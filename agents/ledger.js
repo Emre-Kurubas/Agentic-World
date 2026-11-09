@@ -2,6 +2,8 @@
 // Girdi alanları: t tur, d tarih, k tür, s kaynak, n kişi, c ülkeler, a kişi kimlikleri,
 // p konum, ok başarı, imp önem (0-3), text metin, x türe özel ayrıntı.
 
+import { TECHS } from '../engine/world.js';
+
 const MAX_TEXT = 2000, MAX_ANSWER = 1500;
 const cut = (s, n = MAX_TEXT) => { const t = String(s ?? ''); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
@@ -9,6 +11,7 @@ export const fold = s => String(s ?? '').replace(/[İIı]/g, 'i').replace(/[Şş
 
 const ROLE_TR = { leader: 'lider', general: 'general', opposition: 'muhalefet', oligarch: 'oligark', eski_lider: 'eski lider' };
 const POSTS = [['leader', 'Lider'], ['general', 'Genelkurmay'], ['opposition', 'Muhalefet lideri'], ['oligarch', 'Oligark']];
+const TREATY_TR = { ittifak: 'ittifak', saldirmazlik: 'saldırmazlık', ticaret: 'ticaret', askeri_gecis: 'askerî geçiş', baris: 'barış' };
 const FATE = { olu: 'öldü', surgun: 'sürgüne gitti', emekli: 'emekli oldu', hapis: 'hapse atıldı', serbest: 'serbest kaldı' };
 
 // Eşikler bir kez aşılınca geri dönüş için GAP kadar iyileşme ister; sınırda gidip gelen değer defteri doldurmaz.
@@ -54,12 +57,12 @@ function stateChanges(w, was) {
       if (b.regime !== c.regime) add(`${c.name}: rejim değişti, ${b.regime} yerine ${c.regime}`, 2, { c: cc, p: c.capital });
       if (b.capital !== c.capital) add(`${c.name}: başkent ${w.provinces[c.capital]?.name ?? '?'} oldu`, 2, { c: cc, p: c.capital });
       for (const [post, label] of POSTS) if (b[post] !== c[post]) add(`${c.name}: ${label} değişti, ${who(b[post])} yerine ${who(c[post])}`, post === 'leader' ? 3 : 1, { c: cc, a: [b[post], c[post]].filter(Boolean), p: c.capital });
-      if (!b.strike && c.strike) add(`${c.name}: genel grev başladı`, 2, { c: cc, p: c.capital });
+      if (!b.strike && c.strike) add(`${c.name}: genel grev başladı`, 1, { c: cc, p: c.capital });
       if (b.strike && !c.strike) add(`${c.name}: genel grev sona erdi`, 0, { c: cc });
       if (!b.bankCrisis && c.bankCrisis) add(`${c.name}: bankacılık krizi patladı`, 2, { c: cc, p: c.capital });
       if (b.bankCrisis && !c.bankCrisis) add(`${c.name}: bankacılık krizi atlatıldı`, 0, { c: cc });
       if (!b.defaulted && c.defaulted) add(`${c.name}: borçlarını ödeyemedi, temerrüt ilan edildi`, 3, { c: cc, p: c.capital });
-      for (const t of Object.keys(c.techs || {})) if (!b.techs.includes(t)) add(`${c.name}: yeni teknoloji, ${t}`, 1, { c: cc });
+      for (const t of Object.keys(c.techs || {})) if (!b.techs.includes(t)) add(`${c.name}: yeni teknoloji, ${TECHS[t]?.name ?? t}`, 1, { c: cc });
     }
     if (!c.alive) continue;
     const bands = w.ledgerBands[c.id] ||= {};
@@ -94,7 +97,7 @@ function stateChanges(w, was) {
     else if (was.wars[x.id] && !x.active) add(`Savaş bitti: ${x.name}`, 3, { c: parties });
   }
   for (const t of w.treaties) {
-    const b = was.treaties[t.id], label = `${t.kind} (${t.parties.map(cn).join(', ')})`;
+    const b = was.treaties[t.id], label = `${TREATY_TR[t.kind] ?? t.kind} (${t.parties.map(cn).join(', ')})`;
     if (!b?.active && t.active) add(`Antlaşma yürürlüğe girdi: ${label}`, 2, { c: t.parties, x: { terms: cut(t.terms ?? '', 400) } });
     else if (b?.active && !t.active) add(`Antlaşma sona erdi: ${label}`, 2, { c: t.parties });
     else if (!b && t.pending) add(`Antlaşma teklif edildi: ${label}`, 1, { c: t.parties, x: { terms: cut(t.terms ?? '', 400) } });
@@ -108,14 +111,14 @@ function stateChanges(w, was) {
   for (const s of w.strategic) {
     const b = was.strategic[s.id], ref = s.ref;
     if (!b) continue;
-    if (b.controller !== s.controller) add(`${s.name} artık ${cn(s.controller)} denetiminde (önceki: ${cn(b.controller)})`, 2, { c: [s.controller, b.controller].filter(Boolean), p: ref });
+    if (b.controller && b.controller !== s.controller) add(`${s.name} artık ${cn(s.controller)} denetiminde (önceki: ${cn(b.controller)})`, 2, { c: [s.controller, b.controller].filter(Boolean), p: ref });
     if (b.closed !== !!s.closed) add(`${s.name} ${s.closed ? 'kapatıldı' : 'yeniden açıldı'}`, 2, { c: [s.controller].filter(Boolean), p: ref });
     if (b.toll !== (s.toll || 0)) add(`${s.name}: geçiş ücreti %${Math.round((s.toll || 0) * 100)} oldu`, 1, { c: [s.controller].filter(Boolean), p: ref });
   }
   return out;
 }
 
-const NEWS_IMP = { komplo: 2, felaket: 2, savas: 1 };
+const NEWS_IMP = { komplo: 2, felaket: 1, savas: 1 };
 
 export function buildEntries(w, log, before, lookups = {}) {
   const out = [];

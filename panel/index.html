@@ -3,31 +3,37 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Ajan Dünyası</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Alegreya:wght@500;700&family=Alegreya+Sans:wght@400;500;700&display=swap&subset=latin-ext" rel="stylesheet">
+<link rel="icon" href="favicon.ico">
+<link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<section class="mapwrap" id="wrap" aria-label="Dünya haritası">
-  <svg id="map" role="img" aria-label="Eyaletler, kaynaklar ve stratejik noktalar"></svg>
-  <div id="tip" class="tip" hidden></div>
-  <header class="top">
-    <h1>Ajan Dünyası</h1><div class="date" id="date">Başlangıç</div>
-    <div class="status"><span id="statusDot" class="dot"></span><span id="status">Bağlanıyor</span><span id="progress" class="muted"></span></div>
-  </header>
-  <div class="layers" id="layers" role="group" aria-label="Harita katmanı"></div>
-  <div class="zoom"><button id="zin" type="button" aria-label="Yakınlaştır">+</button><button id="zout" type="button" aria-label="Uzaklaştır">−</button><button id="zreset" type="button">Tümü</button></div>
-  <div class="legend" id="legend"></div>
-</section>
-<aside class="drawer" id="drawer">
-  <button id="toggle" type="button" class="toggle" aria-label="Paneli aç veya kapat">›</button>
-  <nav class="tabs" id="tabs" role="tablist"></nav>
-  <div class="body" id="body" tabindex="0"></div>
-</aside>
+<header class="bar" aria-label="Seçili ülkenin durumu">
+  <label class="who"><span class="flag" id="flag"></span><select id="countrySel" aria-label="Ülke seç"></select></label>
+  <div class="res" id="res"></div>
+  <div class="when"><span id="date">Başlangıç</span><span id="snapnote" class="snapnote" hidden></span></div>
+</header>
+<main class="stage">
+  <section class="mapwrap" id="wrap" aria-label="Dünya haritası">
+    <svg id="map" role="img" aria-label="Eyaletler, kaynaklar ve stratejik noktalar"></svg>
+    <div id="loading" class="loading">Harita çiziliyor</div>
+    <div id="tip" class="tip" hidden></div>
+    <div class="layers" id="layers" role="group" aria-label="Harita katmanı"></div>
+    <div class="zoom"><button id="zin" type="button" aria-label="Yakınlaştır">+</button><button id="zout" type="button" aria-label="Uzaklaştır">−</button><button id="zreset" type="button">Tümü</button></div>
+    <div class="cards" id="cards" aria-live="polite"></div>
+    <div class="legend" id="legend"></div>
+  </section>
+  <aside class="drawer" id="drawer">
+    <button id="toggle" type="button" class="toggle" aria-label="Paneli aç veya kapat">›</button>
+    <nav class="tabs" id="tabs" role="tablist"></nav>
+    <div class="body" id="body" tabindex="0"></div>
+  </aside>
+</main>
 <footer class="ruler">
   <button id="pause" type="button">Oyunu durdur</button>
+  <div class="status"><span id="statusDot" class="dot"></span><span id="status">Bağlanıyor</span><span id="progress"></span></div>
   <button id="prev" type="button" aria-label="Önceki tur">‹</button>
-  <div class="track"><div id="marks" class="marks"></div><input id="slider" type="range" min="0" max="0" value="0" aria-label="Tur seç"></div>
+  <div class="track"><div id="turnmarks" class="marks"></div><input id="slider" type="range" min="0" max="0" value="0" aria-label="Tur seç"></div>
   <button id="next" type="button" aria-label="Sonraki tur">›</button>
   <button id="live" type="button" class="on">Canlı izle</button>
 </footer>

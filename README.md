@@ -6,6 +6,10 @@ Yapay zekâ karakterlerinin kurgusal bir dünyada ülke yönettiği, tur tabanl�
 
 Node.js 20 veya üstü ve oturumu açık Claude Code gerekir.
 
+En kolayı masaüstündeki **Ajan Dünyası** kısayoluna çift tıklamak. Oyun başlar, panel kendi penceresinde açılır, pencereyi kapatınca oyun durur ve kaldığı yerden sürer. Kısayol silinirse `powershell -File kisayol-olustur.ps1` ile yeniden kurulur.
+
+Terminalden:
+
 ```
 cd Desktop\ajan-dunyasi
 node run.js
@@ -42,6 +46,6 @@ Sıfırdan başlamak için: `node run.js --new`. Bu, aynı adlı kaydı siler.
 
 - `engine/`: dünya modeli, ekonomi, ordu, siyaset, işlemler
 - `agents/`: karakter ve hakem istekleri, kural tabanlı oyuncular, tur akışı, kayıt
-- `panel/`: izleme ekranı
+- `panel/`: izleme ekranı. **Defter** sekmesi her şeyi aranabilir tutar, **Kişiler** sekmesi karakter başına zaman çizelgesi verir
 - `agents/queries.js`: karakterlerin bakabildiği bilgiler ve erişim sınırları
 - `tests/realism.js`: gerçekçilik ve sistem kontrolleri (`node tests/realism.js`)
