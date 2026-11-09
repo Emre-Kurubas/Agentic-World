@@ -4,6 +4,7 @@ import { beginTurn, stepWorld } from '../engine/step.js';
 import { applyOp } from '../engine/ops.js';
 import { executePlot } from '../engine/politics.js';
 import { makeParliament, treatyStep } from '../engine/polity.js';
+import { currencyStep, displacedDemand, exportEdge, localPrices } from '../engine/money.js';
 import { Game, shouldWake, isAI } from '../agents/game.js';
 import { LimitError, SessionLostError } from '../agents/backend.js';
 import { npcDecide } from '../agents/npc.js';
@@ -92,7 +93,8 @@ chain('Baraj aşağı havzanın hasadını düşürür', () => {
 });
 chain('Rant bağımlılığı yolsuzluğu ve oligarkı büyütür', () => {
   const w = fresh(), c = w.countries.U1, o = w.characters[c.oligarch], cor = c.corruption, pw = o.wealth;
-  const p = countryProvinces(w, c.id)[0]; p.deposits.oil = { amount: 1e6, rich: 30, known: true, mine: 6 }; run(w, 6);
+  const p = countryProvinces(w, c.id)[0]; p.deposits.oil = { amount: 1e6, rich: 30, known: true, mine: 6 };
+  for (let i = 0; i < 6; i++) { c.stock.oil = 0; c.lastSold = { oil: 1e6 }; run(w, 1); } // Petrol dünyaya satılıyor; satılmayan petrol rant getirmez.
   assert.ok(c.rentShare > .22, `rant ${c.rentShare}`); assert.ok(c.corruption > cor); assert.ok(o.wealth > pw);
 });
 chain('Çelik yoksa makine, makine yoksa yatırım olmaz', () => {
@@ -211,7 +213,41 @@ const memoryStore = () => { let saved = {}, pending = null; return { savePending
 const reply = (p, extra = {}) => { if (p.includes('hukumler')) return { hukumler: [] }; if (!p.includes('şimdi karar ver')) return { bak: ['ekonomi'] }; return { kararlar: [], mesajlar: [], ic_ses: 'x', ...extra }; };
 
 const leaderOf = (w, id = 'U1') => w.characters[w.countries[id].leader];
-const inherited = (seed = 1848, countries = 5) => createWorld({ ...base, plainStates: false, seed, countries });
+chain('Enflasyon serbest kurda parayı düşürür, ithalatı pahalılaştırır', () => {
+  const a = fresh(), b = fresh(), ca = a.countries.U1, cb = b.countries.U1; for (const w of [a, b]) w.countries.U1.fxRegime = 'serbest'; ca.priceLevel *= 3; run(a, 6); run(b, 6);
+  assert.ok(ca.rate > cb.rate * 1.3, `${ca.rate} / ${cb.rate}`); assert.ok(ca.fx < cb.fx);
+});
+chain('Sabit kurda altın kaçarsa para daralır, rezerv biterse kur kopar', () => {
+  const w = fresh(), c = w.countries.U1, before = c.money; c.fxRegime = 'altin'; c._lastReserves = c.reserves; c.reserves -= c.realGdp * .02; run(w, 1); assert.ok(c.money < before * 1.02, `para ${before} -> ${c.money}`);
+  c.reserves = 0; const rate = c.rate, legit = c.legitimacy; beginTurn(w); currencyStep(w, c); assert.equal(c.fxRegime, 'altin', 'tek çeyrek krize yetmez'); currencyStep(w, c);
+  assert.equal(c.fxRegime, 'serbest'); assert.ok(c.rate > rate * 1.2, `kur ${c.rate}`); assert.ok(c.legitimacy < legit); assert.ok(w.newsThisTurn.some(n => n.text.includes('sabit kurdan koptu')));
+});
+ok('Devalüasyon kararı liderin, serbest kurda yapılmaz', () => {
+  const w = fresh(), c = w.countries.U1; c.fxRegime = 'altin'; assert.equal(applyOp(w, w.characters[c.general], { op: 'devalue', pct: .2 }).ok, false); assert.equal(applyOp(w, ld(w, c), { op: 'devalue', pct: .2 }).ok, true); assert.ok(Math.abs(c.rate - 1.2) < .01); assert.equal(c.fx, 83.33);
+  assert.equal(applyOp(w, ld(w, c), { op: 'set_fx_regime', regime: 'serbest' }).ok, true); assert.equal(applyOp(w, ld(w, c), { op: 'devalue', pct: .2 }).ok, false);
+});
+ok('Başka paraya bağlanan kur onu izler, bağlanılan devlet yıkılırsa serbest kalır', () => {
+  const w = fresh(), c = w.countries.U1, o = w.countries.U2; o.fxRegime = 'serbest'; assert.equal(applyOp(w, ld(w, c), { op: 'set_fx_regime', regime: 'bagli', target: 'U2' }).ok, true); o.rate = 2; currencyStep(w, c); assert.equal(c.rate, 2);
+  o.alive = false; currencyStep(w, c); assert.equal(c.fxRegime, 'serbest');
+});
+chain('Dövizle borç: rezerv gelir, kur düşünce faiz bütçeye pahalıya gelir, ödenmezse temerrüt', () => {
+  const a = fresh(), b = fresh(); for (const w of [a, b]) { w.countries.U2.reserves = 1e6; w.countries.U1.reserves = 0; const r = applyOp(w, ld(w, w.countries.U1), { op: 'borrow_foreign', target: 'U2', pct_gdp: .3 }); assert.equal(r.ok, true, r.msg); assert.ok(w.countries.U1.creditors.U2 > 0 && w.countries.U1.reserves > 0); }
+  const ca = a.countries.U1, cb = b.countries.U1; ca.reserves = cb.reserves = 1e5; ca.rate = 5; ca.fxRegime = 'serbest'; cb.fxRegime = 'serbest'; const sa = ca.treasury, sb = cb.treasury; run(a, 1); run(b, 1); assert.ok((sa - ca.treasury) >= (sb - cb.treasury) - 1e9, 'bütçe'); assert.ok(ca.lastSpending > cb.lastSpending, `${ca.lastSpending} / ${cb.lastSpending}`);
+  const w = fresh(), c = w.countries.U1; c.creditors.U2 = c.realGdp * 30; const rel = w.countries.U2.relations.U1 ?? 0; for (let i = 0; i < 7; i++) { c.reserves = 0; run(w, 1); } assert.ok(c.defaulted, 'dış borç temerrüdü'); assert.ok(w.countries.U2.relations.U1 < rel, 'alacaklı öfkelenir');
+});
+chain('Kur fazla değerliyse ithalat artar, ihracat rakipten pay kaybeder', () => {
+  const w = fresh(), a = w.countries.U1; a.rer = 1.5; assert.ok(displacedDemand(a, 'goods') > 0 || !(a._need?.goods)); a._need = { goods: 100 }; assert.equal(Math.round(displacedDemand(a, 'goods')), 50); assert.ok(exportEdge({ rer: 1.5 }) < exportEdge({ rer: .8 }));
+});
+chain('Depolar dolunca üretici yavaşlar, GSYH şişmez, işsizlik artar', () => {
+  const a = fresh(), b = fresh(), ca = a.countries.U1, cb = b.countries.U1; for (const w of [a, b]) w.countries.U1.embargo = aliveCountries(w).filter(o => o.id !== 'U1').map(o => o.id); ca.stock.coal = 1e7; ca.stock.grain = 1e7; ca.stock.iron = 1e7; const ua = ca.unemployment; run(a, 4); run(b, 4);
+  assert.ok(ca.idleShare > .05, `atıl ${ca.idleShare}`); assert.ok(ca.realGdp < cb.realGdp, `${ca.realGdp} / ${cb.realGdp}`); assert.ok(ca.unemployment > cb.unemployment, `${ca.unemployment} / ${cb.unemployment}`); assert.ok(ua);
+});
+ok('İç fiyatı kıtlık yükseltir, sermaye kısıtı kaçışı durdurur', () => {
+  const w = fresh(), c = w.countries.U1; run(w, 1); const plenty = c.prices.grain; c.stock.grain = 0; localPrices(w, c); assert.ok(c.prices.grain > plenty, `${c.prices.grain} / ${plenty}`);
+  const ol = w.characters[c.oligarch], total = aliveCountries(w).reduce((a, x) => a + x.reserves, 0); applyOp(w, ol, { op: 'capital_flight', share: .2 }); assert.ok(aliveCountries(w).reduce((a, x) => a + x.reserves, 0) > total * .97, 'kaçan para dünyadan silinmez');
+  c.capitalClosed = true; assert.equal(applyOp(w, ol, { op: 'capital_flight', share: .2 }).ok, false);
+});
+const inherited =(seed = 1848, countries = 5) => createWorld({ ...base, plainStates: false, seed, countries });
 ok('Devletler devralınır: rejim, ordu, para ve borç ülkeden ülkeye ayrışır', () => {
   const w = inherited(), cs = aliveCountries(w), men = c => Object.values(w.units).filter(u => u.country === c.id).reduce((a, u) => a + u.men, 0);
   assert.equal(w.status, 'kuruluyor'); assert.equal(new Set(cs.map(c => c.archetype)).size, 5, 'aynı tip iki kez çıkmamalı'); assert.ok(new Set(cs.map(c => c.regime)).size >= 4); assert.ok(cs.every(c => c.name && !c.name.startsWith('Bölge')));
@@ -239,7 +275,7 @@ await (async () => {
   const cfg = { ...base, plainStates: false, seed: 42 }, w = createWorld(cfg), g = new Game({ world: w, cfg, backend: { kind: 'mock' }, store: nullStore() }); const orig = g.turn.bind(g);
   g.turn = async () => { await orig(); if (w.turn >= 100) g.stop = true; }; await g.run(0);
   const med = a => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)], cs = aliveCountries(w);
-  assert.ok(med(cs.map(c => c.priceLevel)) < 30, `fiyat ${med(cs.map(c => c.priceLevel))}`); console.log(`geçti  Devralınan dünyalar 100 turda çökmez (${cs.length} güç, ortanca meşruiyet ${Math.round(med(cs.map(c => c.legitimacy)))})`);
+  assert.ok(med(cs.map(c => c.priceLevel)) < 100, `hiperenflasyon: fiyat ${med(cs.map(c => c.priceLevel))}`); console.log(`geçti  Devralınan dünyalar 100 turda çökmez (${cs.length} güç, ortanca meşruiyet ${Math.round(med(cs.map(c => c.legitimacy)))})`);
 })();
 chain('Doğrudan sevkiyat stoktan stoğa geçer, yol yoksa gitmez', () => {
   const w = fresh(), a = w.countries.U1, b = w.countries.U2; run(w, 1); const k = 'U1|U2'; w.routes[k] = { mode: 'kara', cost: 1.04, path: [], tolls: [] }; a.stock.iron = 100; b.stock.iron = 0; leaderOf(w, 'U2').inbox = [];

@@ -33,7 +33,7 @@ function levelOf(value, steps, prev) {
 export function snapshotState(w) {
   const countries = {}, provinces = {}, characters = {}, wars = {}, treaties = {}, plots = {}, strategic = {}, debts = {};
   for (const d of w.debts || []) debts[d.id] = d.status;
-  for (const c of Object.values(w.countries)) countries[c.id] = { alive: c.alive, name: c.name, regime: c.regime, capital: c.capital, leader: c.leader, general: c.general, opposition: c.opposition, oligarch: c.oligarch, strike: !!c.strike, bankCrisis: !!c.bankCrisis, defaulted: !!c.defaulted, techs: Object.keys(c.techs || {}), institutions: Object.fromEntries((c.institutions || []).filter(i => i.id).map(i => [i.id, { name: i.name, head: i.head }])), bills: Object.fromEntries((c.bills || []).map(b => [b.id, b.status])), suspended: (c.parliament?.suspendedUntil ?? 0) > w.turn };
+  for (const c of Object.values(w.countries)) countries[c.id] = { alive: c.alive, name: c.name, regime: c.regime, capital: c.capital, leader: c.leader, general: c.general, opposition: c.opposition, oligarch: c.oligarch, fxRegime: c.fxRegime, rate: c.rate, strike: !!c.strike, bankCrisis: !!c.bankCrisis, defaulted: !!c.defaulted, techs: Object.keys(c.techs || {}), institutions: Object.fromEntries((c.institutions || []).filter(i => i.id).map(i => [i.id, { name: i.name, head: i.head }])), bills: Object.fromEntries((c.bills || []).map(b => [b.id, b.status])), suspended: (c.parliament?.suspendedUntil ?? 0) > w.turn };
   for (const p of Object.values(w.provinces)) provinces[p.id] = p.controller;
   for (const ch of Object.values(w.characters)) characters[ch.id] = { alive: ch.alive, status: ch.status, role: ch.role, country: ch.country, name: ch.name };
   for (const x of w.wars) wars[x.id] = x.active;
@@ -58,6 +58,8 @@ function stateChanges(w, was) {
       if (b.regime !== c.regime) add(`${c.name}: rejim değişti, ${b.regime} yerine ${c.regime}`, 2, { c: cc, p: c.capital });
       if (b.capital !== c.capital) add(`${c.name}: başkent ${w.provinces[c.capital]?.name ?? '?'} oldu`, 2, { c: cc, p: c.capital });
       for (const [post, label] of POSTS) if (b[post] !== c[post]) add(`${c.name}: ${label} değişti, ${who(b[post])} yerine ${who(c[post])}`, post === 'leader' ? 3 : 1, { c: cc, a: [b[post], c[post]].filter(Boolean), p: c.capital });
+      if (b.fxRegime !== c.fxRegime) add(`${c.name}: ${c.currency?.name} ${c.fxRegime === 'serbest' ? 'serbest kura geçti' : c.fxRegime === 'altin' ? 'altına bağlandı' : 'başka bir paraya bağlandı'}`, 2, { c: cc, p: c.capital });
+      else if (c.rate > b.rate * 1.2) add(`${c.name}: ${c.currency?.name} bir çeyrekte %${Math.round((1 - b.rate / c.rate) * 100)} değer kaybetti`, 2, { c: cc, p: c.capital });
       if (!b.strike && c.strike) add(`${c.name}: genel grev başladı`, 1, { c: cc, p: c.capital });
       if (b.strike && !c.strike) add(`${c.name}: genel grev sona erdi`, 0, { c: cc });
       if (!b.bankCrisis && c.bankCrisis) add(`${c.name}: bankacılık krizi patladı`, 2, { c: cc, p: c.capital });

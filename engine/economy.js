@@ -1,5 +1,6 @@
 import { clamp, sum, news, between, rand } from './util.js';
 import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_TR, PLANTS, TECHS, countryProvinces, provincePop, aliveCountries, atWar, hasTreaty } from './world.js';
+import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep } from './money.js';
 
 const RECIPE = {
   steel: { iron: 1, coal: .8 }, fuel: { oil: 1.25 }, fertilizer: { phosphate: 1, coal: .2 },
@@ -87,19 +88,22 @@ function extract(w, c) {
   const motor = hasTech(c, 'petrol_motoru') ? 1 + clamp(c.stock.fuel / Math.max(c._lastFuelNeed || 1, 1), 0, 1) * .25 : 1;
   const fert = hasTech(c, 'kimyasal_gubre') ? 1 + clamp(c.stock.fertilizer / Math.max(c._pop * .002, 1), 0, 1) * .4 : 1;
   const strikes = c.strike ? .65 : 1, bank = c.bankHealth < 30 ? .8 : 1;
-  c._rent = 0;
+  c._rent = 0; c._idleV = 0;
+  const pace = Object.fromEntries(RAW.map(g => [g, glutFactor(c, g)]));
   for (const p of countryProvinces(w, c.id)) {
     const occ = p.controller !== p.owner ? .55 : 1;
     const rail = 1 + p.rail * .12 + (hasTech(c, 'elektrik') ? .08 : 0);
     const eff = (1 - p.devastation * .75) * (.72 + p.infra * .36) * occ * (1 - (p.unrest > 60 ? (p.unrest - 60) / 100 : 0)) * rail;
     const water = clamp(p.water - p.waterPenalty + (p.dam ? .15 : 0), .15, 1.4);
-    raw.grain += p.pops.koylu.n * p.fertility * water * .03 * c.tech.agri * eff * p.weather * fert * motor + p.fish * p.pops.koylu.n * .002;
-    raw.timber += p.pops.koylu.n * p.timber * .006 * eff;
+    const grain = p.pops.koylu.n * p.fertility * water * .03 * c.tech.agri * eff * p.weather * fert * motor + p.fish * p.pops.koylu.n * .002, timber = p.pops.koylu.n * p.timber * .006 * eff;
+    raw.grain += grain * pace.grain; raw.timber += timber * pace.timber;
+    c._idleV += grain * (1 - pace.grain) * BASE_PRICE.grain + timber * (1 - pace.timber) * BASE_PRICE.timber;
     const deposits = Object.entries(p.deposits).filter(([, d]) => d.known && d.mine > 0 && d.amount > 0);
     const mineLoad = sum(deposits, ([, d]) => d.mine), plantLoad = sum(Object.values(p.plants)) + .3;
     const mineShare = mineLoad / (mineLoad + plantLoad);
     for (const [k, d] of deposits) {
-      const q = p.pops.isci.n * mineShare * (d.mine / mineLoad) * d.rich * ({ coal: .3, iron: .22, oil: .12 }[k] ?? .06) * c.tech.ind * eff * strikes;
+      const full = p.pops.isci.n * mineShare * (d.mine / mineLoad) * d.rich * ({ coal: .3, iron: .22, oil: .12 }[k] ?? .06) * c.tech.ind * eff * strikes, f = k === 'gold' ? 1 : pace[k] ?? 1, q = full * f;
+      if (f < 1) c._idleV += (full - q) * BASE_PRICE[k];
       d.amount = Math.max(0, d.amount - q * .08);
       const con = p.concessions?.[k];
       if (k === 'gold') { gold += q; continue; }
@@ -130,26 +134,29 @@ function needs(w, c) {
   if (hasTech(c, 'nadir_metal')) need.rare += sum(Object.values(w.units).filter(u => u.country === c.id && ['zirhli', 'hava'].includes(u.kind)), u => u.men) * .004 + c._cap.machines * .05;
   c._need = need; c._lastFuelNeed = need.fuel;
   c._reserve = Object.fromEntries(GOODS.map(g => [g, need[g] * .4]));
+  localPrices(w, c);
 }
 
 function trade(w, cs) {
   w.tradeFlows = {};
   const key = routeKey;
+  for (const c of cs) c.lastSold = {};
   for (const g of GOODS) {
     const sellers = cs.map(c => ({ c, s: Math.max(0, c.stock[g] - c._need[g] - c._reserve[g]) })).filter(x => x.s > 0);
-    const buyers = cs.map(c => ({ c, d: Math.max(0, c._need[g] + c._reserve[g] * .5 - c.stock[g]) })).filter(x => x.d > 0);
+    const buyers = cs.map(c => ({ c, d: Math.max(0, c._need[g] + c._reserve[g] * .5 - c.stock[g]) + displacedDemand(c, g) })).filter(x => x.d > 0);
     const price = w.globalPrice[g]; let wanted = sum(buyers, b => b.d), moved = 0; const offered = sum(sellers, s => s.s);
     for (let pass = 0; pass < 2; pass++) for (const b of buyers) {
       if (b.d <= 0) continue;
       const acc = sellers.map(x => ({ x, r: w.routes[key(b.c.id, x.c.id)] })).filter(a => a.x.s > 0 && a.x.c.id !== b.c.id && a.r);
-      const wgt = a => a.x.s / a.r.cost * (hasTreaty(w, b.c.id, a.x.c.id, 'ticaret') ? 1.5 : 1), tot = sum(acc, wgt);
+      const wgt = a => a.x.s / a.r.cost * (hasTreaty(w, b.c.id, a.x.c.id, 'ticaret') ? 1.5 : 1) * exportEdge(a.x.c), tot = sum(acc, wgt);
       if (!tot) continue;
       for (const a of acc) {
         const landed = price * a.r.cost * (1 + (b.c.tariffDeals?.[a.x.c.id] ?? b.c.tariff) * .3);
         const q = Math.min(a.x.s, b.d * wgt(a) / tot, Math.max(0, b.c.reserves) / landed);
         if (q <= 0) continue;
-        const v = q * price; a.x.s -= q; b.d -= q; moved += q;
-        a.x.c.stock[g] -= q; b.c.stock[g] += q; a.x.c.reserves += v; b.c.reserves -= q * landed;
+        const v = q * price; a.x.s -= q; b.d -= q; moved += q; a.x.c.lastSold[g] = (a.x.c.lastSold[g] || 0) + q;
+        // Navlun ihracatçıya gider, gümrük alıcının kendi hazinesine yazılır: altın dünyadan kaybolmaz.
+        const gold = v * a.r.cost; a.x.c.stock[g] -= q; b.c.stock[g] += q; a.x.c.reserves += gold; b.c.reserves -= gold;
         a.x.c._exports = (a.x.c._exports || 0) + v; b.c._imports = (b.c._imports || 0) + v;
         a.x.c._rawExp = (a.x.c._rawExp || 0) + (RAW.includes(g) && g !== 'grain' ? v : 0);
         for (const tid of a.r.tolls) { const t = w.strategic.find(s => s.id === tid); if (t?.controller) { const fee = v * t.toll; w.countries[t.controller].reserves += fee; w.countries[t.controller]._tolls = (w.countries[t.controller]._tolls || 0) + fee; } }
@@ -168,7 +175,8 @@ function factories(w, c) {
   const made = {};
   const armsPriority = clamp(c.armShare * 4, .2, 1);
   for (const pl of ORDER) {
-    const cap = c._cap[pl] * (pl === 'arms' ? armsPriority : 1), rec = RECIPE[pl];
+    const pace = glutFactor(c, pl), cap = c._cap[pl] * (pl === 'arms' ? armsPriority : 1) * pace, rec = RECIPE[pl];
+    c._cap[pl] *= pace; if (pace < 1) c._idleV += cap / pace * (1 - pace) * BASE_PRICE[pl] * .45;
     if (pl === 'fuel' && !hasTech(c, 'petrol_arama') && !c.stock.oil) { made[pl] = 0; continue; }
     let r = cap;
     for (const [g, q] of Object.entries(rec)) r = Math.min(r, (c.stock[g] || 0) / q);
@@ -182,7 +190,7 @@ function factories(w, c) {
 }
 
 export function economyStep(w) {
-  updateStrategic(w); updateRoutes(w); weatherStep(w);
+  updateStrategic(w); updateRoutes(w); updateRer(w); weatherStep(w);
   const cs = aliveCountries(w), prevReal = Object.fromEntries(cs.map(c => [c.id, c.realGdp]));
   for (const c of cs) { extract(w, c); needs(w, c); }
   trade(w, cs);
@@ -191,7 +199,7 @@ export function economyStep(w) {
   for (const c of cs) {
     factories(w, c);
     consume(w, c, prevReal[c.id]);
-    fiscal(w, c); demography(w, c); investment(w, c); research(w, c);
+    fiscal(w, c); currencyStep(w, c); demography(w, c); investment(w, c); research(w, c);
     for (const k of ['_exports', '_imports', '_rawExp', '_tolls']) delete c[k];
   }
   epidemicStep(w);
@@ -212,11 +220,11 @@ function consume(w, c, prev) {
   const shortage = Math.max(0, 1 - Math.min(c.foodRatio, 1)) * .55 + Math.max(0, 1 - Math.min(consumer, 1)) * .25 + (hasTech(c, 'petrol_motoru') ? Math.max(0, 1 - Math.min(c.fuelRatio, 1)) * .18 : 0);
   // Kıtlık fiyatı bir kez yükseltir; sürekli enflasyon için kıtlığın kötüleşmesi veya para artışı gerekir.
   const shock = shortage - (c._lastShortage ?? shortage); c._lastShortage = shortage;
-  c.inflation = clamp(.35 * c.inflation + .85 * (mg - g * .6) + shock * .4 + (c.reserves < 0 ? .03 : 0) + (c.bankHealth < 30 ? .02 : 0) + .004, -.04, 4);
+  c.inflation = clamp(.35 * c.inflation + .85 * (mg - g * .6) + shock * .4 + (c._fxPass || 0) + (c.reserves < 0 ? .03 : 0) + (c.bankHealth < 30 ? .02 : 0) + .004, -.04, 4);
   c.priceLevel *= 1 + c.inflation; c.wageIndex += (c.priceLevel - c.wageIndex) * .35;
   c.gdp = real * c.priceLevel; c.money *= 1 + g * .6 + .002;
-  c.fx = Math.round(100 / c.priceLevel * 100) / 100;
-  c.unemployment += (clamp(.06 + (1 - c.inputRatio) * .3 + c._dev * .3 + Math.max(0, -g) * .9, .02, .6) - c.unemployment) * .4;
+  c.idleShare = clamp(c._idleV / Math.max(real + c._idleV, 1), 0, 1);
+  c.unemployment += (clamp(.06 + (1 - c.inputRatio) * .3 + c._dev * .3 + Math.max(0, -g) * .9 + c.idleShare * .25, .02, .6) - c.unemployment) * .4;
   // Kaynak gelirine bağımlılık: kolay para yolsuzluğu ve oligarkları besler, sanayiyi zayıflatır.
   c.rentShare = clamp((c._rent || 0) / Math.max(real, 1), 0, 1);
   if (c.rentShare > .22) { c.corruption = clamp(c.corruption + (c.rentShare - .22) * 2.2, 2, 95); const o = w.characters[c.oligarch]; if (o?.alive) { o.wealth += c.rentShare * 5; o.power = clamp(o.power + c.rentShare * .3, 0, 95); } for (const p of countryProvinces(w, c.id)) if (p.eth !== c.majorityEth && Object.values(p.deposits).some(d => d.known && d.mine > 0)) p.unrest = clamp(p.unrest + 2.2, 0, 100); }
@@ -233,9 +241,14 @@ function fiscal(w, c) {
   const revenue = (c.gdp * .45 * c.tax.income + land + business + (c._imports || 0) * c.priceLevel * c.tariff) * eff + (c._tolls || 0) * c.priceLevel;
   const b = c.budget, programs = (b.military + b.welfare + b.infrastructure + b.education + b.police + b.administration) * c.gdp;
   c.interestRate = clamp(.012 + Math.max(0, c.debt / Math.max(c.gdp * 4, 1) - .5) * .05 + c.inflation * .6 + (c.defaulted ? .04 : 0) + (c.bankHealth < 30 ? .02 : 0), .005, .35);
-  const interest = c.debt * c.interestRate;
-  // Yabancı alacaklılar faizini döviz olarak alır.
-  for (const [cid, amt] of Object.entries(c.creditors)) if (w.countries[cid]?.alive) { const pay = Math.min(Math.max(c.reserves, 0), amt * c.interestRate); c.reserves -= pay; w.countries[cid].reserves += pay; }
+  let interest = c.debt * c.interestRate;
+  // Dış borç altın cinsindendir: para değer kaybedince aynı faiz bütçeye daha pahalıya gelir.
+  const external = sum(Object.values(c.creditors), x => x), extRate = foreignRate(c, external); let extDue = 0, extPaid = 0;
+  for (const [cid, amt] of Object.entries(c.creditors)) if (w.countries[cid]?.alive) { const due = amt * extRate, pay = Math.min(Math.max(c.reserves, 0), due); c.reserves -= pay; w.countries[cid].reserves += pay; extDue += due; extPaid += pay; }
+  interest += extPaid * (c.rate || 1);
+  c.foreignRate = extRate;
+  c.extArrears = extDue > 0 && extPaid < extDue * .5 ? (c.extArrears || 0) + 1 : Math.max(0, (c.extArrears || 0) - 1);
+  if (c.extArrears >= 4) declareDefault(w, c, 'dış borcunu ödeyemeyeceğini açıkladı');
   const need = programs + interest; let cash = c.treasury + revenue, paid = 1;
   if (cash >= need) cash -= need;
   else {
@@ -243,11 +256,7 @@ function fiscal(w, c) {
     c.debt += borrow; cash += borrow;
     if (cash < need) {
       paid = need > 0 ? clamp(cash / need, 0, 1) : 1; cash = 0; c.arrears = clamp(c.arrears + (1 - paid), 0, 6);
-      if (paid < .55 && !c.defaulted && c.debt > c.gdp * 4 * .9) {
-        c.defaulted = true; c.debt *= .55; c.reserves *= .7; c.bankHealth = clamp(c.bankHealth - 30, 0, 100);
-        for (const [cid, amt] of Object.entries(c.creditors)) { const o = w.countries[cid]; if (o?.alive) { o.relations[c.id] = clamp((o.relations[c.id] ?? 0) - 40, -100, 100); o.bankHealth = clamp(o.bankHealth - 12, 0, 100); o.reserves -= amt * .15; } c.creditors[cid] = amt * .55; }
-        news(w, `${c.name} borçlarını ödeyemeyeceğini açıkladı; alacaklı ülkeler öfkeli.`, { kind: 'ekonomi', countries: [c.id] });
-      }
+      if (paid < .55 && !c.defaulted && c.debt > c.gdp * 4 * .9) declareDefault(w, c, 'borçlarını ödeyemeyeceğini açıkladı');
     } else { cash -= need; c.arrears = Math.max(0, c.arrears - .5); }
   }
   c.treasury = cash; if (paid === 1) c.arrears = Math.max(0, c.arrears - .5);

@@ -1,5 +1,6 @@
 import { clamp, sum, rand, between, pick, nextId } from './util.js';
 import { inheritStates } from './inherit.js';
+import { issueCurrency } from './money.js';
 
 const SYL = ['ar','ven','tor','mi','sa','lor','ka','zen','ol','ri','dan','ve','gar','su','thal','ne','bor','ha','lin','es','mar','ku','ra','dor','iv','al','pe','ten'];
 const FIRST = ['Aren','Besra','Cemre','Davor','Elif','Faren','Giray','Hale','Ilgaz','Jale','Kerem','Lale','Mirza','Nehir','Orhun','Pelin','Rüzgar','Selin','Tarkan','Umay','Vedat','Yelda','Zafer','Alara','Bora','Defne','Emre','Feride','Göktan','Hazal'];
@@ -172,7 +173,7 @@ export function makeCountry(w, id, patch = {}) {
   return {
     id, alive: true, name: `Bölge ${id}`, adj: '', ideology: 'Belirsiz', regime: 'Geçici yönetim', motto: '', colors: ['#888888', '#cccccc'],
     axes: { econ: 0, auth: 0, nation: 0, faith: 0 },
-    elections: false, nextElection: 12, pressFreedom: 50, rigging: 0,
+    elections: false, nextElection: 12, pressFreedom: 50, rigging: 0, rate: 1, pegRate: 1, pegTo: null, fxRegime: 'altin', capitalClosed: false, rer: 1, prices: {}, lastSold: {},
     treasury: 0, debt: 0, reserves: 0, money: 0, priceLevel: 1, wageIndex: 1, inflation: .01, realGdp: 0, gdp: 0, unemployment: .08, foodRatio: 1, oreRatio: 1,
     tax: { income: .15, land: .12, business: .18 }, tariff: .08,
     budget: { military: .035, welfare: .03, infrastructure: .02, education: .02, police: .012, administration: .02 },
@@ -242,6 +243,7 @@ export function createWorld(cfg) {
     bootEconomy(w, c);
   });
   findStrategic(w);
+  for (const c of aliveCountries(w)) issueCurrency(c);
   if (!cfg.plainStates) inheritStates(w);
   return w;
 }

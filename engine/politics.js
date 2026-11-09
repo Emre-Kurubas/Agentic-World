@@ -1,6 +1,7 @@
 import { clamp, sum, news, rand, between, nextId, pick } from './util.js';
 import { CLASSES, ROLES, countryProvinces, provincePop, aliveCountries, makeCountry, spawnCharacter, atWar, clampRel } from './world.js';
 import { allocateSeats } from './polity.js';
+import { issueCurrency } from './money.js';
 
 const CLASS_AXES = { koylu: { econ: -15, auth: 15, nation: 15, faith: 35 }, isci: { econ: -55, auth: -10, nation: 5, faith: 0 }, orta: { econ: 20, auth: -35, nation: 0, faith: -10 }, elit: { econ: 65, auth: 25, nation: 15, faith: 10 } };
 
@@ -112,7 +113,7 @@ export function startCivilWar(w, c, leaderCh, label, seedProvinces = []) {
     techs: { ...c.techs }, literacy: c.literacy, parties: c.parties.map(p => ({ ...p })), rulingParty: null,
     relations: { ...c.relations, [c.id]: -100 }, bureaucracy: c.bureaucracy * .6, police: c.police * .5, legitimacy: 45, capital: null
   });
-  w.countries[id] = f; c.relations[id] = -100;
+  f.rate = c.rate; issueCurrency(f, 'serbest'); w.countries[id] = f; c.relations[id] = -100;
   for (const o of aliveCountries(w)) if (o.id !== id && o.id !== c.id) o.relations[id] = o.relations[c.id] ?? 0;
   const provs = countryProvinces(w, c.id);
   let take = [...new Set(seedProvinces)];

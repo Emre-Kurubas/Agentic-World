@@ -4,6 +4,7 @@ import { clamp, rand, pick, between, nextId } from './util.js';
 import { countryProvinces, aliveCountries, word, GOOD_TR } from './world.js';
 import { partyStep } from './politics.js';
 import { makeParliament } from './polity.js';
+import { issueCurrency } from './money.js';
 
 const R = (a, b) => [a, b];
 const ARCHETYPES = [
@@ -16,6 +17,7 @@ const ARCHETYPES = [
   { key: 'federasyon', suffix: ['Konfederasyonu', 'Birleşik Eyaletleri'], regime: ['Gevşek federasyon'], ideology: ['Eyalet hakları', 'Bölgeci federalizm'], elections: true, press: R(45, 70), axes: { econ: R(0, 40), auth: R(-30, 10), nation: R(-20, 20), faith: R(-20, 20) }, budget: { military: .025, welfare: .015, infrastructure: .02, education: .015, police: .008, administration: .01 }, tax: { income: .12, land: .08, business: .16 }, tariff: .06, treasury: .2, reserves: .8, debt: 1, army: .9, fleet: .8, industry: 1, arms: .9, literacy: R(36, 48), bureaucracy: 40, corruption: 35, police: 30, intelligence: 30, legitimacy: 52, courts: 50, unions: true, ownership: 0, loyalty: 58, rise: ['Eyalet valilerinin uzun pazarlığı sonunda federal başkan seçildi.'] },
   { key: 'teokrasi', suffix: ['Kutsal Devleti', 'Ruhani Cumhuriyeti'], regime: ['Ruhani yönetim'], ideology: ['İnanç devleti', 'Kutsal yasa'], elections: false, press: R(15, 35), axes: { econ: R(-20, 20), auth: R(50, 80), nation: R(10, 40), faith: R(80, 100) }, budget: { military: .025, welfare: .03, infrastructure: .015, education: .025, police: .03, administration: .02 }, tax: { income: .14, land: .16, business: .1 }, tariff: .12, treasury: .2, reserves: .5, debt: .8, army: 1, fleet: .6, industry: .7, arms: 1, literacy: R(26, 38), bureaucracy: 50, corruption: 32, police: 60, intelligence: 50, legitimacy: 72, courts: 30, unions: false, ownership: .1, loyalty: 75, advisory: 'Ruhban Meclisi', rise: ['Ruhani meclis onu yüce makama seçti; önceki yüce önder görevdeyken öldü.'] }
 ];
+const FX_OF = { cunta: 'serbest', tacir: 'altin', monarsi: 'altin', cumhuriyet: 'altin', devrim: 'altin', tarim: 'serbest', federasyon: 'serbest', teokrasi: 'altin' };
 const COLORS = ['#2f6f8f', '#a33b3b', '#6a8d3a', '#8a5aa8', '#c58a2a', '#3b8f7f', '#b0577a', '#6b6f3a'];
 
 const jitter = (w, v, by = .18) => v * between(w, 1 - by, 1 + by);
@@ -35,6 +37,8 @@ function applyArchetype(w, c, a, index) {
   });
   for (const p of countryProvinces(w, c.id)) { for (const k of Object.keys(p.plants)) p.plants[k] *= a.industry; p.infra = clamp(p.infra * (.7 + a.industry * .3), .15, 1.8); }
   c.tech.ind *= .85 + a.industry * .15;
+  issueCurrency(c, FX_OF[a.key]);
+  c.capitalClosed = a.key === 'devrim';
   for (const g of Object.keys(c.stock)) if (g !== 'grain') c.stock[g] *= a.industry;
   c.stock.arms *= a.arms;
   for (const u of Object.values(w.units)) if (u.country === c.id) { u.men = Math.round(u.men * jitter(w, a.army)); u.loyalty = clamp(jitter(w, a.loyalty, .08), 0, 100); }

@@ -3,8 +3,8 @@ import { countryProvinces, aliveCountries, atWar, hasTreaty, GOODS, GOOD_TR, PLA
 import { clauseText, leadsParties } from '../engine/polity.js';
 
 export const CATALOG = `Bakabileceğin konular (birden çok seçebilirsin):
-Kendi ülken: ekonomi, butce, stoklar, uretim, kaynaklar, eyaletler, eyalet:P12, ordu, filo, gruplar, partiler, meclis, kurumlar, kisiler, kisi:K12, komplolar, teknoloji
-Dünya: tarih, dunya, ulke:U3, piyasa, rotalar, stratejik, deniz:D5, antlasmalar, savaslar, haberler
+Kendi ülken: ekonomi, para, butce, stoklar, uretim, kaynaklar, eyaletler, eyalet:P12, ordu, filo, gruplar, partiler, meclis, kurumlar, kisiler, kisi:K12, komplolar, teknoloji
+Dünya: tarih, dunya, kurlar, ulke:U3, piyasa, rotalar, stratejik, deniz:D5, antlasmalar, savaslar, haberler
 Sana özel: dosyalar (başkaları hakkında topladıkların), borclar (verdiğin ve aldığın borçlar)`;
 
 // Her karakter ancak erişebildiği kadarını görür: gerçek rakam, tahmin veya dedikodu.
@@ -24,7 +24,9 @@ export function answer(w, ch, raw) {
   const q = String(raw || '').trim(), [topic, arg] = q.split(':').map(s => s?.trim());
   const c = w.countries[ch.country], provs = countryProvinces(w, c.id);
   const T = {
-    ekonomi: () => `GSYH ${show(ch, 'ekonomi', c.realGdp)}, büyüme ${pct(c.growth || 0)}, enflasyon ${pct(c.inflation)}, işsizlik ${pct(c.unemployment)}, döviz rezervi ${show(ch, 'ekonomi', c.reserves)}, para değeri ${c.fx ?? 100}, banka sağlığı ${show(ch, 'ekonomi', c.bankHealth)}, grev ${c.strike ? 'var' : 'yok'}, doğal kaynak rant payı ${pct(c.rentShare || 0)}, gıda karşılama ${pct(c.foodRatio)}, sanayi girdi karşılama ${pct(c.inputRatio ?? 1)}`,
+    para: () => `Para birimi: ${c.currency.name}, ${c.fxRegime === 'altin' ? 'altına bağlı' : c.fxRegime === 'bagli' ? `${w.countries[c.pegTo]?.currency.name} kuruna bağlı` : 'serbest kur'}. Bir altın ${round(c.rate, 3)} yerel para. Sermaye ${c.capitalClosed ? 'kısıtlı' : 'serbest'}. ${can(ch, 'ekonomi') ? `Altın rezervi ${Math.round(c.reserves)}, reel kur ${round(c.rer ?? 1, 2)} (1 üstü paran pahalı, ithal ucuz).` : ''} Dış borç: ${can(ch, 'butce') ? `${Object.entries(c.creditors).map(([id, a]) => `${w.countries[id]?.name} ${Math.round(a)}`).join(', ') || 'yok'}, faiz %${round((c.foreignRate ?? 0) * 100, 1)}` : 'ayrıntısı sana açık değil'}.`,
+    kurlar: () => aliveCountries(w).map(o => `${o.name}: ${o.currency.name}, bir altın ${round(o.rate, 3)}, ${o.fxRegime}`).join('\n'),
+    ekonomi: () => `GSYH ${show(ch, 'ekonomi', c.realGdp)}, büyüme ${pct(c.growth || 0)}, enflasyon ${pct(c.inflation)}, işsizlik ${pct(c.unemployment)}, altın rezervi ${show(ch, 'ekonomi', c.reserves)}, para değeri ${c.fx ?? 100}, banka sağlığı ${show(ch, 'ekonomi', c.bankHealth)}, grev ${c.strike ? 'var' : 'yok'}, doğal kaynak rant payı ${pct(c.rentShare || 0)}, gıda karşılama ${pct(c.foodRatio)}, sanayi girdi karşılama ${pct(c.inputRatio ?? 1)}`,
     butce: () => can(ch, 'butce') ? `Hazine ${Math.round(c.treasury)}, gelir ${Math.round(c.lastRevenue || 0)}, harcama ${Math.round(c.lastSpending || 0)}, borç/GSYH ${pct(c.debt / Math.max(c.gdp * 4, 1))}, faiz ${pct(c.interestRate || 0)}, alacaklılar ${JSON.stringify(c.creditors)}. Vergi: gelir ${pct(c.tax.income)}, toprak ${pct(c.tax.land)}, şirket ${pct(c.tax.business)}, gümrük ${pct(c.tariff)}. Bütçe payları: ${JSON.stringify(c.budget)}` : `Hükümet bütçesinin ayrıntıları sana açık değil. Söylentiye göre hazine ${fuzzy(c.treasury)}, borç oranı ${fuzzy(c.debt / Math.max(c.gdp * 4, 1) * 100)}%.`,
     stoklar: () => GOODS.map(g => `${GOOD_TR[g]} ${show(ch, 'stoklar', c.stock[g] || 0)}`).join(', '),
     uretim: () => can(ch, 'uretim') ? Object.keys(PLANTS).map(k => `${PLANTS[k]}: kapasite ${Math.round(c._cap?.[k] || 0)}, üretim ${Math.round(c._made?.[k] || 0)}`).join('; ') + `. Silah üretim önceliği ${c.armShare}.` : 'Fabrika verilerini görmüyorsun.',
