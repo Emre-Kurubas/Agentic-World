@@ -1,0 +1,30 @@
+{
+  "runName": "dunya-2",
+  "seed": 1848,
+  "countries": 5,
+  "provinces": 130,
+  "maxTurns": 0,
+  "backend": "claude",
+  "port": 4173,
+  "agentRoles": [
+    "leader",
+    "general",
+    "opposition",
+    "oligarch"
+  ],
+  "countryAgentRoles": {},
+  "models": {
+    "leader": "sonnet",
+    "referee": "sonnet",
+    "secondary": "haiku"
+  },
+  "concurrency": 4,
+  "wakeEvery": 2,
+  "wakeTension": 45,
+  "maxMessagesPerActor": 6,
+  "maxDecisionsPerActor": 8,
+  "turnDelayMs": 0,
+  "limitRetryMinutes": 10,
+  "saveDir": "",
+  "maxLookupRounds": 4
+}

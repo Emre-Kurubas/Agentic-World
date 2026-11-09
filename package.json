@@ -1,0 +1,12 @@
+{
+  "name": "ajan-dunyasi",
+  "version": "0.1.0",
+  "description": "Yapay zeka ajanlarinin oynadigi tur tabanli politika simulasyonu",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node run.js",
+    "demo": "node run.js --backend mock --delay 1500",
+    "test": "node tests/realism.js"
+  }
+}
