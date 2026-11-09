@@ -27,6 +27,10 @@ export function extractJson(text) {
 
 const num = v => Number(v) || 0;
 
+// Karakterler Claude Code'un yazılım asistanı talimatıyla değil, yalnızca bu tarafsız çerçeveyle çalışır. Kişilik yazmaz.
+const ACTOR_SYSTEM = 'Kurgusal bir oyun dünyasında yaşayan bir insansın. Yazılım asistanı değilsin ve kullanıcıya yardım etmiyorsun; yalnızca bu kişi olarak kendi çıkarına, inancına veya korkusuna göre yaşıyorsun. Yanıtını yalnızca istenen JSON biçiminde ver.';
+const ACTOR_SYSTEM_FILE = 'ajan-sistem.txt';
+
 // session verilirse karakterin kendi oturumu sürer; verilmezse (hakem, bağlantı denemesi) çağrı iz bırakmaz.
 function callClaude(prompt, model, { timeoutMs = 300000, session = null, cwd = null } = {}) {
   return new Promise((resolve, reject) => {
@@ -35,8 +39,11 @@ function callClaude(prompt, model, { timeoutMs = 300000, session = null, cwd = n
     for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT']) delete env[k];
     // Windows'ta claude bir .cmd olabilir; kabuk gerekir. Node 24 kabukla dizi argümanı uyarı verdiği için komut tek satır.
     const memory = !session ? '--no-session-persistence' : session.resume ? `--resume ${session.id}` : `--session-id ${session.id}`;
-    const command = `claude -p --model ${model} --output-format json ${memory} --tools "" --strict-mcp-config --disable-slash-commands --setting-sources project`;
-    const child = spawn(command, { shell: true, cwd: cwd ?? agentCwd(), env, windowsHide: true });
+    const dir = cwd ?? agentCwd();
+    if (session) fs.writeFileSync(path.join(dir, ACTOR_SYSTEM_FILE), ACTOR_SYSTEM);
+    const system = session ? ` --system-prompt-file ${ACTOR_SYSTEM_FILE}` : '';
+    const command = `claude -p --model ${model} --output-format json ${memory}${system} --tools "" --strict-mcp-config --disable-slash-commands --setting-sources project`;
+    const child = spawn(command, { shell: true, cwd: dir, env, windowsHide: true });
     let out = '', err = '';
     // Windows'ta child.kill yalnızca kabuğu kapatır; claude süreci açık kalmasın diye tüm ağaç kapatılır.
     const killTree = () => process.platform === 'win32' ? spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }) : child.kill();

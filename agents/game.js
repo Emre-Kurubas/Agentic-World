@@ -2,10 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { aliveCountries, ROLES, countryProvinces } from '../engine/world.js';
 import { beginTurn, stepWorld } from '../engine/step.js';
 import { applyOp } from '../engine/ops.js';
-import { makeParliament } from '../engine/polity.js';
 import { news, rand, clamp } from '../engine/util.js';
-import { npcDecide, npcFounding } from './npc.js';
-import { actorPrompt, foundingPrompt, refereePrompt, lookupReply, talkText } from './prompts.js';
+import { npcDecide } from './npc.js';
+import { actorPrompt, refereePrompt, lookupReply, talkText } from './prompts.js';
 import { answer } from './queries.js';
 import { LimitError, SessionLostError } from './backend.js';
 import { snapshotState, buildEntries } from './ledger.js';
@@ -84,41 +83,14 @@ export class Game {
     }
   }
 
-  applyFounding(c, f, index, ch) {
-    const w = this.w;
-    Object.assign(c, { name: String(f.name || c.name).slice(0, 60), ideology: String(f.ideology || 'Belirsiz').slice(0, 80), regime: String(f.regime || 'Yönetim').slice(0, 60), elections: !!f.elections, pressFreedom: clamp(Number(f.press_freedom ?? 50), 0, 100), motto: String(f.motto || '').slice(0, 120) });
-    if (f.axes) for (const a of ['econ', 'auth', 'nation', 'faith']) c.axes[a] = clamp(Number(f.axes[a] ?? 0), -100, 100);
-    if (Array.isArray(f.colors) && /^#[0-9a-f]{6}$/i.test(f.colors[0])) c.colors = [f.colors[0], /^#[0-9a-f]{6}$/i.test(f.colors[1]) ? f.colors[1] : '#efe6c9'];
-    if (c.elections && !c.parliament) makeParliament(c, 'Meclis');
-    news(w, `Yeni devlet: ${c.name}. ${c.regime}, ideolojisi ${c.ideology}. "${c.motto}"`, { kind: 'siyaset', countries: [c.id] });
-  }
-
+  // Devletler dünya üretiminde hazır devralınır; açılış yalnızca ilk kaydı yazar.
   async found() {
-    const w = this.w, cs = aliveCountries(w), trace = [];
-    this.pending = this.store.loadPending(0) || { turn: 0, founding: {}, actors: {}, referee: {} };
+    const w = this.w;
     beginTurn(w);
-    this.setStatus('kuruluyor', 'Liderler ülkelerini kuruyor');
-    await this.withRetry(() => pool(cs, this.cfg.concurrency, async (c, i) => {
-      if (this.pending.founding[c.id]) return;
-      const ch = w.characters[c.leader];
-      let f = null;
-      if (this.backend.kind !== 'mock' && isAI(this.cfg, c, ch)) {
-        try { f = await this.askAs(ch, () => foundingPrompt(w, c, ch), this.cfg.models.leader); }
-        catch (e) { if (e instanceof LimitError) throw e; this.report(ch, `Kuruluş yanıtı alınamadı: ${e.message}`); }
-      }
-      this.pending.founding[c.id] = f || npcFounding(w, c, i);
-      this.store.savePending(this.pending);
-    }));
-    cs.forEach((c, i) => {
-      const f = this.pending.founding[c.id], ch = w.characters[c.leader];
-      this.applyFounding(c, f, i, ch);
-      if (f.kimlik) ch.persona = String(f.kimlik).slice(0, 900);
-      trace.push({ actor: ch.id, country: c.id, role: 'leader', name: ch.name, ai: isAI(this.cfg, c, ch), persona: ch.persona, monologue: f.ic_ses || '', decisions: [`Devleti kurdu: ${c.name} (${c.regime})`], messages: [] });
-    });
+    for (const c of aliveCountries(w)) news(w, `${c.name}: ${c.regime}, ${c.ideology}. Yönetimde ${w.characters[c.leader]?.name}.`, { kind: 'siyaset', countries: [c.id] });
     w.status = 'oyunda';
     w.newsLog.push(...w.newsThisTurn);
-    this.store.commit(w, buildEntries(w, { trace, rulings: [] }, null));
-    this.store.clearPending();
+    this.store.commit(w, buildEntries(w, { trace: [], rulings: [] }, null));
     this.onUpdate?.({ type: 'turn', turn: w.turn });
   }
 

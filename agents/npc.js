@@ -1,23 +1,6 @@
 import { rand, pick, sum } from '../engine/util.js';
 import { atWar, countryProvinces, aliveCountries } from '../engine/world.js';
 
-const IDEOLOGIES = [
-  { ideology: 'Liberal cumhuriyetçilik', regime: 'Parlamenter cumhuriyet', elections: true, press: 80, axes: { econ: 35, auth: -50, nation: 0, faith: -20 } },
-  { ideology: 'Devrimci sosyalizm', regime: 'Tek parti devleti', elections: false, press: 15, axes: { econ: -75, auth: 60, nation: 10, faith: -60 } },
-  { ideology: 'Kutsal monarşi', regime: 'Mutlak monarşi', elections: false, press: 20, axes: { econ: 25, auth: 75, nation: 35, faith: 80 } },
-  { ideology: 'Milliyetçi otoriterlik', regime: 'Başkanlık diktatörlüğü', elections: false, press: 25, axes: { econ: 15, auth: 70, nation: 85, faith: 20 } },
-  { ideology: 'Sosyal demokrasi', regime: 'Federal cumhuriyet', elections: true, press: 75, axes: { econ: -25, auth: -30, nation: -10, faith: -10 } },
-  { ideology: 'Tacir oligarşisi', regime: 'Tacirler konseyi', elections: false, press: 50, axes: { econ: 80, auth: 15, nation: -20, faith: 0 } }
-];
-const COLOR = ['#2f6f8f', '#a33b3b', '#6a8d3a', '#8a5aa8', '#c58a2a', '#3b8f7f', '#b0577a'];
-const NAMES = ['Varen', 'Toldar', 'Sumera', 'Hazenya', 'Ordal', 'Keltimar', 'Marunya'];
-const SUFFIX = ['Cumhuriyeti', 'Halk Devleti', 'Krallığı', 'Birliği', 'Konfederasyonu', 'Konseyi'];
-
-export function npcFounding(w, c, i) {
-  const t = pick(w, IDEOLOGIES);
-  return { name: `${NAMES[i % NAMES.length]} ${pick(w, SUFFIX)}`, ideology: t.ideology, regime: t.regime, elections: t.elections, press_freedom: t.press, axes: t.axes, motto: 'Düzen ve refah.', colors: [COLOR[i % COLOR.length], '#efe6c9'] };
-}
-
 const enemies = (w, c) => aliveCountries(w).filter(o => o.id !== c.id && atWar(w, c.id, o.id));
 const might = (w, id) => sum(Object.values(w.units).filter(u => u.country === id), u => u.men);
 const provIsBorder = (w, p, id) => p.neighbors.some(n => w.provinces[n].controller === id);

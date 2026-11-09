@@ -1,5 +1,5 @@
 import { round, between } from '../engine/util.js';
-import { countryProvinces, aliveCountries, TECHS, PLANTS } from '../engine/world.js';
+import { countryProvinces, aliveCountries, TECHS, GOODS } from '../engine/world.js';
 import { CATALOG, alarms } from './queries.js';
 import { STATE_POWERS, CIVIL_POWERS, DELEGABLE, GATED } from '../engine/polity.js';
 
@@ -35,11 +35,17 @@ ${news}
 ${CATALOG}`;
 }
 
+// Yalnızca bir kez, oturumun başında verilir: karakterin içine doğduğu devlet ve bildiği geçmiş.
+function inheritedText(w, ch) {
+  const c = w.countries[ch.country], past = (w.past || []).filter(e => e.countries.includes(c.id)).slice(-10);
+  return `\n\nDevraldığın ülke: ${c.regime}. Resmî ideoloji: ${c.ideology}. ${c.elections ? 'Seçim yapılıyor.' : 'Seçim yapılmıyor.'}${ch.rise ? `\nİktidara gelişin: ${ch.rise}` : ''}${ch.background ? `\nGeçmişin: ${ch.background}` : ''}${past.length ? `\nBildiğin geçmiş:\n${past.map(e => `- ${e.text}`).join('\n')}` : ''}\nBunlardan ne çıkardığın sana kalmış; hiçbirine bağlı değilsin, düzeni değiştirebilir veya yıkabilirsin.`;
+}
+
 const recapText = ch => `\n\nESKİ HAFIZANA ULAŞILAMIYOR. Elinde kalanlar:\nKimliğin: ${ch.persona || '(yazılmamış)'}\nGünlüğün:\n${ch.diary.map(d => `- ${d}`).join('\n') || '- (boş)'}\nSonuçlar:\n${ch.outcomes.map(d => `- ${d}`).join('\n') || '- (yok)'}`;
 
 export function actorPrompt(w, ch, answers, final, { intro = true, recap = false, retry = false } = {}) {
   const seen = answers.length ? `\n\n${seenText(answers)}` : '';
-  const life = (intro || recap) && ch.background ? `\n\nGeçmişin: ${ch.background} Bundan ne çıkardığın sana kalmış.` : '';
+  const life = intro || recap ? inheritedText(w, ch) : '';
   const who = `${life}${intro && !ch.persona ? '\n\nHenüz kim olduğunu yazmadın. Sana kişilik verilmedi: inançlarını, korkularını, sınırlarını sen belirle ve "kimlik" alanına yaz.' : ''}`;
   return `${frontPage(w, ch)}${seen}${recap ? recapText(ch) : ''}${who}${intro ? `\n\n${MANIFESTO}` : ''}
 
@@ -57,19 +63,9 @@ Cevap yazabilir, yeni kişilere yazabilir veya kararlarını değiştirebilirsin
 Yalnızca bu JSON ile yanıt ver:
 {"ic_ses":"şu an ne düşünüyorsun","kararlar":["yalnızca değiştireceksen"],"mesajlar":[{"kime":"K12 veya U3","metin":"gizli mesaj"}],"notlar":"günlüğüne yazacağın satır"}`;
 
-export function foundingPrompt(w, c, ch) {
-  const provs = countryProvinces(w, c.id);
-  const totals = { farm: provs.reduce((a, p) => a + p.fertility, 0) };
-  return `Kurgusal bir dünyada yeni kurulan bir ülkenin kurucu lideri ${ch.name} karakterini oynuyorsun.${ch.background ? ` Geçmişin: ${ch.background} Bundan ne çıkardığın sana kalmış.` : ''} Ülkenin adı, rejimi, ideolojisi ve senin kim olduğun tamamen senin kararın. Hazır bir kalıbı seçmek zorunda değilsin; hiç görülmemiş bir düzen de kurabilirsin.
-${provs.length} eyalet. Ortalama toprak verimi ${round(totals.farm / provs.length)}. Bilinen yataklar: ${[...new Set(provs.flatMap(p => Object.entries(p.deposits).filter(([, d]) => d.known).map(([k]) => k)))].join(', ') || 'yok'}. Araziler: ${[...new Set(provs.map(p => p.terrain))].join(', ')}. Çoğunluk: ${c.majorityEth}, inanç: ${c.majorityRel}. 
-Bugünün dünyasındaki gerçek ülke, kişi veya parti adlarını kullanma. Özgün bir devlet düşün. Eksenler -100..100: econ (sol-sağ), auth (özgürlükçü-otoriter), nation (enternasyonal-milliyetçi), faith (seküler-dindar).
-Yalnızca bu JSON ile yanıt ver:
-{"name":"ülke adı","ideology":"ideoloji adı","regime":"rejim adı","elections":true,"press_freedom":0,"axes":{"econ":0,"auth":0,"nation":0,"faith":0},"motto":"kısa slogan","colors":["#rrggbb","#rrggbb"],"kimlik":"sen kimsin, neye inanıyorsun, nelerden korkuyorsun","ic_ses":"neden bu yolu seçtin"}`;
-}
-
 const OPS_DOC = () => `İZİN VERİLEN İŞLEMLER (engine'in anladıkları):
 set_tax{kind:income|land|business,rate} set_budget{category:military|welfare|infrastructure|education|police|administration,share} set_tariff{rate} set_arms_share{share}
-print_money{pct_gdp} borrow{pct_gdp} embargo{target,on} build{province,kind:steel|fuel|fertilizer|machines|goods|arms|maden|demiryolu|liman|baraj|tarim|altyapi,resource?,pct_gdp} survey{province} set_research{tech} steal_tech{target} grant_concession{target,province,resource,share,fee_pct_gdp} revoke_concession{province,resource} lend{target,pct_gdp} nationalize{amount} privatize{amount} land_reform{}
+print_money{pct_gdp} borrow{pct_gdp} embargo{target,on} build{province,kind:steel|fuel|fertilizer|machines|goods|arms|maden|demiryolu|liman|baraj|tarim|altyapi,resource?,pct_gdp} survey{province} set_research{tech} steal_tech{target} grant_concession{target,province,resource,share,fee_pct_gdp} revoke_concession{province,resource} lend{target,pct_gdp} ship_goods{target,good,amount} nationalize{amount} privatize{amount} land_reform{}
 recruit{province,men,unit_kind:piyade|topcu|zirhli|hava} disband{unit} move{unit,to} move_army{to,share} declare_war{target} join_war{war,side:a|b}
 propose_treaty{target,kind:ittifak|saldirmazlik|ticaret|askeri_gecis|baris,terms,annex,reparations} accept_treaty{id} break_treaty{id} send_aid{target,pct_gdp,arms,secret}
 spy{target,kind:bilgi|sabotaj|isyan_fonla} propaganda{strength} repress{strength} concession{cls:koylu|isci|orta|elit,pct_gdp} purge{character,fate:hapis|surgun|olu}
@@ -80,6 +76,7 @@ lend_private{character,amount,interest,due_turns,terms} repay_debt{debt,amount} 
 start_plot{kind:darbe|suikast|isyan,secrecy} invite_plot{plot,character} join_plot{plot} betray_plot{plot} execute_plot{plot} fund_plot{plot,amount} bribe{character,amount,direction:up|down} capital_flight{share} invest{amount} embezzle{pct_gdp} set_strait{id,closed,toll} build_canal{id} build_ship{province,ships} move_fleet{fleet,to} amphibious{unit,to} found_party{name,axes,base} ban_party{party} set_institutions{courts,unions,ruling_party} gather_dossier{character} blackmail{character,demand} create_institution{name,description,budget_pct_gdp,amount,powers:[],authority:[],veto:[],head,members:[],effects}
 custom{label,effects:[{target?,stat,delta,turns}],turns} stat: legitimacy corruption bureaucracy police intelligence pressFreedom warExhaustion repress sat.koylu sat.isci sat.orta sat.elit sat.all sat.ordu sat.sermaye sat.din sat.burokrasi unrest
 Kurum powers: ${[...STATE_POWERS, ...CIVIL_POWERS].join(',')} (devlet yetkileri yalnızca lider kurabilir; kişilerin kurduğu kurumu amount ile kendi serveti besler). authority: kurum üyelerinin yapabileceği işlem adları (${[...DELEGABLE].join(',')}). veto: kurumun engelleyebileceği işlem adları. Yeni bir kurum, örgüt veya konsey kararını metin olarak bırakma: amacına uyan powers, budget_pct_gdp, head ve gerekiyorsa authority/veto ver.
+Bir ülkeye tek seferlik mal göndermeyi veya takası ship_goods ile yap; iki taraflı takasta her taraf kendi gönderimini yapar. Mal ve para hareketini custom ile temsil etme. Mal anahtarları: ${GOODS.join(',')}.
 Antlaşma maddeleri: propose_treaty içine clauses:[{type:harac,payer,pct_gdp,turns}|{type:teslimat,from,good,amount,turns}|{type:gumruk,rate}|{type:silahsiz_bolge,country,provinces:[]}|{type:asker_limit,country,men}|{type:yardim}] ve isteğe bağlı turns (süre). Metindeki somut şartları bu maddelere çevir; bunlar her tur kodla uygulanır, tutulmayan ihlal olarak kaydolur.
 Meclis yasama yetkisine sahipse şu işlemler kendiliğinden yasa teklifine dönüşür ve bir sonraki çeyrekte oylanır: ${[...GATED].join(',')}.
 Abluka için düşman limanlarına komşu denize filo gönderilir (move_fleet). Teknoloji anahtarları: ${Object.keys(TECHS).join(',')}.

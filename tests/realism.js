@@ -7,8 +7,9 @@ import { makeParliament, treatyStep } from '../engine/polity.js';
 import { Game, shouldWake, isAI } from '../agents/game.js';
 import { LimitError, SessionLostError } from '../agents/backend.js';
 import { npcDecide } from '../agents/npc.js';
+import { actorPrompt } from '../agents/prompts.js';
 
-const base = { seed: 42, countries: 5, provinces: 130, agentRoles: ['leader', 'general', 'opposition', 'oligarch'], countryAgentRoles: {}, models: { leader: 'a', referee: 'a', secondary: 'b' }, concurrency: 2, wakeEvery: 2, wakeTension: 45, maxMessagesPerActor: 3, maxDecisionsPerActor: 5, limitRetryMinutes: 0, maxTurns: 0 };
+const base = { plainStates: true, seed: 42, countries: 5, provinces: 130, agentRoles: ['leader', 'general', 'opposition', 'oligarch'], countryAgentRoles: {}, models: { leader: 'a', referee: 'a', secondary: 'b' }, concurrency: 2, wakeEvery: 2, wakeTension: 45, maxMessagesPerActor: 3, maxDecisionsPerActor: 5, limitRetryMinutes: 0, maxTurns: 0 };
 const fresh = () => { const w = createWorld(base); w.status = 'oyunda'; for (const c of aliveCountries(w)) c.majorityEth ??= ''; run(w, 4); return w; };
 const run = (w, n) => { for (let i = 0; i < n; i++) { beginTurn(w); stepWorld(w); } };
 const ld = (w, c) => w.characters[c.leader];
@@ -117,7 +118,7 @@ const counting = async () => {
   const cfg = { ...base, agentRoles: ['leader'] }; const w = createWorld(cfg); let calls = 0;
   const backend = { kind: 'claude', async ask(p) { calls++; if (p.includes('hukumler')) return { hukumler: [] }; if (p.includes('"motto"')) return { name: 'Deneme', regime: 'R', ideology: 'I', elections: false, kimlik: 'Ben biriyim.' }; return { kimlik: 'K', ic_ses: 's', kararlar: ['Yeni bir ay takvimi ilan et'], mesajlar: [], notlar: 'n' }; } };
   const g = new Game({ world: w, cfg, backend, store: nullStore() });
-  await g.turn(); assert.equal(calls, 5); calls = 0; await g.turn();
+  await g.turn(); assert.equal(calls, 0, 'devletler hazır devralınır'); await g.turn();
   assert.equal(calls, 10); console.log('geçti  Tek karakter modunda tur başına 5 ajan ve 5 hakem çağrısı');
   assert.equal(ld(w, w.countries.U1).persona, 'K'); console.log('geçti  Karakter kendi kimliğini yazar');
 };
@@ -209,6 +210,43 @@ const sessionWorld = () => { const cfg = { ...base, agentRoles: ['leader'], maxL
 const memoryStore = () => { let saved = {}, pending = null; return { savePending(p) { pending = JSON.parse(JSON.stringify(p)); }, loadPending(t) { return pending?.turn === t ? pending : null; }, clearPending() { pending = null; }, commit() {}, loadSessions: () => JSON.parse(JSON.stringify(saved)), saveSessions(s) { saved = JSON.parse(JSON.stringify(s)); } }; };
 const reply = (p, extra = {}) => { if (p.includes('hukumler')) return { hukumler: [] }; if (!p.includes('şimdi karar ver')) return { bak: ['ekonomi'] }; return { kararlar: [], mesajlar: [], ic_ses: 'x', ...extra }; };
 
+const leaderOf = (w, id = 'U1') => w.characters[w.countries[id].leader];
+const inherited = (seed = 1848, countries = 5) => createWorld({ ...base, plainStates: false, seed, countries });
+ok('Devletler devralınır: rejim, ordu, para ve borç ülkeden ülkeye ayrışır', () => {
+  const w = inherited(), cs = aliveCountries(w), men = c => Object.values(w.units).filter(u => u.country === c.id).reduce((a, u) => a + u.men, 0);
+  assert.equal(w.status, 'kuruluyor'); assert.equal(new Set(cs.map(c => c.archetype)).size, 5, 'aynı tip iki kez çıkmamalı'); assert.ok(new Set(cs.map(c => c.regime)).size >= 4); assert.ok(cs.every(c => c.name && !c.name.startsWith('Bölge')));
+  const spread = f => { const v = cs.map(f); return Math.max(...v) / Math.max(Math.min(...v), .001); };
+  assert.ok(spread(c => men(c) / c.gdp) > 1.8, `ordu ${spread(c => men(c) / c.gdp)}`); assert.ok(spread(c => c.reserves / c.gdp) > 2, 'rezerv'); assert.ok(spread(c => c.debt / c.gdp) > 1.5, 'borç'); assert.ok(spread(c => Object.values(c.budget).reduce((a, x) => a + x, 0)) > 1.2, 'bütçe'); assert.ok(spread(c => c.literacy) > 1.3, 'okuryazarlık');
+});
+ok('Geçmiş olgudur: kaybedilen eyaletin halkı, borçlar ve iktidara geliş gerçektir', () => {
+  for (const seed of [1848, 42, 7]) {
+    const w = inherited(seed); assert.ok(w.past.length >= 2, `olay ${w.past.length}`); assert.ok(aliveCountries(w).every(c => w.characters[c.leader].rise));
+    assert.ok(!w.past.some(e => /nefret|öfke|intikam|kin/i.test(e.text)), 'duygu yazılmaz');
+    for (const c of aliveCountries(w)) for (const [id, amt] of Object.entries(c.creditors)) { assert.ok(amt > 0 && w.countries[id]); assert.ok(w.past.some(e => e.countries.includes(id) && e.countries.includes(c.id) && e.text.includes('borçlu'))); }
+    for (const e of w.past.filter(x => x.text.includes('elinden'))) { const p = Object.values(w.provinces).find(q => e.text.includes(`${q.name} eyaleti`)), loser = w.countries[e.countries[1]]; assert.equal(p.eth, loser.majorityEth, 'kayıp eyaletin halkı gerçekten karşı taraftan'); assert.equal(p.controller, e.countries[0]); }
+  }
+});
+ok('Seçimli rejimde gerçek destekle meclis kurulur, seçimsiz rejim yasa çıkarırken meclise takılmaz', () => {
+  const w = inherited(); for (const c of aliveCountries(w)) { if (c.elections) { assert.ok(c.parliament?.legislative, c.name); assert.ok(new Set(Object.values(c.parliament.seats)).size > 1, `eşit sandalye: ${JSON.stringify(c.parliament.seats)}`); assert.equal(Object.values(c.parliament.seats).reduce((a, x) => a + x, 0), 100); } else if (c.parliament) assert.equal(c.parliament.legislative, false, 'danışma meclisi işlemi durdurmaz'); }
+});
+ok('Geçmişler aynı dünyada tekrar etmez, devralınan bilgi yalnızca ilk çağrıda gelir', () => {
+  const w = inherited(), leaders = aliveCountries(w).map(c => w.characters[c.leader]); assert.equal(new Set(leaders.map(l => l.background)).size, leaders.length);
+  const l = leaders[0], first = actorPrompt(w, l, [], true, { intro: true }), later = actorPrompt(w, l, [], true, { intro: false });
+  assert.ok(first.includes('Devraldığın ülke') && first.includes(l.rise)); assert.ok(!later.includes('Devraldığın ülke') && !later.includes(l.rise));
+  assert.ok(answer(w, l, 'tarih').length > 20);
+});
+await (async () => {
+  const cfg = { ...base, plainStates: false, seed: 42 }, w = createWorld(cfg), g = new Game({ world: w, cfg, backend: { kind: 'mock' }, store: nullStore() }); const orig = g.turn.bind(g);
+  g.turn = async () => { await orig(); if (w.turn >= 100) g.stop = true; }; await g.run(0);
+  const med = a => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)], cs = aliveCountries(w);
+  assert.ok(med(cs.map(c => c.priceLevel)) < 30, `fiyat ${med(cs.map(c => c.priceLevel))}`); console.log(`geçti  Devralınan dünyalar 100 turda çökmez (${cs.length} güç, ortanca meşruiyet ${Math.round(med(cs.map(c => c.legitimacy)))})`);
+})();
+chain('Doğrudan sevkiyat stoktan stoğa geçer, yol yoksa gitmez', () => {
+  const w = fresh(), a = w.countries.U1, b = w.countries.U2; run(w, 1); const k = 'U1|U2'; w.routes[k] = { mode: 'kara', cost: 1.04, path: [], tolls: [] }; a.stock.iron = 100; b.stock.iron = 0; leaderOf(w, 'U2').inbox = [];
+  assert.equal(applyOp(w, leaderOf(w), { op: 'ship_goods', target: 'U2', good: 'iron', amount: 52 }).ok, true); assert.equal(a.stock.iron, 48); assert.equal(Math.round(b.stock.iron), 50); assert.ok(leaderOf(w, 'U2').inbox.at(-1).text.includes('demir'));
+  assert.equal(applyOp(w, w.characters[a.general], { op: 'ship_goods', target: 'U2', good: 'iron', amount: 1 }).ok, false, 'general devlet stokunu gönderemez');
+  delete w.routes[k]; assert.equal(applyOp(w, leaderOf(w), { op: 'ship_goods', target: 'U2', good: 'iron', amount: 10 }).ok, false); assert.equal(a.stock.iron, 48);
+});
 chain('Kalıcı mal kıtlığı fiyatı bir kez yükseltir, her çeyrek enflasyon üretmez', () => {
   const w = fresh(), c = w.countries.U1; let peak = 0;
   for (let i = 0; i < 24; i++) { c.stock.goods = 0; for (const p of countryProvinces(w, 'U1')) p.plants.goods = 0; beginTurn(w); stepWorld(w); if (i < 4) peak = Math.max(peak, c.inflation); }
@@ -227,7 +265,6 @@ await (async () => {
   console.log('geçti  100 turda ekonomi kendi başına çökmez');
 })();
 
-const leaderOf = (w, id = 'U1') => w.characters[w.countries[id].leader];
 const parliamentWorld = () => { const w = fresh(), c = w.countries.U1; c.elections = true; makeParliament(c, 'Divan'); return { w, c, l: leaderOf(w) }; };
 const stepOnce = w => { beginTurn(w); stepWorld(w); };
 

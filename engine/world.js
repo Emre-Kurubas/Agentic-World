@@ -1,4 +1,5 @@
 import { clamp, sum, rand, between, pick, nextId } from './util.js';
+import { inheritStates } from './inherit.js';
 
 const SYL = ['ar','ven','tor','mi','sa','lor','ka','zen','ol','ri','dan','ve','gar','su','thal','ne','bor','ha','lin','es','mar','ku','ra','dor','iv','al','pe','ten'];
 const FIRST = ['Aren','Besra','Cemre','Davor','Elif','Faren','Giray','Hale','Ilgaz','Jale','Kerem','Lale','Mirza','Nehir','Orhun','Pelin','Rüzgar','Selin','Tarkan','Umay','Vedat','Yelda','Zafer','Alara','Bora','Defne','Emre','Feride','Göktan','Hazal'];
@@ -29,7 +30,7 @@ export const TECHS = {
   nadir_metal: { name: 'Nadir metal alaşımları', cost: 220, req: ['elektrik', 'zirhli'] }
 };
 
-const word = w => { let s = ''; const n = 2 + Math.floor(rand(w) * 2); for (let i = 0; i < n; i++) s += pick(w, SYL); return s[0].toUpperCase() + s.slice(1); };
+export const word = w => { let s = ''; const n = 2 + Math.floor(rand(w) * 2); for (let i = 0; i < n; i++) s += pick(w, SYL); return s[0].toUpperCase() + s.slice(1); };
 
 function clipCell(sites, i, W, H) {
   let poly = [[0, 0, -1], [W, 0, -1], [W, H, -1], [0, H, -1]];
@@ -142,9 +143,12 @@ const LIFE_ROLE = {
   opposition: ['Bir grevde vurulan arkadaşlarının cenazesini taşıdığı için hapis yattı.', 'Yedi yıl sürgünde yaşadı, dönüşünde bir gazete kurdu.', 'Üniversiteden atıldı, yıllarca gizli broşür bastı.', 'Öğretmenlikten siyasi nedenle kovuldu.'],
   oligarch: ['Liman hamalıyken gemi kiraladı, bir savaş sırasında tahıl satarak zengin oldu.', 'Bir maden imtiyazını kumarda kazandı.', 'Aile bankasını iflastan kurtarmak için ortağını mahkemeye verdi.', 'Yabancı bir şirketin temsilcisiyken kendi işini kurdu.']
 };
-function lifeOf(id, name, role) {
+function lifeOf(w, id, name, role) {
   const pool = [...(LIFE_ROLE[role] || []), ...LIFE_COMMON];
   let h = 7; for (const ch of `${id}|${name}`) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  const used = w.lifeUsed ||= [];
+  if (pool.every(x => used.includes(x))) used.length = 0;
+  for (let i = 0; i < pool.length; i++) { const life = pool[(h + i) % pool.length]; if (!used.includes(life)) { used.push(life); return life; } }
   return pool[h % pool.length];
 }
 
@@ -159,7 +163,7 @@ function spawnCharacter(w, cid, role, axes) {
     axes: { econ: axes.econ + between(w, -40, 40), auth: axes.auth + between(w, -40, 40), nation: axes.nation + between(w, -40, 40), faith: axes.faith + between(w, -40, 40) },
     notes: '', lastWake: -99, inbox: []
   };
-  w.characters[id].background = lifeOf(id, w.characters[id].name, role);
+  w.characters[id].background = lifeOf(w, id, w.characters[id].name, role);
   return w.characters[id];
 }
 export { spawnCharacter, bfsSea };
@@ -238,6 +242,7 @@ export function createWorld(cfg) {
     bootEconomy(w, c);
   });
   findStrategic(w);
+  if (!cfg.plainStates) inheritStates(w);
   return w;
 }
 
