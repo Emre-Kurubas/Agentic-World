@@ -10,6 +10,8 @@ export const CIVIL_POWERS = ['education', 'welfare', 'propaganda', 'clergy', 'ca
 export const DELEGABLE = new Set(['appoint_governor', 'appoint_commander', 'set_culture_policy', 'set_fx_regime', 'devalue', 'borrow_foreign', 'repay_foreign', 'set_capital_controls', 'ship_goods', 'set_tax', 'set_budget', 'set_tariff', 'set_arms_share', 'print_money', 'borrow', 'embargo', 'build', 'survey', 'set_research', 'move', 'move_army', 'recruit', 'repress', 'concession', 'purge', 'ban_party', 'set_institutions', 'propose_treaty', 'accept_treaty', 'spy', 'steal_tech', 'gather_dossier']);
 export const GATED = new Set(['set_culture_policy', 'nationalize_company', 'set_tax', 'set_budget', 'set_tariff', 'borrow', 'declare_war', 'ban_party', 'land_reform', 'nationalize', 'privatize']);
 const MAX_OPEN_BILLS = 6;
+// One institution's share of GDP per quarter. Around 1900 a whole government spent a tenth of GDP; a single agency is a small slice of that.
+export const MAX_AGENCY_BUDGET = .02;
 
 const activeInstitutions = c => (c.institutions || []).filter(i => i.id);
 const memberOf = (i, id) => i.head === id || (i.members || []).includes(id);
@@ -30,7 +32,7 @@ export function makeInstitution(w, c, actor, op) {
     powers: (Array.isArray(op.powers) ? op.powers : []).filter(p => allowed.includes(p)).slice(0, 4),
     authority: isState ? (Array.isArray(op.authority) ? op.authority : []).filter(x => DELEGABLE.has(x)).slice(0, 8) : [],
     veto: isState ? (Array.isArray(op.veto) ? op.veto : []).filter(x => GATED.has(x) || DELEGABLE.has(x)).slice(0, 6) : [],
-    budget: isState ? num(op.budget_pct_gdp, 0, .05, .002) : 0,
+    budget: isState ? num(op.budget_pct_gdp, 0, MAX_AGENCY_BUDGET, .002) : 0,
     sponsor: isState ? null : actor.id, amount: isState ? 0 : num(op.amount, 0, actor.wealth * .25, 0),
     head: null, members: [], strength: .15, funding: .5
   };
@@ -83,8 +85,9 @@ export function institutionStep(w) {
       const sp = w.characters[inst.sponsor]; need = inst.amount;
       if (sp?.alive && need > 0) { const m = Math.min(sp.wealth, need); sp.wealth -= m; paid = m / need; } else if (need <= 0) paid = 0;
     } else {
+      // State institutions are budget lines: they are paid as well as the rest of the state was paid this quarter.
       need = inst.budget * Math.max(c.gdp, 1);
-      if (need > 0) { const m = Math.min(Math.max(c.treasury, 0), need); c.treasury -= m; paid = m / need; }
+      if (need > 0) paid = c.paidRatio ?? 1;
     }
     inst.funding += (paid - inst.funding) * .4;
     const size = inst.sponsor ? clamp(need / 15, 0, 1.2) : clamp(inst.budget / Math.max(.003 * Math.max(inst.powers.length, 1), .001), 0, 1.2);

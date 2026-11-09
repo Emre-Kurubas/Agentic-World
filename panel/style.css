@@ -55,7 +55,7 @@ button{border:1px solid var(--line);background:var(--ledger);color:var(--ink);pa
 table{border-collapse:collapse;width:100%;font-size:14.5px}td,th{text-align:left;padding:3px 6px 3px 0;border-bottom:1px solid var(--line)}td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 .entry{padding:10px 0;border-bottom:1px solid var(--line)}.entry .who2{font-weight:700}.entry blockquote{margin:5px 0;font:400 16.5px/1.5 var(--serif)}.entry ul{margin:5px 0;padding-left:18px}.persona{background:var(--ledger2);padding:6px 9px;font-size:14.5px;margin:5px 0}.looked{font-size:14px;color:var(--muted);margin:3px 0}
 .badge{font-size:13px;border:1px solid var(--line);padding:0 5px;margin-left:6px;color:var(--muted);white-space:nowrap}.badge.ok{border-color:#517d55;color:#2f6236}.badge.no{border-color:var(--war);color:var(--war)}
-.news{padding:7px 0 7px 10px;border-left:3px solid var(--line);margin:7px 0}.news.war,.news.disaster{border-color:var(--war)}.news.plot{border-color:var(--plot)}.news.economy{border-color:var(--brass2)}.news.diplomacy{border-color:#2f6f8f}.empty{padding:24px 0;color:var(--muted)}
+.news{padding:7px 0 7px 10px;border-left:3px solid var(--line);margin:7px 0}.news.war,.news.disaster,.news.atrocity{border-color:var(--war)}.news.plot{border-color:var(--plot)}.news.economy{border-color:var(--brass2)}.news.diplomacy{border-color:#2f6f8f}.empty{padding:24px 0;color:var(--muted)}
 .linky{border:0;background:none;padding:0;font:inherit;font-weight:700;color:#1b4f5d;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:2px}.linky:hover{background:none;color:#0d3440}
 
 .filters{display:grid;gap:7px;position:sticky;top:-14px;background:var(--ledger);padding:2px 0 9px;z-index:2;border-bottom:2px solid var(--ink)}

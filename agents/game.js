@@ -9,26 +9,46 @@ import { answer } from './queries.js';
 import { LimitError, SessionLostError } from './backend.js';
 import { snapshotState, buildEntries } from './ledger.js';
 import { isPaintable, portraitPrompt, paintingPrompt, parseArt, witnessFor } from './art.js';
+import { incapacitated } from '../engine/health.js';
+import { hashOf } from '../engine/names.js';
 
 export function rolesFor(cfg, c) {
   const root = c.parent ?? c.id;
   const raw = cfg.countryAgentRoles?.[c.id] ?? cfg.countryAgentRoles?.[root] ?? cfg.agentRoles;
   return new Set((raw || []).filter(r => ROLES.includes(r)));
 }
-export const isAI = (cfg, c, ch) => rolesFor(cfg, c).has(ch.role);
+// Someone in one of the four seats is an AI when that seat is cast as one. Someone who has lost the seat stays whoever was playing them.
+export const seated = (w, ch) => { const c = w.countries[ch.country]; return !!c?.alive && c[ch.role] === ch.id && ch.status === 'free'; };
+export const isAI = (cfg, c, ch) => c[ch.role] === ch.id ? rolesFor(cfg, c).has(ch.role) : !!ch.everAI;
 
-function currentActors(w) {
-  const out = [];
+// Everyone who can act this quarter: the holders of the four seats, and those who lost a seat but not their life (prisoners, exiles, the deposed).
+// The gravely ill act for no one.
+export function currentActors(w) {
+  const out = [], seen = new Set();
   for (const c of aliveCountries(w)) for (const r of ROLES) {
     const ch = w.characters[c[r]];
-    if (ch?.alive && ch.status === 'free' && ch.country === c.id) out.push(ch);
+    if (ch?.alive && ch.status === 'free' && ch.country === c.id && !incapacitated(ch)) { out.push(ch); seen.add(ch.id); }
   }
+  for (const ch of Object.values(w.characters)) if (ch.everAI && ch.alive && !seen.has(ch.id) && !seated(w, ch) && !incapacitated(ch) && w.countries[ch.country]?.alive) out.push(ch);
   return out;
+}
+
+// Which model plays whom. A cast list is dealt round the table so that every role is played by every model somewhere;
+// without one, leaders get one model and everyone else another. assign pins a person, a seat ("U2.general") or a role.
+export function castModel(cfg, w, ch) {
+  const m = cfg.models ?? {}, pinned = m.assign?.[ch.id] ?? m.assign?.[`${ch.country}.${ch.role}`] ?? m.assign?.[ch.role];
+  if (pinned) return pinned;
+  const cast = Array.isArray(m.cast) ? m.cast.filter(Boolean) : [];
+  if (!cast.length) return ch.role === 'leader' ? m.leader : m.secondary;
+  const ci = Object.keys(w.countries).indexOf(ch.country), ri = ROLES.indexOf(ch.role);
+  return cast[(w.turn <= 1 && ci >= 0 && ri >= 0 ? ci + ri : hashOf(ch.id)) % cast.length];
 }
 
 export function shouldWake(w, cfg, ch) {
   const c = w.countries[ch.country];
   if (!isAI(cfg, c, ch)) return false;
+  // Out of office, a person is woken by letters and otherwise lives at a slower pace.
+  if (!seated(w, ch)) return ch.inbox.length > 0 || w.turn - ch.lastWake >= cfg.wakeEvery * 2;
   if (ch.role === 'leader') return true;
   if ((c.tension ?? 0) >= cfg.wakeTension) return true;
   if (ch.inbox.length) return true;
@@ -36,7 +56,7 @@ export function shouldWake(w, cfg, ch) {
   return w.turn - ch.lastWake >= cfg.wakeEvery;
 }
 
-const modelFor = (cfg, ch) => ch.role === 'leader' ? cfg.models.leader : cfg.models.secondary;
+const modelFor = (cfg, ch) => ch.model ?? (ch.role === 'leader' ? cfg.models.leader : cfg.models.secondary);
 
 async function pool(items, n, fn) {
   let i = 0; const results = new Array(items.length);
@@ -117,7 +137,7 @@ export class Game {
       const ch = item.kind === 'portrait' ? w.characters[item.character] : witnessFor(w, item.entry, isAIch);
       if (!ch || (item.kind === 'portrait' && !ch.alive)) { remaining.splice(remaining.indexOf(item), 1); return; }
       try {
-        const text = await backend.askText(item.kind === 'portrait' ? portraitPrompt(w, ch) : paintingPrompt(w, ch, item.entry), cfg.models.art ?? cfg.models.leader), art = parseArt(text);
+        const text = await backend.askText(item.kind === 'portrait' ? portraitPrompt(w, ch) : paintingPrompt(w, ch, item.entry), cfg.models.art ?? modelFor(cfg, ch)), art = parseArt(text);
         if (art) store.saveArt({ id: item.kind === 'portrait' ? `portrait-${ch.id}` : `painting-${item.entry.id}`, kind: item.kind, turn: item.entry?.t ?? w.turn, date: item.entry?.d ?? w.date, character: item.kind === 'portrait' ? ch.id : null, witness: item.kind === 'event' ? ch.id : null, witnessName: ch.name, event: item.entry?.text ?? null, country: ch.country, caption: art.caption, prompt: art.prompt }, art.svg);
         else this.report(ch, 'The image response had no valid SVG.');
         remaining.splice(remaining.indexOf(item), 1);
@@ -128,7 +148,10 @@ export class Game {
 
   async think() {
     const w = this.w, cfg = this.cfg;
-    for (const ch of Object.values(w.characters)) ch.aiControlled = !!w.countries[ch.country] && isAI(cfg, w.countries[ch.country], ch);
+    for (const ch of Object.values(w.characters)) {
+      ch.aiControlled = !!w.countries[ch.country] && isAI(cfg, w.countries[ch.country], ch);
+      if (ch.aiControlled && ch.alive) { ch.everAI = true; ch.model ??= castModel(cfg, w, ch); }
+    }
     const actors = currentActors(w).filter(ch => shouldWake(w, cfg, ch));
     this.setStatus('agents thinking', `${actors.length} characters deciding`);
     let done = 0;
@@ -204,6 +227,7 @@ export class Game {
           if (clean.monologue) cur.monologue = [cur.monologue, clean.monologue].filter(Boolean).join('\n\n');
           if (clean.notes) cur.notes = [cur.notes, clean.notes].filter(Boolean).join(' ');
           if (clean.identity) cur.identity = clean.identity;
+          if (clean.publicFace) cur.publicFace = clean.publicFace;
         }
         this.store.savePending(this.pending);
       }));
@@ -225,6 +249,13 @@ export class Game {
       let r;
       try { r = await this.backend.ask(refereePrompt(w, w.countries[cid], entries), cfg.models.referee); }
       catch (e) { if (e instanceof LimitError) throw e; this.report(null, `No referee reply received: ${e.message}`); r = { rulings: [] }; }
+      if (!Array.isArray(r?.rulings)) r = { rulings: [] };
+      // A decision the referee passed over is asked for once more; nothing a character decided is dropped in silence.
+      const left = unruled(entries, r);
+      if (left.length) {
+        try { const again = await this.backend.ask(refereePrompt(w, w.countries[cid], left), cfg.models.referee); if (Array.isArray(again?.rulings)) r.rulings.push(...again.rulings); }
+        catch (e) { if (e instanceof LimitError) throw e; this.report(null, `No referee reply to the second request: ${e.message}`); }
+      }
       this.pending.referee[cid] = r;
       this.store.savePending(this.pending);
     }));
@@ -242,11 +273,12 @@ export class Game {
       if (r && !r.fallback) {
         ch.lastWake = w.turn;
         if (r.identity) ch.persona = r.identity;
+        if (r.publicFace) ch.publicFace = r.publicFace;
         if (r.notes) { ch.diary.push(`${w.date || 'Start'}: ${r.notes}`); ch.diary = ch.diary.slice(-16); }
         for (const m of r.messages) outgoing.push({ from: ch, ...m });
-        trace.push({ actor: ch.id, country: c.id, role: ch.role, name: ch.name, ai, persona: ch.persona, lookups: (this.pending.lookups?.[ch.id] || []).map(a => a.q), monologue: r.monologue, decisions: r.decisions, messages: r.messages, notes: r.notes });
+        trace.push({ actor: ch.id, country: c.id, role: ch.role, name: ch.name, ai, model: ai ? ch.model ?? null : null, standing: seated(w, ch) ? 'in office' : ch.status === 'free' ? 'out of office' : ch.status, persona: ch.persona, lookups: (this.pending.lookups?.[ch.id] || []).map(a => a.q), monologue: r.monologue, decisions: r.decisions, messages: r.messages, notes: r.notes });
         if (r._ops) for (const op of r._ops) rulings.push(this.applyRuling(ch, { narrative: describe(op), prob: 1, public: false, ops: [op], source: 'mock' }));
-      } else {
+      } else if (seated(w, ch)) {
         const ops = npcDecide(w, ch);
         if (ops.length) { for (const op of ops) rulings.push(this.applyRuling(ch, { narrative: describe(op), prob: 1, public: false, ops: [op], source: 'rule' })); }
       }
@@ -258,13 +290,25 @@ export class Game {
         rulings.push(this.applyRuling(ch, { narrative: String(h.narrative || '').slice(0, 400), prob: clamp(Number(h.probability ?? .5), 0, 1), public: !!h.public, ops: Array.isArray(h.operations) ? h.operations.slice(0, 6) : [], decision: h.decision, decisionText: this.pending.actors[ch.id]?.decisions?.[h.decision], source: 'referee' }));
       }
     }
+    // What the referee still left without a ruling is written down and told to the person who decided it.
+    for (const ch of actors) {
+      const mine = this.pending.actors[ch.id], ruled = this.pending.referee[ch.country];
+      if (!mine?.decisions?.length || mine._ops || mine.fallback || !ruled) continue;
+      for (const { decisions, indices } of unruled([{ actor: ch, decisions: mine.decisions }], ruled)) decisions.forEach((d, k) => {
+        this.report(ch, `The referee gave no ruling on decision ${indices[k]}: ${d.slice(0, 160)}`);
+        ch.outcomes.push(`${w.date}: Not carried out, no ruling was given: ${d.slice(0, 200)}`); ch.outcomes = ch.outcomes.slice(-16); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
+      });
+    }
     for (const ch of actors) ch.inbox = [];
     for (const m of outgoing) {
       const target = w.characters[m.to] ?? w.characters[w.countries[m.to]?.leader];
       if (!target?.alive) m.undelivered = true;
       else if (!m.read) target.inbox.push({ turn: w.turn, from: `${m.from.name} (${w.countries[m.from.country]?.name})`, text: m.text });
+      // A prisoner's letters pass through the censor's hands; how often they are copied depends on how good the state's eyes are.
+      const home = w.countries[m.from.country], warden = w.characters[home?.leader];
+      if (m.from.status === 'imprisoned' && target?.alive && warden?.alive && warden.id !== target.id && rand(w) < clamp(.25 + home.intelligence / 150, .25, .85)) { warden.inbox.push({ turn: w.turn, from: 'Prison censor', text: `Letter from the prisoner ${m.from.name} to ${target.name}: ${m.text}` }); m.intercepted = true; }
     }
-    return { trace, rulings, system: (this.sysLog ||= []).splice(0), messages: outgoing.map(m => { const target = w.characters[m.to] ?? w.characters[w.countries[m.to]?.leader]; return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, read: !!m.read, round: m.round ?? 0 }; }) };
+    return { trace, rulings, system: (this.sysLog ||= []).splice(0), messages: outgoing.map(m => { const target = w.characters[m.to] ?? w.characters[w.countries[m.to]?.leader]; return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, intercepted: !!m.intercepted, read: !!m.read, round: m.round ?? 0 }; }) };
   }
 
   applyRuling(ch, { narrative, prob, public: pub, ops, source, decision, decisionText }) {
@@ -306,12 +350,22 @@ export class Game {
   }
 }
 
+// The decisions of each actor that have no ruling yet, with their original numbers.
+function unruled(entries, r) {
+  const has = (id, i) => (r?.rulings || []).some(h => h?.actor === id && Number(h.decision) === i), out = [];
+  for (const e of entries) {
+    const idx = e.decisions.map((_, i) => e.indices?.[i] ?? i).filter(i => !has(e.actor.id, i));
+    if (idx.length) out.push({ actor: e.actor, decisions: idx.map(i => e.decisions[(e.indices ?? e.decisions.map((_, k) => k)).indexOf(i)]), indices: idx });
+  }
+  return out;
+}
+
 function safeApply(w, ch, op) { try { return applyOp(w, ch, op); } catch (e) { return { ok: false, msg: `Error: ${e.message}` }; } }
 
 function sanitize(r, cfg) {
   if (!r || r.fallback) return { fallback: true };
   const messages = (Array.isArray(r.messages) ? r.messages : []).slice(0, cfg.maxMessagesPerActor).map(m => ({ to: String(m.to || ''), text: String(m.text || '').slice(0, 800) })).filter(m => m.to && m.text);
-  const out = { identity: String(r.identity || '').slice(0, 900), monologue: String(r.inner_voice || '').slice(0, 1200), decisions: (Array.isArray(r.decisions) ? r.decisions : []).slice(0, cfg.maxDecisionsPerActor).map(x => String(x).slice(0, 700)), messages, notes: String(r.notes || '').slice(0, 1500) };
+  const out = { identity: String(r.identity || '').slice(0, 900), publicFace: String(r.public_face || '').slice(0, 240), monologue: String(r.inner_voice || '').slice(0, 1200), decisions: (Array.isArray(r.decisions) ? r.decisions : []).slice(0, cfg.maxDecisionsPerActor).map(x => String(x).slice(0, 700)), messages, notes: String(r.notes || '').slice(0, 1500) };
   if (r._ops) out._ops = r._ops;
   return out;
 }

@@ -1,18 +1,32 @@
 import { clamp, sum, news, between, rand } from './util.js';
 import { CLASSES, atWar, hasTreaty, countryProvinces, aliveCountries } from './world.js';
 import { hasTech } from './economy.js';
-import { neutralize } from './politics.js';
+import { die } from './politics.js';
+import { afflict, incapacitated } from './health.js';
 
 const SHIP_POWER = { cruiser: 1, battleship: 3.5, submarine: .6 };
 let supplied = {};
 // A unit is in supply only if its province connects to its capital through friendly ground.
-function supplyNetwork(w, c) {
+// Supply also crosses the sea, from a home port to the country's other ports, unless an enemy fleet holds the water in front of them.
+export function supplyNetwork(w, c) {
   const reach = new Set(), q = c.capital && w.provinces[c.capital] ? [c.capital] : [];
   for (const x of q) reach.add(x);
-  while (q.length) { const x = q.shift(); for (const n of w.provinces[x].neighbors) { const o = w.provinces[n].controller; if (!reach.has(n) && (o === c.id || hasTreaty(w, c.id, o, 'military_access') || hasTreaty(w, c.id, o, 'alliance'))) { reach.add(n); q.push(n); } } }
+  const spread = () => { while (q.length) { const x = q.shift(); for (const n of w.provinces[x].neighbors) { const o = w.provinces[n].controller; if (!reach.has(n) && (o === c.id || hasTreaty(w, c.id, o, 'military_access') || hasTreaty(w, c.id, o, 'alliance'))) { reach.add(n); q.push(n); } } } };
+  spread();
+  const open = p => p.port > 0 && p.seas.some(s => { const holder = w.seaControl?.[s]; return !holder || !atWar(w, holder, c.id); });
+  if ([...reach].some(id => open(w.provinces[id]))) for (const p of countryProvinces(w, c.id)) if (!reach.has(p.id) && open(p)) { reach.add(p.id); q.push(p.id); }
+  spread();
   return reach;
 }
-const commanderOf = (w, u) => w.characters[u.commander]?.alive ? w.characters[u.commander] : w.characters[w.countries[u.country]?.general];
+const fit = ch => ch?.alive && ch.status === 'free' && !incapacitated(ch) ? ch : null;
+const commanderOf = (w, u) => fit(w.characters[u.commander]) ?? fit(w.characters[w.countries[u.country]?.general]);
+// Command is dangerous for those who lead from the front; a chief of staff at headquarters is rarely hit.
+function hazard(w, gen, u, lost, p) {
+  if (!gen?.alive) return;
+  const front = u.commander === gen.id ? 1 : .25, roll = rand(w);
+  if (roll < (lost ? .03 : .008) * front) { news(w, `${gen.name} fell in battle at ${p.name}.`, { kind: 'war', countries: [gen.country] }); die(w, gen, `fell in battle at ${p.name}`, { quiet: true }); }
+  else if (roll < (lost ? .1 : .03) * front) afflict(w, gen, 'wound', 1 + Math.floor(rand(w) * 3), `the battle of ${p.name}`);
+}
 
 const TERRAIN_DEF = { plains: 1.05, hills: 1.35, forest: 1.25, mountain: 1.75, desert: 1.1, marsh: 1.4, tundra: 1.2 };
 const KIND = { infantry: 1, artillery: 1.7, armor: 3.2, air: 2.6 };
@@ -70,7 +84,7 @@ export function militaryStep(w) {
   const byProv = {};
   for (const u of Object.values(w.units)) (byProv[u.province] ||= []).push(u);
   for (const [pid, us] of Object.entries(byProv)) resolve(w, pid, us);
-  for (const u of Object.values(w.units)) if (u.men < 2 || u.morale <= 3) { delete w.units[u.id]; }
+  for (const u of Object.values(w.units)) if (u.men < .2 || u.morale <= 3) { delete w.units[u.id]; }
   const remaining = {};
   for (const u of Object.values(w.units)) (remaining[u.province] ||= []).push(u);
   for (const [pid, us] of Object.entries(remaining)) {
@@ -120,20 +134,31 @@ function navalStep(w) {
   for (const f of Object.values(w.fleets)) if (f.ships < 1) delete w.fleets[f.id];
 }
 
+// What the armed forces cost each quarter. A standing army of one in a hundred of the people takes a few percent of GDP, as it did around 1900.
+export function upkeepCost(w, c) {
+  const men = sum(Object.values(w.units).filter(u => u.country === c.id), u => u.men * (UPKEEP[u.kind] ?? 1));
+  const ships = sum(Object.values(w.fleets).filter(f => f.country === c.id), f => f.ships * (SHIP_POWER[f.kind] ?? 1));
+  const forts = sum(countryProvinces(w, c.id), p => (p.fort || 0) * 3 + (p.battery || 0) * 2);
+  return (men * .8 + ships * 3 + forts * 5) * c.priceLevel;
+}
+const UPKEEP = { infantry: 1, artillery: 1.5, armor: 3, air: 3 };
+
 function upkeep(w, c) {
   const us = Object.values(w.units).filter(u => u.country === c.id);
   const men = sum(us, u => u.men);
   if (!men) return;
-  const ships = sum(Object.values(w.fleets).filter(f => f.country === c.id), f => f.ships);
-  const forts = sum(countryProvinces(w, c.id), p => (p.fort || 0) * 3 + (p.battery || 0) * 2);
-  const required = (men * .12 + ships * .6 + forts) * c.priceLevel;
+  const required = upkeepCost(w, c);
   const funded = clamp((c.budget.military * c.gdp * c.paidRatio) / Math.max(required, 1), 0, 1.3);
   c.militaryFunding = funded;
   const inWar = w.wars.some(x => x.active && (x.a.includes(c.id) || x.b.includes(c.id)));
   const consume = men * (inWar ? .012 : .004);
   c.stock.arms = Math.max(0, c.stock.arms - consume);
+  // Pay, arrears and a long war decide where the troops' spirit settles; a battle only knocks it about for a while.
+  const spirit = clamp(40 + funded * 35 - c.arrears * 6 - c.warExhaustion * .3, 8, 95);
   for (const u of us) {
-    u.morale = clamp(u.morale + (funded - .85) * 10 - c.arrears * 2.2 - c.warExhaustion * .03, 0, 100);
+    u.morale = clamp(u.morale + (spirit - u.morale) * .2, 0, 100);
+    // Soldiers who are not paid go home: the army shrinks toward what the budget can keep.
+    if (funded < .85) u.men *= 1 - clamp((.85 - funded) * .1, 0, .06);
     u.equip = clamp(u.equip + (c.stock.arms > 0 ? .02 : -.05) * (funded > .6 ? 1 : .3), .2, 1.4);
     if (supplied[c.id] && !supplied[c.id].has(u.province) && !w.provinces[u.province].neighbors.some(n => supplied[c.id].has(n))) { u.men *= .92; u.morale = clamp(u.morale - 6, 0, 100); }
     u.loyalty = clamp(u.loyalty + (funded - .85) * 5 - c.arrears * 1.4 + (c.legitimacy - 50) * .02, 0, 100);
@@ -165,7 +190,8 @@ function resolve(w, pid, us) {
   const atkWins = fA > fD;
   const winGen = commanderOf(w, (atkWins ? A : D)[0]), loseGen = commanderOf(w, (atkWins ? D : A)[0]);
   if (winGen) { winGen.skill = clamp((winGen.skill ?? 1) + .01, .5, 1.6); (winGen.record ||= { won: 0, lost: 0 }).won++; }
-  if (loseGen) { (loseGen.record ||= { won: 0, lost: 0 }).lost++; if (rand(w) < .03) { news(w, `${loseGen.name} fell in battle at ${p.name}.`, { kind: 'war', countries: [loseGen.country] }); neutralize(w, loseGen, 'dead'); } }
+  if (loseGen) (loseGen.record ||= { won: 0, lost: 0 }).lost++;
+  hazard(w, winGen, (atkWins ? A : D)[0], false, p); hazard(w, loseGen, (atkWins ? D : A)[0], true, p);
   const dd = apply(D, lossD, !atkWins), da = apply(A, lossA, atkWins);
   p.devastation = clamp(p.devastation + .1 + (dd + da) / 700, 0, 1);
   for (const k of CLASSES) p.pops[k].n *= .985;

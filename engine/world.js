@@ -152,13 +152,15 @@ function lifeOf(w, id, name, role) {
   return pool[h % pool.length];
 }
 
-function spawnCharacter(w, cid, role, axes) {
+// patch: family (a surname to carry on), age ([youngest, oldest]) and power, for heirs and others who are not drawn at random.
+function spawnCharacter(w, cid, role, axes, patch = {}) {
   const id = nextId(w, 'K');
   const t = () => Math.round(between(w, 15, 90));
+  const given = pick(w, givenNames(w.countries[cid]?.majorityEth, w.countries[cid]?.majorityRel)), family = pick(w, familyNames(w.countries[cid]?.majorityEth)), [young, old] = patch.age ?? [34, 68];
   w.characters[id] = {
-    id, country: cid, role, name: `${pick(w, givenNames(w.countries[cid]?.majorityEth, w.countries[cid]?.majorityRel))} ${pick(w, familyNames(w.countries[cid]?.majorityEth))}`, skill: .75 + (hashOf(id) % 61) / 100, alive: true, status: 'free',
-    age: Math.round(between(w, 34, 68)), persona: '', diary: [], outcomes: [], ties: {}, dossiers: {}, ambition: t(), loyalty: role === 'leader' ? 100 : t(), ruthless: t(), greed: t(),
-    power: role === 'leader' ? 70 : Math.round(between(w, 30, 65)),
+    id, country: cid, role, name: patch.name ?? `${given} ${patch.family ?? family}`, skill: .75 + (hashOf(id) % 61) / 100, alive: true, status: 'free',
+    age: Math.round(between(w, young, old)), persona: '', diary: [], outcomes: [], ties: {}, dossiers: {}, ambition: t(), loyalty: role === 'leader' ? 100 : t(), ruthless: t(), greed: t(),
+    power: patch.power ?? (role === 'leader' ? 70 : Math.round(between(w, 30, 65))),
     wealth: Math.round(between(w, 10, role === 'oligarch' ? 300 : 40)),
     axes: { econ: axes.econ + between(w, -40, 40), auth: axes.auth + between(w, -40, 40), nation: axes.nation + between(w, -40, 40), faith: axes.faith + between(w, -40, 40) },
     notes: '', lastWake: -99, inbox: []
@@ -219,6 +221,8 @@ export function createWorld(cfg) {
   cIds.forEach((id, i) => {
     const c = makeCountry(w, id); w.countries[id] = c;
     const mine = Object.values(w.provinces).filter(p => p.owner === id).sort((a, b) => (b.fertility + b.port + b.river) - (a.fertility + a.port + a.river));
+    // The capital stands on the country's main body of land, not on an outlying island.
+    const body = mainBody(w, mine); mine.sort((a, b) => body.has(b.id) - body.has(a.id));
     c.capital = mine[0].id;
     const eth = ETH[i % ETH.length], minor = ETH[(i + 5) % ETH.length], rel = REL[i % REL.length], minorRel = REL[(i + 3) % REL.length];
     mine.forEach((p, k) => {
@@ -244,10 +248,28 @@ export function createWorld(cfg) {
   });
   findStrategic(w);
   const taken = new Set();
-  for (const p of Object.values(w.provinces)) { let name = placeName(p.eth, p.id), n = 0; while (taken.has(name)) name = placeName(p.eth, `${p.id}#${++n}`); taken.add(name); p.name = name; }
+  // A people has only so many place names; when they run out, new towns are named after old ones, so the search always ends.
+  const AGAIN = ['New', 'Upper', 'Lower', 'Old', 'North', 'South', 'East', 'West'];
+  for (const p of Object.values(w.provinces)) {
+    let name = placeName(p.eth, p.id), n = 0;
+    while (taken.has(name)) { const base = placeName(p.eth, `${p.id}#${++n}`); name = n <= 24 ? base : n <= 200 ? `${AGAIN[n % AGAIN.length]} ${base}` : `${base} ${n}`; }
+    taken.add(name); p.name = name;
+  }
   for (const c of aliveCountries(w)) issueCurrency(c);
   if (!cfg.plainStates) inheritStates(w);
   return w;
+}
+
+// The largest stretch of a country's provinces that can be walked without leaving it.
+function mainBody(w, provs) {
+  const own = new Set(provs.map(p => p.id)), seen = new Set(); let best = new Set();
+  for (const p of provs) {
+    if (seen.has(p.id)) continue;
+    const part = new Set([p.id]), q = [p.id]; seen.add(p.id);
+    while (q.length) for (const n of w.provinces[q.pop()].neighbors) if (own.has(n) && !seen.has(n)) { seen.add(n); part.add(n); q.push(n); }
+    if (part.size > best.size) best = part;
+  }
+  return best;
 }
 
 function bfsSea(w, from, to, cutoff = 999) {

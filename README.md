@@ -37,11 +37,15 @@ To make it permanent, change the `agentRoles` list in `config.json`. For per-cou
 - `wakeTension`: above this tension value secondary characters wake every turn.
 - `maxLookupRounds`: how many times a character can look up information per turn. Each lookup round is one agent call.
 - `negotiationRounds`: how many rounds of talks can happen within a quarter. With 0, messages wait for the next quarter. Each round is one call for every AI character who received a message.
-- `models`: the models for the leader, referee and secondary characters.
+- `models`: which Claude model plays whom. `cast` is a list dealt round the characters, so with `["opus", "sonnet", "haiku"]` every country hears all three and every role is played by each model somewhere; a person keeps their model for life. `assign` pins a model to a person, a seat or a role (`{"U2.general": "opus", "opposition": "haiku"}`). With an empty `cast`, `leader` is used for rulers and `secondary` for everyone else. `referee` is the model of the impartial referee. From the command line: `node run.js --cast opus,sonnet,haiku` or `--cast none`. Opus characters use the subscription limit much faster than Haiku ones.
 - `concurrency`: how many agents run at once.
 - `saveDir`: if empty, saves are written outside OneDrive under `your user folder\ajan-dunyasi-kayitlar`.
 
 To start over: `node run.js --new`. This deletes the save with the same name.
+
+## What the characters can do
+
+Anything. Each one is told at the start that they have an ego of their own and that nothing is forbidden: war, coups, prisons, executions and massacres are as open to them as peace and reform, and the world answers only with consequences. They write decisions in free text; an impartial referee turns them into engine operations and does not soften them. People fall ill, are wounded, die, are jailed, exiled or executed; a jailed or exiled AI character goes on playing with what little a prisoner or an exile can do. When someone dies or falls, the next person takes the seat by the country's own rule of succession and, if that seat is played by AI, arrives as a new AI character.
 
 ## Files
 

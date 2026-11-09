@@ -1,5 +1,5 @@
 {
-  "runName": "world-6",
+  "runName": "world-7",
   "seed": 1848,
   "countries": 5,
   "provinces": 130,
@@ -16,7 +16,9 @@
   "models": {
     "leader": "sonnet",
     "referee": "sonnet",
-    "secondary": "haiku"
+    "secondary": "haiku",
+    "cast": ["opus", "sonnet", "haiku"],
+    "assign": {}
   },
   "concurrency": 4,
   "wakeEvery": 2,

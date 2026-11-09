@@ -4,6 +4,7 @@ import { allocateSeats } from './polity.js';
 import { issueCurrency } from './money.js';
 import { culturePenalty, leaderForeignness, minorityShare } from './culture.js';
 import { adminPressure } from './admin.js';
+import { afflict, healthStep, incapacitated } from './health.js';
 
 const CLASS_AXES = { peasants: { econ: -15, auth: 15, nation: 15, faith: 35 }, workers: { econ: -55, auth: -10, nation: 5, faith: 0 }, middle: { econ: 20, auth: -35, nation: 0, faith: -10 }, elite: { econ: 65, auth: 25, nation: 15, faith: 10 } };
 
@@ -11,7 +12,12 @@ export const distance = (a, b) => (Math.abs(a.econ - b.econ) * 1.2 + Math.abs(a.
 
 export function modValue(c, key) { return sum(c.mods.filter(m => m.key === key), m => m.delta); }
 
+// Troops stationed in a province hold its streets, as far as their numbers go.
+export const garrisonHold = (men, pop) => Math.min(15, men / Math.max(pop, 1) * 400);
+
 export function satisfactionStep(w) {
+  const garrison = {};
+  for (const u of Object.values(w.units)) if (w.provinces[u.province]?.controller === u.country) garrison[u.province] = (garrison[u.province] || 0) + u.men;
   for (const c of aliveCountries(w)) {
     const inWar = w.wars.some(x => x.active && (x.a.includes(c.id) || x.b.includes(c.id)));
     const realWage = c.wageIndex / c.priceLevel;
@@ -41,7 +47,11 @@ export function satisfactionStep(w) {
       }
       const pp = provincePop(p);
       const meanSat = CLASSES.reduce((a, k) => a + p.pops[k].sat * p.pops[k].n, 0) / Math.max(pp, 1);
-      const pressure = 88 - meanSat * 1.3 + (c.pressFreedom > 70 ? 3 : 0) - c.police * .13 - c.repress * .35 + modValue(c, 'unrest') + adminPressure(p);
+      // Police hold down open unrest far better where the press cannot report it. That is control, not consent: satisfaction is untouched.
+      const grip = c.police * (.1 + .2 * (1 - c.pressFreedom / 100));
+      // A province does not forget what was done to it, for as long as those who did it still rule there.
+      const scar = p.scar && p.scar.by === p.controller ? p.scar.weight * 40 * Math.max(0, 1 - (w.turn - p.scar.turn) / 80) : 0;
+      const pressure = 88 - meanSat * 1.3 + (c.pressFreedom > 70 ? 3 : 0) - grip - garrisonHold(garrison[p.id] || 0, pp) - c.repress * .35 + modValue(c, 'unrest') + adminPressure(p) + scar;
       p.unrest = clamp(p.unrest + (clamp(pressure, 0, 100) - p.unrest) * .35, 0, 100);
       unrestSum += p.unrest * pp; popSum += pp;
     }
@@ -50,7 +60,8 @@ export function satisfactionStep(w) {
     c.repress = Math.max(0, c.repress - 6);
     const meanPop = weightedSat(w, c);
     c.popularity = meanPop;
-    const legitTarget = clamp(22 + meanPop * .75 + (c.growth || 0) * 40 - c.arrears * 4 - leaderForeignness(w, c), 5, 95);
+    // Legitimacy rests on how people live and on the standing the regime inherited or earned beyond that: a dynasty, a faith, a constitution, a revolution.
+    const legitTarget = clamp(22 + meanPop * .75 + (c.legitBase ?? 0) + (c.growth || 0) * 40 - c.arrears * 4 - leaderForeignness(w, c), 5, 95);
     c.legitimacy = clamp(c.legitimacy + (legitTarget - c.legitimacy) * .1 + modValue(c, 'legitimacy'), 0, 100);
     c.mods = c.mods.map(m => ({ ...m, turns: m.turns - 1 })).filter(m => m.turns > 0);
     c.tension = clamp(c.unrest * .55 + (100 - c.legitimacy) * .3 + (100 - c.blocs.army.sat) * .25 + w.plots.filter(x => x.active && x.country === c.id).length * 10 + (inWar ? 10 : 0), 0, 100);
@@ -80,29 +91,90 @@ export function canSplit(w, c) {
   return countryProvinces(w, c.id).length >= 4 && w.turn >= (c.noSplitUntil ?? 0) && !w.wars.some(x => x.active && x.civil && (x.a.includes(c.id) || x.b.includes(c.id)));
 }
 
-function successor(w, c, except) {
-  return Object.values(w.characters).filter(x => x.country === c.id && x.alive && x.status === 'free' && x.id !== except).sort((a, b) => b.power - a.power)[0];
-}
+const familyOf = ch => ch.name.split(' ').at(-1);
+const mark = (w, ch, text) => { (ch.secrets ||= []).push({ turn: w.turn, text }); ch.secrets = ch.secrets.slice(-12); };
+const strongest = (w, c, except) => Object.values(w.characters).filter(x => x.country === c.id && x.alive && x.status === 'free' && x.id !== except && !incapacitated(x)).sort((a, b) => b.power - a.power)[0];
 
-export function installLeader(w, c, ch, regimeChange) {
-  const oldId = c.leader;
-  const oldRole = ch.role;
-  if (oldId && w.characters[oldId] && oldId !== ch.id) { w.characters[oldId].role = 'former_leader'; }
-  ch.role = 'leader'; ch.loyalty = 100; ch.power = Math.max(ch.power, 60); c.leader = ch.id;
-  if (oldRole !== 'leader' && ROLES.includes(oldRole)) { const n = spawnCharacter(w, c.id, oldRole, c.axes); c[oldRole] = n.id; }
+// How power passes when the ruler is gone. Where votes are held the rule is always an interim head and an early vote.
+export const SUCCESSION = ['dynasty', 'army', 'party', 'clergy', 'council', 'open'];
+export const successionRule = c => c.elections ? 'election' : SUCCESSION.includes(c.succession) ? c.succession : 'open';
+export const SUCCESSION_TEXT = { election: 'an interim head of government takes over and a vote is held within half a year', dynasty: 'the throne passes by blood to the next of the ruling family', army: 'the chief of the general staff takes over', party: 'the party picks the strongest of its leading figures', clergy: 'the clerical council elects one of its own', council: 'the great trading houses raise the richest among them', open: 'no rule is settled; whoever is strongest takes it' };
+
+export function installLeader(w, c, ch, regimeChange, keepSlot = false) {
+  const old = w.characters[c.leader], oldRole = ch.role, held = c[oldRole] === ch.id;
+  if (old && old.id !== ch.id && old.role === 'leader') old.role = 'former_leader';
+  ch.role = 'leader'; ch.status = 'free'; ch.loyalty = 100; ch.power = Math.max(ch.power, 60); c.leader = ch.id; c.heir = null;
+  if (!keepSlot && held && oldRole !== 'leader' && ROLES.includes(oldRole)) { const n = spawnCharacter(w, c.id, oldRole, c.axes); c[oldRole] = n.id; n.rise = `Took the place of ${ch.name}, who became head of state, in ${w.date ?? 'the first days'}.`; }
   if (regimeChange) Object.assign(c, regimeChange);
 }
 
-function replaceSlot(w, c, ch) {
-  if (ROLES.includes(ch.role) && c[ch.role] === ch.id && ch.role !== 'leader') { const n = spawnCharacter(w, c.id, ch.role, c.axes); c[ch.role] = n.id; }
+// Who rules next depends on what kind of state it is. A named successor comes first everywhere; after that the army turns to its chief,
+// merchants to money, dynasties to blood, clerics to their council, parties to their strongest, and elected governments to an interim head and a vote.
+export function succeed(w, c, gone, shock = 0) {
+  const free = id => { const x = w.characters[id]; return x?.alive && x.status === 'free' && x.country === c.id && x.id !== gone?.id && !incapacitated(x) ? x : null; };
+  const rule = successionRule(c);
+  let next = free(c.heir), by = 'as the named successor';
+  if (!next) {
+    if (rule === 'army') { next = free(c.general); by = 'at the head of the army'; }
+    else if (rule === 'council') { next = free(c.oligarch); by = 'by the choice of the great houses'; }
+    else if (rule === 'party') { next = [c.general, c.oligarch].map(free).filter(Boolean).sort((a, b) => b.power - a.power)[0]; by = 'by the choice of the party'; }
+    else if (rule === 'dynasty' && gone) { next = spawnCharacter(w, c.id, 'leader', c.axes, { family: familyOf(gone), age: [18, clamp((gone.age ?? 50) - 18, 19, 50)], power: 50 }); by = 'by right of blood'; }
+    else if (rule === 'clergy') { next = spawnCharacter(w, c.id, 'leader', c.axes, { age: [52, 72], power: 55 }); by = 'by the choice of the clerical council'; }
+    else if (rule === 'election') { next = spawnCharacter(w, c.id, 'leader', c.axes, { power: 50 }); by = 'as interim head of government until a vote is held'; }
+  }
+  const regular = !!next;
+  if (!next) { next = strongest(w, c, gone?.id) ?? spawnCharacter(w, c.id, 'leader', c.axes); by = 'in the vacuum that followed'; }
+  installLeader(w, c, next);
+  if (rule === 'election') c.nextElection = Math.min(c.nextElection ?? Infinity, w.turn + 2);
+  // An orderly handover costs little; a scramble for the palace costs the regime part of what it stood on.
+  c.legitimacy = clamp(c.legitimacy - (regular ? 3 : 9) - shock, 0, 100);
+  if (!regular) c.legitBase = (c.legitBase ?? 0) * .6;
+  next.rise = `Came to power in ${w.date ?? 'the first days'}, ${by}, after ${gone?.name ?? 'the last ruler'} ${gone ? fateOf(gone) : 'left office'}.`;
+  news(w, `${next.name} took over the government of ${c.name} ${by}.`, { kind: 'politics', countries: [c.id] });
+  return next;
 }
 
-export function neutralize(w, ch, fate = 'imprisoned') {
-  const c = w.countries[ch.country];
-  ch.status = fate; ch.alive = fate === 'imprisoned' || fate === 'exiled';
-  if (fate === 'dead') ch.alive = false;
-  if (c) replaceSlot(w, c, ch);
-  for (const pl of w.plots) { pl.members = pl.members.filter(x => x !== ch.id); if (pl.active && pl.leader === ch.id) { if (pl.members.length) pl.leader = pl.members[0]; else pl.active = false; } }
+// What became of someone, as the next person in their seat would put it.
+const fateOf = ch => ch.status === 'dead' ? ch.death?.how ?? 'died' : ch.status === 'exiled' ? 'was driven into exile' : ch.status === 'imprisoned' ? 'was imprisoned' : 'left the post';
+function replaceSlot(w, c, ch) {
+  if (!ROLES.includes(ch.role) || c[ch.role] !== ch.id || ch.role === 'leader') return;
+  const n = spawnCharacter(w, c.id, ch.role, c.axes); c[ch.role] = n.id;
+  n.rise = `Took the place of ${ch.name}, who ${fateOf(ch)}, in ${w.date ?? 'the first days'}.`;
+}
+
+// Posts need a free and living person: a jailed governor governs nothing.
+function stripPosts(w, ch) {
+  for (const p of Object.values(w.provinces)) if (p.governor === ch.id) p.governor = null;
+  for (const u of Object.values(w.units)) if (u.commander === ch.id) u.commander = null;
+  for (const c of Object.values(w.countries)) { if (c.heir === ch.id) c.heir = null; for (const i of c.institutions || []) { if (i.head === ch.id) i.head = null; if (i.members?.includes(ch.id)) i.members = i.members.filter(x => x !== ch.id); } }
+}
+function leavePlots(w, ch) {
+  for (const pl of w.plots) { pl.members = pl.members.filter(x => x !== ch.id); if (pl.active && pl.leader === ch.id) { if (pl.members.length) pl.leader = pl.members.shift(); else pl.active = false; } }
+}
+
+// Loses freedom, not life. Whoever calls this decides what happens to the office.
+export function sideline(w, ch, fate = 'imprisoned') {
+  ch.status = fate; ch.alive = true; ch.heldSince = w.turn;
+  stripPosts(w, ch); leavePlots(w, ch);
+}
+
+// Imprisoned or exiled: the seat they held is filled by the country's own rule.
+export function neutralize(w, ch, fate = 'imprisoned', how) {
+  if (fate === 'dead') return die(w, ch, how ?? 'was killed');
+  const c = w.countries[ch.country], wasLeader = c?.alive && c.leader === ch.id;
+  sideline(w, ch, fate);
+  if (c?.alive) { if (wasLeader) succeed(w, c, ch); else replaceSlot(w, c, ch); }
+}
+
+// The one way out of the world, whatever the cause: the record is written, posts fall vacant, the seat is filled.
+export function die(w, ch, how = 'died', { quiet = false, shock = 0 } = {}) {
+  if (!ch?.alive) return;
+  const c = w.countries[ch.country], wasLeader = c?.alive && c.leader === ch.id;
+  ch.alive = false; ch.status = 'dead'; ch.death = { turn: w.turn, how }; delete ch.condition;
+  stripPosts(w, ch); leavePlots(w, ch);
+  if (!c?.alive) return;
+  if (!quiet) news(w, `${c.name}: ${ch.name} ${how}, aged ${ch.age}.`, { kind: 'politics', countries: [c.id] });
+  if (wasLeader) succeed(w, c, ch, shock); else replaceSlot(w, c, ch);
 }
 
 export function startCivilWar(w, c, leaderCh, label, seedProvinces = []) {
@@ -156,9 +228,10 @@ export function plotStep(w) {
     const leak = clamp(.03 + pl.members.length * .05 + (c.police + c.intelligence) / 100 * .1 - pl.secrecy * .12, .02, .75);
     if (!pl.exposed && rand(w) < leak) {
       pl.exposed = true;
-      const leader = w.characters[c.leader];
-      leader.inbox.push({ turn: w.turn, from: 'Intelligence', text: `Preparations for the ${pl.kind} plot have leaked. The suspected ringleader: ${lead.name}. Plot no: ${pl.id}.` });
-      news(w, `In ${c.name}, preparations for a ${pl.kind} plot around ${lead.name} have reached the intelligence service.`, { kind: 'plot', countries: [c.id], secret: true });
+      // The leak reaches whoever the plot is aimed at: the ruler, or the person marked for death.
+      const victim = pl.kind === 'assassination' ? w.characters[pl.target] : null, warned = victim?.alive && victim.id !== c.leader ? victim : w.characters[c.leader];
+      if (warned?.alive && warned.id !== lead.id) warned.inbox.push({ turn: w.turn, from: victim && warned.id === victim.id ? 'A warning' : 'Intelligence', text: victim && warned.id === victim.id ? `There is a plot against your life. The name behind it is said to be ${lead.name}.` : `Preparations for the ${pl.kind} plot have leaked. The suspected ringleader: ${lead.name}. Plot no: ${pl.id}.` });
+      news(w, `In ${c.name}, preparations for a ${pl.kind} plot around ${lead.name} have leaked.`, { kind: 'plot', countries: [c.id], secret: true });
     }
   }
 }
@@ -183,18 +256,35 @@ export function executePlot(w, pl) {
   const target = w.characters[c.leader];
   const surprise = pl.exposed ? .65 : 1.2;
   if (pl.kind === 'assassination') {
-    const p = clamp(.18 + pl.progress / 220 - c.police / 300 - (pl.exposed ? .2 : 0), .03, .8);
-    if (rand(w) < p) {
-      target.alive = false; target.status = 'dead';
-      news(w, `${c.name} leader ${target.name} died by assassination.`, { kind: 'plot', countries: [c.id] });
-      const s = successor(w, c, target.id);
-      if (s) installLeader(w, c, s); c.legitimacy = clamp(c.legitimacy - 16, 0, 100);
-      return 'The assassination succeeded.';
+    // Anyone can be marked: a ruler, a rival, a prisoner, someone abroad. The guard around them, the preparation and luck decide.
+    const victim = w.characters[pl.target]?.alive ? w.characters[pl.target] : target;
+    if (!victim?.alive || victim.id === lead.id) return 'There is no one left to strike at.';
+    const home = w.countries[victim.country]?.alive ? w.countries[victim.country] : c, head = home.leader === victim.id, abroad = home.id !== c.id;
+    const guard = (head ? .05 + home.police / 300 : victim.status === 'imprisoned' ? -.1 : home.police / 600) + (abroad ? .1 : 0);
+    const p = clamp(.18 + pl.progress / 220 - guard - (pl.exposed ? .2 : 0), .03, .8), roll = rand(w);
+    const outcome = roll < p * .65 ? 'killed' : roll < p ? 'wounded' : 'missed';
+    const traced = rand(w) < clamp((outcome === 'killed' ? .2 : .45) + home.police / 250 - pl.secrecy * .3, .05, .9);
+    for (const x of inPlot) mark(w, x, `Took part in the attempt on the life of ${victim.name}.`);
+    const hand = traced ? ` The trail led to ${lead.name}${abroad ? ` of ${c.name}` : ''}.` : ' Who sent the killer is not known.', seen = [home.id, ...(abroad && traced ? [c.id] : [])];
+    // A plotter who is found out is seized before anyone can profit from the deed, unless the plotter is the state itself.
+    const ruler = home.leader === lead.id;
+    if (traced && !abroad && !ruler) sideline(w, lead, 'imprisoned');
+    if (outcome === 'killed') {
+      news(w, `${home.name}: ${victim.name} was killed by an assassin.${hand}`, { kind: 'plot', countries: seen });
+      die(w, victim, 'was killed by an assassin', { quiet: true, shock: head ? 8 : 0 });
+    } else {
+      if (outcome === 'wounded') afflict(w, victim, 'wound', rand(w) < .4 ? 3 : 2, 'an assassin');
+      news(w, `${home.name}: ${victim.name} ${outcome === 'wounded' ? 'was wounded in' : 'survived'} an attempt on their life.${hand}`, { kind: 'plot', countries: seen });
+      if (head && outcome === 'missed') home.legitimacy = clamp(home.legitimacy + 3, 0, 100);
     }
-    neutralize(w, lead, 'dead');
-    news(w, `An assassination attempt on the leader of ${c.name} failed.`, { kind: 'plot', countries: [c.id] });
-    c.legitimacy = clamp(c.legitimacy + 3, 0, 100);
-    return 'The assassination failed.';
+    if (traced && !abroad && !ruler && lead.country === home.id) replaceSlot(w, home, lead);
+    if (traced && ruler) { home.legitimacy = clamp(home.legitimacy - 7 * (.4 + home.pressFreedom / 100), 0, 100); home.mods.push({ key: 'unrest', delta: clamp(victim.power / 12, 1, 6), turns: 3, label: `The attempt on ${victim.name}` }); }
+    if (traced && abroad) {
+      home.relations[c.id] = clampRel((home.relations[c.id] ?? 0) - (c.leader === lead.id ? 60 : 25));
+      const told = w.characters[home.leader];
+      if (told?.alive) told.inbox.push({ turn: w.turn, from: 'Investigators', text: `The attempt on ${victim.name} was traced to ${lead.name} (${lead.id}) of ${c.name}.` });
+    }
+    return outcome === 'killed' ? `${victim.name} was killed.${hand}` : outcome === 'wounded' ? `${victim.name} was wounded but lives.${hand}` : `The attempt on ${victim.name} failed.${hand}`;
   }
   if (pl.kind === 'uprising') {
     if (!canSplit(w, c)) { neutralize(w, lead, 'imprisoned'); news(w, `In ${c.name}, an armed uprising was put down before it could take root.`, { kind: 'plot', countries: [c.id] }); return 'Not enough ground for an uprising.'; }
@@ -209,10 +299,12 @@ export function executePlot(w, pl) {
   const r = att / Math.max(def, 1);
   if (r > 1.12) {
     news(w, `Coup in ${c.name}: ${target.name} was overthrown and ${lead.name} took power.`, { kind: 'plot', countries: [c.id] });
-    neutralize(w, target, 'exiled');
+    sideline(w, target, 'exiled');
     const military = lead.role === 'general';
-    installLeader(w, c, lead, military ? { regime: 'Military junta', elections: false, pressFreedom: Math.min(c.pressFreedom, 25) } : {});
-    c.legitimacy = clamp(c.legitimacy - 14, 0, 100);
+    installLeader(w, c, lead, military ? { regime: 'Military junta', elections: false, succession: 'army', pressFreedom: Math.min(c.pressFreedom, 25) } : { succession: c.elections ? c.succession : 'open' });
+    lead.rise = `Seized power in ${w.date ?? 'the first days'} by overthrowing ${target.name}.`;
+    // Those who take the palace by force do not inherit what the old order stood on.
+    c.legitimacy = clamp(c.legitimacy - 14, 0, 100); c.legitBase = Math.min(c.legitBase ?? 0, 0);
     return 'The coup succeeded.';
   }
   if (r > .92 && canSplit(w, c)) {
@@ -228,14 +320,17 @@ export function executePlot(w, pl) {
 
 export function uprisingStep(w) {
   for (const c of aliveCountries(w)) {
-    const hot = countryProvinces(w, c.id).filter(p => p.unrest > 62);
+    const provs = countryProvinces(w, c.id), people = sum(provs, provincePop) || 1, hot = provs.filter(p => p.unrest > 62);
     for (const p of hot) if (rand(w) < .3) {
       p.devastation = clamp(p.devastation + .06, 0, 1);
       for (const k of CLASSES) p.pops[k].n *= .996;
-      news(w, `${p.name}: mass uprising, fighting in the streets.`, { kind: 'disaster', countries: [c.id] });
-      c.legitimacy = clamp(c.legitimacy - 1.5, 0, 100);
+      // A rising that has been fought out leaves the province spent for a while, whatever it still feels.
+      p.unrest = clamp(p.unrest - 14, 0, 100);
+      news(w, `${p.name}: mass uprising, fighting in the streets.`, { kind: 'disaster', countries: [c.id], hush: true });
+      // A rising in a remote valley shakes the government less than one in a great city.
+      c.legitimacy = clamp(c.legitimacy - clamp(provincePop(p) / people * 20, .3, 2.5), 0, 100);
     }
-    const total = countryProvinces(w, c.id).length;
+    const total = provs.length;
     if (canSplit(w, c) && hot.length >= Math.ceil(total * .5) && rand(w) < .14) {
       const oppId = c.opposition, opp = w.characters[oppId];
       const minority = sum(hot, p => minorityShare(p, c)) > hot.length / 2;
@@ -279,10 +374,11 @@ export function electionStep(w) {
     } else {
       news(w, `${c.name} election: ${opp.name} won; ${inc.name} lost power (${Math.round(100 - share)}%).`, { kind: 'politics', countries: [c.id] });
       const prev = inc.id;
-      installLeader(w, c, opp);
-      const ex = w.characters[prev]; ex.role = 'opposition'; ex.loyalty = 40; const slotted = c.opposition;
-      if (w.characters[slotted]) { w.characters[slotted].alive = false; w.characters[slotted].status = 'retired'; }
+      // The two change places: the winner governs, the loser leads the opposition. No one else appears.
+      installLeader(w, c, opp, null, true);
+      const ex = w.characters[prev]; ex.role = 'opposition'; ex.loyalty = 40;
       c.opposition = prev; c.legitimacy = clamp(c.legitimacy + 10 * fairness, 0, 100);
+      opp.rise = `Won the election of ${w.date ?? 'the first days'} against ${ex.name}.`;
       c.axes = { ...opp.axes };
       c.rulingParty = [...c.parties].filter(p => !p.banned && p.id !== c.rulingParty).sort((a, b) => b.support - a.support)[0]?.id ?? c.rulingParty;
     }
@@ -290,21 +386,14 @@ export function electionStep(w) {
 }
 
 export function lifeStep(w) {
+  // Most deaths come through illness, which everyone can watch coming.
+  healthStep(w, die);
   if (w.turn % 4 !== 3) return;
   for (const ch of Object.values(w.characters)) {
     if (!ch.alive) continue;
     ch.age = (ch.age ?? 50) + 1;
-    if (rand(w) >= clamp(Math.pow(Math.max(0, ch.age - 45) / 45, 3) * .35, .002, .6)) continue;
-    const c = w.countries[ch.country];
-    ch.alive = false; ch.status = 'dead';
-    if (!c?.alive) continue;
-    news(w, `${c.name}: ${ch.name} died at the age of ${ch.age}.`, { kind: 'politics', countries: [c.id] });
-    if (c.leader === ch.id) {
-      const s = successor(w, c, ch.id);
-      if (s) { installLeader(w, c, s); c.legitimacy = clamp(c.legitimacy - 9, 0, 100); news(w, `${s.name} took over the government of ${c.name}; a power vacuum is being debated.`, { kind: 'politics', countries: [c.id] }); }
-      else { const n = spawnCharacter(w, c.id, 'leader', c.axes); c.leader = n.id; }
-    } else replaceSlot(w, c, ch);
-    for (const pl of w.plots) { pl.members = pl.members.filter(x => x !== ch.id); if (pl.active && pl.leader === ch.id) pl.active = false; }
+    // The rest is the stroke, the fall, the heart that stops without warning.
+    if (rand(w) < clamp(Math.pow(Math.max(0, ch.age - 45) / 45, 3) * .1, .001, .25)) die(w, ch, 'died suddenly');
   }
 }
 

@@ -172,12 +172,12 @@ function stateChanges(w, was) {
   return out;
 }
 
-const NEWS_IMP = { plot: 2, disaster: 1, war: 1 };
+const NEWS_IMP = { atrocity: 3, plot: 2, disaster: 1, war: 1 };
 
 export function buildEntries(w, log, before, lookups = {}) {
   const out = [];
   for (const x of log.trace || []) {
-    out.push({ k: 'thought', s: x.ai ? 'agent' : 'rule', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, text: cut(x.monologue), x: { persona: cut(x.persona, 900), decisions: x.decisions || [], lookups: x.lookups || [], ai: x.ai, notes: x.notes || '' } });
+    out.push({ k: 'thought', s: x.ai ? 'agent' : 'rule', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, text: cut(x.monologue), x: { persona: cut(x.persona, 900), decisions: x.decisions || [], lookups: x.lookups || [], ai: x.ai, model: x.model ?? null, standing: x.standing ?? null, notes: x.notes || '' } });
     for (const q of lookups[x.actor] || []) out.push({ k: 'query', s: 'agent', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, q: q.q, text: cut(q.a, MAX_ANSWER) });
   }
   for (const m of log.messages || []) out.push({ k: 'message', s: 'agent', n: m.fromName, to: m.toName, c: [m.fromCountry, m.toCountry].filter(Boolean), a: [m.from, m.toActor].filter(Boolean), imp: 0, ok: !m.undelivered, text: cut(m.text), x: { read: !!m.read, round: m.round ?? 0 } });
@@ -197,7 +197,7 @@ export function buildEntries(w, log, before, lookups = {}) {
 export function logFromEntries(entries) {
   const log = { trace: [], rulings: [], messages: [] };
   for (const e of entries) {
-    if (e.k === 'thought') log.trace.push({ actor: e.a[0], country: e.c[0], role: e.r, name: e.n, ai: e.x.ai, persona: e.x.persona, lookups: e.x.lookups, monologue: e.text, decisions: e.x.decisions, messages: [] });
+    if (e.k === 'thought') log.trace.push({ actor: e.a[0], country: e.c[0], role: e.r, name: e.n, ai: e.x.ai, model: e.x.model, standing: e.x.standing, persona: e.x.persona, lookups: e.x.lookups, monologue: e.text, decisions: e.x.decisions, messages: [] });
     else if (e.k === 'ruling' || e.k === 'rule') log.rulings.push({ actor: e.a[0], name: e.n, country: e.c[0], role: e.r, narrative: e.x.narrative, probability: e.x.probability, success: e.x.success, results: e.x.results, source: e.s, decision: e.x.decision });
     else if (e.k === 'message') log.messages.push({ from: e.a[0], fromName: e.n, fromCountry: e.c[0], toName: e.to, text: e.text, undelivered: e.ok === false, read: !!e.x?.read, round: e.x?.round ?? 0 });
   }

@@ -1,7 +1,7 @@
 import { clamp, sum, news, between, rand } from './util.js';
 import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_LABEL, PLANTS, TECHS, countryProvinces, provincePop, aliveCountries, atWar, hasTreaty } from './world.js';
 import { migrate } from './culture.js';
-import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep } from './money.js';
+import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding } from './money.js';
 
 export const RECIPE = {
   steel: { iron: 1, coal: .8 }, fuel: { oil: 1.25 }, fertilizer: { phosphate: 1, coal: .2 },
@@ -78,7 +78,7 @@ function weatherStep(w) {
     const region = [core, ...core.neighbors.map(n => w.provinces[n])];
     const kind = rand(w) < .7 ? 'drought' : 'flood';
     region.forEach(p => p.weather *= kind === 'drought' ? .55 : .7);
-    news(w, `${core.name} region hit by ${kind}: the harvest fell sharply.`, { kind: 'disaster', countries: [core.controller] });
+    news(w, `${core.name} region hit by ${kind}: the harvest fell sharply.`, { kind: 'disaster', countries: [core.controller], hush: true });
   }
   for (const p of Object.values(w.provinces)) p.waterPenalty = 0;
   for (const p of Object.values(w.provinces)) if (p.dam) { let q = p.downstream ? w.provinces[p.downstream] : null, f = .3, n = 0; while (q && n++ < 12) { q.waterPenalty += f; f *= .8; q = q.downstream ? w.provinces[q.downstream] : null; } }
@@ -154,7 +154,8 @@ function trade(w, cs) {
       if (!tot) continue;
       for (const a of acc) {
         const landed = price * a.r.cost * (1 + (b.c.tariffDeals?.[a.x.c.id] ?? b.c.tariff) * .3);
-        const q = Math.min(a.x.s, b.d * wgt(a) / tot, Math.max(0, b.c.reserves) / landed);
+        // Gold owed to foreign creditors this quarter is not spent on imports: the debt is served first, and imports shrink instead.
+        const q = Math.min(a.x.s, b.d * wgt(a) / tot, Math.max(0, b.c.reserves - (b.c._debtService || 0)) / landed);
         if (q <= 0) continue;
         const v = q * price; a.x.s -= q; b.d -= q; moved += q; a.x.c.lastSold[g] = (a.x.c.lastSold[g] || 0) + q;
         // Freight goes to the exporter, customs to the buyer's own treasury: gold does not vanish from the world.
@@ -216,8 +217,9 @@ function consume(w, c, prev) {
   c.stock.coal = Math.max(0, c.stock.coal - c._pop * .001);
   if (hasTech(c, 'combustion_engine')) { c.fuelRatio = clamp(c.stock.fuel / Math.max(n.fuel, .1), 0, 1.2); c.stock.fuel = Math.max(0, c.stock.fuel - c._pop * .0006); } else c.fuelRatio = 1;
   const rawV = sum(RAW, g => c._raw[g] * BASE_PRICE[g]), madeV = sum(Object.keys(RECIPE), g => (c._made[g] || 0) * BASE_PRICE[g] * .45);
-  const real = rawV + madeV + c._services, g = prev > 0 ? real / prev - 1 : 0;
-  c.realGdp = real; c.growth = g;
+  // The first quarter has no measured past to compare with, so it counts as no growth rather than a boom or a slump.
+  const real = rawV + madeV + c._services, g = prev > 0 && c._measured ? real / prev - 1 : 0;
+  c._measured = true; c.realGdp = real; c.growth = g;
   const prevM = c._lastMoney ?? c.money, mg = prevM > 0 ? c.money / prevM - 1 : 0; c._lastMoney = c.money;
   const shortage = Math.max(0, 1 - Math.min(c.foodRatio, 1)) * .55 + Math.max(0, 1 - Math.min(consumer, 1)) * .25 + (hasTech(c, 'combustion_engine') ? Math.max(0, 1 - Math.min(c.fuelRatio, 1)) * .18 : 0);
   // Scarcity raises prices once; sustained inflation needs worsening scarcity or money growth.
@@ -238,36 +240,58 @@ function consume(w, c, prev) {
 }
 
 function fiscal(w, c) {
-  const eff = clamp((.4 + c.bureaucracy / 120) * (1 - c.corruption / 130) * (1 - c.unrest / 400) * (c._adminFactor ?? 1), .2, 1);
+  const eff = clamp((.4 + c.bureaucracy / 120) * (1 - c.corruption / 130) * (1 - (c.unrest ?? 0) / 400) * (c._adminFactor ?? 1), .2, 1);
   const land = c._raw.grain * 10 * c.priceLevel * c.tax.land, business = (sum(RAW.filter(g => g !== 'grain'), g => c._raw[g] * BASE_PRICE[g]) + sum(Object.keys(RECIPE), g => (c._made[g] || 0) * BASE_PRICE[g] * .45)) * c.priceLevel * c.tax.business;
   const revenue = (c.gdp * .45 * c.tax.income + land + business + (c._imports || 0) * c.priceLevel * c.tariff) * eff + (c._tolls || 0) * c.priceLevel;
   const b = c.budget, programs = (b.military + b.welfare + b.infrastructure + b.education + b.police + b.administration) * c.gdp;
-  c.interestRate = clamp(.012 + Math.max(0, c.debt / Math.max(c.gdp * 4, 1) - .5) * .05 + c.inflation * .6 + (c.defaulted ? .04 : 0) + (c.bankHealth < 30 ? .02 : 0), .005, .35);
+  // Standing institutions are part of the budget: a state that founds many of them pays for them every quarter.
+  const agencies = sum((c.institutions || []).filter(i => i.id && !i.sponsor), i => i.budget || 0) * c.gdp;
+  // Lenders price in the inflation they have come to expect, not one quarter's jump.
+  c.inflTrend = (c.inflTrend ?? Math.max(0, c.inflation)) * .8 + Math.max(0, c.inflation) * .2;
+  c.interestRate = sovereignRate(c);
   let interest = c.debt * c.interestRate;
   // External debt is in gold: when the currency falls, the same interest costs the budget more.
   const external = sum(Object.values(c.creditors), x => x), extRate = foreignRate(c, external); let extDue = 0, extPaid = 0;
   for (const [cid, amt] of Object.entries(c.creditors)) if (w.countries[cid]?.alive) { const due = amt * extRate, pay = Math.min(Math.max(c.reserves, 0), due); c.reserves -= pay; w.countries[cid].reserves += pay; extDue += due; extPaid += pay; }
   interest += extPaid * (c.rate || 1);
-  c.foreignRate = extRate;
+  c.foreignRate = extRate; c._debtService = extDue;
   c.extArrears = extDue > 0 && extPaid < extDue * .5 ? (c.extArrears || 0) + 1 : Math.max(0, (c.extArrears || 0) - 1);
   if (c.extArrears >= 4) declareDefault(w, c, 'declared it cannot pay its external debt');
-  const need = programs + interest; let cash = c.treasury + revenue, paid = 1;
+  const need = programs + agencies + interest; let cash = c.treasury + revenue, paid = 1, borrowed = 0;
   if (cash >= need) cash -= need;
   else {
-    const gap = need - cash, capacity = Math.max(0, c.gdp * 4 * (1.1 + c.legitimacy / 100) - c.debt), borrow = Math.min(gap, c.defaulted ? capacity * .1 : capacity * .35);
-    c.debt += borrow; cash += borrow;
-    if (cash < need) {
+    // A deficit is covered by borrowing for as long as lenders agree; after that wages and bills go unpaid.
+    borrowed = Math.min(need - cash, creditLeft(c));
+    c.debt += borrowed; cash += borrowed;
+    if (cash < need - 1e-9) {
       paid = need > 0 ? clamp(cash / need, 0, 1) : 1; cash = 0; c.arrears = clamp(c.arrears + (1 - paid), 0, 6);
-      if (paid < .55 && !c.defaulted && c.debt > c.gdp * 4 * .9) declareDefault(w, c, 'declared it cannot pay its debts');
+      if (paid < .55 && c.debt > c.gdp * 4 * .9) declareDefault(w, c, 'declared it cannot pay its debts');
     } else { cash -= need; c.arrears = Math.max(0, c.arrears - .5); }
   }
   c.treasury = cash; if (paid === 1) c.arrears = Math.max(0, c.arrears - .5);
+  creditStanding(w, c, paid === 1);
   c.lastRevenue = revenue; c.lastSpending = need * paid; c.paidRatio = paid;
-  c.bureaucracy = clamp(c.bureaucracy + (b.administration * paid - .018) * 60 - (paid < .8 ? 1 : 0), 10, 95);
-  c.police = clamp(c.police + (b.police * paid - .011) * 200, 5, 95);
-  c.corruption = clamp(c.corruption + (paid < .8 ? 1.2 : -.1) + (c.pressFreedom < 30 ? .25 : -.05) - (c.courts - 45) * .004, 2, 95);
-  c.literacy = clamp(c.literacy + (b.education * paid - .015) * 25, 5, 99);
+  c.lastBalance = revenue - need; c.lastInterest = interest; c.lastAgencies = agencies; c.lastBorrowed = borrowed + (c._loans || 0); c._loans = 0;
+  // State capacity has a running cost that grows with its level: what is spent decides where it settles, so a poor state stays small instead of decaying forever.
+  c.bureaucracy = clamp(c.bureaucracy + (capacityFor(b.administration * paid) - c.bureaucracy) * .06 - (paid < .8 ? 1 : 0), 10, 95);
+  c.police = clamp(c.police + (policeFor(b.police * paid) - c.police) * .08, 5, 95);
+  // Corruption settles where the press, the courts and unpaid officials leave it.
+  // Each country starts at rest with the habits it inherited; from there a freer press and stronger courts pull corruption down, and their loss lets it grow.
+  const open = c.pressFreedom * .3 + c.courts * .35;
+  c.graftBase ??= c.corruption + open;
+  c.corruption = clamp(c.corruption + (clamp(c.graftBase - open + (paid < .8 ? 15 : 0), 5, 90) - c.corruption) * .03, 2, 95);
+  // Intelligence work grows out of the police; whatever the state built on top of that stays on top.
+  c.intelBase ??= c.intelligence - c.police * .5;
+  c.intelligence = clamp(c.intelligence + (clamp(c.intelBase + c.police * .5, 5, 95) - c.intelligence) * .03, 0, 100);
+  // Schools add readers quickly; a starved school system loses them only as the old die.
+  const school = (b.education * paid - .015) * 25;
+  c.literacy = clamp(c.literacy + (school < 0 ? school * .2 : school), 5, 99);
 }
+// The level of administration or policing that a given share of GDP sustains, and the share that a given level costs.
+export const capacityFor = share => clamp(10 + share * 2400, 10, 95);
+export const policeFor = share => clamp(5 + share * 3200, 5, 95);
+export const costOfCapacity = level => Math.max(0, level - 10) / 2400;
+export const costOfPolice = level => Math.max(0, level - 5) / 3200;
 
 function demography(w, c) {
   const provs = countryProvinces(w, c.id), gap = Math.max(0, 1 - c.foodRatio); let starved = 0, fled = 0;
@@ -323,7 +347,7 @@ function epidemicStep(w) {
   if (rand(w) < .05 + sum(aliveCountries(w), c => c.starved > 30 ? .03 : 0)) {
     const ps = Object.values(w.provinces), start = ps[Math.floor(rand(w) * ps.length)];
     w.epidemics.push({ name: 'Epidemic', active: true, start: w.turn, provinces: { [start.id]: .5 } });
-    news(w, `A contagious epidemic broke out in ${start.name}.`, { kind: 'disaster', countries: [start.controller] });
+    news(w, `A contagious epidemic broke out in ${start.name}.`, { kind: 'disaster', countries: [start.controller], hush: true });
   }
   for (const e of w.epidemics.filter(x => x.active)) {
     const next = {};

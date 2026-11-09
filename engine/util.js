@@ -12,6 +12,7 @@ export const between = (w, a, b) => a + rand(w) * (b - a);
 export const pick = (w, xs) => xs[Math.floor(rand(w) * xs.length)];
 export const nextId = (w, p) => `${p}${++w.seq}`;
 export function news(w, text, opts = {}) {
-  w.newsThisTurn.push({ turn: w.turn, text, kind: opts.kind || 'general', countries: opts.countries || [], secret: !!opts.secret });
+  // hush: the kind of bad news from the provinces that a gagged press does not print.
+  w.newsThisTurn.push({ turn: w.turn, text, kind: opts.kind || 'general', countries: opts.countries || [], secret: !!opts.secret, ...(opts.hush ? { hush: true } : {}) });
 }
 export const quarterLabel = t => `Q${(t % 4) + 1} ${1900 + Math.floor(t / 4)}`;

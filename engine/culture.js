@@ -49,6 +49,21 @@ export function migrate(from, to, rate) {
   normalize(to);
 }
 
+// Takes part of the people who match out of a province, whatever the cause, and returns how many thousand of each group went.
+export function removePeople(p, match, share) {
+  const gone = groupsOf(p).filter(match).map(g => ({ eth: g.eth, rel: g.rel, people: provincePop(p) * g.share * share })), total = gone.reduce((a, g) => a + g.people, 0), pop = provincePop(p);
+  if (total <= 0 || pop <= 0) return [];
+  for (const k of Object.keys(p.pops)) p.pops[k].n = Math.max(1, p.pops[k].n * (1 - total / pop));
+  if (p.groups?.length) { for (const g of p.groups) if (match(g)) g.share *= 1 - share; if (p.groups.some(g => g.share > 0)) normalize(p); }
+  return gone;
+}
+// The same people arriving somewhere else.
+export function settlePeople(to, eth, rel, people) {
+  const pop = Math.max(provincePop(to), 1);
+  for (const k of Object.keys(to.pops)) to.pops[k].n *= 1 + people / pop;
+  if (to.groups) { for (const g of to.groups) g.share *= pop / (pop + people); add(to, eth, rel, people / (pop + people)); normalize(to); }
+}
+
 const DRIFT = { assimilate: .0025, tolerate: .0004, autonomy: 0 }, FAITH_DRIFT = { state: .002, tolerate: .0003, secular: 0 };
 
 export function cultureStep(w) {

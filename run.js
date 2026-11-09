@@ -28,6 +28,9 @@ if (flag('roles')) {
   if (bad.length) { console.error(`Unknown character: ${bad.join(', ')}. Options: ${ROLES.join(', ')}`); process.exit(1); }
 }
 
+// --cast opus,sonnet,haiku deals these models round the characters; --cast none goes back to one model for leaders and one for the rest.
+if (flag('cast')) cfg.models.cast = flag('cast') === 'none' ? [] : String(flag('cast')).split(',').map(s => s.trim()).filter(Boolean);
+
 const baseDir = cfg.saveDir || path.join(os.homedir(), 'ajan-dunyasi-kayitlar');
 const dir = path.join(baseDir, cfg.runName);
 if (flag('new') && fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
@@ -106,6 +109,7 @@ async function main() {
   server.listen(cfg.port, '127.0.0.1', () => console.log(`Panel: http://localhost:${cfg.port}`));
   const c = Object.values(world.countries)[0];
   console.log(`Backend: ${cfg.backend}. AI characters: ${[...rolesFor(cfg, c)].join(', ') || 'none (all play by rules)'}.`);
+  console.log(cfg.models.cast?.length ? `Models dealt round the characters: ${cfg.models.cast.join(', ')}. Referee: ${cfg.models.referee}.` : `Models: leaders ${cfg.models.leader}, others ${cfg.models.secondary}, referee ${cfg.models.referee}.`);
   console.log(`Saves: ${dir}`);
   if (cfg.backend === 'claude') {
     try { await checkClaude(); console.log('Claude connection is ready.'); }

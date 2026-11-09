@@ -128,7 +128,7 @@ await lookups();
 
 const counting = async () => {
   const cfg = { ...base, agentRoles: ['leader'] }; const w = createWorld(cfg); let calls = 0;
-  const backend = { kind: 'claude', async ask(p) { calls++; if (p.includes('rulings')) return { rulings: [] }; if (p.includes('"motto"')) return { name: 'Trial', regime: 'R', ideology: 'I', elections: false, identity: 'I am someone.' }; return { identity: 'K', inner_voice: 's', decisions: ['Proclaim a new lunar calendar'], messages: [], notes: 'n' }; } };
+  const backend = { kind: 'claude', async ask(p) { calls++; if (p.includes('rulings')) return { rulings: [{ actor: /DECISIONS:\n(K\d+) /.exec(p)[1], decision: 0, narrative: 'A calendar is proclaimed', probability: 1, operations: [] }] }; if (p.includes('"motto"')) return { name: 'Trial', regime: 'R', ideology: 'I', elections: false, identity: 'I am someone.' }; return { identity: 'K', inner_voice: 's', decisions: ['Proclaim a new lunar calendar'], messages: [], notes: 'n' }; } };
   const g = new Game({ world: w, cfg, backend, store: nullStore() });
   await g.turn(); assert.equal(calls, 0, 'states are inherited ready-made'); await g.turn();
   assert.equal(calls, 10); console.log('passed  One-character mode makes 5 agent and 5 referee calls per turn');
@@ -292,7 +292,7 @@ ok('Battles and technical errors are written to the ledger, the decision text is
   const list = buildEntries(w, { trace: [], messages: [], system: [{ name: 'referee', text: 'timeout' }], rulings: [{ actor: 'K1', name: 'A', country: 'U1', role: 'leader', narrative: 'n', probability: 1, success: true, results: [], source: 'referee', decisionText: 'Burn the bridge', ops: [] }] }, null);
   assert.ok(list.some(e => e.k === 'battle' && e.x.lossD === 9 && e.p === id)); assert.ok(list.some(e => e.k === 'system' && e.text === 'timeout')); assert.equal(list.find(e => e.k === 'ruling').x.decisionText, 'Burn the bridge');
 });
-const frontWorld = () => { const w = fresh(); run(w, 1); const a = w.countries.U1, p = countryProvinces(w, 'U1').find(q => q.id !== a.capital && q.neighbors.some(n => w.provinces[n].controller === 'U2')), q = w.provinces[p.neighbors.find(n => w.provinces[n].controller === 'U2')]; for (const u of Object.values(w.units)) if (['U1', 'U2'].includes(u.country)) delete w.units[u.id]; w.wars.push({ id: 'SF', a: ['U2'], b: ['U1'], civil: false, active: true, start: w.turn, name: 'F' }); return { w, a, b: w.countries.U2, p, q }; };
+const frontWorld = () => { const w = fresh(); run(w, 1); const a = w.countries.U1, p = countryProvinces(w, 'U1').find(q => q.id !== a.capital && q.neighbors.some(n => w.provinces[n].controller === 'U2')), q = w.provinces[p.neighbors.find(n => w.provinces[n].controller === 'U2')]; Object.assign(p, { terrain: 'plains', fort: 0, trench: 0, infra: .5, rail: 0 }); w.strategic = w.strategic.filter(s => s.ref !== p.id); for (const u of Object.values(w.units)) if (['U1', 'U2'].includes(u.country)) delete w.units[u.id]; w.wars.push({ id: 'SF', a: ['U2'], b: ['U1'], civil: false, active: true, start: w.turn, name: 'F' }); return { w, a, b: w.countries.U2, p, q }; };
 const soldier = (w, c, province, men = 100) => { const u = makeUnit(w, c, province, men, 1, 80); u.morale = 70; u.equip = 1; return u; };
 chain('Construction takes time, finishes, and is lost if the province falls', () => {
   const w = fresh(), c = w.countries.U1, p = countryProvinces(w, 'U1')[0], l = ld(w, c); c.treasury = c.gdp * 3; c.stock.machines = 100; const before = p.plants.steel;
@@ -664,4 +664,298 @@ await (async () => {
   assert.equal(prompts[2].split('Calendar adopted').length, 2, 'each wake-up brings only its own new outcome');
   console.log('passed  Chain: decision, ruling, next morning only the new outcome');
 })();
+
+// ---- Public money, bodies, succession and force
+import { ROLES } from '../engine/world.js';
+import { sovereignRate, creditLeft } from '../engine/money.js';
+import { costOfPolice } from '../engine/economy.js';
+import { die, neutralize, electionStep } from '../engine/politics.js';
+import { afflict, healthStep, incapacitated } from '../engine/health.js';
+import { upkeepCost } from '../engine/military.js';
+import { groupsOf } from '../engine/culture.js';
+import { moodRoom } from '../engine/ops.js';
+import { currentActors, seated } from '../agents/game.js';
+import { refereePrompt, frontPage } from '../agents/prompts.js';
+
+const popOf = p => Object.values(p.pops).reduce((a, x) => a + x.n, 0);
+const lean = { military: .01, welfare: .01, infrastructure: .01, education: .01, police: .01, administration: .01 };
+
+ok('A world with eight countries can be made: place names do not run out', () => {
+  const w = createWorld({ ...base, plainStates: false, countries: 8, provinces: 160, seed: 1848 });
+  assert.equal(aliveCountries(w).length, 8); assert.equal(new Set(Object.values(w.provinces).map(p => p.name)).size, Object.keys(w.provinces).length);
+  assert.equal(aliveCountries(createWorld({ ...base, plainStates: false, seed: 5 })).length, 5);
+});
+ok('The first quarter is an ordinary quarter: taxes come in and prices do not jump', () => {
+  const w = inherited(), first = {}; run(w, 1);
+  for (const c of aliveCountries(w)) first[c.id] = c.lastRevenue / c.gdp;
+  run(w, 1); for (const c of aliveCountries(w)) assert.ok(Math.abs(c.inflation) < .05, `${c.archetype} inflation ${c.inflation}`);
+  run(w, 2); for (const c of aliveCountries(w)) assert.ok(first[c.id] > c.lastRevenue / c.gdp * .7, `${c.archetype} first-quarter revenue ${first[c.id]} against ${c.lastRevenue / c.gdp}`);
+});
+ok('An inherited state left alone for three years neither soars nor collapses, and states do not all start in the same fiscal position', () => {
+  const balances = [];
+  for (const seed of [1848, 42, 7]) {
+    const w = inherited(seed), start = Object.fromEntries(aliveCountries(w).map(c => [c.id, c.legitimacy])); run(w, 12);
+    for (const c of aliveCountries(w)) { assert.ok(Math.abs(c.legitimacy - start[c.id]) < 22, `${c.archetype} ${start[c.id]} -> ${c.legitimacy}`); balances.push(c.lastBalance / c.gdp); }
+  }
+  assert.ok(balances.some(b => b > 0) && balances.some(b => b < -.03), `balances ${balances.map(b => b.toFixed(3)).join(' ')}`);
+});
+chain('A deficit is borrowed and the debt grows; a surplus fills the treasury; a heavier debt costs a higher rate', () => {
+  const w = fresh(), a = w.countries.U1, b = w.countries.U2;
+  a.budget.military = .2; a.treasury = 0; b.budget = { ...lean }; b.tax.income = .3;
+  const debt = a.debt, cash = b.treasury; run(w, 4);
+  assert.ok(a.lastBalance < 0 && a.lastBorrowed > 0 && a.debt > debt, `${a.lastBalance} ${a.lastBorrowed}`); assert.ok(b.lastBalance > 0 && b.treasury > cash, `${b.lastBalance}`);
+  const light = sovereignRate(a); a.debt = a.gdp * 4 * 2; assert.ok(sovereignRate(a) > light + .02, `${light} -> ${sovereignRate(a)}`);
+});
+chain('An empty treasury builds on credit, and when lenders refuse the work does not start', () => {
+  const w = fresh(), c = w.countries.U1, l = ld(w, c), p = countryProvinces(w, c.id)[0];
+  c.treasury = 0; c.stock.machines = 99; const debt = c.debt;
+  const r = applyOp(w, l, { op: 'build', province: p.id, kind: 'goods', pct_gdp: .03 });
+  assert.equal(r.ok, true, r.msg); assert.ok(/borrowed/.test(r.msg), r.msg); assert.ok(c.debt > debt);
+  c.debt = c.gdp * 4 * 5; assert.equal(creditLeft(c), 0);
+  const r2 = applyOp(w, l, { op: 'build', province: p.id, kind: 'goods', pct_gdp: .03 }); assert.equal(r2.ok, false); assert.ok(/lenders/.test(r2.msg), r2.msg);
+});
+chain('A standing institution is a budget line: it raises what the state must spend every quarter', () => {
+  const w = fresh(), c = w.countries.U1; run(w, 1); const before = (c.lastRevenue - c.lastBalance) / c.gdp;
+  applyOp(w, ld(w, c), { op: 'create_institution', name: 'Railway Board', budget_pct_gdp: .5, powers: ['industry'] });
+  assert.ok(c.institutions.at(-1).budget <= .02, 'one agency cannot swallow the budget');
+  run(w, 1); assert.ok(c.lastAgencies > c.gdp * .015, `${c.lastAgencies}`); assert.ok((c.lastRevenue - c.lastBalance) / c.gdp > before + .01);
+});
+chain('Spending decides where the bureaucracy settles; the press and the courts decide where corruption settles', () => {
+  const a = fresh(), b = fresh(), ca = a.countries.U1, cb = b.countries.U1;
+  ca.budget.administration = .034; cb.budget.administration = .004; ca.pressFreedom = ca.courts = 95; cb.pressFreedom = cb.courts = 5; run(a, 40); run(b, 40);
+  assert.ok(ca.bureaucracy > 78 && cb.bureaucracy < 32, `${ca.bureaucracy} / ${cb.bureaucracy}`); assert.ok(ca.corruption < cb.corruption - 15, `${ca.corruption} / ${cb.corruption}`);
+});
+chain('A decree moves moods only so far: repeating it adds nothing, and it cannot touch what the state is', () => {
+  const w = fresh(), twin = fresh(), c = w.countries.U1, l = ld(w, c), corruption = c.corruption, police = c.police;
+  for (let i = 0; i < 12; i++) applyOp(w, l, { op: 'custom', label: 'Day of national pride', effects: [{ stat: 'legitimacy', delta: 12, turns: 6 }, { stat: 'corruption', delta: -12 }, { stat: 'police', delta: 12 }, { stat: 'sat.all', delta: 12 }] });
+  const held = k => c.mods.filter(m => m.key === k).reduce((a, m) => a + m.delta, 0);
+  assert.ok(held('legitimacy') <= moodRoom(c, l, 'legitimacy') + 1e-9 && held('legitimacy') > 0); assert.ok(held('sat.all') <= moodRoom(c, l, 'sat.all') + 1e-9);
+  assert.equal(c.corruption, corruption); assert.equal(c.police, police);
+  assert.ok(moodRoom(c, w.characters[c.general], 'sat.all') < moodRoom(c, l, 'sat.all'), 'a lesser voice carries less far');
+  run(w, 8); run(twin, 8); assert.ok(c.legitimacy < twin.countries.U1.legitimacy + 6, `legitimacy cannot be talked up: ${c.legitimacy} / ${twin.countries.U1.legitimacy}`);
+});
+chain('A default writes the debt down and shuts the lenders out; years of paying in full bring them back', () => {
+  const w = fresh(), c = w.countries.U1, l = ld(w, c); c.budget = { ...lean }; c.tax.income = .3; const debt = c.debt, room = creditLeft(c);
+  assert.equal(applyOp(w, l, { op: 'default_debt' }).ok, true); assert.ok(c.defaulted && c.debt < debt * .6); assert.ok(creditLeft(c) < room * .5);
+  assert.equal(applyOp(w, l, { op: 'default_debt' }).ok, false, 'not twice in a row');
+  run(w, 20); assert.equal(c.defaulted, false, 'trust returns');
+});
+ok('Courts and the press can be broken in a day and take years to grow', () => {
+  const w = fresh(), c = w.countries.U1, l = ld(w, c); c.pressFreedom = 10; c.courts = 10;
+  const r = applyOp(w, l, { op: 'set_institutions', press_freedom: 90, courts: 90 }); assert.equal(c.pressFreedom, 25); assert.equal(c.courts, 25); assert.ok(/cannot be raised/.test(r.msg));
+  applyOp(w, l, { op: 'set_institutions', press_freedom: 0 }); assert.equal(c.pressFreedom, 0);
+});
+chain('Troops stationed in a restive province hold its streets; a gagged press lets the police hold the rest', () => {
+  const squeeze = w => { w.countries.U1.tax = { income: .6, land: .6, business: .6 }; return w; };
+  const a = squeeze(fresh()), b = squeeze(fresh()), spot = countryProvinces(a, 'U1').find(p => !Object.values(a.units).some(u => u.province === p.id));
+  makeUnit(a, 'U1', spot.id, 30); run(a, 6); run(b, 6);
+  assert.ok(a.provinces[spot.id].unrest < b.provinces[spot.id].unrest - 5, `${a.provinces[spot.id].unrest} / ${b.provinces[spot.id].unrest}`);
+  const x = squeeze(fresh()), y = squeeze(fresh());
+  for (const [w, press] of [[x, 5], [y, 95]]) { const c = w.countries.U1; c.pressFreedom = press; c.police = 80; c.budget.police = costOfPolice(80); }
+  run(x, 6); run(y, 6); assert.ok(x.countries.U1.unrest < y.countries.U1.unrest - 6, `${x.countries.U1.unrest} / ${y.countries.U1.unrest}`);
+});
+chain('An army the budget cannot pay wears away: morale falls and the officers grow bitter', () => {
+  const a = fresh(), b = fresh(), ca = a.countries.U1, cb = b.countries.U1, mean = (w, k) => { const us = Object.values(w.units).filter(u => u.country === 'U1'); return us.reduce((s, u) => s + u[k], 0) / us.length; };
+  ca.budget.military = upkeepCost(a, ca) / ca.gdp * .3; cb.budget.military = upkeepCost(b, cb) / cb.gdp * 1.1; run(a, 6); run(b, 6);
+  assert.ok(ca.militaryFunding < .7 && cb.militaryFunding > .9, `${ca.militaryFunding} / ${cb.militaryFunding}`);
+  assert.ok(mean(a, 'morale') < mean(b, 'morale') - 10, `${mean(a, 'morale')} / ${mean(b, 'morale')}`); assert.ok(ca.blocs.army.sat < cb.blocs.army.sat - 8);
+});
+chain('A grave wound takes a ruler out of the game without killing them; the gravely ill can die, and then the seat passes on', () => {
+  const w = fresh(), c = w.countries.U1, l = ld(w, c);
+  assert.equal(afflict(w, l, 'wound', 3, 'a fall'), false); assert.ok(incapacitated(l)); assert.ok(!currentActors(w).includes(l)); assert.ok(currentActors(w).includes(w.characters[c.general]));
+  assert.ok(frontPage(w, w.characters[c.general]).includes('is not governing'), 'the others are told');
+  assert.equal(afflict(w, l, 'wound', 4), true, 'the fourth degree is death, left to the caller');
+  l.age = 96; for (let i = 0; i < 80 && l.alive; i++) { beginTurn(w); healthStep(w, die); }
+  assert.equal(l.alive, false); assert.ok(l.death?.how); assert.notEqual(c.leader, l.id); assert.ok(w.characters[c.leader].alive);
+});
+chain('Command in battle is dangerous: a general at the front can be wounded or killed, and the army gets a new chief', () => {
+  const w = fresh(), a = w.countries.U1, b = w.countries.U2, p = countryProvinces(w, a.id)[0]; let hurt = 0, dead = 0;
+  w.wars.push({ id: 'S-test', a: [a.id], b: [b.id], civil: false, active: true, start: w.turn, name: 'Test war' });
+  for (let i = 0; i < 300 && !(hurt && dead); i++) {
+    for (const u of Object.values(w.units)) delete w.units[u.id];
+    const gen = w.characters[a.general]; delete gen.condition; makeUnit(w, a.id, p.id, 5).commander = gen.id; makeUnit(w, b.id, p.id, 80);
+    beginTurn(w); militaryStep(w);
+    if (!gen.alive) { dead++; assert.notEqual(a.general, gen.id); assert.ok(gen.death.how.includes('fell in battle')); } else if (gen.condition?.kind === 'wound') hurt++;
+  }
+  assert.ok(hurt > 0 && dead > 0, `${hurt} wounded, ${dead} dead`);
+});
+chain('Who rules next follows the kind of state: the army\'s chief, the blood line, an interim head and a vote, or the named successor', () => {
+  { const w = fresh(), c = w.countries.U1, old = ld(w, c), gen = c.general; c.succession = 'army'; die(w, old, 'died'); assert.equal(c.leader, gen); assert.notEqual(c.general, gen); assert.ok(w.characters[c.general].alive); assert.ok(w.characters[gen].rise.includes('army')); }
+  { const w = fresh(), c = w.countries.U1, old = ld(w, c), n = Object.keys(w.characters).length; c.succession = 'dynasty'; die(w, old, 'died'); const heir = ld(w, c); assert.equal(heir.name.split(' ').at(-1), old.name.split(' ').at(-1)); assert.ok(heir.age < old.age); assert.equal(Object.keys(w.characters).length, n + 1); assert.equal(w.characters[c.general].role, 'general', 'the general stays a general'); }
+  { const w = fresh(), c = w.countries.U1, old = ld(w, c); c.elections = true; c.nextElection = w.turn + 40; die(w, old, 'died'); assert.ok(c.nextElection <= w.turn + 2); assert.notEqual(c.leader, old.id); }
+  { const w = fresh(), c = w.countries.U1, old = ld(w, c), named = c.oligarch; c.succession = 'army'; assert.equal(applyOp(w, old, { op: 'designate_successor', character: named }).ok, true); neutralize(w, old, 'exiled'); assert.equal(c.leader, named); assert.equal(old.status, 'exiled'); assert.equal(c.heir, null); }
+});
+chain('An election swaps the two rivals and no one else appears', () => {
+  const w = fresh(), c = w.countries.U1, inc = c.leader, opp = c.opposition, living = () => Object.values(w.characters).filter(x => x.alive).length, n = living();
+  c.elections = true; c.nextElection = w.turn; c.pressFreedom = 100; c.rigging = 0; for (const p of c.parties) p.support = p.id === c.rulingParty ? 1 : 60;
+  beginTurn(w); electionStep(w);
+  assert.equal(c.leader, opp); assert.equal(c.opposition, inc); assert.equal(w.characters[inc].role, 'opposition'); assert.equal(living(), n); assert.ok(!Object.values(w.characters).some(x => x.status === 'retired'));
+});
+chain('Anyone can be marked for death: the killing leaves a trace and fills the seat, and a plotter who is found out is jailed', () => {
+  let killed = 0, wounded = 0, traced = 0;
+  for (let i = 0; i < 30; i++) {
+    const w = createWorld({ ...base, seed: 100 + i }); w.status = 'playing'; run(w, 1);
+    const c = w.countries.U1, gen = w.characters[c.general], victim = w.characters[c.oligarch], ruler = c.leader;
+    assert.equal(applyOp(w, gen, { op: 'start_plot', kind: 'assassination', character: victim.id, secrecy: .5 }).ok, true);
+    const pl = w.plots.at(-1); assert.equal(pl.target, victim.id); pl.progress = 100; executePlot(w, pl);
+    assert.equal(c.leader, ruler, 'the ruler was not the target'); assert.ok(gen.secrets.some(s => s.text.includes(victim.name)));
+    if (!victim.alive) { killed++; assert.equal(victim.death.how, 'was killed by an assassin'); assert.notEqual(c.oligarch, victim.id); assert.ok(w.characters[c.oligarch].alive); }
+    else if (victim.condition?.kind === 'wound') wounded++;
+    if (gen.status === 'imprisoned') { traced++; assert.notEqual(c.general, gen.id, 'a jailed general commands nothing'); }
+  }
+  assert.ok(killed >= 4 && wounded >= 1 && traced >= 3, `${killed} killed, ${wounded} wounded, ${traced} traced`);
+});
+chain('The state can jail, banish and execute: a prisoner can be put to death, the deed is on file, and no one is arrested twice', () => {
+  const w = fresh(), c = w.countries.U1, l = ld(w, c), opp = w.characters[c.opposition], olig = w.characters[c.oligarch]; c.courts = 0;
+  for (let i = 0; i < 30 && opp.status === 'free'; i++) applyOp(w, l, { op: 'purge', character: opp.id, fate: 'imprisoned' });
+  assert.equal(opp.status, 'imprisoned'); assert.notEqual(c.opposition, opp.id);
+  assert.equal(applyOp(w, l, { op: 'purge', character: opp.id, fate: 'imprisoned' }).ok, false, 'already in prison');
+  assert.equal(applyOp(w, l, { op: 'purge', character: opp.id, fate: 'dead' }).ok, true); assert.equal(opp.alive, false); assert.equal(opp.death.how, 'was executed');
+  assert.ok(l.secrets.some(s => s.text.includes(opp.name))); assert.ok(c.mods.some(m => m.key === 'unrest' && m.label.includes(opp.name)));
+  for (let i = 0; i < 30 && olig.status === 'free'; i++) applyOp(w, l, { op: 'purge', character: olig.id, fate: 'exiled' });
+  assert.equal(olig.status, 'exiled'); assert.equal(applyOp(w, l, { op: 'purge', character: olig.id, fate: 'imprisoned' }).ok, false, 'out of reach abroad');
+  assert.equal(applyOp(w, l, { op: 'release', character: olig.id }).ok, true); assert.equal(olig.status, 'free'); assert.notEqual(c.oligarch, olig.id, 'the seat is not handed back');
+});
+chain('Out of office a person keeps only what any private person has; prisoners keep less, and go on living', () => {
+  const w = fresh(), c = w.countries.U1, old = ld(w, c); old.everAI = true;
+  neutralize(w, old, 'imprisoned'); assert.notEqual(c.leader, old.id); assert.equal(old.role, 'former_leader');
+  assert.equal(applyOp(w, old, { op: 'set_tax', kind: 'income', rate: .5 }).ok, false); assert.equal(applyOp(w, old, { op: 'start_plot', kind: 'coup' }).ok, false);
+  assert.equal(applyOp(w, old, { op: 'custom', label: 'Hunger strike' }).ok, true);
+  assert.ok(currentActors(w).includes(old), 'a prisoner still acts'); assert.ok(!seated(w, old)); assert.ok(frontPage(w, old).includes('prisoner'));
+  assert.ok(answer(w, old, 'budget').includes('not open to you'), 'the papers of the office are closed to them');
+  old.status = 'free'; assert.equal(applyOp(w, old, { op: 'declare_war', target: 'U2' }).ok, false, 'a former ruler commands nothing'); assert.equal(applyOp(w, old, { op: 'start_plot', kind: 'coup' }).ok, true);
+});
+chain('Violence against a people: the dead and the driven-out are counted, the province changes, neighbours receive them, the army is marked, and it is not forgotten', () => {
+  const w = fresh(), c = w.countries.U1, l = ld(w, c), p = countryProvinces(w, c.id).find(x => x.neighbors.some(n => w.provinces[n].controller !== c.id)), q = w.provinces[p.neighbors.find(n => w.provinces[n].controller !== c.id)], o = w.countries[q.controller];
+  p.groups = [{ eth: c.majorityEth || 'Home', rel: c.majorityRel, share: .6 }, { eth: o.majorityEth, rel: o.majorityRel, share: .4 }]; q.groups = [{ eth: o.majorityEth, rel: o.majorityRel, share: 1 }];
+  for (const u of Object.values(w.units)) if (u.country === c.id) delete w.units[u.id]; c.police = 0;
+  const order = { op: 'persecute', province: p.id, group: o.majorityEth, method: 'expel', share: .5 };
+  assert.equal(applyOp(w, l, order).ok, false, 'no force on the spot');
+  const u = makeUnit(w, c.id, p.id, 40, 1, 100), before = { p: popOf(p), q: popOf(q), rel: o.relations[c.id] ?? 0, legit: c.legitimacy }; c.axes.auth = 100; beginTurn(w);
+  let r; for (let i = 0; i < 10 && !(r = applyOp(w, l, order)).ok; i++) u.loyalty = 100;
+  assert.equal(r.ok, true, r.msg);
+  assert.ok(popOf(p) < before.p * .9, 'the province is emptier'); assert.ok(popOf(q) > before.q, 'the neighbour receives them');
+  assert.ok(groupsOf(p).find(g => g.eth === o.majorityEth).share < .3, 'the makeup of the province changed');
+  assert.ok(u.morale < 65 && u.loyalty < 100, 'the army that did it is marked'); assert.ok(l.secrets.some(s => /expulsion/.test(s.text)), 'the order is on file'); assert.equal(p.scar?.by, c.id);
+  assert.ok(o.relations[c.id] < before.rel - 30, 'kin abroad turn hostile'); assert.ok(c.legitimacy < before.legit); assert.ok(w.characters[o.leader].inbox.some(m => m.from === 'Refugees and envoys'));
+  assert.ok(w.newsThisTurn.some(n => n.kind === 'atrocity' && !n.secret)); assert.ok(answer(w, l, 'history').includes(p.name), 'it enters the record');
+  const twin = structuredClone(w); delete twin.provinces[p.id].scar; run(w, 3); run(twin, 3);
+  assert.ok(w.provinces[p.id].unrest > twin.provinces[p.id].unrest + 2, `the province remembers: ${w.provinces[p.id].unrest} / ${twin.provinces[p.id].unrest}`);
+});
+chain('An offer stays on the desk: the character sees it each morning, the referee sees its number, it can be accepted without one, and it lapses if ignored', () => {
+  const w = fresh(), c = w.countries.U1, a = w.characters[c.oligarch], b = w.characters[c.general];
+  const first = applyOp(w, a, { op: 'propose_contract', to: b.id, terms: 'Guard my mines', pay_per_turn: 5, payer: 'me', turns: 8 }); b.inbox = [];
+  assert.ok(frontPage(w, b).includes(first.contract) && frontPage(w, b).includes('Guard my mines'));
+  const prompt = refereePrompt(w, c, [{ actor: b, decisions: ['I accept the offer'] }]);
+  assert.ok(prompt.includes(first.contract)); assert.ok(prompt.includes(countryProvinces(w, c.id)[0].name)); assert.ok(/B\d+ infantry \d+k at P\d+/.test(prompt), 'units come with their size and place');
+  const second = applyOp(w, a, { op: 'propose_contract', to: b.id, terms: 'Guard my mines, better pay', pay_per_turn: 8, payer: 'me', turns: 8 });
+  assert.equal(w.contracts.filter(k => k.status === 'proposed').length, 1, 'the new offer replaces the old');
+  assert.equal(applyOp(w, b, { op: 'accept_contract' }).ok, true); assert.equal(w.contracts.find(k => k.id === second.contract).status, 'active');
+  applyOp(w, a, { op: 'propose_contract', to: c.opposition, terms: 'Stay quiet', pay_per_turn: 1, payer: 'me', turns: 4 }); const idle = w.contracts.at(-1); run(w, 10); assert.equal(idle.status, 'lapsed');
+});
+
+await (async () => {
+  const cfg = { ...base, models: { leader: 'x', secondary: 'y', referee: 'ref', cast: ['opus', 'sonnet', 'haiku'], assign: { 'U2.general': 'pinned' } }, maxLookupRounds: 0, negotiationRounds: 0 }, w = createWorld(cfg), used = {}; w.status = 'playing';
+  const backend = { kind: 'claude', async ask(p, model) { if (p.includes('rulings')) { used.referee = model; return { rulings: [] }; } const m = /Your name: [^(]+\((K\d+)\)/.exec(p); if (m) used[m[1]] = model; return { decisions: ['Wait'], messages: [] }; } };
+  const g = new Game({ world: w, cfg, backend, store: memoryStore() }); await g.turn();
+  const seats = id => ROLES.map(r => w.characters[w.countries[id][r]]);
+  assert.equal(new Set(seats('U1').map(x => x.model)).size, 3, 'one country hears all three models'); assert.equal(new Set(['U1', 'U2', 'U3'].map(id => w.characters[w.countries[id].leader].model)).size, 3, 'the rulers are not all one model');
+  assert.equal(w.characters[w.countries.U2.general].model, 'pinned'); assert.equal(used.referee, 'ref');
+  for (const ch of seats('U1')) assert.equal(used[ch.id], ch.model, 'each is asked on their own model');
+  const heir = w.countries.U1.general, old = w.characters[w.countries.U1.leader], kept = w.characters[heir].model; w.countries.U1.succession = 'army'; die(w, old, 'died'); await g.turn();
+  assert.equal(w.characters[heir].model, kept, 'a person keeps their model when their seat changes'); assert.ok(w.characters[w.countries.U1.general].model, 'the newcomer gets one');
+  console.log('passed  Each character is played by their own model and keeps it for life');
+})();
+
+await (async () => {
+  const cfg = { ...base, agentRoles: ['leader', 'opposition'], maxLookupRounds: 0, negotiationRounds: 0, concurrency: 1 }, w = createWorld(cfg); w.status = 'playing';
+  const c = w.countries.U1, warden = w.characters[c.leader], prisoner = w.characters[c.opposition], friend = w.characters[w.countries.U2.leader]; let woke = 0;
+  prisoner.everAI = true; c.intelligence = 100; neutralize(w, prisoner, 'imprisoned');
+  const backend = { kind: 'claude', async ask(p) { if (p.includes('rulings')) return { rulings: [] }; if (p.includes(`Your name: ${prisoner.name}`)) { woke++; assert.ok(p.includes('prisoner of the state')); return { decisions: [], messages: [{ to: friend.id, text: 'Get me out of here.' }] }; } return { decisions: [], messages: [] }; } };
+  const g = new Game({ world: w, cfg, backend, store: memoryStore() }); let copied = false, reached = false;
+  for (let i = 0; i < 8 && !copied; i++) { prisoner.inbox.push({ turn: w.turn, from: 'A friend', text: 'Are you alive?' }); await g.turn(); copied = warden.inbox.some(m => m.from === 'Prison censor' && m.text.includes('Get me out')); reached ||= friend.inbox.some(m => m.text === 'Get me out of here.'); }
+  assert.ok(woke > 0, 'a prisoner still wakes'); assert.ok(reached, 'the letter is delivered'); assert.ok(copied, 'and the censor copies it for the ruler');
+  console.log('passed  Chain: a prisoner writes, the letter arrives, the censor reads it');
+})();
+
+// ---- Ego and freedom in the opening text, who can know what, and whether government matters
+import { news as writeNews } from '../engine/util.js';
+import { newsFor } from '../agents/queries.js';
+
+ok('The opening text gives every character an ego and every freedom, and no number to judge people by', () => {
+  const w = inherited(), l = ld(w, aliveCountries(w)[0]), first = actorPrompt(w, l, [], true, { intro: true }), later = actorPrompt(w, l, [], true, { intro: false });
+  assert.ok(first.includes('You have an ego') && first.includes('no score or ledger'), 'the ego is theirs and so are their feelings about others');
+  assert.ok(first.includes('massacres are as open to you as peace'), 'nothing is forbidden, in either direction');
+  assert.ok(!later.includes('You have an ego'), 'said once, at the start of their life');
+  assert.ok(!/\b(loyalty|ambition|greed|relations?|power) -?\d/i.test(first), 'no relationship is handed over as a number');
+});
+chain('While the ruler lies too ill to govern, the named successor governs in their name', () => {
+  const w = fresh(), c = w.countries.U1, l = ld(w, c), gen = w.characters[c.general];
+  assert.equal(applyOp(w, gen, { op: 'set_tax', kind: 'income', rate: .2 }).ok, false);
+  applyOp(w, l, { op: 'designate_successor', character: gen.id }); afflict(w, l, 'illness', 3);
+  assert.equal(applyOp(w, gen, { op: 'set_tax', kind: 'income', rate: .2 }).ok, true); assert.equal(c.tax.income, .2);
+  assert.ok(frontPage(w, gen).includes('govern in their name')); assert.ok(answer(w, gen, 'budget').includes('Treasury'), 'the papers of the office are open to the regent');
+  delete l.condition; assert.equal(applyOp(w, gen, { op: 'set_tax', kind: 'income', rate: .3 }).ok, false, 'the regency ends when the ruler recovers');
+});
+chain('A newcomer knows whose place they took and how it fell vacant; the arrested know who gave the order', () => {
+  const w = fresh(), c = w.countries.U1, l = ld(w, c), opp = w.characters[c.opposition]; c.courts = 0;
+  for (let i = 0; i < 30 && opp.status === 'free'; i++) applyOp(w, l, { op: 'purge', character: opp.id, fate: 'imprisoned' });
+  const next = w.characters[c.opposition]; assert.notEqual(next.id, opp.id); assert.ok(next.rise.includes(opp.name) && next.rise.includes('imprisoned'), next.rise);
+  assert.ok(actorPrompt(w, next, [], true, { intro: true }).includes(next.rise)); assert.ok(opp.inbox.some(m => m.text.includes(l.name)));
+});
+ok('People know what they could know: a gagged press hides the provinces, a prisoner hears little, and what someone thinks of others stays their own', () => {
+  const w = fresh(), c = w.countries.U1, seat = r => w.characters[c[r]], sees = ch => newsFor(w, ch, w.turn).some(n => n.text.includes('Testville'));
+  beginTurn(w); writeNews(w, 'Testville: mass uprising, fighting in the streets.', { kind: 'disaster', countries: [c.id], hush: true }); writeNews(w, 'A treaty was signed in the capital.', { kind: 'diplomacy', countries: [c.id] }); w.newsLog.push(...w.newsThisTurn);
+  c.pressFreedom = 10;
+  assert.ok(sees(seat('leader')) && sees(seat('general')) && sees(seat('opposition')), 'the ruler, the army and the opposition\'s network hear of it'); assert.ok(!sees(seat('oligarch')), 'it is not in the papers');
+  const far = aliveCountries(w).find(o => o.id !== c.id && !countryProvinces(w, o.id).some(p => p.neighbors.some(n => w.provinces[n].controller === c.id)));
+  if (far) { const reader = w.characters[far.leader]; far.intel[c.id] = 0; assert.ok(!sees(reader), 'a distant country does not hear'); far.intel[c.id] = 60; assert.ok(sees(reader), 'unless it has eyes there'); }
+  c.pressFreedom = 80; assert.ok(sees(seat('oligarch')), 'a free press prints it');
+  const jailed = seat('oligarch'); neutralize(w, jailed, 'imprisoned'); const cell = newsFor(w, jailed, w.turn); assert.ok(cell.some(n => n.text.includes('treaty')) && !cell.some(n => n.text.includes('Testville')));
+  const l = seat('leader'); l.persona = 'I despise the general and mean to ruin him.'; l.publicFace = 'A plain soldier of the nation.';
+  const seen = answer(w, seat('general'), `person:${l.id}`); assert.ok(seen.includes('plain soldier') && !seen.includes('despise'));
+});
+chain('Government matters: ten years of good rule lift a poor state, ten years of bad rule wreck a rich one', () => {
+  const play = (arche, act) => { const w = inherited(1848), c = aliveCountries(w).find(x => x.archetype === arche), op = o => applyOp(w, w.characters[c.leader], { ...o, _law: true }); for (let t = 0; t < 40; t++) { beginTurn(w); if (act) act(c, op, t); stepWorld(w); } return c; };
+  const good = (c, op, t) => {
+    if (t === 0) { op({ op: 'set_tax', kind: 'income', rate: .15 }); op({ op: 'set_tax', kind: 'business', rate: .15 }); for (const [category, share] of [['administration', .022], ['education', .018], ['infrastructure', .02], ['welfare', .02]]) op({ op: 'set_budget', category, share }); op({ op: 'set_culture_policy', language: 'tolerate', faith: 'tolerate' }); }
+    if (t % 4 === 0) op({ op: 'set_institutions', courts: Math.min(80, c.courts + 15), press_freedom: Math.min(80, c.pressFreedom + 15) });
+  };
+  const bad = (c, op, t) => {
+    if (t === 0) { op({ op: 'set_tax', kind: 'income', rate: .5 }); op({ op: 'set_tax', kind: 'land', rate: .5 }); for (const [category, share] of [['military', .14], ['education', 0], ['infrastructure', 0], ['administration', .004]]) op({ op: 'set_budget', category, share }); op({ op: 'set_institutions', courts: 0, press_freedom: 0 }); }
+    op({ op: 'print_money', pct_gdp: .1 }); op({ op: 'embezzle', pct_gdp: .05 });
+  };
+  const poor = play('agrarian'), raised = play('agrarian', good), rich = play('merchant'), ruined = play('merchant', bad);
+  assert.ok(raised.realGdp > poor.realGdp * 1.2, `output ${raised.realGdp} / ${poor.realGdp}`); assert.ok(raised.bureaucracy > poor.bureaucracy + 15 && raised.corruption < poor.corruption - 8); assert.ok(raised.legitimacy > poor.legitimacy && raised.lastRevenue / raised.gdp > poor.lastRevenue / poor.gdp * 1.5);
+  assert.ok(raised.debt / raised.gdp > poor.debt / poor.gdp, 'and building a state is not free');
+  assert.ok(ruined.realGdp < rich.realGdp * .9, `output ${ruined.realGdp} / ${rich.realGdp}`); assert.ok(ruined.legitimacy < rich.legitimacy - 25 && ruined.corruption > rich.corruption + 25 && ruined.inflation > rich.inflation + .05);
+});
+
+await (async () => {
+  const cfg = { ...base, agentRoles: ['leader'], maxLookupRounds: 0, negotiationRounds: 0, concurrency: 1 }, w = createWorld(cfg), leader = w.countries.U1.leader, asked = []; w.status = 'playing';
+  const backend = { kind: 'claude', async ask(p) {
+    if (!p.includes('rulings')) return { decisions: p.includes(w.characters[leader].name) ? ['Raise the land tax to a fifth', 'Found a naval academy', 'Order a census'] : [], messages: [] };
+    if (!p.includes(leader + ' (')) return { rulings: [] };
+    const listed = [...p.split('DECISIONS:')[1].matchAll(/^  (\d+)\. /gm)].map(m => Number(m[1])); asked.push(listed);
+    return { rulings: listed.filter(i => i !== 2).slice(0, 1).map(i => ({ actor: leader, decision: i, narrative: 'Ruling ' + i, probability: 1, operations: [] })) };
+  } };
+  const g = new Game({ world: w, cfg, backend, store: memoryStore() }); await g.turn();
+  assert.deepEqual(asked, [[0, 1, 2], [1, 2]], 'what was passed over is asked for once more, under its own number');
+  const out = w.characters[leader].outcomes.join(' | ');
+  assert.ok(out.includes('Ruling 0') && out.includes('Ruling 1'), 'both rulings count'); assert.ok(out.includes('no ruling was given') && out.includes('census'), 'and what is still left is told to the one who decided it');
+  console.log('passed  Chain: a decision the referee skips is asked for again, and if still unanswered the character is told');
+})();
+chain('A ruler can raise up someone who was no one until then, sell gold from the reserve, and buy the troops\' spirit for a while', () => {
+  const w = fresh(), c = w.countries.U1, l = ld(w, c), u = Object.values(w.units).find(x => x.country === c.id), n = Object.keys(w.characters).length;
+  const r = applyOp(w, l, { op: 'appoint_commander', unit: u.id, name: 'Colonel Arvid Stane' }); assert.equal(r.ok, true, r.msg); const officer = w.characters[u.commander];
+  assert.equal(officer.name, 'Colonel Arvid Stane'); assert.equal(Object.keys(w.characters).length, n + 1); assert.ok(!currentActors(w).includes(officer), 'a minor figure holds no seat');
+  assert.equal(applyOp(w, l, { op: 'appoint_commander', unit: u.id, name: 'Colonel Arvid Stane' }).ok, true); assert.equal(Object.keys(w.characters).length, n + 1, 'the same name is the same person');
+  assert.equal(applyOp(w, l, { op: 'appoint_commander', unit: u.id, character: 'K9999' }).ok, false, 'an unknown id is a mistake, not a newcomer');
+  c.succession = 'dynasty'; assert.equal(applyOp(w, l, { op: 'designate_successor' }).ok, true); const heir = w.characters[c.heir];
+  assert.equal(heir.name.split(' ').at(-1), l.name.split(' ').at(-1), 'an heir of the house carries its name'); die(w, l, 'died'); assert.equal(c.leader, heir.id); assert.ok(currentActors(w).includes(heir), 'and the heir who was no one now rules');
+  const c2 = w.countries.U2, l2 = ld(w, c2), gold = c2.reserves, cash = c2.treasury; assert.equal(applyOp(w, l2, { op: 'sell_gold', amount: gold / 2 }).ok, true); assert.ok(c2.reserves < gold * .51 && c2.treasury > cash);
+  const mine = () => Object.values(w.units).filter(x => x.country === c2.id); for (const x of mine()) x.morale = 50; c2.treasury = c2.gdp;
+  assert.equal(applyOp(w, l2, { op: 'concession', cls: 'army', pct_gdp: .02 }).ok, true); assert.ok(mine().every(x => x.morale > 50) && c2.treasury < c2.gdp);
+  const small = applyOp(w, l2, { op: 'recruit', province: c2.capital, men: .5 }); assert.ok(small.ok && small.msg.includes('500 men'), small.msg);
+});
 console.log('All checks passed.');

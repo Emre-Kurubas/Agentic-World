@@ -46,11 +46,31 @@ export function foreignRate(c, external) {
 }
 export const externalDebt = c => sum(Object.values(c.creditors), x => x);
 
+// What lenders ask of a state: little from a sound one, more as the debt burden grows, with inflation, after a default and while the banks are sick.
+export function sovereignRate(c) {
+  const burden = c.debt / Math.max(c.gdp * 4, 1);
+  return clamp(.0075 + .02 * Math.max(0, burden - .6) ** 1.5 + Math.max(0, c.inflTrend ?? c.inflation) * .6 + (c.defaulted ? .02 : 0) + (c.bankHealth < 30 ? .01 : 0), .005, .35);
+}
+// Lenders shut out a defaulter, but not forever: some years of paying in full and the market deals with the state again.
+// A state already in default cannot default again; it simply goes on not paying.
+const DEFAULT_MEMORY = 16;
+export const canDefault = (w, c) => !c.defaulted;
+export function creditStanding(w, c, paidInFull) {
+  if (!c.defaulted) return;
+  c.cleanTurns = paidInFull && !(c.extArrears > 0) ? (c.cleanTurns || 0) + 1 : 0;
+  if (c.cleanTurns >= DEFAULT_MEMORY) { c.defaulted = false; c.cleanTurns = 0; news(w, `${c.name} is trusted by lenders again, years after its default.`, { kind: 'economy', countries: [c.id] }); }
+}
+// How much more lenders would still put up in one quarter. Trust in the government widens it; a default nearly closes it.
+export function creditLeft(c) {
+  return Math.max(0, c.gdp * 4 * (1.1 + c.legitimacy / 100) - c.debt) * (c.defaulted ? .1 : .35);
+}
+
 export function declareDefault(w, c, why) {
-  if (c.defaulted) return;
-  c.defaulted = true; c.debt *= .55; c.reserves *= .7; c.bankHealth = clamp(c.bankHealth - 30, 0, 100);
+  if (!canDefault(w, c)) return false;
+  c.defaulted = true; c.defaultedAt = w.turn; c.cleanTurns = 0; c.extArrears = 0; c.debt *= .55; c.reserves *= .7; c.bankHealth = clamp(c.bankHealth - 30, 0, 100);
   for (const [cid, amt] of Object.entries(c.creditors)) { const o = w.countries[cid]; if (o?.alive) { o.relations[c.id] = clamp((o.relations[c.id] ?? 0) - 40, -100, 100); o.bankHealth = clamp(o.bankHealth - 12, 0, 100); o.reserves -= amt * .15; } c.creditors[cid] = amt * .55; }
-  news(w, `${c.name} ${why}; creditor countries are furious.`, { kind: 'economy', countries: [c.id] });
+  news(w, `${c.name} ${why}; ${Object.keys(c.creditors).length ? 'creditor countries are furious' : 'its bondholders are ruined'}.`, { kind: 'economy', countries: [c.id] });
+  return true;
 }
 
 function currencyCrisis(w, c) {

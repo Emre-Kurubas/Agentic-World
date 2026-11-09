@@ -10,16 +10,24 @@ export function proposeContract(w, actor, op, num) {
   const named = String(op.to ?? '').toLowerCase(), other = w.characters[op.to] ?? w.characters[w.countries[op.to]?.leader] ?? Object.values(w.characters).find(x => x.alive && x.name.toLowerCase() === named);
   if (!other?.alive || other.id === actor.id) return null;
   const hasGoods = GOODS.includes(op.good);
+  // A new offer to the same person replaces the one still lying unanswered on their desk.
+  for (const old of w.contracts || []) if (old.status === 'proposed' && old.a === actor.id && old.b === other.id) { old.status = 'withdrawn'; old.closedAt = w.turn; }
   const k = { id: nextId(w, 'CT'), a: actor.id, b: other.id, terms: String(op.terms || '').slice(0, 400), payer: op.payer === 'them' ? other.id : op.payer === 'none' ? null : actor.id, pay: num(op.pay_per_turn, 0, 1e6, 0), good: hasGoods ? op.good : null, amount: hasGoods ? num(op.amount, 0, 1e5, 0) : 0, seller: hasGoods ? (op.seller === 'them' ? other.id : actor.id) : null, turns: Math.round(num(op.turns, 1, 80, 8)), status: 'proposed', turn: w.turn };
   (w.contracts ||= []).push(k);
   say(w, other, actor.name, `Contract offer ${k.id}: ${k.terms}${k.pay ? ` Payment ${Math.round(k.pay)} per quarter.` : ''}${k.good ? ` Delivery ${Math.round(k.amount)} ${GOOD_LABEL[k.good]} per quarter.` : ''} Runs ${k.turns} quarters. Accept with accept_contract.`);
   return k;
 }
 
-export function acceptContract(w, actor, id) {
-  const k = (w.contracts || []).find(x => x.id === id && x.status === 'proposed' && x.b === actor.id); if (!k) return false;
+// Offers waiting for this person's answer.
+export const offersFor = (w, ch) => (w.contracts || []).filter(x => x.status === 'proposed' && x.b === ch.id);
+const OFFER_LIFE = 8;
+
+// By number if one is given; otherwise the offer from the named person, or the only one waiting.
+export function acceptContract(w, actor, id, from) {
+  const waiting = offersFor(w, actor), sender = w.characters[from]?.id ?? w.countries[from]?.leader, bySender = sender ? waiting.filter(x => x.a === sender) : waiting;
+  const k = waiting.find(x => x.id === id) ?? (bySender.length === 1 ? bySender[0] : null); if (!k) return null;
   k.status = 'active'; k.until = w.turn + k.turns; say(w, w.characters[k.a], actor.name, `Contract ${k.id} accepted.`);
-  return true;
+  return k;
 }
 
 function breach(w, k, who, text) {
@@ -30,6 +38,7 @@ function breach(w, k, who, text) {
 
 export function contractStep(w) {
   for (const k of w.contracts ||= []) {
+    if (k.status === 'proposed' && w.turn - k.turn > OFFER_LIFE) { k.status = 'lapsed'; k.closedAt = w.turn; say(w, w.characters[k.a], 'Notary', `Your contract offer ${k.id} went unanswered and has lapsed.`); }
     if (!open(k)) continue;
     const A = w.characters[k.a], B = w.characters[k.b];
     if (!A?.alive || !B?.alive) { k.status = 'void'; k.closedAt = w.turn; continue; }

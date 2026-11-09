@@ -23,7 +23,7 @@ write('timeline.ndjson', entries.map(e => JSON.stringify(e)).join('\n'));
 const world = store.loadWorld(), people = store.people(), art = store.artIndex();
 for (const p of Object.values(people)) p.portrait = art.find(a => a.kind === 'portrait' && a.character === p.id)?.file ?? null;
 write('people.json', people);
-write('countries.json', Object.values(world.countries).map(c => ({ id: c.id, name: c.name, alive: c.alive, regime: c.regime, ideology: c.ideology, archetype: c.archetype, currency: c.currency, culture: c.culture, chronicle: c.chronicle, parent: c.parent, leader: world.characters[c.leader]?.name, laws: c.laws, institutions: c.institutions, history: c.history })));
+write('countries.json', Object.values(world.countries).map(c => ({ id: c.id, name: c.name, alive: c.alive, regime: c.regime, ideology: c.ideology, archetype: c.archetype, currency: c.currency, culture: c.culture, chronicle: c.chronicle, parent: c.parent, leader: world.characters[c.leader]?.name, succession: c.elections ? 'election' : c.succession ?? 'open', laws: c.laws, institutions: c.institutions, atrocities: c.atrocities ?? [], history: c.history })));
 write('world-history.json', world.past ?? []);
 write('map.json', JSON.parse(store.readMap()));
 write('marks.json', store.marks());
@@ -44,9 +44,10 @@ This folder contains everything that happened in the game, including the charact
 
 - timeline.ndjson: one event per line. t turn, d date, k kind, n person, c countries, a person ids, p location, imp importance (0-3), text body, x details.
 - Kinds: thought (inner voice, decisions, diary note), message, query, ruling (referee), rule (rule-based action), news, state (regime, leader, border, economy change), battle (with losses), system (technical error).
-- If x.secret is true the event is hidden from the public; you can use it as dramatic irony in the story.
-- people.json: everyone, the dead included; identity, background, birthplace, life events, portrait file.
-- countries.json: chronicle, culture, currency, laws, institutions, per-turn statistics.
+- A thought carries x.model (which Claude model plays that person) and x.standing (in office, out of office, imprisoned, exiled). A message with x.intercepted was copied by a prison censor for the ruler.
+- News has x.kind: politics, economy, diplomacy, war, plot, disaster, atrocity (state violence against a population; importance 3). If x.secret is true the event is hidden from the public; you can use it as dramatic irony in the story.
+- people.json: everyone, the dead included; private identity, public face, the model that played them, health, how and when they died, background, birthplace, life events, portrait file.
+- countries.json: chronicle, culture, currency, rule of succession, laws, institutions, recorded atrocities, per-turn statistics (treasury, budget balance, debt).
 - world-history.json: the shared history before the game began.
 - stats.ndjson: every country's numbers each turn; for charts.
 - map.json: province polygons, rivers. final-world.json.gz: the full world at the end of the game.
