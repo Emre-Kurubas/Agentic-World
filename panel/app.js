@@ -9,7 +9,7 @@ const GOOD_LABEL = { grain: 'Grain', timber: 'Timber', coal: 'Coal', iron: 'Iron
 const CHIP = { coal: 'Co', iron: 'Fe', copper: 'Cu', oil: 'Oi', phosphate: 'Ph', rare: 'Ra', gold: 'Au' };
 const TERRAIN_LABEL = { plains: 'Plains', forest: 'Forest', hills: 'Hills', mountain: 'Mountain', desert: 'Desert', marsh: 'Marsh', tundra: 'Tundra' };
 const ST = { strait: 'Strait', pass: 'Pass', bridge: 'Bridge', port: 'Natural harbor', canal_site: 'Canal route', canal: 'Canal' };
-const KINDS = [['state', 'State change'], ['battle', 'Battle'], ['news', 'News'], ['thought', 'Thought'], ['ruling', 'Referee'], ['rule', 'Rule action'], ['message', 'Message'], ['query', 'Lookup'], ['system', 'Technical']];
+const KINDS = [['state', 'State change'], ['battle', 'Battle'], ['news', 'News'], ['thought', 'Thought'], ['ruling', 'Referee'], ['rule', 'Rule action'], ['message', 'Message'], ['notice', 'Report to a person'], ['query', 'Lookup'], ['system', 'Technical']];
 const KIND_LABEL = Object.fromEntries(KINDS);
 const WIDE = new Set(['ledger', 'person', 'gallery']);
 const S = { meta: null, turn: 0, last: -1, data: null, tab: 'world', layer: 'political', country: null, province: null, live: true, marks: {}, person: null, led: { q: '', kinds: new Set(), country: '', fail: false, imp: false, from: '', to: '' }, cardsAt: -1 };
@@ -188,7 +188,7 @@ function ledgerUrl(f, cursor) {
 }
 function entryHtml(e) {
   const x = e.x || {}, who = e.n ? (e.a?.[0] ? `<button class="linky" type="button" data-person="${e.a[0]}">${esc(e.n)}</button>` : `<b>${esc(e.n)}</b>`) : '', to = e.to ? `<span class="muted">→ ${e.a?.[1] ? `<button class="linky" type="button" data-person="${e.a[1]}">${esc(e.to)}</button>` : esc(e.to)}</span>` : '';
-  const flags = `${e.s === 'rule' || e.s === 'mock' ? '' : ''}${e.ok === false ? `<span class="badge no">${e.k === 'message' ? 'Not delivered' : 'Failed'}</span>` : ''}${x.secret ? '<span class="badge">Secret</span>' : ''}${e.k === 'message' && x.read ? '<span class="badge ok">Read in the same quarter</span>' : ''}${x.probability != null && e.k === 'ruling' ? `<span class="badge">${Math.round(x.probability * 100)}% probability</span>` : ''}${e.imp >= 3 ? '<span class="badge no">Major event</span>' : ''}`;
+  const flags = `${e.s === 'rule' || e.s === 'mock' ? '' : ''}${e.ok === false ? `<span class="badge no">${e.k === 'message' ? 'Not delivered' : 'Failed'}</span>` : ''}${x.secret ? '<span class="badge">Secret</span>' : ''}${e.k === 'message' && x.read ? '<span class="badge ok">Read in the same quarter</span>' : ''}${e.k === 'message' && x.intercepted ? '<span class="badge no">Copied by the censor</span>' : ''}${x.probability != null && e.k === 'ruling' ? `<span class="badge">${Math.round(x.probability * 100)}% probability</span>` : ''}${e.imp >= 3 ? '<span class="badge no">Major event</span>' : ''}`;
   let body = `<p>${esc(e.text)}</p>`, more = '';
   if (e.k === 'query') { body = `<p class="muted">Looked up: ${esc(e.q)}</p>`; more = `<details><summary>Answer received</summary><pre>${esc(e.text)}</pre></details>`; }
   if (e.k === 'thought') { const parts = []; if (x.decisions?.length) parts.push(`<ul>${x.decisions.map(d => `<li>${esc(d)}</li>`).join('')}</ul>`); if (x.lookups?.length) parts.push(`<div class="looked">Topics looked up: ${esc(x.lookups.join(', '))}</div>`); if (x.persona) parts.push(`<div class="persona">${esc(x.persona)}</div>`); if (parts.length) more = `<details><summary>Decisions and identity</summary>${parts.join('')}</details>`; if (!e.text) body = ''; }

@@ -13,6 +13,10 @@ const ROLE_LABEL = { leader: 'leader', general: 'general', opposition: 'oppositi
 const POSTS = [['leader', 'Leader'], ['general', 'Chief of Staff'], ['opposition', 'Opposition leader'], ['oligarch', 'Oligarch']];
 const TREATY_LABEL = { alliance: 'alliance', nonaggression: 'non-aggression', trade: 'trade', military_access: 'military access', peace: 'peace' };
 const FATE = { dead: 'died', exiled: 'went into exile', retired: 'retired', imprisoned: 'was imprisoned', free: 'was released' };
+const DEGREE = ['', 'mildly', 'seriously', 'gravely'];
+// What a government has set: recorded whenever it moves, whoever moved it (a decree, a law, a rule-based ruler).
+const policyOf = c => ({ 'income tax': c.tax?.income, 'land tax': c.tax?.land, 'business tax': c.tax?.business, tariff: c.tariff, ...Object.fromEntries(Object.entries(c.budget || {}).map(([k, v]) => [`${k} budget`, v])), 'press freedom': (c.pressFreedom ?? 0) / 100, 'court independence': (c.courts ?? 0) / 100 });
+const shown = v => `${Math.round((v ?? 0) * 1000) / 10}%`;
 
 // Once a threshold is crossed, returning needs GAP of recovery; a value hovering at the line does not flood the ledger.
 const GAP = 6;
@@ -39,9 +43,9 @@ export function snapshotState(w) {
   const sieges = {}, policies = {}, governors = {};
   for (const p of Object.values(w.provinces)) { if (p.siege) sieges[p.id] = p.siege.by; if (p.governor) governors[p.id] = p.governor; }
   for (const c of Object.values(w.countries)) policies[c.id] = `${c.languagePolicy}|${c.faithPolicy}`;
-  for (const c of Object.values(w.countries)) countries[c.id] = { alive: c.alive, name: c.name, regime: c.regime, capital: c.capital, leader: c.leader, general: c.general, opposition: c.opposition, oligarch: c.oligarch, fxRegime: c.fxRegime, rate: c.rate, strike: !!c.strike, bankCrisis: !!c.bankCrisis, defaulted: !!c.defaulted, techs: Object.keys(c.techs || {}), institutions: Object.fromEntries((c.institutions || []).filter(i => i.id).map(i => [i.id, { name: i.name, head: i.head }])), bills: Object.fromEntries((c.bills || []).map(b => [b.id, b.status])), suspended: (c.parliament?.suspendedUntil ?? 0) > w.turn };
+  for (const c of Object.values(w.countries)) countries[c.id] = { alive: c.alive, name: c.name, regime: c.regime, capital: c.capital, leader: c.leader, general: c.general, opposition: c.opposition, oligarch: c.oligarch, fxRegime: c.fxRegime, rate: c.rate, strike: !!c.strike, bankCrisis: !!c.bankCrisis, defaulted: !!c.defaulted, policy: policyOf(c), succession: c.elections ? 'election' : c.succession ?? 'open', heir: c.heir ?? null, techs: Object.keys(c.techs || {}), institutions: Object.fromEntries((c.institutions || []).filter(i => i.id).map(i => [i.id, { name: i.name, head: i.head }])), bills: Object.fromEntries((c.bills || []).map(b => [b.id, b.status])), suspended: (c.parliament?.suspendedUntil ?? 0) > w.turn };
   for (const p of Object.values(w.provinces)) provinces[p.id] = p.controller;
-  for (const ch of Object.values(w.characters)) characters[ch.id] = { alive: ch.alive, status: ch.status, role: ch.role, country: ch.country, name: ch.name };
+  for (const ch of Object.values(w.characters)) characters[ch.id] = { alive: ch.alive, status: ch.status, role: ch.role, country: ch.country, name: ch.name, health: ch.condition ? `${ch.condition.severity}${ch.condition.kind}` : '' };
   for (const x of w.wars) wars[x.id] = x.active;
   for (const t of w.treaties) treaties[t.id] = { active: !!t.active, pending: !!t.pending, breaches: t.breaches?.length ?? 0 };
   for (const p of w.plots) plots[p.id] = { active: !!p.active, exposed: !!p.exposed };
@@ -71,6 +75,12 @@ function stateChanges(w, was) {
       if (!b.bankCrisis && c.bankCrisis) add(`${c.name}: a banking crisis erupted`, 2, { c: cc, p: c.capital });
       if (b.bankCrisis && !c.bankCrisis) add(`${c.name}: the banking crisis has passed`, 0, { c: cc });
       if (!b.defaulted && c.defaulted) add(`${c.name}: could not pay its debts and declared default`, 3, { c: cc, p: c.capital });
+      if (b.defaulted && !c.defaulted) add(`${c.name}: lenders deal with the state again, its default is behind it`, 2, { c: cc });
+      const now = policyOf(c), moved = Object.keys(now).filter(k => Math.abs((now[k] ?? 0) - (b.policy?.[k] ?? now[k] ?? 0)) >= (k.includes('freedom') || k.includes('court') ? .05 : .003));
+      if (b.policy && moved.length) add(`${c.name} changed course: ${moved.map(k => `${k} ${shown(b.policy[k])} to ${shown(now[k])}`).join('; ')}`, 1, { c: cc, p: c.capital, x: { policy: Object.fromEntries(moved.map(k => [k, [b.policy[k], now[k]]])) } });
+      const rule = c.elections ? 'election' : c.succession ?? 'open';
+      if (b.succession && b.succession !== rule) add(`${c.name}: the rule of succession changed from ${b.succession} to ${rule}`, 2, { c: cc, p: c.capital });
+      if ((b.heir ?? null) !== (c.heir ?? null)) add(c.heir ? `${c.name}: ${who(c.heir)} is now the named successor` : `${c.name}: there is no named successor any more`, 2, { c: cc, a: [c.heir, b.heir].filter(Boolean), x: { secret: !!c._heirSecret } });
       for (const i of (c.institutions || []).filter(x => x.id)) {
         const was2 = b.institutions[i.id];
         if (!was2) add(`${c.name}: new institution, ${i.name}${i.head ? ` (head ${who(i.head)})` : ''}`, 1, { c: cc, a: [i.head].filter(Boolean), x: { description: i.description, powers: i.powers, authority: i.authority, veto: i.veto } });
@@ -108,8 +118,11 @@ function stateChanges(w, was) {
   for (const ch of Object.values(w.characters)) {
     const b = was.characters[ch.id], label = `${ch.name} (${ROLE_LABEL[ch.role] ?? ch.role}, ${cn(ch.country)})`;
     if (!b) { add(`A new figure appeared: ${label}`, 0, { c: [ch.country], a: [ch.id] }); continue; }
-    if (b.alive && !ch.alive) add(`${label} ${FATE[ch.status] ?? 'left the stage'}`, b.role === 'leader' ? 2 : 1, { c: [ch.country], a: [ch.id] });
+    if (b.alive && !ch.alive) add(`${label} ${ch.status === 'dead' ? ch.death?.how ?? 'died' : FATE[ch.status] ?? 'left the stage'}${ch.status === 'dead' ? `, aged ${ch.age}` : ''}`, b.role === 'leader' ? 2 : 1, { c: [ch.country], a: [ch.id], x: { death: ch.death ?? null } });
     else if (b.status !== ch.status) add(`${label} ${FATE[ch.status] ?? `status: ${ch.status}`}`, 1, { c: [ch.country], a: [ch.id] });
+    // Everyone's body is on the record, also when the palace keeps it out of the papers.
+    const health = ch.condition ? `${ch.condition.severity}${ch.condition.kind}` : '';
+    if (ch.alive && (b.health ?? '') !== health) add(ch.condition ? `${label} is ${DEGREE[ch.condition.severity] ?? ''} ${ch.condition.kind === 'wound' ? 'wounded' : 'ill'}${ch.condition.cause ? ` (${ch.condition.cause})` : ''}` : `${label} has recovered`, ch.condition?.severity >= 3 && b.role === 'leader' ? 2 : ch.condition?.severity >= 2 ? 1 : 0, { c: [ch.country], a: [ch.id], x: { health: ch.condition ?? null } });
     if (b.role !== ch.role) add(`${ch.name} is now ${ROLE_LABEL[ch.role] ?? ch.role} (previously ${ROLE_LABEL[b.role] ?? b.role})`, 0, { c: [ch.country], a: [ch.id] });
     if (b.country !== ch.country) add(`${ch.name} moved from ${cn(b.country)} to ${cn(ch.country)}`, 1, { c: [b.country, ch.country], a: [ch.id] });
   }
@@ -177,17 +190,19 @@ const NEWS_IMP = { atrocity: 3, plot: 2, disaster: 1, war: 1 };
 export function buildEntries(w, log, before, lookups = {}) {
   const out = [];
   for (const x of log.trace || []) {
-    out.push({ k: 'thought', s: x.ai ? 'agent' : 'rule', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, text: cut(x.monologue), x: { persona: cut(x.persona, 900), decisions: x.decisions || [], lookups: x.lookups || [], ai: x.ai, model: x.model ?? null, standing: x.standing ?? null, notes: x.notes || '' } });
+    out.push({ k: 'thought', s: x.ai ? 'agent' : 'rule', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, text: cut(x.monologue), x: { persona: cut(x.persona, 900), publicFace: x.publicFace || '', decisions: x.decisions || [], lookups: x.lookups || [], ai: x.ai, model: x.model ?? null, standing: x.standing ?? null, health: x.health ?? null, notes: x.notes || '' } });
     for (const q of lookups[x.actor] || []) out.push({ k: 'query', s: 'agent', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, q: q.q, text: cut(q.a, MAX_ANSWER) });
   }
-  for (const m of log.messages || []) out.push({ k: 'message', s: 'agent', n: m.fromName, to: m.toName, c: [m.fromCountry, m.toCountry].filter(Boolean), a: [m.from, m.toActor].filter(Boolean), imp: 0, ok: !m.undelivered, text: cut(m.text), x: { read: !!m.read, round: m.round ?? 0 } });
+  for (const m of log.messages || []) out.push({ k: 'message', s: 'agent', n: m.fromName, to: m.toName, c: [m.fromCountry, m.toCountry].filter(Boolean), a: [m.from, m.toActor].filter(Boolean), imp: 0, ok: !m.undelivered, text: cut(m.text), x: { read: !!m.read, round: m.round ?? 0, intercepted: !!m.intercepted, secret: true } });
+  // What the world itself told people this quarter: reports, warnings, notices, offers. A letter between characters is a message, not a notice.
+  for (const ch of Object.values(w.characters)) for (const m of ch.inbox || []) if (m.turn === w.turn - 1 && !m.letter && !m.logged) { m.logged = true; out.push({ k: 'notice', s: 'engine', n: ch.name, r: ch.role, c: [ch.country], a: [ch.id], imp: 0, text: cut(`[${m.from}] ${m.text}`, 700), x: { from: m.from, secret: true } }); }
   for (const r of log.rulings || []) {
     const failed = (r.results || []).filter(y => y.ok === false), ok = !!r.success && !failed.length, detail = (r.results || []).map(y => y.msg).filter(Boolean).join('; ');
     out.push({ k: r.source === 'referee' ? 'ruling' : 'rule', s: r.source, n: r.name, r: r.role, c: [r.country], a: [r.actor], imp: 0, ok, text: cut(r.source === 'referee' ? r.narrative : `${r.narrative}${detail ? `: ${detail}` : ''}`), x: { narrative: cut(r.narrative, 400), probability: r.probability, success: r.success, results: r.results || [], ops: r.ops || [], decision: r.decision, decisionText: r.decisionText ?? '' } });
   }
   for (const b of w.battles || []) out.push({ k: 'battle', s: 'engine', c: [b.attacker, b.defender], p: b.province, imp: 1, text: `Battle of ${w.provinces[b.province]?.name ?? b.province}: ${w.countries[b.attackerWon ? b.attacker : b.defender]?.name} prevailed. Losses: attacker ${b.lossA}k, defender ${b.lossD}k.`, x: { ...b } });
   for (const y of log.system || []) out.push({ k: 'system', s: 'engine', c: [], n: y.name, imp: 0, text: cut(y.text, 500) });
-  for (const n of w.newsThisTurn || []) out.push({ k: 'news', s: 'engine', c: n.countries || [], imp: n.secret ? 0 : NEWS_IMP[n.kind] ?? 0, text: cut(n.text), x: { kind: n.kind, secret: !!n.secret } });
+  for (const n of w.newsThisTurn || []) out.push({ k: 'news', s: 'engine', c: n.countries || [], ...(n.province ? { p: n.province } : {}), ...(n.people?.length ? { a: n.people } : {}), imp: n.secret ? 0 : NEWS_IMP[n.kind] ?? 0, text: cut(n.text), x: { kind: n.kind, secret: !!n.secret, ...(n.hush ? { hush: true } : {}) } });
   if (before) out.push(...stateChanges(w, before));
   const t = w.turn, d = w.date || 'Start';
   return out.map((e, i) => ({ id: `${t}-${i}`, t, i, d, ...e }));

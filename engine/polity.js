@@ -2,14 +2,19 @@
 import { clamp, sum, news, rand, nextId } from './util.js';
 import { GOODS, GOOD_LABEL, aliveCountries } from './world.js';
 import { distance } from './politics.js';
+import { incapacitated } from './health.js';
 
 export const num = (v, a, b, d = a) => clamp(Number.isFinite(Number(v)) ? Number(v) : d, a, b);
 
 export const STATE_POWERS = ['audit', 'judiciary', 'security', 'intelligence', 'bureaucracy', 'bank', 'army'];
 export const CIVIL_POWERS = ['education', 'welfare', 'propaganda', 'clergy', 'capital', 'farming', 'industry', 'research'];
 export const DELEGABLE = new Set(['appoint_governor', 'appoint_commander', 'set_culture_policy', 'set_fx_regime', 'devalue', 'borrow_foreign', 'repay_foreign', 'set_capital_controls', 'ship_goods', 'set_tax', 'set_budget', 'set_tariff', 'set_arms_share', 'print_money', 'borrow', 'embargo', 'build', 'survey', 'set_research', 'move', 'move_army', 'recruit', 'repress', 'concession', 'purge', 'ban_party', 'set_institutions', 'propose_treaty', 'accept_treaty', 'spy', 'steal_tech', 'gather_dossier']);
-export const GATED = new Set(['set_culture_policy', 'nationalize_company', 'set_tax', 'set_budget', 'set_tariff', 'borrow', 'declare_war', 'ban_party', 'land_reform', 'nationalize', 'privatize']);
-const MAX_OPEN_BILLS = 6;
+export const GATED = new Set(['set_culture_policy', 'nationalize_company', 'set_tax', 'set_budget', 'set_tariff', 'borrow', 'print_money', 'default_debt', 'declare_war', 'ban_party', 'land_reform', 'nationalize', 'privatize', 'set_regime']);
+// What a law can do. A legislature makes rules and votes money; it does not arrest people, name heirs or move regiments. Those are acts of the executive.
+export const LEGISLATIVE = new Set([...GATED, 'create_institution', 'fund_institution', 'dissolve_institution', 'set_institutions', 'hold_election', 'concession', 'set_arms_share', 'set_capital_controls', 'set_fx_regime', 'release', 'repay_state_debt']);
+const MAX_OPEN_BILLS = 6, MAX_INSTITUTIONS = 30, MAX_PRIVATE_EACH = 3;
+// Whoever governs today: the ruler, or the person governing in the ruler's name while the ruler lies too ill.
+export const governs = (w, c, actor) => !!actor && (actor.id === c.leader || ((c.regent ?? c.heir) === actor.id && actor.status === 'free' && incapacitated(w.characters[c.leader])));
 // One institution's share of GDP per quarter. Around 1900 a whole government spent a tenth of GDP; a single agency is a small slice of that.
 export const MAX_AGENCY_BUDGET = .02;
 
@@ -21,12 +26,18 @@ export function delegated(c, actor, opName) {
 }
 
 // As the vetoing institution's strength and court independence grow, the leader cannot get past it.
+// An institution answers once a quarter to a given kind of act: asking again the same quarter gets the same answer. Only its own head is not subject to it.
 export function vetoedBy(w, c, actor, opName) {
-  return activeInstitutions(c).find(i => (i.veto || []).includes(opName) && !memberOf(i, actor.id) && rand(w) < clamp((i.strength ?? 0) * (.35 + c.courts / 150), 0, .95));
+  const book = c._veto?.turn === w.turn ? c._veto : (c._veto = { turn: w.turn, said: {} });
+  if (!(opName in book.said)) book.said[opName] = activeInstitutions(c).find(i => (i.veto || []).includes(opName) && rand(w) < clamp((i.strength ?? 0) * (.35 + c.courts / 150), 0, .95))?.id ?? null;
+  const inst = book.said[opName] && activeInstitutions(c).find(i => i.id === book.said[opName]);
+  return inst && inst.head !== actor.id ? inst : undefined;
 }
 
 export function makeInstitution(w, c, actor, op) {
-  const isState = actor.id === c.leader, allowed = isState ? [...STATE_POWERS, ...CIVIL_POWERS] : CIVIL_POWERS;
+  const isState = governs(w, c, actor), allowed = isState ? [...STATE_POWERS, ...CIVIL_POWERS] : CIVIL_POWERS;
+  // The register has room for so many bodies, and one private person keeps up only a few. A new club never pushes a court out of existence.
+  if (activeInstitutions(c).length >= MAX_INSTITUTIONS || (!isState && activeInstitutions(c).filter(i => i.sponsor === actor.id).length >= MAX_PRIVATE_EACH)) return null;
   const inst = {
     id: nextId(w, 'KR'), name: String(op.name || 'Unnamed institution').slice(0, 70), description: String(op.description || '').slice(0, 280), founder: actor.name, turn: w.turn,
     powers: (Array.isArray(op.powers) ? op.powers : []).filter(p => allowed.includes(p)).slice(0, 4),
@@ -37,10 +48,9 @@ export function makeInstitution(w, c, actor, op) {
     head: null, members: [], strength: .15, funding: .5
   };
   const head = w.characters[op.head];
-  inst.head = head?.alive && head.country === c.id ? head.id : actor.id;
-  for (const id of Array.isArray(op.members) ? op.members.slice(0, 8) : []) { const m = w.characters[id]; if (m?.alive && m.country === c.id && m.id !== inst.head && !inst.members.includes(m.id)) inst.members.push(m.id); }
+  inst.head = head?.alive && head.country === c.id && head.status === 'free' ? head.id : actor.id;
+  for (const id of Array.isArray(op.members) ? op.members.slice(0, 8) : []) { const m = w.characters[id]; if (m?.alive && m.status === 'free' && m.country === c.id && m.id !== inst.head && !inst.members.includes(m.id)) inst.members.push(m.id); }
   c.institutions.push(inst);
-  if (c.institutions.length > 30) c.institutions.shift();
   return inst;
 }
 
@@ -123,22 +133,45 @@ export function leadsParties(w, c, ch) {
 export function createBill(w, c, actor, { title, text, ops, axes }) {
   if ((c.bills || []).filter(b => b.status === 'pending').length >= MAX_OPEN_BILLS) return null;
   const led = leadsParties(w, c, actor)[0];
-  const bill = { id: nextId(w, 'Y'), title: String(title || 'Unnamed law').slice(0, 100), text: String(text || '').slice(0, 500), ops: (Array.isArray(ops) ? ops : []).slice(0, 4), axes: axes && typeof axes === 'object' ? { econ: num(axes.econ, -100, 100, 0), auth: num(axes.auth, -100, 100, 0), nation: num(axes.nation, -100, 100, 0), faith: num(axes.faith, -100, 100, 0) } : { ...(actor.id === c.leader ? c.axes : actor.axes) }, proposer: actor.id, proposerName: actor.name, party: led?.id ?? null, byGov: actor.id === c.leader, turn: w.turn, voteAt: w.turn + 1, votes: {}, lobby: {}, status: 'pending' };
+  const bill = { id: nextId(w, 'Y'), title: String(title || 'Unnamed law').slice(0, 100), text: String(text || '').slice(0, 500), ops: (Array.isArray(ops) ? ops : []).filter(o => LEGISLATIVE.has(o?.op)).slice(0, 4), axes: axes && typeof axes === 'object' ? { econ: num(axes.econ, -100, 100, 0), auth: num(axes.auth, -100, 100, 0), nation: num(axes.nation, -100, 100, 0), faith: num(axes.faith, -100, 100, 0) } : { ...(actor.id === c.leader ? c.axes : actor.axes) }, proposer: actor.id, proposerName: actor.name, party: led?.id ?? null, byGov: actor.id === c.leader, turn: w.turn, voteAt: w.turn + 1, votes: {}, lobby: {}, status: 'pending' };
   (c.bills ||= []).push(bill);
   for (const p of c.parties) { for (const id of [p.founder, p.id === c.rulingParty ? c.leader : null, c.opposition]) { const ch = w.characters[id]; if (ch?.alive && ch.id !== actor.id && ch.aiControlled && ch.country === c.id && leadsParties(w, c, ch).includes(p)) ch.inbox.push({ turn: w.turn, from: c.parliament?.name ?? 'Parliament', text: `Bill ${bill.id} (${bill.proposerName}): ${bill.title}. ${bill.text} It will be voted on next quarter.` }); } }
   return bill;
+}
+
+// What a party makes of what a bill actually does, beyond where its sponsor stands: no party votes its own ban, landlords do not vote for land reform.
+function billLean(c, b, p) {
+  let s = 0; const x = p.axes;
+  for (const op of b.ops || []) switch (op?.op) {
+    case 'set_regime': if (op.elections === false) s -= 45; if (op.elections === true) s += 15; if (op.press_freedom !== undefined && op.press_freedom < c.pressFreedom - 5) s += x.auth > 40 ? 8 : -25; break;
+    case 'ban_party': s += op.party === p.id ? -100 : x.auth > 30 ? 5 : -15; break;
+    case 'print_money': s += x.econ > 0 ? -18 : 4; break;
+    case 'default_debt': s += x.econ > 0 ? -25 : 5; break;
+    case 'declare_war': s += x.nation > 30 ? 12 : -15; break;
+    case 'set_tax': { const up = (op.rate ?? 0) > (c.tax[op.kind] ?? 0), pays = { land: 'peasants', business: 'elite', income: 'workers' }[op.kind], mine = p.base === pays || (op.kind === 'income' && p.base === 'middle'); s += up ? (mine ? -20 : 4) : (mine ? 12 : 0); break; }
+    case 'set_budget': { const up = (op.share ?? 0) > (c.budget[op.category] ?? 0) ? 1 : -1; if (op.category === 'welfare') s += up * (x.econ < 0 ? 15 : -8); if (op.category === 'military') s += up * (x.nation > 20 ? 10 : -8); break; }
+    case 'nationalize': case 'nationalize_company': s += x.econ < -20 ? 18 : x.econ > 20 ? -30 : -5; break;
+    case 'privatize': s += x.econ > 20 ? 15 : x.econ < -20 ? -20 : 0; break;
+    case 'land_reform': s += p.base === 'peasants' ? 30 : p.base === 'elite' ? -40 : x.econ < 0 ? 10 : -10; break;
+    case 'set_culture_policy': if (op.language === 'assimilate') s += x.nation > 30 ? 12 : -12; if (op.language === 'autonomy') s += x.nation > 30 ? -15 : 8; if (op.faith === 'state') s += x.faith > 30 ? 15 : -12; if (op.faith === 'secular') s += x.faith > 30 ? -20 : 10; break;
+  }
+  return s;
 }
 
 function partyVotes(w, c, b, p) {
   if (b.votes[p.id]) return b.votes[p.id] === 'yes';
   let s = 30 - distance(p.axes, b.axes) * .5 + (b.lobby[p.id] || 0) * .4 + rand(w) * 16 - 8;
   if (b.party === p.id) s += 35;
+  s += billLean(c, b, p);
   if (b.byGov) s += p.id === c.rulingParty ? 30 : -10;
+  // The government's own benches do not carry the opposition's bills unless something moves them.
+  else if (p.id === c.rulingParty && b.party !== p.id) s -= 28;
   return s > 0;
 }
 
 export function enactLaw(w, c, bill, apply, via) {
-  const leader = w.characters[c.leader], results = leader ? bill.ops.map(op => ({ op: op?.op, ...apply(w, leader, { ...op, _law: true }) })) : [];
+  // A law passed by a legislature is carried out as law. A decree is the ruler's own act: it skips no court and no veto.
+  const leader = w.characters[c.leader], results = leader ? bill.ops.filter(op => LEGISLATIVE.has(op?.op)).map(op => ({ op: op?.op, ...apply(w, leader, { ...op, _law: true, ...(via === 'decree' ? { _decree: true } : {}) }) })) : [];
   (c.laws ||= []).push({ id: bill.id, title: bill.title, text: bill.text, turn: w.turn, via, results: results.map(r => `${r.op}: ${r.msg}`).slice(0, 4) });
   if (c.laws.length > 40) c.laws.shift();
   return results;
@@ -163,6 +196,8 @@ export function billStep(w, apply) {
       }
     }
     if (c.bills) c.bills = c.bills.filter(b => b.status === 'pending' || w.turn - b.closedAt <= 8);
+    // A chamber that is not elected is still refilled from time to time as the standing of its factions shifts.
+    if (c.parliament && !c.elections && w.turn % 8 === 0) c.parliament.seats = allocateSeats(c);
   }
 }
 
@@ -218,7 +253,8 @@ export function treatyStep(w) {
       if (cl.type === 'tribute') {
         const payer = w.countries[cl.payer], other = w.countries[t.parties.find(x => x !== cl.payer)];
         if (!payer?.alive || !other?.alive) continue;
-        const due = Math.max(payer.gdp, 1) * cl.pct_gdp, paid = Math.min(Math.max(payer.reserves, 0), due);
+        // Tribute is owed in gold, so it is measured against what the country really produces, not against its paper prices.
+        const due = Math.max(payer.realGdp, 1) * cl.pct_gdp, paid = Math.min(Math.max(payer.reserves, 0), due);
         payer.reserves -= paid; other.reserves += paid;
         if (paid < due * .95) breach(w, t, cl, cl.payer, `${payer.name} could not pay its tribute in full.`);
       } else if (cl.type === 'delivery') {

@@ -2,6 +2,8 @@
 import { clamp, news, nextId, rand } from './util.js';
 import { PLANTS, BASE_PRICE, GOOD_LABEL, DEPOSITS, aliveCountries, countryProvinces } from './world.js';
 import { RECIPE } from './economy.js';
+import { queueProject, durationOf } from './projects.js';
+import { governs } from './polity.js';
 
 const SCALE = .05, MAX_PER_COUNTRY = 14, BANKRUPT_TURNS = 6;
 export const STATE = 'state';
@@ -17,6 +19,29 @@ function setCapacity(w, f, next) {
   if (f.sector === 'mine') p.deposits[f.resource].mine = next; else p.plants[f.sector] = next;
   for (const o of Object.values(w.firms)) if (o !== f && isOpen(o) && o.province === f.province && o.sector === f.sector && o.resource === f.resource) o.stake = next > 0 ? o.stake * old / next : 0;
   f.stake = next > 0 ? (f.stake * old + add) / next : 0;
+}
+
+// When capacity is added to a works, whoever paid for it owns the addition and everyone else's share of the whole shrinks with it.
+// With no payer named (the state building on its own account) the new capacity belongs to no company.
+export function restake(w, province, sector, resource, old, next, payer) {
+  for (const o of Object.values(w.firms || {})) {
+    if (!isOpen(o) || o.province !== province || o.sector !== sector || (o.resource ?? null) !== (resource ?? null)) continue;
+    o.stake = next > 0 ? clamp((o.stake * old + (o.id === payer ? next - old : 0)) / next, 0, 1) : 0;
+  }
+}
+// The state takes a company. What it does to the books of state ownership is the caller's affair.
+export function seizeFirm(w, c, firm, tell) {
+  const owner = w.characters[firm.owner];
+  if (owner) { tell(w, owner, c.name, `The state seized ${firm.name}.`); if (owner.country !== c.id && w.countries[owner.country]) w.countries[owner.country].relations[c.id] = clamp((w.countries[owner.country].relations[c.id] ?? 0) - 25, -100, 100); }
+  firm.owner = STATE; firm.offer = null;
+}
+// Capital put into a company becomes works only after they are built, and only if the country has the machinery to equip them.
+function expand(w, host, firm, capital, fail) {
+  const mine = firm.sector === 'mine', add = capital * (mine ? .002 : .004);
+  if ((host.stock.machines || 0) < add) return fail('The country does not have the machinery to equip it; machines must be made or imported first.');
+  host.stock.machines -= add; firm.cash += capital * .25;
+  queueProject(w, host, { kind: firm.sector, province: firm.province, resource: firm.resource ?? undefined, add, firm: firm.id, label: firm.name });
+  return null;
 }
 
 function makeFirm(w, c, p, sector, resource, owner, stake, name) {
@@ -76,7 +101,7 @@ export function firmStep(w) {
     if (!c?.alive) continue;
     resolveOwner(w, f, c);
     const { units, margin } = unitProfit(c, f, p), gross = units * f.stake * margin * SCALE, profit = gross > 0 ? gross * (1 - clamp(c.tax.business, 0, .7)) : gross;
-    f.lastProfit = +profit.toFixed(2);
+    f.lastProfit = +profit.toFixed(2); f.lastUnits = units * f.stake;
     f.bad = profit < 0 ? f.bad + 1 : 0;
     if (profit > 0) {
       const dividend = profit * .4; f.cash += profit - dividend;
@@ -87,6 +112,8 @@ export function firmStep(w) {
         if (owner.country !== f.country) { const paid = Math.min(Math.max(c.reserves, 0), dividend); c.reserves -= paid; if (w.countries[owner.country]?.alive) w.countries[owner.country].reserves += paid; }
       }
     } else f.cash += profit;
+    // A private company that earns and has cash in hand builds: this is where industry's own growth comes from. Sick banks, dear credit and unrest make owners wait.
+    if (profit > 0 && f.owner !== STATE && f.cash > 20 && w.turn >= (f.buildsUntil ?? 0) && c.bankHealth >= 30 && (c.interestRate ?? .01) < .05 && p.unrest < 55) { const spend = f.cash * .5; if (!expand(w, c, f, spend, x => x)) { f.cash -= spend; f.buildsUntil = w.turn + 4; } }
     if (f.bad >= BANKRUPT_TURNS && f.cash < 0) bankrupt(w, f, c, p);
   }
   pruneFirms(w);
@@ -107,33 +134,33 @@ function pruneFirms(w) {
 const openCount = (w, id) => Object.values(w.firms).filter(f => isOpen(f) && f.country === id).length;
 
 export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
-  const firm = w.firms?.[op.id], isHead = actor.id === c.leader;
+  const firm = w.firms && Object.hasOwn(w.firms, String(op.id)) ? w.firms[op.id] : null, isHead = governs(w, c, actor);
   switch (op.op) {
     case 'found_company': {
       const p = w.provinces[op.province]; if (!p) return fail('No such province.');
       const host = w.countries[p.controller], sector = op.sector, mine = sector === 'mine';
       if (!host?.alive) return fail('A company cannot be founded here.');
       if (host.id !== c.id && host.capitalClosed) return fail('This country is closed to foreign capital.');
-      if (!mine && !PLANTS[sector]) return fail('No such sector.');
+      if (!mine && !(typeof sector === 'string' && Object.hasOwn(PLANTS, sector))) return fail('No such sector.');
       if (mine && (!DEPOSITS.includes(op.resource) || op.resource === 'gold' || !p.deposits[op.resource]?.known)) return fail('No known deposit.');
       if (openCount(w, host.id) >= MAX_PER_COUNTRY) return fail('No registry room left in this country.');
-      const state = isHead && op.state === true, amount = num(op.amount, 1, state ? Math.max(c.treasury, 0) : actor.wealth, 0);
-      if (amount < 1) return fail('Not enough capital.');
-      if (state) c.treasury -= amount; else actor.wealth -= amount;
+      const state = isHead && op.state === true, amount = Math.min(num(op.amount, 0, 1e9, 0), state ? Math.max(c.treasury, 0) : actor.wealth);
+      if (!(amount >= 1)) return fail('Not enough capital.');
       const f = makeFirm(w, host, p, sector, mine ? op.resource : null, state ? STATE : actor.id, 0, String(op.name || '').slice(0, 60) || `${p.name} Company`);
-      setCapacity(w, f, capacity(w, f) + amount * (mine ? .002 : .004));
-      f.cash = amount * .25;
+      const refused = expand(w, host, f, state ? amount / Math.max(c.priceLevel, .01) : amount, fail);
+      if (refused) { delete w.firms[f.id]; return refused; }
+      if (state) c.treasury -= amount; else actor.wealth -= amount;
       news(w, `${host.name}: ${f.name} was founded.`, { kind: 'economy', countries: [host.id] });
-      return { ok: true, msg: `Company founded: ${f.id}`, firm: f.id };
+      return { ok: true, msg: `Company founded: ${f.id}. Its works will stand in ${durationOf(f.sector)} quarters.`, firm: f.id };
     }
     case 'invest_company': {
       if (!firm || !isOpen(firm)) return fail('No such company.');
       const state = firm.owner === STATE && isHead;
       if (firm.owner !== actor.id && !state) return fail('This company is not yours.');
-      const amount = num(op.amount, 0, state ? Math.max(c.treasury, 0) : actor.wealth, 0); if (amount <= 0) return fail('No money.');
+      const amount = Math.min(num(op.amount, 0, 1e9, 0), state ? Math.max(c.treasury, 0) : actor.wealth); if (!(amount > 0)) return fail('No money.');
+      const refused = expand(w, w.countries[firm.country], firm, state ? amount / Math.max(c.priceLevel, .01) : amount, fail); if (refused) return refused;
       if (state) c.treasury -= amount; else actor.wealth -= amount;
-      firm.cash += amount * .25; setCapacity(w, firm, capacity(w, firm) + amount * (firm.sector === 'mine' ? .002 : .004));
-      return ok();
+      return { ok: true, msg: `The extension will stand in ${durationOf(firm.sector)} quarters.` };
     }
     case 'sell_company': {
       if (!firm || !isOpen(firm) || firm.owner !== actor.id) return fail('This company is not yours.');
@@ -148,16 +175,16 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
       if (!agreed && !open) return fail('No sale offer.');
       const price = agreed ? firm.offer.price : firmValue(w, firm);
       if (actor.wealth < price) return fail('Not enough wealth.');
-      const seller = w.characters[firm.owner]; actor.wealth -= price; if (seller) { seller.wealth += price; tell(w, seller, actor.name, `${firm.name} was sold; you received ${Math.round(price)}.`); }
+      const seller = w.characters[firm.owner], home = w.countries[firm.country]; actor.wealth -= price;
+      if (firm.owner === STATE && home) { home.treasury += price * (home.rate || 1); home.ownership = clamp(home.ownership - .02, 0, 1); tell(w, w.characters[home.leader], actor.name, `${firm.name} was bought from the state for ${Math.round(price)}.`); }
+      else if (seller) { seller.wealth += price; tell(w, seller, actor.name, `${firm.name} was sold; you received ${Math.round(price)}.`); }
       firm.owner = actor.id; firm.offer = null; leaveTrace(w, actor, `Bought ${firm.name}.`);
       return ok();
     }
     case 'nationalize_company': {
       if (!isHead) return fail('Only the leader can seize a company.');
       if (!firm || !isOpen(firm) || firm.country !== c.id || firm.owner === STATE) return fail('No company to seize.');
-      const owner = w.characters[firm.owner];
-      if (owner) { tell(w, owner, c.name, `The state seized ${firm.name}.`); if (owner.country !== c.id && w.countries[owner.country]) w.countries[owner.country].relations[c.id] = clamp((w.countries[owner.country].relations[c.id] ?? 0) - 25, -100, 100); }
-      firm.owner = STATE; firm.offer = null; c.ownership = clamp(c.ownership + .02, 0, 1); c.blocs.capital.sat = clamp(c.blocs.capital.sat - 5, 0, 100);
+      seizeFirm(w, c, firm, tell); c.ownership = clamp(c.ownership + .02, 0, 1); c.blocs.capital.sat = clamp(c.blocs.capital.sat - 5, 0, 100);
       news(w, `${c.name}: ${firm.name} was nationalized.`, { kind: 'economy', countries: [c.id] });
       return ok();
     }
@@ -165,10 +192,11 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
       if (!isHead) return fail('Only the leader can sell.');
       if (!firm || !isOpen(firm) || firm.owner !== STATE || firm.country !== c.id) return fail('No such state company.');
       const buyer = w.characters[op.buyer]; if (!buyer?.alive) return fail('No such buyer.');
-      const price = num(op.price, 0, 1e9, firmValue(w, firm)); if (buyer.wealth < price) return fail('The buyer cannot afford it.');
-      buyer.wealth -= price; c.treasury += price * (c.rate || 1); firm.owner = buyer.id; c.ownership = clamp(c.ownership - .02, 0, 1);
-      leaveTrace(w, actor, `Sold ${firm.name} to ${buyer.name} for ${Math.round(price)}.`); tell(w, buyer, c.name, `${firm.name} is now yours.`);
-      return ok();
+      // A sale needs a buyer who agrees: the state makes the offer, and the company changes hands when the buyer takes it.
+      const price = num(op.price, 0, 1e9, firmValue(w, firm));
+      firm.offer = { buyer: buyer.id, price }; leaveTrace(w, actor, `Offered ${firm.name} to ${buyer.name} for ${Math.round(price)}.`);
+      tell(w, buyer, c.name, `The state offers you ${firm.name} (${firm.id}) for ${Math.round(price)}. Take it with buy_company.`);
+      return { ok: true, msg: 'The offer was made. The sale happens if they take it.' };
     }
     default: return fail('Unknown company operation.');
   }

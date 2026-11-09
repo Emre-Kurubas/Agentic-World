@@ -53,7 +53,9 @@ export function contractStep(w) {
       if (!sellerFirm(w, k)) { breach(w, k, seller.id, `${seller.name} no longer owns a company producing ${GOOD_LABEL[k.good]}.`); continue; }
       const route = from.id === to.id ? { cost: 1 } : w.routes[from.id < to.id ? `${from.id}|${to.id}` : `${to.id}|${from.id}`];
       if (!route) continue;
-      const q = Math.min(from.stock[k.good] || 0, k.amount);
+      // A seller delivers what their own works turn out, not the country's stores.
+      const output = Object.values(w.firms || {}).filter(f => f.status === 'open' && f.owner === k.seller && f.country === from.id && (f.sector === k.good || f.resource === k.good)).reduce((a, f) => a + (f.lastUnits || 0), 0);
+      const q = Math.min(from.stock[k.good] || 0, k.amount, output);
       from.stock[k.good] -= q; to.stock[k.good] = (to.stock[k.good] || 0) + q / route.cost;
       if (q < k.amount * .95) breach(w, k, seller.id, `${seller.name} delivered short on ${GOOD_LABEL[k.good]}.`);
     }

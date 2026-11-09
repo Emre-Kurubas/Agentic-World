@@ -1,7 +1,7 @@
 import { clamp, sum, news, between, rand } from './util.js';
 import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_LABEL, PLANTS, TECHS, countryProvinces, provincePop, aliveCountries, atWar, hasTreaty } from './world.js';
 import { migrate } from './culture.js';
-import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding } from './money.js';
+import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding, USUAL_COVER } from './money.js';
 
 export const RECIPE = {
   steel: { iron: 1, coal: .8 }, fuel: { oil: 1.25 }, fertilizer: { phosphate: 1, coal: .2 },
@@ -97,7 +97,11 @@ function extract(w, c) {
     const rail = 1 + p.rail * .12 + (hasTech(c, 'electricity') ? .08 : 0);
     const eff = (1 - p.devastation * .75) * (.72 + p.infra * .36) * occ * (1 - (p.unrest > 60 ? (p.unrest - 60) / 100 : 0)) * rail;
     const water = clamp(p.water - p.waterPenalty + (p.dam ? .15 : 0), .15, 1.4);
-    const grain = p.pops.peasants.n * p.fertility * water * .03 * c.tech.agri * eff * p.weather * fert * engine + p.fish * p.pops.peasants.n * .002, timber = p.pops.peasants.n * p.timber * .006 * eff;
+    // A province has only so much land. Hands beyond those it was farmed with add less and less, and fewer hands lose less than their share:
+    // that is what lets a famine burn out instead of feeding on itself, and what makes a growing people need better farming.
+    p.land ??= Math.max(p.pops.peasants.n, 1);
+    const hands = p.land * Math.pow(Math.max(p.pops.peasants.n, 0) / p.land, .7);
+    const grain = hands * p.fertility * water * .03 * c.tech.agri * eff * p.weather * fert * engine + p.fish * p.pops.peasants.n * .002, timber = p.pops.peasants.n * p.timber * .006 * eff;
     raw.grain += grain * pace.grain; raw.timber += timber * pace.timber;
     c._idleV += grain * (1 - pace.grain) * BASE_PRICE.grain + timber * (1 - pace.timber) * BASE_PRICE.timber;
     const deposits = Object.entries(p.deposits).filter(([, d]) => d.known && d.mine > 0 && d.amount > 0);
@@ -109,8 +113,9 @@ function extract(w, c) {
       d.amount = Math.max(0, d.amount - q * .08);
       const con = p.concessions?.[k];
       if (k === 'gold') { gold += q; continue; }
-      const kept = con && w.countries[con.holder]?.alive ? q * (1 - con.share) : q;
-      if (con && w.countries[con.holder]?.alive) { const shipped = q - kept; w.countries[con.holder].stock[k] = (w.countries[con.holder].stock[k] || 0) + shipped; }
+      // A concession pays out only while the two countries still deal with each other: not across a war or an embargo.
+      const pays = con && w.countries[con.holder]?.alive && !atWar(w, c.id, con.holder) && !c.embargo.includes(con.holder), kept = pays ? q * (1 - con.share) : q;
+      if (pays) { const shipped = q - kept; w.countries[con.holder].stock[k] = (w.countries[con.holder].stock[k] || 0) + shipped; }
       raw[k] += kept; c._rent += kept * BASE_PRICE[k] * (k === 'oil' ? 1.4 : 1);
       if (d.amount <= 0) news(w, `${c.name}: the ${p.name} ${GOOD_LABEL[k]} deposit is exhausted.`, { kind: 'economy', countries: [c.id] });
     }
@@ -132,6 +137,7 @@ function needs(w, c) {
   const ships = sum(Object.values(w.fleets).filter(f => f.country === c.id), f => f.ships);
   need.grain += c._pop * .01; need.goods += c._pop * .004; need.coal += c._pop * .001 + (hasTech(c, 'combustion_engine') ? 0 : ships * .08);
   need.arms += men * .01; need.fuel += engine * .05 + (hasTech(c, 'combustion_engine') ? ships * .08 + c._pop * .0006 : 0); need.machines += c._pop * .00008;
+  c._burn = { coal: hasTech(c, 'combustion_engine') ? 0 : ships * .08, fuel: engine * .05 + (hasTech(c, 'combustion_engine') ? ships * .08 : 0) };
   if (hasTech(c, 'chemical_fertilizer')) need.fertilizer += c._pop * .002;
   if (hasTech(c, 'rare_alloys')) need.rare += sum(Object.values(w.units).filter(u => u.country === c.id && ['armor', 'air'].includes(u.kind)), u => u.men) * .004 + c._cap.machines * .05;
   c._need = need; c._lastFuelNeed = need.fuel;
@@ -142,7 +148,7 @@ function needs(w, c) {
 function trade(w, cs) {
   w.tradeFlows = {};
   const key = routeKey;
-  for (const c of cs) c.lastSold = {};
+  for (const c of cs) { c.lastSold = {}; c.lastBought = {}; }
   for (const g of GOODS) {
     const sellers = cs.map(c => ({ c, s: Math.max(0, c.stock[g] - c._need[g] - c._reserve[g]) })).filter(x => x.s > 0);
     const buyers = cs.map(c => ({ c, d: Math.max(0, c._need[g] + c._reserve[g] * .5 - c.stock[g]) + displacedDemand(c, g) })).filter(x => x.d > 0);
@@ -162,12 +168,15 @@ function trade(w, cs) {
         const gold = v * a.r.cost; a.x.c.stock[g] -= q; b.c.stock[g] += q; a.x.c.reserves += gold; b.c.reserves -= gold;
         a.x.c._exports = (a.x.c._exports || 0) + v; b.c._imports = (b.c._imports || 0) + v;
         a.x.c._rawExp = (a.x.c._rawExp || 0) + (RAW.includes(g) && g !== 'grain' ? v : 0);
-        for (const tid of a.r.tolls) { const t = w.strategic.find(s => s.id === tid); if (t?.controller) { const fee = v * t.toll; w.countries[t.controller].reserves += fee; w.countries[t.controller]._tolls = (w.countries[t.controller]._tolls || 0) + fee; } }
+        // The toll is part of what the buyer paid; it is passed on to whoever holds the strait, not minted anew.
+        for (const tid of a.r.tolls) { const t = w.strategic.find(s => s.id === tid); if (t?.controller) { const fee = Math.min(v * t.toll, Math.max(a.x.c.reserves, 0)); a.x.c.reserves -= fee; w.countries[t.controller].reserves += fee; w.countries[t.controller]._tolls = (w.countries[t.controller]._tolls || 0) + fee; } }
+        b.c.lastBought[g] = (b.c.lastBought[g] || 0) + q;
         const k = key(b.c.id, a.x.c.id); (w.tradeFlows[k] ||= {}); w.tradeFlows[k][g] = (w.tradeFlows[k][g] || 0) + v;
       }
     }
     const unmet = wanted > 0 ? clamp((wanted - moved) / wanted, 0, 1) : 0;
-    const before = w.globalPrice[g], D = sum(cs, c => c._need[g]) + 1, S = sum(cs, c => c.stock[g]) + moved * .2 + 1;
+    // Durable goods are held in deeper stores everywhere, so a world with years of machinery in hand is not a world glutted with it.
+    const before = w.globalPrice[g], D = sum(cs, c => c._need[g]) + 1, S = (sum(cs, c => c.stock[g]) + moved * .2) / ((USUAL_COVER[g] ?? 2) / 2) + 1;
     const target = BASE_PRICE[g] * clamp(Math.pow(D / S * 1.6, .8), .4, 5) * (1 + unmet * .9);
     w.globalPrice[g] = clamp(before + (target - before) * .4, BASE_PRICE[g] * .3, BASE_PRICE[g] * 9);
     if (w.globalPrice[g] > before * 1.5 && before > BASE_PRICE[g]) news(w, `World ${GOOD_LABEL[g]} price rose sharply.`, { kind: 'economy' });
@@ -214,19 +223,26 @@ function consume(w, c, prev) {
   c.stock.grain = Math.max(0, c.stock.grain - c._pop * .01) * .96;
   const consumer = clamp(c.stock.goods / Math.max(c._pop * .004, 1), 0, 1.2);
   c.stock.goods = Math.max(0, c.stock.goods - c._pop * .004) * .96;
-  c.stock.coal = Math.max(0, c.stock.coal - c._pop * .001);
-  if (hasTech(c, 'combustion_engine')) { c.fuelRatio = clamp(c.stock.fuel / Math.max(n.fuel, .1), 0, 1.2); c.stock.fuel = Math.max(0, c.stock.fuel - c._pop * .0006); } else c.fuelRatio = 1;
+  // What the fleet and the motorised army burn, the fields take and the workshops use really leaves the stores.
+  c.stock.coal = Math.max(0, c.stock.coal - c._pop * .001 - (c._burn?.coal || 0));
+  if (hasTech(c, 'combustion_engine')) { c.fuelRatio = clamp(c.stock.fuel / Math.max(n.fuel, .1), 0, 1.2); c.stock.fuel = Math.max(0, c.stock.fuel - c._pop * .0006 - (c._burn?.fuel || 0)); } else c.fuelRatio = 1;
+  if (hasTech(c, 'chemical_fertilizer')) c.stock.fertilizer = Math.max(0, (c.stock.fertilizer || 0) - c._pop * .002);
+  if (n.rare > 0) c.stock.rare = Math.max(0, (c.stock.rare || 0) - n.rare);
+  // Nothing keeps for ever: what lies in store beyond two years' need rusts, rots or is written off.
+  for (const good of GOODS) { const keep = (n[good] || 0) * 8; if (good !== 'grain' && good !== 'goods' && c.stock[good] > keep) c.stock[good] -= (c.stock[good] - keep) * .04; }
   const rawV = sum(RAW, g => c._raw[g] * BASE_PRICE[g]), madeV = sum(Object.keys(RECIPE), g => (c._made[g] || 0) * BASE_PRICE[g] * .45);
   // The first quarter has no measured past to compare with, so it counts as no growth rather than a boom or a slump.
   const real = rawV + madeV + c._services, g = prev > 0 && c._measured ? real / prev - 1 : 0;
   c._measured = true; c.realGdp = real; c.growth = g;
-  const prevM = c._lastMoney ?? c.money, mg = prevM > 0 ? c.money / prevM - 1 : 0; c._lastMoney = c.money;
+  const prevM = c._lastMoney ?? c.money, mg = prevM > 0 ? c.money / prevM - 1 : 0;
   const shortage = Math.max(0, 1 - Math.min(c.foodRatio, 1)) * .55 + Math.max(0, 1 - Math.min(consumer, 1)) * .25 + (hasTech(c, 'combustion_engine') ? Math.max(0, 1 - Math.min(c.fuelRatio, 1)) * .18 : 0);
   // Scarcity raises prices once; sustained inflation needs worsening scarcity or money growth.
   const shock = shortage - (c._lastShortage ?? shortage); c._lastShortage = shortage;
-  c.inflation = clamp(.35 * c.inflation + .85 * (mg - g * .6) + shock * .4 + (c._fxPass || 0) + (c.reserves < 0 ? .03 : 0) + (c.bankHealth < 30 ? .02 : 0) + .004, -.04, 4);
+  // Money follows output of itself. What moves prices is money made or lost beyond that (the printing press, gold flowing in or out), scarcity and the exchange rate.
+  // A currency tied to gold has an anchor; one that floats drifts a little every quarter.
+  c.inflation = clamp(.35 * c.inflation + .85 * mg + shock * .4 + (c._fxPass || 0) + (c.reserves < 0 ? .03 : 0) + (c.bankHealth < 30 ? .02 : 0) + (c.fxRegime === 'floating' ? .004 : .001), -.04, 4);
   c.priceLevel *= 1 + c.inflation; c.wageIndex += (c.priceLevel - c.wageIndex) * .35;
-  c.gdp = real * c.priceLevel; c.money *= 1 + g * .6 + .002;
+  c.gdp = real * c.priceLevel; c.money *= 1 + g * .6 + .002; c._lastMoney = c.money;
   c.idleShare = clamp(c._idleV / Math.max(real + c._idleV, 1), 0, 1);
   c.unemployment += (clamp(.06 + (1 - c.inputRatio) * .3 + c._dev * .3 + Math.max(0, -g) * .9 + c.idleShare * .25, .02, .6) - c.unemployment) * .4;
   // Resource-rent dependence: easy money feeds corruption and oligarchs and weakens industry.
@@ -249,7 +265,8 @@ function fiscal(w, c) {
   // Lenders price in the inflation they have come to expect, not one quarter's jump.
   c.inflTrend = (c.inflTrend ?? Math.max(0, c.inflation)) * .8 + Math.max(0, c.inflation) * .2;
   c.interestRate = sovereignRate(c);
-  let interest = c.debt * c.interestRate;
+  // A state in default has stopped paying its bondholders. It pays again once it is trusted again; until then the debt neither grows nor is served.
+  let interest = c.defaulted ? 0 : c.debt * c.interestRate;
   // External debt is in gold: when the currency falls, the same interest costs the budget more.
   const external = sum(Object.values(c.creditors), x => x), extRate = foreignRate(c, external); let extDue = 0, extPaid = 0;
   for (const [cid, amt] of Object.entries(c.creditors)) if (w.countries[cid]?.alive) { const due = amt * extRate, pay = Math.min(Math.max(c.reserves, 0), due); c.reserves -= pay; w.countries[cid].reserves += pay; extDue += due; extPaid += pay; }
@@ -262,7 +279,7 @@ function fiscal(w, c) {
   else {
     // A deficit is covered by borrowing for as long as lenders agree; after that wages and bills go unpaid.
     borrowed = Math.min(need - cash, creditLeft(c));
-    c.debt += borrowed; cash += borrowed;
+    c.debt += borrowed; cash += borrowed; c._taken = (c._taken || 0) + borrowed;
     if (cash < need - 1e-9) {
       paid = need > 0 ? clamp(cash / need, 0, 1) : 1; cash = 0; c.arrears = clamp(c.arrears + (1 - paid), 0, 6);
       if (paid < .55 && c.debt > c.gdp * 4 * .9) declareDefault(w, c, 'declared it cannot pay its debts');
@@ -296,15 +313,22 @@ export const costOfPolice = level => Math.max(0, level - 5) / 3200;
 function demography(w, c) {
   const provs = countryProvinces(w, c.id), gap = Math.max(0, 1 - c.foodRatio); let starved = 0, fled = 0;
   for (const p of provs) {
-    const welfare = 1 + c.budget.welfare;
-    for (const k of CLASSES) { const pop = p.pops[k], sev = k === 'elite' ? .1 : k === 'middle' ? .5 : 1, lost = pop.n * gap * .09 * sev / welfare; starved += lost; pop.n = Math.max(1, pop.n * (1 + .0035 * (c.foodRatio >= 1 ? 1 : .4)) - lost); }
+    const welfare = 1 + c.budget.welfare * (c.paidRatio ?? 1);
+    // A lean year is hunger, not yet famine: people begin to die in numbers once a twentieth of the bread is missing.
+    for (const k of CLASSES) { const pop = p.pops[k], sev = k === 'elite' ? .1 : k === 'middle' ? .5 : 1, lost = pop.n * Math.max(0, gap - .05) * .12 * sev / welfare; starved += lost; pop.n = Math.max(1, pop.n * (1 + .0035 * (c.foodRatio >= 1 ? 1 : .4)) - lost); }
     // Urbanization comes with literacy and industry.
-    const mv = p.pops.peasants.n * clamp((sum(Object.values(p.plants)) - .3) * .002 + c.literacy * .00002, 0, .01); p.pops.peasants.n -= mv; p.pops.workers.n += mv * .8; p.pops.middle.n += mv * .2;
+    // People leave the land for the towns while there is bread there; when bread fails they go back to it.
+    if (c.foodRatio >= 1) { const mv = p.pops.peasants.n * clamp((sum(Object.values(p.plants)) - .3) * .002 + c.literacy * .00002, 0, .01); p.pops.peasants.n -= mv; p.pops.workers.n += mv * .8; p.pops.middle.n += mv * .2; }
+    else if (c.foodRatio < .9) { const back = p.pops.workers.n * .012; p.pops.workers.n -= back; p.pops.peasants.n += back; }
     if (gap > .12 || p.devastation > .45) {
       const outs = p.neighbors.map(n => w.provinces[n]).filter(n => (n.controller !== p.controller && !atWar(w, n.controller, p.controller)) || (n.controller === p.controller && n.devastation < p.devastation - .1));
-      if (outs.length) { const rate = clamp(gap * .12 + p.devastation * .04, 0, .1); for (const k of ['peasants', 'workers']) { const m = p.pops[k].n * rate; p.pops[k].n -= m; fled += m; const to = outs[Math.floor(rand(w) * outs.length)]; to.pops[k].n += m; migrate(p, to, rate); to.unrest = clamp(to.unrest + m / Math.max(provincePop(to), 1) * 120, 0, 100); } }
+      if (outs.length) {
+        const rate = clamp(gap * .12 + p.devastation * .04, 0, .1), to = outs[Math.floor(rand(w) * outs.length)], before = provincePop(p); let moved = 0;
+        for (const k of ['peasants', 'workers']) { const m = p.pops[k].n * rate; p.pops[k].n -= m; to.pops[k].n += m; moved += m; }
+        fled += moved; migrate(p, to, moved / Math.max(before, 1)); to.unrest = clamp(to.unrest + moved / Math.max(provincePop(to), 1) * 120, 0, 100);
+      }
     }
-    p.devastation = Math.max(0, p.devastation - .02 - c.budget.infrastructure * .4);
+    p.devastation = Math.max(0, p.devastation - .02 - c.budget.infrastructure * (c.paidRatio ?? 1) * .4);
   }
   if (starved > 8) news(w, `${c.name}: famine claimed about ${Math.round(starved)}k lives.${fled > 5 ? ` ${Math.round(fled)}k people were displaced.` : ''}`, { kind: 'disaster', countries: [c.id] });
   c.starved = starved; c.fled = fled;
@@ -337,7 +361,7 @@ function research(w, c) {
   const known = aliveCountries(w).filter(o => o.techs[t]).length;
   c.research.progress += points * (1 + known * .15);
   if (c.research.progress >= TECHS[t].cost) {
-    c.techs[t] = w.turn; c.research = { target: null, progress: 0 };
+    c.techs[t] = Math.max(1, w.turn); c.research = { target: null, progress: 0 };
     news(w, `${c.name}: ${TECHS[t].name} has been put into practice.`, { kind: 'economy', countries: [c.id] });
     if (t === 'oil_prospecting') for (const p of countryProvinces(w, c.id)) if (p.deposits.oil && rand(w) < .35) p.deposits.oil.known = true;
   }
@@ -353,7 +377,7 @@ function epidemicStep(w) {
     const next = {};
     for (const [id, v] of Object.entries(e.provinces)) {
       const p = w.provinces[id], c = w.countries[p.controller]; if (!c?.alive) continue;
-      const med = hasTech(c, 'antibiotics') ? .4 : 1, care = 1 - clamp(c.budget.welfare * 3, 0, .4);
+      const med = hasTech(c, 'antibiotics') ? .4 : 1, care = 1 - clamp(c.budget.welfare * (c.paidRatio ?? 1) * 3, 0, .4);
       for (const k of CLASSES) p.pops[k].n *= 1 - v * .025 * med * care;
       p.unrest = clamp(p.unrest + v * 2, 0, 100);
       const decay = v - .12;

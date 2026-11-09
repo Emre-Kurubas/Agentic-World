@@ -22,23 +22,29 @@ export function updateRer(w) {
 }
 
 // With full warehouses producers slow down: looks at how many turns of domestic demand and last turn's sales the stock covers.
+// Durable goods are kept in deep stores without anyone calling it a glut: a year's machinery, an arsenal for a war.
+export const USUAL_COVER = { machines: 8, arms: 16 };
+const coverOf = (c, g, demand) => (c.stock[g] || 0) / demand * 2 / (USUAL_COVER[g] ?? 2);
+// Makers of ordinary goods slow down when the warehouses hold years of sales; makers of durable goods when the usual store is full, before the price is ruined.
 export function glutFactor(c, g) {
   if (!c._need) return 1;
-  const demand = Math.max((c._need?.[g] || 0) + (c.lastSold?.[g] || 0), .001), cover = (c.stock[g] || 0) / demand;
-  return cover > GLUT_TURNS ? GLUT_TURNS / cover : 1;
+  const cover = (c.stock[g] || 0) / Math.max((c._need?.[g] || 0) + (c.lastSold?.[g] || 0), .001), full = USUAL_COVER[g] ?? GLUT_TURNS;
+  return cover > full ? full / cover : 1;
 }
 
 // Domestic market: a good's local price comes from the world price, the currency's value and local scarcity.
 export function localPrices(w, c) {
   c.prices ||= {};
   for (const g of GOODS) {
-    const demand = Math.max(c._need?.[g] || 0, .001), cover = (c.stock[g] || 0) / demand, scarcity = clamp(1.4 / (Math.min(cover, 6) * .5 + .4), .5, 3);
+    // An arsenal is bought by the state at its own price: a full one does not make rifles cheap the way a full granary makes bread cheap.
+    const cover = coverOf(c, g, Math.max(c._need?.[g] || 0, .001)), scarcity = clamp(1.4 / (Math.min(cover, 6) * .5 + .4), g === 'arms' ? .9 : .5, 3);
     c.prices[g] = +(w.globalPrice[g] * (c.rer ?? 1) * scarcity).toFixed(2);
   }
 }
 
 // An overvalued currency lets imports push local goods out of the market; that is how a surplus country's foreign exchange recirculates.
-export const displacedDemand = (c, g) => clamp(((c.rer ?? 1) - 1) * 2, 0, .5) * (c._need?.[g] || 0);
+// A tariff wall keeps part of them out.
+export const displacedDemand = (c, g) => clamp(((c.rer ?? 1) - 1) * 2, 0, .5) * (c._need?.[g] || 0) * (1 - clamp(c.tariff ?? 0, 0, 1));
 export const exportEdge = c => 1 / Math.max(c.rer ?? 1, .2) ** 2;
 
 export function foreignRate(c, external) {
@@ -61,14 +67,19 @@ export function creditStanding(w, c, paidInFull) {
   if (c.cleanTurns >= DEFAULT_MEMORY) { c.defaulted = false; c.cleanTurns = 0; news(w, `${c.name} is trusted by lenders again, years after its default.`, { kind: 'economy', countries: [c.id] }); }
 }
 // How much more lenders would still put up in one quarter. Trust in the government widens it; a default nearly closes it.
+// The quarter's allowance is fixed when the quarter opens (openCredit): asking the lenders ten times in one quarter does not get ten allowances.
+// Lenders take up about an eighth of the remaining headroom in a quarter: enough for a war loan, not for the whole ceiling at once.
+const creditRoom = c => Math.max(0, c.gdp * 4 * (1.1 + c.legitimacy / 100) - c.debt) * (c.defaulted ? .03 : .12);
 export function creditLeft(c) {
-  return Math.max(0, c.gdp * 4 * (1.1 + c.legitimacy / 100) - c.debt) * (c.defaulted ? .1 : .35);
+  return Math.max(0, Math.min(creditRoom(c), (c._room ?? Infinity) - (c._taken || 0)));
 }
+export function openCredit(c) { c._room = creditRoom(c); c._taken = 0; }
 
 export function declareDefault(w, c, why) {
   if (!canDefault(w, c)) return false;
-  c.defaulted = true; c.defaultedAt = w.turn; c.cleanTurns = 0; c.extArrears = 0; c.debt *= .55; c.reserves *= .7; c.bankHealth = clamp(c.bankHealth - 30, 0, 100);
-  for (const [cid, amt] of Object.entries(c.creditors)) { const o = w.countries[cid]; if (o?.alive) { o.relations[c.id] = clamp((o.relations[c.id] ?? 0) - 40, -100, 100); o.bankHealth = clamp(o.bankHealth - 12, 0, 100); o.reserves -= amt * .15; } c.creditors[cid] = amt * .55; }
+  c.defaulted = true; c.defaultedAt = w.turn; c.cleanTurns = 0; c.extArrears = 0; c.debt *= .55; if (c.reserves > 0) c.reserves *= .7; c.bankHealth = clamp(c.bankHealth - 30, 0, 100);
+  // The creditors' loss is the part of their claim that is written off; no gold of theirs vanishes on top of it.
+  for (const [cid, amt] of Object.entries(c.creditors)) { const o = w.countries[cid]; if (o?.alive) { o.relations[c.id] = clamp((o.relations[c.id] ?? 0) - 40, -100, 100); o.bankHealth = clamp(o.bankHealth - 12, 0, 100); c.creditors[cid] = amt * .55; } else delete c.creditors[cid]; }
   news(w, `${c.name} ${why}; ${Object.keys(c.creditors).length ? 'creditor countries are furious' : 'its bondholders are ruined'}.`, { kind: 'economy', countries: [c.id] });
   return true;
 }

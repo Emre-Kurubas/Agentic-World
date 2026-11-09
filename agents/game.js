@@ -29,12 +29,14 @@ export function currentActors(w) {
     const ch = w.characters[c[r]];
     if (ch?.alive && ch.status === 'free' && ch.country === c.id && !incapacitated(ch)) { out.push(ch); seen.add(ch.id); }
   }
-  for (const ch of Object.values(w.characters)) if (ch.everAI && ch.alive && !seen.has(ch.id) && !seated(w, ch) && !incapacitated(ch) && w.countries[ch.country]?.alive) out.push(ch);
+  // Someone the story has moved past falls silent in time: out of office, they stay on stage for some years after their fall or after the last letter that reached them.
+  for (const ch of Object.values(w.characters)) if (ch.everAI && ch.alive && !seen.has(ch.id) && !seated(w, ch) && !incapacitated(ch) && w.countries[ch.country]?.alive && w.turn - Math.max(ch.outSince ?? w.turn, ...ch.inbox.map(m => m.turn ?? 0)) < FADE_AFTER) out.push(ch);
   return out;
 }
 
 // Which model plays whom. A cast list is dealt round the table so that every role is played by every model somewhere;
 // without one, leaders get one model and everyone else another. assign pins a person, a seat ("U2.general") or a role.
+const FADE_AFTER = 16;
 export function castModel(cfg, w, ch) {
   const m = cfg.models ?? {}, pinned = m.assign?.[ch.id] ?? m.assign?.[`${ch.country}.${ch.role}`] ?? m.assign?.[ch.role];
   if (pinned) return pinned;
@@ -198,7 +200,7 @@ export class Game {
       const unread = new Map();
       for (const from of [...actors]) {
         for (const m of this.pending.actors[from.id]?.messages ?? []) {
-          const target = reachable.get(m.to) ?? reachable.get(w.countries[m.to]?.leader);
+          const target = reachable.get(recipient(w, m.to)?.id);
           if (m.read || !target || target.id === from.id || talk.skip[target.id] || this.pending.actors[target.id]?.fallback) continue;
           if (!unread.has(target.id)) unread.set(target.id, []);
           unread.get(target.id).push({ m, from });
@@ -265,7 +267,9 @@ export class Game {
     const w = this.w, cfg = this.cfg, trace = [], rulings = [];
     const awake = new Set(actors.map(a => a.id));
     const outgoing = [];
-    for (const ch of actors) if (!this.pending.actors[ch.id]?.fallback) ch.newOutcomes = [];
+    // Those who woke have read their mail: it is cleared now, before anything is carried out, so that what this quarter's acts send them
+    // (an arrest order, a plot invitation, a blackmail note, an offer) is still there next morning. Someone who failed to answer has read nothing.
+    for (const ch of actors) if (!this.pending.actors[ch.id]?.fallback) { ch.newOutcomes = []; ch.inbox = []; }
     for (const ch of currentActors(w)) {
       const c = w.countries[ch.country];
       const ai = isAI(cfg, c, ch);
@@ -276,9 +280,10 @@ export class Game {
         if (r.publicFace) ch.publicFace = r.publicFace;
         if (r.notes) { ch.diary.push(`${w.date || 'Start'}: ${r.notes}`); ch.diary = ch.diary.slice(-16); }
         for (const m of r.messages) outgoing.push({ from: ch, ...m });
-        trace.push({ actor: ch.id, country: c.id, role: ch.role, name: ch.name, ai, model: ai ? ch.model ?? null : null, standing: seated(w, ch) ? 'in office' : ch.status === 'free' ? 'out of office' : ch.status, persona: ch.persona, lookups: (this.pending.lookups?.[ch.id] || []).map(a => a.q), monologue: r.monologue, decisions: r.decisions, messages: r.messages, notes: r.notes });
+        trace.push({ actor: ch.id, country: c.id, role: ch.role, name: ch.name, ai, model: ai ? ch.model ?? null : null, standing: seated(w, ch) ? 'in office' : ch.status === 'free' ? 'out of office' : ch.status, health: ch.condition ? { kind: ch.condition.kind, severity: ch.condition.severity } : null, publicFace: ch.publicFace ?? '', persona: ch.persona, lookups: (this.pending.lookups?.[ch.id] || []).map(a => a.q), monologue: r.monologue, decisions: r.decisions, messages: r.messages, notes: r.notes });
         if (r._ops) for (const op of r._ops) rulings.push(this.applyRuling(ch, { narrative: describe(op), prob: 1, public: false, ops: [op], source: 'mock' }));
-      } else if (seated(w, ch)) {
+      } else if (seated(w, ch) && !ai) {
+        // Only people who are played by rules act by rules. An AI character who was not woken, or whose answer did not arrive, does nothing that quarter.
         const ops = npcDecide(w, ch);
         if (ops.length) { for (const op of ops) rulings.push(this.applyRuling(ch, { narrative: describe(op), prob: 1, public: false, ops: [op], source: 'rule' })); }
       }
@@ -299,24 +304,33 @@ export class Game {
         ch.outcomes.push(`${w.date}: Not carried out, no ruling was given: ${d.slice(0, 200)}`); ch.outcomes = ch.outcomes.slice(-16); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
       });
     }
-    for (const ch of actors) ch.inbox = [];
+    // Those who never read their mail (rule-based players, sleepers) do not keep every letter for ever.
+    for (const ch of Object.values(w.characters)) if (ch.inbox.length > 40) ch.inbox = ch.inbox.slice(-40);
     for (const m of outgoing) {
-      const target = w.characters[m.to] ?? w.characters[w.countries[m.to]?.leader];
+      const target = recipient(w, m.to);
+      if (target) m.to = target.id === w.countries[m.to]?.leader ? m.to : target.id;
       if (!target?.alive) m.undelivered = true;
-      else if (!m.read) target.inbox.push({ turn: w.turn, from: `${m.from.name} (${w.countries[m.from.country]?.name})`, text: m.text });
+      else if (!m.read) target.inbox.push({ turn: w.turn, from: `${m.from.name} (${w.countries[m.from.country]?.name})`, text: m.text, letter: true });
       // A prisoner's letters pass through the censor's hands; how often they are copied depends on how good the state's eyes are.
       const home = w.countries[m.from.country], warden = w.characters[home?.leader];
       if (m.from.status === 'imprisoned' && target?.alive && warden?.alive && warden.id !== target.id && rand(w) < clamp(.25 + home.intelligence / 150, .25, .85)) { warden.inbox.push({ turn: w.turn, from: 'Prison censor', text: `Letter from the prisoner ${m.from.name} to ${target.name}: ${m.text}` }); m.intercepted = true; }
     }
-    return { trace, rulings, system: (this.sysLog ||= []).splice(0), messages: outgoing.map(m => { const target = w.characters[m.to] ?? w.characters[w.countries[m.to]?.leader]; return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, intercepted: !!m.intercepted, read: !!m.read, round: m.round ?? 0 }; }) };
+    return { trace, rulings, system: (this.sysLog ||= []).splice(0), messages: outgoing.map(m => { const target = recipient(w, m.to); return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, intercepted: !!m.intercepted, read: !!m.read, round: m.round ?? 0 }; }) };
   }
 
   applyRuling(ch, { narrative, prob, public: pub, ops, source, decision, decisionText }) {
     const w = this.w, c = w.countries[ch.country];
     const success = prob >= 1 || rand(w) < prob;
     const results = success ? ops.map(op => ({ op: op.op, ...safeApply(w, ch, op) })) : [];
-    if (narrative && pub && success && source === 'referee') news(w, `${c?.name ?? ''}: ${narrative}`, { kind: 'politics', countries: [ch.country] });
-    if (source === 'referee' && narrative) { ch.outcomes.push(`${w.date}: ${success ? 'Succeeded' : 'Failed'}: ${narrative}`); ch.outcomes = ch.outcomes.slice(-16); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1)); }
+    const refused = results.filter(r => r.ok === false), carried = success && (!results.length || refused.length < results.length);
+    // What is announced is what happened: an order the world refused does not make the papers as if it had been done.
+    if (narrative && pub && carried && source === 'referee') news(w, `${c?.name ?? ''}: ${narrative}`, { kind: 'politics', countries: [ch.country] });
+    // The person who gave the order is told what actually came of it, in the engine's own words, not only what was intended.
+    if (source === 'referee' && narrative) {
+      const plain = m => m && !['Applied.', 'Recorded.'].includes(m), said = results.filter(r => plain(r.msg)).map(r => `${r.ok ? '' : `${r.op} was NOT carried out: `}${r.msg}`).join(' ');
+      const verdict = !success ? 'Failed' : !refused.length ? 'Succeeded' : refused.length < results.length ? 'Only partly carried out' : 'Not carried out';
+      ch.outcomes.push(`${w.date}: ${verdict}: ${narrative}${said ? ` [${said.slice(0, 500)}]` : ''}`); ch.outcomes = ch.outcomes.slice(-16); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
+    }
     return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, probability: prob, success, results, source, decision, decisionText, ops };
   }
 
@@ -350,6 +364,14 @@ export class Game {
   }
 }
 
+// A letter may be addressed by id, by country or by name.
+function recipient(w, to) {
+  const key = String(to ?? '').trim(), direct = w.characters[key] ?? w.characters[w.countries[key]?.leader];
+  if (direct) return direct;
+  const low = key.toLowerCase(), person = Object.values(w.characters).find(x => x.alive && x.name.toLowerCase() === low), state = Object.values(w.countries).find(c => c.alive && c.name.toLowerCase() === low);
+  return person ?? w.characters[state?.leader] ?? null;
+}
+
 // The decisions of each actor that have no ruling yet, with their original numbers.
 function unruled(entries, r) {
   const has = (id, i) => (r?.rulings || []).some(h => h?.actor === id && Number(h.decision) === i), out = [];
@@ -360,7 +382,8 @@ function unruled(entries, r) {
   return out;
 }
 
-function safeApply(w, ch, op) { try { return applyOp(w, ch, op); } catch (e) { return { ok: false, msg: `Error: ${e.message}` }; } }
+// What comes from outside the engine carries no inner switches: only the engine itself marks an operation as law or decree.
+function safeApply(w, ch, op) { try { const { _law, _decree, ...plain } = op ?? {}; return applyOp(w, ch, plain); } catch (e) { return { ok: false, msg: `Error: ${e.message}` }; } }
 
 function sanitize(r, cfg) {
   if (!r || r.fallback) return { fallback: true };

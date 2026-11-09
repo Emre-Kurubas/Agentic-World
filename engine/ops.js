@@ -1,16 +1,16 @@
 import { clamp, news, rand, nextId, pick, sum } from './util.js';
 import { CLASSES, GOODS, countryProvinces, atWar, hasTreaty, makeUnit, aliveCountries, clampRel, provincePop } from './world.js';
 import { executePlot, neutralize, die, SUCCESSION } from './politics.js';
-import { capture, pathStep, upkeepCost } from './military.js';
-import { makeFleet, TECHS, PLANTS, DEPOSITS, GOOD_LABEL, ROLES, spawnCharacter } from './world.js';
+import { capture, pathStep, upkeepCost, settleOccupations } from './military.js';
+import { makeFleet, TECHS, PLANTS, DEPOSITS, GOOD_LABEL, ROLES, spawnCharacter, bfsSea } from './world.js';
 import { hasTech } from './economy.js';
 import { FX_REGIMES, foreignRate, externalDebt, creditLeft, declareDefault } from './money.js';
-import { firmOp } from './firms.js';
+import { firmOp, seizeFirm, STATE } from './firms.js';
 import { queueProject, durationOf, DEFENSES, MAX_DEFENSE } from './projects.js';
 import { LANGUAGE_POLICY, FAITH_POLICY, groupsOf, removePeople, settlePeople } from './culture.js';
 import { incapacitated } from './health.js';
 import { proposeContract, acceptContract, cancelContract } from './contracts.js';
-import { delegated, vetoedBy, makeInstitution, mustPassParliament, createBill, parliamentOpen, makeParliament, leadsParties, enactLaw, normalizeClauses, activateClauses, allocateSeats, clauseText, MAX_AGENCY_BUDGET } from './polity.js';
+import { delegated, vetoedBy, makeInstitution, mustPassParliament, createBill, parliamentOpen, makeParliament, leadsParties, enactLaw, normalizeClauses, activateClauses, allocateSeats, clauseText, MAX_AGENCY_BUDGET, governs } from './polity.js';
 
 const FIRM_OPS = new Set(['found_company', 'invest_company', 'sell_company', 'buy_company', 'nationalize_company', 'privatize_company']);
 const PERMISSIONS = {
@@ -28,7 +28,7 @@ PERMISSIONS.imprisoned = new Set(['accept_contract', 'cancel_contract', 'repay_d
 export function permissionsOf(c, actor, w) {
   if (actor.status === 'imprisoned' || actor.status === 'exiled') return PERMISSIONS[actor.status];
   // While the ruler lies too ill to govern, the named successor governs in their name.
-  if (w && c.heir === actor.id && incapacitated(w.characters[c.leader])) return null;
+  if (w && governs(w, c, actor)) return null;
   if (c[actor.role] !== actor.id) return PERMISSIONS.private;
   return actor.role in PERMISSIONS ? PERMISSIONS[actor.role] : PERMISSIONS.private;
 }
@@ -50,6 +50,23 @@ const leaveTrace = (w, ch, text) => { (ch.secrets ||= []).push({ turn: w.turn, t
 const tell = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 const openDebt = (w, id) => (w.debts || []).find(d => d.id === id && ['open', 'overdue'].includes(d.status));
 const NO_FUNDS = 'The treasury is empty and lenders will not cover it.';
+// Names that arrive from outside are looked up as names, never as whatever an object happens to inherit.
+const has = (o, k) => typeof k === 'string' && !!o && Object.hasOwn(o, k);
+// An allowance holds for one quarter: asking again the same quarter draws on what is left of it, not on a fresh one.
+const quarterBook = (w, holder) => holder._quarter?.turn === w.turn ? holder._quarter : (holder._quarter = { turn: w.turn, used: {} });
+const used = (w, holder, key) => quarterBook(w, holder).used[key] || 0;
+function allowance(w, holder, key, limit, want) {
+  const book = quarterBook(w, holder), take = Math.max(0, Math.min(Number.isFinite(want) ? want : 0, limit - (book.used[key] || 0)));
+  book.used[key] = (book.used[key] || 0) + take;
+  return take;
+}
+// A mood put about by someone, under the same ceiling as any other talk.
+function sway(c, actor, stat, delta, turns, label) {
+  const room = moodRoom(c, actor, stat), active = sum(c.mods.filter(m => m.src === 'custom' && m.key === stat), m => m.delta), moved = clamp(active + delta, -room, room) - active;
+  if (Math.abs(moved) < .05) return 0;
+  c.mods.push({ key: stat, delta: moved, turns, label, src: 'custom' });
+  return moved;
+}
 // Rulers appoint people who were no one until then: an officer, an official, a child of the house. Such a person enters the world when they are named to something.
 const MINOR_LIMIT = 14;
 function personFor(w, c, op, kind, patch = {}) {
@@ -64,66 +81,82 @@ function pay(c, cost) {
   if (!(cost > 0)) return '';
   const cash = Math.min(Math.max(c.treasury, 0), cost), loan = cost - cash;
   if (loan > creditLeft(c) + 1e-9) return null;
-  c.treasury -= cash; c.debt += loan; c._loans = (c._loans || 0) + loan;
+  c.treasury -= cash; c.debt += loan; c._loans = (c._loans || 0) + loan; c._taken = (c._taken || 0) + loan;
   return loan > cost * .01 ? ` ${Math.round(loan)} of the ${Math.round(cost)} cost was borrowed.` : '';
 }
 
-function endWar(w, a, b, annex, reparations) {
-  for (const war of w.wars) if (war.active && ((war.a.includes(a) && war.b.includes(b)) || (war.b.includes(a) && war.a.includes(b)))) {
-    war.a = war.a.filter(x => x !== a && x !== b); war.b = war.b.filter(x => x !== a && x !== b);
-    if (!war.a.length || !war.b.length) war.active = false;
+// A peace is made between two countries. In a war of several, whoever signs with allies still fighting leaves the war and the rest go on;
+// the war itself ends only when one side has no one left in it.
+function endWar(w, a, b, annex) {
+  for (const war of w.wars) {
+    if (!war.active) continue;
+    const side = x => war.a.includes(x) ? 'a' : war.b.includes(x) ? 'b' : null, sa = side(a), sb = side(b);
+    if (!sa || !sb || sa === sb) continue;
+    const leaving = [war[sa].length > 1 ? a : null, war[sb].length > 1 ? b : null].filter(Boolean);
+    if (!leaving.length) war.active = false;
+    else { war.a = war.a.filter(x => !leaving.includes(x)); war.b = war.b.filter(x => !leaving.includes(x)); if (!war.a.length || !war.b.length) war.active = false; }
   }
   for (const p of Object.values(w.provinces)) {
     if (![a, b].includes(p.owner) || ![a, b].includes(p.controller) || p.owner === p.controller) continue;
-    if (annex) p.owner = p.controller; else p.controller = p.owner;
+    if (annex) { p.owner = p.controller; p.admin = Math.min(p.admin ?? .5, .3); } else p.controller = p.owner;
+    delete p.siege;
   }
-  for (const u of Object.values(w.units)) {
-    const pr = w.provinces[u.province];
-    if (pr.controller !== u.country && [a, b].includes(u.country) && [a, b].includes(pr.controller)) {
-      const home = Object.values(w.provinces).find(x => x.controller === u.country);
-      if (home) u.province = home.id; else delete w.units[u.id];
-    }
-  }
+  settleOccupations(w);
 }
 
 export function applyOp(w, actor, op) {
+  if (!actor?.alive) return { ok: false, msg: 'The dead give no orders.' };
   const c = alive(w, actor.country);
   if (!c || !op?.op) return { ok: false, msg: 'Invalid operation.' };
   const perm = permissionsOf(c, actor, w), held = actor.status === 'imprisoned' || actor.status === 'exiled';
   if (perm && !perm.has(op.op) && (held || !delegated(c, actor, op.op))) return { ok: false, msg: held ? `Someone who is ${actor.status} cannot do this: ${op.op}` : `${c[actor.role] === actor.id ? actor.role : 'A private person'} is not authorized for this operation: ${op.op}` };
-  if (!op._law) {
+  // A law passed by a legislature is above a veto; a decree is not.
+  if (!op._law || op._decree) {
     const blocker = vetoedBy(w, c, actor, op.op);
     if (blocker) { news(w, `${c.name}: ${blocker.name} blocked the decision taken by ${actor.name}.`, { kind: 'politics', countries: [c.id] }); return fail(`${blocker.name} blocked it.`); }
-    if (mustPassParliament(w, c, op)) {
+    if (!op._law && mustPassParliament(w, c, op)) {
       const bill = createBill(w, c, actor, { title: LAW_TITLE[op.op] ?? op.op, text: JSON.stringify({ ...op, op: undefined }).slice(0, 300), ops: [op] });
       return bill ? { ok: true, msg: `Referred to parliament: ${bill.id}`, bill: bill.id } : fail('The parliamentary agenda is full.');
     }
   }
   const target = op.target ? alive(w, op.target) : null;
+  if (target && target.id === c.id) return fail('That needs another country, not your own.');
   const gdp = Math.max(c.gdp, 1);
   if (FIRM_OPS.has(op.op)) return firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num);
   switch (op.op) {
-    case 'set_tax': if (!c.tax[op.kind] && c.tax[op.kind] !== 0) return fail('No such tax type.'); c.tax[op.kind] = num(op.rate, 0, .7); return ok();
+    case 'set_tax': if (!has(c.tax, op.kind)) return fail('No such tax type.'); c.tax[op.kind] = num(op.rate, 0, .7); return ok();
     case 'set_budget': if (!BUDGET.includes(op.category)) return fail('No such budget category.'); c.budget[op.category] = num(op.share, 0, .45); return ok();
     case 'set_tariff': c.tariff = num(op.rate, 0, 1); return ok();
     case 'set_arms_share': c.armShare = num(op.share, 0, .75); return ok();
-    case 'print_money': { const x = gdp * num(op.pct_gdp, 0, .8); c.money += x; c.treasury += x; news(w, `${c.name} central bank put a large amount of money into circulation.`, { kind: 'economy', countries: [c.id] }); return ok(); }
-    case 'borrow': { const x = gdp * num(op.pct_gdp, 0, .6), room = creditLeft(c); if (x > room) return fail(`Lenders would put up at most ${Math.round(room)} now.`); c.debt += x; c.treasury += x; c._loans = (c._loans || 0) + x; return { ok: true, msg: `Borrowed ${Math.round(x)}.` }; }
+    case 'print_money': { const pct = allowance(w, c, 'print', .5, num(op.pct_gdp, 0, .8)); if (pct <= 0) return fail('The presses have already run as hard as they can this quarter.'); const x = gdp * pct; c.money += x; c.treasury += x; news(w, `${c.name} central bank put a large amount of money into circulation.`, { kind: 'economy', countries: [c.id] }); return { ok: true, msg: `${Math.round(x)} in new money entered the treasury.` }; }
+    case 'borrow': { const x = gdp * num(op.pct_gdp, 0, .6), room = creditLeft(c); if (x > room) return fail(`Lenders would put up at most ${Math.round(room)} more this quarter.`); c.debt += x; c.treasury += x; c._loans = (c._loans || 0) + x; c._taken = (c._taken || 0) + x; return { ok: true, msg: `Borrowed ${Math.round(x)}.` }; }
+    case 'repay_state_debt': { const x = Math.min(Math.max(c.treasury, 0), c.debt, gdp * num(op.pct_gdp, 0, 40, 40)); if (x <= 0) return fail('There is nothing in the treasury to repay with.'); c.treasury -= x; c.debt -= x; return { ok: true, msg: `${Math.round(x)} of the debt was repaid; ${Math.round(c.debt)} remains.` }; }
     case 'sell_gold': { const x = Math.min(Math.max(c.reserves, 0), num(op.amount, 0, 1e12, 0)); if (x <= 0) return fail('There is no gold in the reserve to sell.'); c.reserves -= x; c.treasury += x * (c.rate || 1); return { ok: true, msg: `${Math.round(x)} gold left the reserve and ${Math.round(x * (c.rate || 1))} entered the treasury. ${Math.round(c.reserves)} gold remains to back the currency, pay for imports and serve foreign debts.` }; }
     case 'default_debt': return declareDefault(w, c, 'repudiated its debts') ? { ok: true, msg: `The debt was written down to ${Math.round(c.debt)}. Lenders will keep away for years.` } : fail('The state is already in default.');
     case 'embargo': if (!target) return fail('No such target.'); if (op.on === false) c.embargo = c.embargo.filter(x => x !== target.id); else if (!c.embargo.includes(target.id)) { c.embargo.push(target.id); target.relations[c.id] = clampRel((target.relations[c.id] ?? 0) - 15); news(w, `${c.name} cut off trade with ${target.name}.`, { kind: 'diplomacy', countries: [c.id, target.id] }); } return ok();
     case 'build': return build(w, c, op);
     case 'survey': { const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('That province is not under your control.'); if (pay(c, gdp * .01) === null) return fail(NO_FUNDS); const found = Object.entries(p.deposits).filter(([k, d]) => !d.known && (k !== 'oil' || hasTech(c, 'oil_prospecting')) && (k !== 'rare' || hasTech(c, 'electricity')) && rand(w) < .65); found.forEach(([, d]) => d.known = true); if (found.length) news(w, `${c.name}: ${found.map(([k]) => GOOD_LABEL[k]).join(', ')} found in ${p.name}.`, { kind: 'economy', countries: [c.id] }); return { ok: true, msg: found.length ? `Found: ${found.map(([k]) => GOOD_LABEL[k]).join(', ')}` : 'No new deposit was found in this survey.' }; }
-    case 'set_research': if (!TECHS[op.tech] || c.techs[op.tech] || !TECHS[op.tech].req.every(r => c.techs[r])) return fail('This technology cannot be researched.'); c.research = { target: op.tech, progress: c.research.target === op.tech ? c.research.progress : 0 }; return ok();
-    case 'steal_tech': { if (!target) return fail('No such target.'); const cand = Object.keys(target.techs).filter(t => !c.techs[t]); if (!cand.length) return fail('No technology to steal.'); if (rand(w) > clamp(.2 + (c.intelligence - target.intelligence) / 150, .05, .75)) { target.relations[c.id] = clampRel((target.relations[c.id] ?? 0) - 15); return fail('The spy network was exposed.'); } const t = pick(w, cand); c.techs[t] = w.turn; news(w, `${target.name} technology secretly passed to ${c.name}.`, { kind: 'plot', countries: [c.id, target.id], secret: true }); return ok(); }
-    case 'grant_concession': { if (!target) return fail('No such target.'); const p = w.provinces[op.province]; if (!p || p.controller !== c.id || !p.deposits[op.resource]) return fail('No such deposit.'); (p.concessions ||= {})[op.resource] = { holder: target.id, share: num(op.share, .05, .9) }; c.treasury += gdp * num(op.fee_pct_gdp, 0, .1); news(w, `${c.name} granted the ${p.name} ${GOOD_LABEL[op.resource]} concession to ${target.name}.`, { kind: 'economy', countries: [c.id, target.id] }); return ok(); }
+    case 'set_research': if (!has(TECHS, op.tech) || c.techs[op.tech] || !TECHS[op.tech].req.every(r => c.techs[r])) return fail('This technology cannot be researched.'); c.research = { target: op.tech, progress: c.research.target === op.tech ? c.research.progress : 0 }; return ok();
+    case 'steal_tech': { if (!target) return fail('No such target.'); const cand = Object.keys(target.techs).filter(t => !c.techs[t]); if (!cand.length) return fail('No technology to steal.'); if (rand(w) > clamp(.2 + (c.intelligence - target.intelligence) / 150, .05, .75)) { target.relations[c.id] = clampRel((target.relations[c.id] ?? 0) - 15); return fail('The spy network was exposed.'); } const t = pick(w, cand); c.techs[t] = Math.max(1, w.turn); news(w, `${target.name} technology secretly passed to ${c.name}.`, { kind: 'plot', countries: [c.id, target.id], secret: true }); return ok(); }
+    case 'grant_concession': { if (!target) return fail('No such target.'); const p = w.provinces[op.province]; if (!p || p.controller !== c.id || !has(p.deposits, op.resource)) return fail('No such deposit.'); (p.concessions ||= {})[op.resource] = { holder: target.id, share: num(op.share, .05, .9) }; tell(w, w.characters[target.leader], c.name, `You have been granted ${Math.round(num(op.share, .05, .9) * 100)}% of the ${GOOD_LABEL[op.resource]} raised at ${p.name}.`); news(w, `${c.name} granted the ${p.name} ${GOOD_LABEL[op.resource]} concession to ${target.name}.`, { kind: 'economy', countries: [c.id, target.id] }); return { ok: true, msg: 'The concession is theirs. Whatever they pay for it is for them to send.' }; }
     case 'revoke_concession': { const p = w.provinces[op.province]; const con = p?.concessions?.[op.resource]; if (!con || p.controller !== c.id) return fail('No such concession.'); const o = w.countries[con.holder]; if (o) o.relations[c.id] = clampRel((o.relations[c.id] ?? 0) - 35); delete p.concessions[op.resource]; news(w, `${c.name} seized the ${p.name} concession.`, { kind: 'diplomacy', countries: [c.id, con.holder] }); return ok(); }
-    case 'lend': { if (!target) return fail('No such target.'); const amt = Math.min(Math.max(c.reserves, 0), gdp * num(op.pct_gdp, 0, .4)); c.reserves -= amt; target.reserves += amt; target.creditors[c.id] = (target.creditors[c.id] || 0) + amt; news(w, `${c.name} lent money to the government of ${target.name}.`, { kind: 'economy', countries: [c.id, target.id] }); return ok(); }
+    case 'lend': { if (!target) return fail('No such target.'); const amt = Math.min(Math.max(c.reserves, 0), Math.max(c.realGdp, 1) * num(op.pct_gdp, 0, .4)); if (amt <= 0) return fail('There is no gold to lend.'); c.reserves -= amt; target.reserves += amt; target.creditors[c.id] = (target.creditors[c.id] || 0) + amt; tell(w, w.characters[target.leader], c.name, `${Math.round(amt)} in gold has been lent to your state. It is owed back with interest; if you do not want the debt, return it with repay_foreign.`); news(w, `${c.name} lent money to the government of ${target.name}.`, { kind: 'economy', countries: [c.id, target.id] }); return { ok: true, msg: `${Math.round(amt)} gold lent.` }; }
     case 'set_fx_regime': { if (!FX_REGIMES.includes(op.regime)) return fail('No such exchange-rate regime.'); if (op.regime === 'pegged') { if (!target || target.id === c.id) return fail('No currency to peg to.'); c.pegTo = target.id; c.pegRate = (c.rate || 1) / (target.rate || 1); } else c.pegTo = null; c.fxRegime = op.regime; news(w, `${c.name}: ${c.currency.name} ${op.regime === 'floating' ? 'was floated' : op.regime === 'gold' ? 'was pegged to gold' : `was pegged to ${target.currency.name}`}.`, { kind: 'economy', countries: [c.id] }); return ok(); }
-    case 'devalue': { if (c.fxRegime === 'floating') return fail('A floating rate cannot be devalued; it sets itself.'); const pct = num(op.pct, .01, 1, .1), prev = c.rate; c.rate *= 1 + pct; if (c.pegTo) c.pegRate *= 1 + pct; c._fxPass = (c._fxPass || 0) + Math.log(c.rate / prev) * .2; c.fx = +(100 / c.rate).toFixed(2); c.legitimacy = clamp(c.legitimacy - pct * 8, 0, 100); news(w, `${c.name}: ${c.currency.name} was devalued by ${Math.round(pct * 100)}%.`, { kind: 'economy', countries: [c.id] }); return ok(); }
+    case 'devalue': { if (c.fxRegime === 'floating') return fail('A floating rate cannot be devalued; it sets itself.'); const pct = allowance(w, c, 'devalue', .3, num(op.pct, .01, 1, .1)), prev = c.rate; if (pct <= 0) return fail('The currency has already been cut as far as it can be in one quarter.'); c.rate *= 1 + pct; if (c.pegTo) c.pegRate *= 1 + pct; c._fxPass = (c._fxPass || 0) + Math.log(c.rate / prev) * .2; c.fx = +(100 / c.rate).toFixed(2); c.legitimacy = clamp(c.legitimacy - pct * 8, 0, 100); news(w, `${c.name}: ${c.currency.name} was devalued by ${Math.round(pct * 100)}%.`, { kind: 'economy', countries: [c.id] }); return ok(); }
     case 'set_capital_controls': c.capitalClosed = op.closed !== false; news(w, `${c.name} ${c.capitalClosed ? 'restricted' : 'freed'} capital movements.`, { kind: 'economy', countries: [c.id] }); return ok();
     case 'rename_currency': if (!op.name) return fail('No name given.'); c.currency.name = String(op.name).slice(0, 40); return ok();
-    case 'borrow_foreign': { if (c.defaulted) return fail('After a default no one will lend abroad.'); const lenders = (target ? [target] : aliveCountries(w).filter(o => o.id !== c.id)).filter(o => !o.capitalClosed && !atWar(w, c.id, o.id) && !o.embargo.includes(c.id) && o.reserves > Math.max(o.realGdp, 1) * .3).sort((a, b) => b.reserves - a.reserves); if (!lenders.length) return fail('No bank could be found to lend.'); const l = lenders[0], real = Math.max(c.realGdp, 1), room = Math.max(0, real * (.6 + c.legitimacy / 100) - externalDebt(c)), amt = Math.min(room, real * num(op.pct_gdp, 0, .4), l.reserves - Math.max(l.realGdp, 1) * .3); if (amt <= 0) return fail('Not enough confidence for this loan.'); l.reserves -= amt; c.reserves += amt; c.creditors[l.id] = (c.creditors[l.id] || 0) + amt; news(w, `${c.name} borrowed gold from the banks of ${l.name}.`, { kind: 'economy', countries: [c.id, l.id] }); return { ok: true, msg: `${Math.round(amt)} gold borrowed, interest ${Math.round(foreignRate(c, externalDebt(c)) * 1000) / 10}%.` }; }
+    case 'borrow_foreign': {
+      if (c.defaulted) return fail('After a default no one will lend abroad.');
+      const floor = o => Math.max(o.realGdp, 1) * .3, lenders = (target ? [target] : aliveCountries(w).filter(o => o.id !== c.id)).filter(o => !o.capitalClosed && !atWar(w, c.id, o.id) && !o.embargo.includes(c.id) && o.reserves > floor(o)).sort((a, b) => b.reserves - a.reserves);
+      if (!lenders.length) return fail('No bank could be found to lend.');
+      // Foreign banks lend so much to one borrower in a quarter, and let only so much of their country's gold go.
+      const l = lenders[0], real = Math.max(c.realGdp, 1), room = Math.max(0, real * (.6 + c.legitimacy / 100) - externalDebt(c)), out = used(w, l, 'lentOut'), spare = Math.max(0, (l.reserves + out - floor(l)) * .25 - out);
+      const amt = Math.min(room, spare, real * (.2 - used(w, c, 'foreignLoan')), real * num(op.pct_gdp, 0, .4));
+      if (!(amt > 0)) return fail('The banks abroad will lend no more this quarter.');
+      allowance(w, c, 'foreignLoan', .2, amt / real); allowance(w, l, 'lentOut', Infinity, amt);
+      l.reserves -= amt; c.reserves += amt; c.creditors[l.id] = (c.creditors[l.id] || 0) + amt; news(w, `${c.name} borrowed gold from the banks of ${l.name}.`, { kind: 'economy', countries: [c.id, l.id] });
+      return { ok: true, msg: `${Math.round(amt)} gold borrowed, interest ${Math.round(foreignRate(c, externalDebt(c)) * 1000) / 10}%.` };
+    }
     case 'repay_foreign': { const l = target; if (!l || !c.creditors[l.id]) return fail('You owe this country nothing.'); const m = Math.min(Math.max(c.reserves, 0), c.creditors[l.id], num(op.amount, 0, 1e12, c.creditors[l.id])); if (m <= 0) return fail('No reserves.'); c.reserves -= m; l.reserves += m; c.creditors[l.id] -= m; return ok(); }
     case 'set_culture_policy': { if (op.language) { if (!LANGUAGE_POLICY.includes(op.language)) return fail('Unknown language policy.'); c.languagePolicy = op.language; } if (op.faith) { if (!FAITH_POLICY.includes(op.faith)) return fail('Unknown faith policy.'); c.faithPolicy = op.faith; } news(w, `${c.name} changed its policy toward peoples and faiths.`, { kind: 'politics', countries: [c.id] }); return ok(); }
     case 'appoint_governor': { const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('Province not yours.'); if (op.remove) { tell(w, w.characters[p.governor], c.name, `You are removed as governor of ${p.name}.`); p.governor = null; return ok(); } const ch = personFor(w, c, op, 'governor'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail('No such person.'); p.governor = ch.id; tell(w, ch, c.name, `You are appointed governor of ${p.name}.`); return { ok: true, msg: `${ch.name} (${ch.id}) governs ${p.name}.` }; }
@@ -136,32 +169,134 @@ export function applyOp(w, actor, op) {
     case 'build_canal': { const s = w.strategic.find(x => x.id === op.id && x.type === 'canal_site'); if (!s) return fail('No such route.'); const p = w.provinces[s.ref]; if (p.controller !== c.id) return fail('The land is not yours.'); if (w.canals.some(k => k.province === p.id)) return fail('The canal already exists.'); if (c.stock.machines < 8 || c.stock.steel < 20) return fail('Not enough machinery or steel.'); if ((w.projects || []).some(x => x.kind === 'canal' && x.province === p.id && !x.status)) return fail('Canal already under construction.'); const note = pay(c, gdp * .8); if (note === null) return fail(NO_FUNDS); c.stock.machines -= 8; c.stock.steel -= 20; queueProject(w, c, { kind: 'canal', province: p.id, strategic: s.id, label: `${p.name} canal` }); return { ok: true, msg: `Digging, ready in ${durationOf('canal')} quarters.${note}` }; }
     case 'build_ship': { const p = w.provinces[op.province]; if (!p || p.controller !== c.id || !p.port) return fail('There is no port here.'); const ships = Math.round(num(op.ships, 1, 30)), shipKind = ['battleship', 'submarine'].includes(op.kind) ? op.kind : 'cruiser', factor = { cruiser: 1, battleship: 4, submarine: 1.5 }[shipKind]; if (shipKind === 'submarine' && !hasTech(c, 'combustion_engine')) return fail('Submarines need the internal combustion engine.'); if (c.stock.steel < ships * 2 * factor) return fail('Not enough steel.'); const note = pay(c, ships * 1.5 * factor * c.priceLevel); if (note === null) return fail(NO_FUNDS); c.stock.steel -= ships * 2 * factor; queueProject(w, c, { kind: 'ship', province: p.id, ships, shipKind, label: `${ships} ${shipKind}` }); return { ok: true, msg: `Laid down, ready in ${durationOf('ship', shipKind)} quarters.${note}` }; }
     case 'move_fleet': { const f = w.fleets[op.fleet]; if (!f || f.country !== c.id || !w.seas[op.to]) return fail('Invalid fleet order.'); f.target = op.to; return ok(); }
-    case 'amphibious': { const u = w.units[op.unit], p = w.provinces[op.to]; if (!u || u.country !== c.id || !p?.coast) return fail('Invalid landing order.'); if (!Object.values(w.fleets).some(f => f.country === c.id && p.seas.includes(f.sea))) return fail('You need a fleet off the target coast.'); if (!atWar(w, c.id, p.controller) && p.controller !== c.id) return fail('You are not at war.'); u.province = p.id; u.men *= Math.max(.3, .9 - (p.battery || 0) * .15); u.morale = clamp(u.morale - 10, 0, 100); u.target = null; return ok(); }
-    case 'found_party': { const name = String(op.name || 'New Party').slice(0, 60); const axes = { econ: num(op.axes?.econ, -100, 100, 0), auth: num(op.axes?.auth, -100, 100, 0), nation: num(op.axes?.nation, -100, 100, 0), faith: num(op.axes?.faith, -100, 100, 0) }; c.parties.push({ id: nextId(w, 'F'), name, axes, base: CLASSES.includes(op.base) ? op.base : 'middle', support: 3, founder: actor.id, banned: false, organization: 10 }); news(w, `${c.name}: ${name} was founded.`, { kind: 'politics', countries: [c.id] }); return ok(); }
+    case 'amphibious': {
+      // A landing needs a coast to embark from, water that can be crossed, a surface fleet holding the far shore and ships enough to carry the men.
+      const u = w.units[op.unit], p = w.provinces[op.to]; if (!u || u.country !== c.id || !p?.coast) return fail('Invalid landing order.');
+      const from = w.provinces[u.province], enemyHolds = s => { const h = w.seaControl?.[s]; return !!h && atWar(w, h, c.id); };
+      if (u.province === p.id) return fail('The unit is already there.');
+      if (!from.coast) return fail('The unit must first march to the coast to embark.');
+      if (u.shipped === w.turn) return fail('This unit has already been at sea this quarter.');
+      if (!atWar(w, c.id, p.controller) && p.controller !== c.id) return fail('You are not at war with whoever holds that coast.');
+      const escort = Object.values(w.fleets).filter(f => f.country === c.id && f.kind !== 'submarine' && p.seas.includes(f.sea) && !enemyHolds(f.sea));
+      if (!escort.length) return fail('You need a surface fleet holding the water off the target coast.');
+      if (!from.seas.some(s => p.seas.some(t => s === t || bfsSea(w, s, t)))) return fail('No sea route joins the two coasts.');
+      const lift = sum(escort, f => f.ships) * 3; if (u.men > lift) return fail(`The fleet there can carry about ${Math.round(lift)} thousand men; this unit has ${Math.round(u.men)} thousand.`);
+      u.province = p.id; u.men *= Math.max(.3, .9 - (p.battery || 0) * .15); u.morale = clamp(u.morale - 10, 0, 100); u.target = null; u.dug = 0; u.shipped = w.turn;
+      return { ok: true, msg: `${Math.round(u.men)} thousand men were put ashore at ${p.name}.` };
+    }
+    case 'found_party': { if (c.parties.length >= 8) return fail('There is no room for another party; the country has eight.'); const name = String(op.name || 'New Party').slice(0, 60); const axes = { econ: num(op.axes?.econ, -100, 100, 0), auth: num(op.axes?.auth, -100, 100, 0), nation: num(op.axes?.nation, -100, 100, 0), faith: num(op.axes?.faith, -100, 100, 0) }; c.parties.push({ id: nextId(w, 'F'), name, axes, base: CLASSES.includes(op.base) ? op.base : 'middle', support: 3, founder: actor.id, banned: false, organization: 10 }); news(w, `${c.name}: ${name} was founded.`, { kind: 'politics', countries: [c.id] }); return ok(); }
     case 'ban_party': { const p = c.parties.find(x => x.id === op.party); if (!p) return fail('No such party.'); if (rand(w) < c.courts / 160) { news(w, `${c.name} court overturned the ban on ${p.name}.`, { kind: 'politics', countries: [c.id] }); return fail('The court blocked it.'); } p.banned = true; if (c.parliament) c.parliament.seats = allocateSeats(c); c.pressFreedom = clamp(c.pressFreedom - 6, 0, 100); c.legitimacy = clamp(c.legitimacy - 4, 0, 100); news(w, `${c.name}: ${p.name} was banned.`, { kind: 'politics', countries: [c.id] }); return ok(); }
     case 'set_institutions': { const notes = []; if (op.courts !== undefined) c.courts = eased(c.courts, num(op.courts, 0, 100), 'Court independence', notes); if (op.press_freedom !== undefined) { const was = c.pressFreedom; c.pressFreedom = eased(was, num(op.press_freedom, 0, 100), 'Press freedom', notes); if (Math.abs(c.pressFreedom - was) >= 5) news(w, `${c.name} ${c.pressFreedom > was ? 'loosened' : 'tightened'} its hold on the press.`, { kind: 'politics', countries: [c.id] }); } if (typeof op.unions === 'boolean') c.unions = op.unions; if (op.ruling_party && c.parties.some(p => p.id === op.ruling_party)) c.rulingParty = op.ruling_party; return { ok: true, msg: notes.length ? `Applied. ${notes.join('; ')}.` : 'Applied.' }; }
-    case 'gather_dossier': { const ch = w.characters[op.character]; if (!ch?.alive) return fail('No such target.'); if (rand(w) > clamp(.25 + c.intelligence / 200, .1, .8)) return fail('No evidence could be found for a dossier.'); const facts = (ch.secrets || []).slice(-5).map(s => s.text); actor.dossiers[ch.id] = { turn: w.turn, about: ch.name, facts }; return { ok: true, msg: facts.length ? `Dossier opened, ${facts.length} facts found.` : 'Dossier opened, but nothing incriminating came up.' }; }
+    case 'gather_dossier': { const ch = w.characters[op.character]; if (!ch?.alive) return fail('No such target.'); if (rand(w) > clamp(.25 + c.intelligence / 200, .1, .8)) return fail('No evidence could be found for a dossier.'); const facts = (ch.secrets || []).filter(s => !s.published).slice(-5).map(s => s.text); actor.dossiers[ch.id] = { turn: w.turn, about: ch.name, facts }; return { ok: true, msg: facts.length ? `Dossier opened, ${facts.length} facts found.` : 'Dossier opened, but nothing that is not already known came up.' }; }
     case 'blackmail': { const ch = w.characters[op.character], file = actor.dossiers[ch?.id]; if (!ch?.alive || !file) return fail('You hold no dossier.'); if (!file.facts?.length) return fail('There is nothing usable in the dossier.'); tell(w, ch, actor.name, `I have a dossier on you: ${file.facts.join(' ')} I expect you to do this: ${String(op.demand || 'Support me.').slice(0, 300)}`); leaveTrace(w, actor, `Blackmailed ${ch.name}.`); if (!ch.aiControlled) ch.loyalty = clamp(ch.loyalty - 5, 0, 100); return ok(); }
-    case 'publish_dossier': { const ch = w.characters[op.character], file = actor.dossiers[ch?.id]; if (!ch?.alive || !file?.facts?.length) return fail('No dossier to publish.'); const home = w.countries[ch.country], n = file.facts.length; news(w, `Leaked documents: about ${ch.name}: ${file.facts.join(' ')}`, { kind: 'plot', countries: [ch.country] }); if (home?.leader === ch.id) home.legitimacy = clamp(home.legitimacy - (2 + n * 1.5) * (.4 + home.pressFreedom / 100), 0, 100); else ch.power = clamp(ch.power - (6 + n * 2), 0, 100); delete actor.dossiers[ch.id]; return ok(); }
+    case 'publish_dossier': { const ch = w.characters[op.character], file = actor.dossiers[ch?.id]; if (!ch?.alive || !file?.facts?.length) return fail('No dossier to publish.'); const home = w.countries[ch.country], n = file.facts.length; news(w, `Leaked documents: about ${ch.name}: ${file.facts.join(' ')}`, { kind: 'plot', countries: [ch.country] }); if (home?.leader === ch.id) home.legitimacy = clamp(home.legitimacy - (2 + n * 1.5) * (.4 + home.pressFreedom / 100), 0, 100); else ch.power = clamp(ch.power - (6 + n * 2), 0, 100); for (const s of ch.secrets || []) if (file.facts.includes(s.text)) s.published = true; delete actor.dossiers[ch.id]; return ok(); }
     case 'lend_private': { const ch = w.characters[op.character]; if (!ch?.alive || ch.id === actor.id) return fail('No such target.'); const m = num(op.amount, 0, actor.wealth); if (m <= 0) return fail('No money to give.'); const d = { id: nextId(w, 'B-'), creditor: actor.id, debtor: ch.id, amount: m, owed: m * (1 + num(op.interest, 0, 1, 0)), due: w.turn + Math.round(num(op.due_turns, 1, 80, 8)), terms: String(op.terms || '').slice(0, 240), status: 'open', turn: w.turn }; actor.wealth -= m; ch.wealth += m; (w.debts ||= []).push(d); tell(w, ch, actor.name, `Debt ${d.id}: lent you ${Math.round(m)}, expects ${Math.round(d.owed)} back, due turn ${d.due}. ${d.terms}`); return { ok: true, msg: `Debt recorded: ${d.id}`, debt: d.id }; }
     case 'repay_debt': { const d = openDebt(w, op.debt); if (!d || d.debtor !== actor.id) return fail('You have no such debt.'); const m = Math.min(actor.wealth, d.owed, num(op.amount, 0, 1e12, d.owed)); if (m <= 0) return fail('No money to pay with.'); actor.wealth -= m; d.owed -= m; const cr = w.characters[d.creditor]; if (cr) cr.wealth += m; if (d.owed < .01) { d.status = 'paid'; d.closedAt = w.turn; } tell(w, cr, actor.name, `Debt ${d.id}: paid ${Math.round(m)}${d.status === 'paid' ? ', the debt is closed.' : `, ${Math.round(d.owed)} remaining.`}`); return ok(); }
     case 'forgive_debt': { const d = openDebt(w, op.debt); if (!d || d.creditor !== actor.id) return fail('You have no such claim.'); d.status = 'forgiven'; d.closedAt = w.turn; tell(w, w.characters[d.debtor], actor.name, `Debt ${d.id} was forgiven.`); return ok(); }
     case 'set_tie': return ok();
-    case 'nationalize': { const a = num(op.amount, 0, 1); c.ownership = clamp(c.ownership + a, 0, 1); c.treasury += gdp * a * .25; c.blocs.capital.sat = clamp(c.blocs.capital.sat - a * 60, 0, 100); news(w, `${c.name} moved to nationalize industry.`, { kind: 'economy', countries: [c.id] }); return ok(); }
-    case 'privatize': { const a = num(op.amount, 0, 1); c.ownership = clamp(c.ownership - a, 0, 1); c.treasury += gdp * a * .2; return ok(); }
-    case 'land_reform': { for (const p of countryProvinces(w, c.id)) { p.pops.peasants.sat = clamp(p.pops.peasants.sat + 16, 0, 100); p.pops.elite.sat = clamp(p.pops.elite.sat - 24, 0, 100); } c.blocs.capital.sat = clamp(c.blocs.capital.sat - 12, 0, 100); news(w, `${c.name} proclaimed land reform.`, { kind: 'politics', countries: [c.id] }); return ok(); }
-    case 'recruit': { const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('No such province.'); const men = Math.round(num(op.men, .1, provincePop(p) * .08) * 10) / 10; const kind = ['artillery', 'armor', 'air'].includes(op.unit_kind) ? op.unit_kind : 'infantry'; if (kind === 'armor' && !hasTech(c, 'armor')) return fail('You lack armor technology.'); if (kind === 'air' && !hasTech(c, 'aviation')) return fail('You lack aviation technology.'); if (['armor', 'air'].includes(kind) && (c.stock.steel < men * .2 || c.stock.fuel < men * .05)) return fail('Not enough steel or fuel.'); const arms = men * (kind === 'artillery' ? .12 : .05); if (c.stock.arms < arms) return fail('Not enough arms in stock.'); const note = pay(c, men * .4 * c.priceLevel); if (note === null) return fail(NO_FUNDS); if (['armor', 'air'].includes(kind)) { c.stock.steel -= men * .2; c.stock.fuel -= men * .05; } c.stock.arms -= arms; for (const k of ['peasants', 'workers']) p.pops[k].n -= men / 2; queueProject(w, c, { kind: 'unit', province: p.id, men, unitKind: kind, label: `${men}k ${kind}` }); return { ok: true, msg: `${men < 1 ? `${Math.round(men * 1000)} men` : `${men} thousand men`} in training, ready in ${durationOf('unit', kind)} quarters.${men < 2 ? ' So small a body can guard a palace but counts for little in the field.' : ''}${note}` }; }
-    case 'disband': { const u = w.units[op.unit]; if (!u || u.country !== c.id) return fail('No such unit.'); const p = w.provinces[u.province]; p.pops.workers.n += u.men; delete w.units[u.id]; return ok(); }
+    case 'nationalize': {
+      // Taking over industry brings the state property, not cash, and only so much can be taken over in a quarter. The same share of the country's private companies goes with it.
+      const before = c.ownership, moved = clamp(before + allowance(w, c, 'nationalize', .25, num(op.amount, 0, 1)), 0, 1) - before; if (moved <= 0) return fail('No more can be taken over this quarter.');
+      c.ownership = before + moved; c.blocs.capital.sat = clamp(c.blocs.capital.sat - moved * 60, 0, 100);
+      const firms = Object.values(w.firms || {}).filter(f => f.status === 'open' && f.country === c.id && f.owner !== STATE), take = firms.slice(0, Math.round(firms.length * moved / Math.max(1 - before, .01)));
+      for (const f of take) seizeFirm(w, c, f, tell);
+      news(w, `${c.name} moved to nationalize industry.`, { kind: 'economy', countries: [c.id] });
+      return { ok: true, msg: `The state now holds about ${Math.round(c.ownership * 100)}% of industry${take.length ? `, ${take.map(f => f.name).join(', ')} among it` : ''}. What it earns comes in as the profits of those companies.` };
+    }
+    case 'privatize': {
+      // Buyers pay for state property according to how far they trust the state not to take it back.
+      const before = c.ownership, moved = before - clamp(before - allowance(w, c, 'privatize', .25, num(op.amount, 0, 1)), 0, 1); if (moved <= 0) return fail('There is nothing more to sell this quarter.');
+      const price = gdp * moved * .2 * clamp(c.blocs.capital.sat / 60, .1, 1), firms = Object.values(w.firms || {}).filter(f => f.status === 'open' && f.country === c.id && f.owner === STATE);
+      c.ownership = before - moved; c.treasury += price;
+      for (const f of firms.slice(0, Math.round(firms.length * moved / Math.max(before, .01)))) { f.owner = null; f.offer = null; }
+      return { ok: true, msg: `State property was sold for ${Math.round(price)}.` };
+    }
+    case 'land_reform': {
+      if (w.turn - (c.landReformAt ?? -99) < 8) return fail('The last land reform is still being carried out.');
+      if ((c.landShare ?? 0) >= 1) return fail('There are no great estates left to divide.');
+      c.landReformAt = w.turn; c.landShare = clamp((c.landShare ?? 0) + .5, 0, 1);
+      for (const p of countryProvinces(w, c.id)) { p.pops.peasants.sat = clamp(p.pops.peasants.sat + 16, 0, 100); p.pops.elite.sat = clamp(p.pops.elite.sat - 24, 0, 100); }
+      c.blocs.capital.sat = clamp(c.blocs.capital.sat - 12, 0, 100); news(w, `${c.name} proclaimed land reform.`, { kind: 'politics', countries: [c.id] });
+      return { ok: true, msg: 'The estates are being divided. Peasants on their own land stay better disposed for good, and those who lost it do not forget.' };
+    }
+    case 'recruit': {
+      const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('No such province.');
+      if (p.owner !== c.id) return fail('Troops cannot be raised from an occupied people.');
+      const kind = ['artillery', 'armor', 'air'].includes(op.unit_kind) ? op.unit_kind : 'infantry', hands = p.pops.peasants.n + p.pops.workers.n;
+      // A province gives so many men in a quarter, however many orders are written.
+      const men = Math.round(Math.min(num(op.men, .1, 1e6), Math.max(0, Math.min(provincePop(p) * .08, hands - 2) - used(w, p, 'levy'))) * 10) / 10;
+      if (men < .1) return fail(`${p.name} has given all the men it can this quarter.`);
+      if (kind === 'armor' && !hasTech(c, 'armor')) return fail('You lack armor technology.'); if (kind === 'air' && !hasTech(c, 'aviation')) return fail('You lack aviation technology.');
+      if (['armor', 'air'].includes(kind) && (c.stock.steel < men * .2 || c.stock.fuel < men * .05)) return fail('Not enough steel or fuel.');
+      const arms = men * (kind === 'artillery' ? .12 : .05); if (c.stock.arms < arms) return fail('Not enough arms in stock.');
+      const note = pay(c, men * .4 * c.priceLevel); if (note === null) return fail(NO_FUNDS);
+      if (['armor', 'air'].includes(kind)) { c.stock.steel -= men * .2; c.stock.fuel -= men * .05; }
+      c.stock.arms -= arms; allowance(w, p, 'levy', Infinity, men);
+      for (const k of ['peasants', 'workers']) p.pops[k].n = Math.max(1, p.pops[k].n - men * p.pops[k].n / hands);
+      queueProject(w, c, { kind: 'unit', province: p.id, men, unitKind: kind, label: `${men}k ${kind}` });
+      return { ok: true, msg: `${men < 1 ? `${Math.round(men * 1000)} men` : `${men} thousand men`} in training, ready in ${durationOf('unit', kind)} quarters.${men < 2 ? ' So small a body can guard a palace but counts for little in the field.' : ''} Every man kept under arms has to be paid from the military budget each quarter.${note}` };
+    }
+    case 'disband': { const u = w.units[op.unit]; if (!u || u.country !== c.id) return fail('No such unit.'); const here = w.provinces[u.province], home = here.controller === c.id && here.owner === c.id ? here : w.provinces[c.capital]; if (home) home.pops.workers.n += u.men; delete w.units[u.id]; return { ok: true, msg: `${Math.round(u.men)} thousand men went home.` }; }
     case 'move': { const u = w.units[op.unit]; if (!u || u.country !== c.id || !w.provinces[op.to]) return fail('Invalid movement order.'); return applyOrder(w, c, u, op.to); }
     case 'move_army': { if (!w.provinces[op.to]) return fail('No such target province.'); let n = 0; const us = Object.values(w.units).filter(u => u.country === c.id).sort((a, b) => b.men - a.men); const share = Math.ceil(us.length * num(op.share, .1, 1, .6)); for (const u of us.slice(0, share)) if (applyOrder(w, c, u, op.to).ok) n++; return n ? ok() : fail('Your units have no route to this target.'); }
-    case 'declare_war': { if (!target || atWar(w, c.id, target.id)) return fail('War cannot be declared.'); w.treaties.filter(t => t.active && t.parties.includes(c.id) && t.parties.includes(target.id)).forEach(t => { t.active = false; c.legitimacy = clamp(c.legitimacy - 3, 0, 100); }); w.wars.push({ id: nextId(w, 'S'), a: [c.id], b: [target.id], civil: false, active: true, start: w.turn, name: `${c.name} - ${target.name} War` }); c.embargo = c.embargo.filter(x => x !== target.id); c.relations[target.id] = -90; target.relations[c.id] = -90; news(w, `${c.name} declared war on ${target.name}.`, { kind: 'war', countries: [c.id, target.id] }); for (const a of aliveCountries(w)) if (a.id !== c.id && hasTreaty(w, a.id, target.id, 'alliance')) w.characters[a.leader].inbox.push({ turn: w.turn, from: 'Foreign Ministry', text: `Your ally ${target.name} was attacked by ${c.name}. Help is expected under the alliance.` }); return ok(); }
-    case 'join_war': { const war = w.wars.find(x => x.active && x.id === op.war); if (!war || !op.side || !['a', 'b'].includes(op.side)) return fail('War not found.'); if (war.a.includes(c.id) || war.b.includes(c.id)) return fail('Already at war.'); war[op.side].push(c.id); news(w, `${c.name} entered the ${war.name}.`, { kind: 'war', countries: [c.id] }); return ok(); }
-    case 'propose_treaty': { if (!target || !TREATY.includes(op.kind)) return fail('Invalid proposal.'); const id = nextId(w, 'A'); const clauses = normalizeClauses(w, op.clauses, [c.id, target.id]); w.treaties.push({ id, kind: op.kind, parties: [c.id, target.id], active: false, pending: true, proposer: c.id, terms: String(op.terms || '').slice(0, 240), clauses, breaches: [], expires: null, durationTurns: op.turns ? Math.round(num(op.turns, 1, 200, 40)) : null, annex: !!op.annex, reparations: num(op.reparations, 0, .3), turn: w.turn }); w.characters[target.leader].inbox.push({ turn: w.turn, from: c.name, text: `Treaty proposal ${id}: ${op.kind}. ${String(op.terms || '').slice(0, 240)}${clauses.length ? ` Clauses: ${clauses.map(x => clauseText(w, x)).join('; ')}.` : ''} Issue an accept_treaty decision to accept.` }); return ok(); }
-    case 'accept_treaty': { const waiting = w.treaties.filter(x => x.pending && x.parties.includes(c.id) && x.proposer !== c.id), from = waiting.filter(x => !target || x.proposer === target.id), t = waiting.find(x => x.id === op.id) ?? (from.length === 1 ? from[0] : null); if (!t) return fail(waiting.length ? `Which proposal? Waiting: ${waiting.map(x => x.id).join(', ')}.` : 'No proposal is waiting.'); t.pending = false; t.active = t.kind !== 'peace' || !!t.clauses?.length; activateClauses(w, t); if (t.durationTurns) t.expires = w.turn + t.durationTurns; const other = alive(w, t.proposer); if (!other) return fail('The other party is gone.'); if (t.kind === 'peace') { endWar(w, c.id, other.id, t.annex, t.reparations); if (t.reparations) { const v = c.gdp * t.reparations; c.reserves -= v; other.reserves += v; } news(w, `${c.name} and ${other.name} signed a peace.`, { kind: 'diplomacy', countries: [c.id, other.id] }); } else news(w, `Treaty signed between ${c.name} and ${other.name}: ${t.kind.replace('_', ' ')}.`, { kind: 'diplomacy', countries: [c.id, other.id] }); c.relations[other.id] = clampRel((c.relations[other.id] ?? 0) + 18); other.relations[c.id] = clampRel((other.relations[c.id] ?? 0) + 18); return ok(); }
+    case 'declare_war': {
+      if (!target || atWar(w, c.id, target.id)) return fail('War cannot be declared.');
+      // Whatever was signed with them is torn up. Breaking a peace that is still fresh costs most, at home and with everyone who watches.
+      for (const t of w.treaties.filter(x => x.active && x.parties.includes(c.id) && x.parties.includes(target.id))) { t.active = false; c.legitimacy = clamp(c.legitimacy - (t.kind === 'peace' ? 8 : 3), 0, 100); if (t.kind === 'peace') for (const o of aliveCountries(w)) if (o.id !== c.id) o.relations[c.id] = clampRel((o.relations[c.id] ?? 0) - 6); }
+      w.wars.push({ id: nextId(w, 'S'), a: [c.id], b: [target.id], civil: false, active: true, start: w.turn, name: `${c.name} - ${target.name} War` }); c.embargo = c.embargo.filter(x => x !== target.id); c.relations[target.id] = -90; target.relations[c.id] = -90;
+      news(w, `${c.name} declared war on ${target.name}.`, { kind: 'war', countries: [c.id, target.id] });
+      for (const a of aliveCountries(w)) if (a.id !== c.id && a.id !== target.id && hasTreaty(w, a.id, target.id, 'alliance')) tell(w, w.characters[a.leader], 'Foreign Ministry', `Your ally ${target.name} was attacked by ${c.name}. Help is expected under the alliance.`);
+      return ok();
+    }
+    case 'join_war': {
+      const war = w.wars.find(x => x.active && x.id === op.war); if (!war || !['a', 'b'].includes(op.side)) return fail('War not found.'); if (war.a.includes(c.id) || war.b.includes(c.id)) return fail('Already in this war.');
+      const foes = war[op.side === 'a' ? 'b' : 'a'].map(id => w.countries[id]).filter(o => o?.alive);
+      for (const o of foes) {
+        for (const t of w.treaties.filter(x => x.active && x.parties.includes(c.id) && x.parties.includes(o.id))) { t.active = false; c.legitimacy = clamp(c.legitimacy - (t.kind === 'peace' ? 8 : 3), 0, 100); }
+        c.relations[o.id] = -90; o.relations[c.id] = -90; c.embargo = c.embargo.filter(x => x !== o.id);
+        tell(w, w.characters[o.leader], 'Foreign Ministry', `${c.name} has entered the ${war.name} against you.`);
+      }
+      war[op.side].push(c.id); news(w, `${c.name} entered the ${war.name}.`, { kind: 'war', countries: [c.id, ...foes.map(o => o.id)] }); return ok();
+    }
+    case 'propose_treaty': {
+      if (!target || !TREATY.includes(op.kind)) return fail('Invalid proposal.');
+      if (op.kind === 'peace' && !atWar(w, c.id, target.id)) return fail('There is no war between you to end.');
+      const id = nextId(w, 'A'), clauses = normalizeClauses(w, op.clauses, [c.id, target.id]), other = pid => w.provinces[pid].owner === c.id ? target : c;
+      // Provinces named in a treaty change hands when it is signed: each goes from whichever of the two owns it to the other.
+      const cede = [...new Set(Array.isArray(op.cede) ? op.cede : [])].filter(pid => [c.id, target.id].includes(w.provinces[pid]?.owner)).slice(0, 24), reparations = num(op.reparations, 0, .3), payer = op.reparations_from === 'me' ? c.id : target.id;
+      w.treaties.push({ id, kind: op.kind, parties: [c.id, target.id], active: false, pending: true, proposer: c.id, terms: String(op.terms || '').slice(0, 240), clauses, breaches: [], expires: null, durationTurns: op.turns ? Math.round(num(op.turns, 1, 200, 40)) : null, annex: !!op.annex, cede, reparations, payer, turn: w.turn });
+      tell(w, w.characters[target.leader], c.name, `Treaty proposal ${id}: ${op.kind.replace('_', ' ')}. ${String(op.terms || '').slice(0, 240)}${clauses.length ? ` Clauses: ${clauses.map(x => clauseText(w, x)).join('; ')}.` : ''}${cede.length ? ` Provinces to change hands: ${cede.map(pid => `${w.provinces[pid].name} (${pid}) to ${other(pid).name}`).join(', ')}.` : ''}${op.annex ? ' Each side keeps the land it now holds.' : ''}${reparations ? ` ${w.countries[payer].name} pays ${Math.round(reparations * 100)}% of a quarter's output in gold.` : ''} Issue an accept_treaty decision to accept.`);
+      return { ok: true, msg: `Proposal ${id} was sent.`, treaty: id };
+    }
+    case 'accept_treaty': {
+      const waiting = w.treaties.filter(x => x.pending && x.parties.includes(c.id) && x.proposer !== c.id), from = waiting.filter(x => !target || x.proposer === target.id), t = waiting.find(x => x.id === op.id) ?? (from.length === 1 ? from[0] : null);
+      if (!t) return fail(waiting.length ? `Which proposal? Waiting: ${waiting.map(x => x.id).join(', ')}.` : 'No proposal is waiting.');
+      const other = alive(w, t.proposer); if (!other) { t.pending = false; return fail('The other party is gone.'); }
+      if (t.kind === 'peace' && !atWar(w, c.id, other.id)) { t.pending = false; return fail('There is no war between you to end.'); }
+      // A peace is a treaty in force like any other: for some years, breaking it is breaking one's word.
+      t.pending = false; t.active = true; activateClauses(w, t); const lasts = t.durationTurns ?? (t.kind === 'peace' ? 20 : null); if (lasts) t.expires = w.turn + lasts;
+      if (t.kind === 'peace') endWar(w, c.id, other.id, t.annex);
+      for (const pid of t.cede || []) {
+        const p = w.provinces[pid], giver = w.countries[p.owner], taker = p.owner === c.id ? other : p.owner === other.id ? c : null; if (!taker) continue;
+        p.owner = taker.id; p.controller = taker.id; p.admin = Math.min(p.admin ?? .5, .3); p.governor = null; delete p.siege;
+        if (giver.capital === pid) { const next = [...countryProvinces(w, giver.id)].sort((a, b) => provincePop(b) - provincePop(a))[0]; if (next) giver.capital = next.id; }
+        news(w, `${p.name} passed from ${giver.name} to ${taker.name} by treaty.`, { kind: 'diplomacy', countries: [giver.id, taker.id], province: pid });
+      }
+      if (t.cede?.length) settleOccupations(w);
+      if (t.reparations) {
+        // Paid in gold as far as there is gold; the rest is owed.
+        const payer = t.payer === other.id ? other : c, payee = payer === c ? other : c, due = Math.max(payer.realGdp, 1) * t.reparations, paid = Math.min(Math.max(payer.reserves, 0), due);
+        payer.reserves -= paid; payee.reserves += paid; if (due - paid > .5) payer.creditors[payee.id] = (payer.creditors[payee.id] || 0) + due - paid;
+      }
+      news(w, t.kind === 'peace' ? `${c.name} and ${other.name} signed a peace.` : `Treaty signed between ${c.name} and ${other.name}: ${t.kind.replace('_', ' ')}.`, { kind: 'diplomacy', countries: [c.id, other.id] });
+      const harsh = t.annex || t.reparations > 0 || t.cede?.length, warmth = t.kind === 'peace' && harsh ? 4 : 18;
+      c.relations[other.id] = clampRel((c.relations[other.id] ?? 0) + warmth); other.relations[c.id] = clampRel((other.relations[c.id] ?? 0) + warmth);
+      return ok();
+    }
     case 'break_treaty': { const t = w.treaties.find(x => x.id === op.id && x.active && x.parties.includes(c.id)); if (!t) return fail('No such treaty.'); t.active = false; const o = t.parties.find(x => x !== c.id), justified = t.breaches?.at(-1)?.party === o; if (w.countries[o]) w.countries[o].relations[c.id] = clampRel((w.countries[o].relations[c.id] ?? 0) - (justified ? 10 : 35)); if (!justified) for (const a of aliveCountries(w)) if (a.id !== c.id) a.relations[c.id] = clampRel((a.relations[c.id] ?? 0) - 5); news(w, `${c.name} unilaterally broke its treaty.`, { kind: 'diplomacy', countries: [c.id, o] }); return ok(); }
-    case 'send_aid': { if (!target) return fail('No such target.'); const val = Math.min(Math.max(c.reserves, 0), gdp * num(op.pct_gdp, 0, .25)); const arms = Math.min(c.stock.arms, num(op.arms, 0, 1e9)); c.reserves -= val; target.reserves += val; c.stock.arms -= arms; target.stock.arms += arms; target.relations[c.id] = clampRel((target.relations[c.id] ?? 0) + 12); news(w, `${c.name} sent aid to ${target.name}.`, { kind: 'diplomacy', countries: [c.id, target.id], secret: !!op.secret }); return ok(); }
+    case 'send_aid': { if (!target) return fail('No such target.'); const val = Math.min(Math.max(c.reserves, 0), Math.max(c.realGdp, 1) * num(op.pct_gdp, 0, .25)); const arms = Math.min(c.stock.arms, num(op.arms, 0, 1e9)); if (val <= 0 && arms <= 0) return fail('There is nothing to send.'); c.reserves -= val; target.reserves += val; c.stock.arms -= arms; target.stock.arms += arms; target.relations[c.id] = clampRel((target.relations[c.id] ?? 0) + 12); tell(w, w.characters[target.leader], c.name, `Aid has arrived: ${Math.round(val)} in gold${arms > 0 ? ` and ${Math.round(arms)} of arms` : ''}.`); news(w, `${c.name} sent aid to ${target.name}.`, { kind: 'diplomacy', countries: [c.id, target.id], secret: !!op.secret }); return { ok: true, msg: `${Math.round(val)} gold${arms > 0 ? ` and ${Math.round(arms)} arms` : ''} sent.` }; }
     case 'spy': { if (!target) return fail('No such target.'); const p = clamp(.25 + (c.intelligence - target.intelligence) / 160 + rand(w) * .3, .08, .9); if (rand(w) > p) { if (rand(w) < .5) { target.relations[c.id] = clampRel((target.relations[c.id] ?? 0) - 18); news(w, `${target.name} caught spies from ${c.name}.`, { kind: 'diplomacy', countries: [c.id, target.id] }); } return fail('The operation failed.'); } c.intel[target.id] = clamp((c.intel[target.id] ?? 0) + 25, 0, 100); if (op.kind === 'sabotage') { const v = pick(w, countryProvinces(w, target.id)); if (v) { for (const k of Object.keys(v.plants)) v.plants[k] *= .9; v.devastation = clamp(v.devastation + .08, 0, 1); news(w, `Mysterious explosions at industrial plants in ${v.name}.`, { kind: 'plot', countries: [target.id] }); } } if (op.kind === 'fund_uprising') { target.mods.push({ key: 'unrest', delta: 9, turns: 3, label: 'Foreign-backed unrest' }); } return ok(); }
-    case 'propaganda': { const s = num(op.strength, 0, 1, .5); const key = actor.role === 'leader' ? 'sat.all' : 'unrest'; c.mods.push({ key, delta: (actor.role === 'leader' ? 4 : 5) * s, turns: 2, label: `Propaganda: ${actor.name}` }); return ok(); }
+    case 'propaganda': { const s = num(op.strength, 0, 1, .5), ruler = governs(w, c, actor), moved = sway(c, actor, ruler ? 'sat.all' : 'unrest', (ruler ? 4 : 5) * s, 2, `Propaganda: ${actor.name}`); return moved ? ok() : { ok: true, msg: 'The country has heard as much of this as it will take for now.' }; }
     case 'repress': { const s = num(op.strength, 0, 1, .5); c.repress = clamp(c.repress + s * 55, 0, 100); c.pressFreedom = clamp(c.pressFreedom - s * 8, 0, 100); c.legitimacy = clamp(c.legitimacy - s * 3, 0, 100); for (const p of countryProvinces(w, c.id)) p.pops.middle.sat = clamp(p.pops.middle.sat - s * 9, 0, 100); news(w, `${c.name} security forces took harsh measures against dissidents.`, { kind: 'politics', countries: [c.id] }); return ok(); }
     case 'concession': { const k = op.cls;
       if (k === 'army') {
@@ -176,6 +311,7 @@ export function applyOp(w, actor, op) {
       if (!CLASSES.includes(k)) return fail('No such class.'); const cost = gdp * num(op.pct_gdp, 0, .15), note = pay(c, cost); if (note === null) return fail(NO_FUNDS); for (const p of countryProvinces(w, c.id)) p.pops[k].sat = clamp(p.pops[k].sat + cost / gdp * 110, 0, 100); return { ok: true, msg: `Applied.${note}` }; }
     case 'purge': {
       const ch = w.characters[op.character]; if (!ch || ch.country !== c.id || !ch.alive || ch.id === actor.id) return fail('No such target.');
+      if (ch.id === c.leader) return fail('The ruler is not arrested by an order of their own government; that takes a coup.');
       const fate = op.fate === 'dead' ? 'dead' : op.fate === 'exiled' ? 'exiled' : 'imprisoned', inCustody = ch.status === 'imprisoned';
       if (ch.status === fate) return fail(`${ch.name} is already ${fate}.`);
       if (ch.status === 'exiled') return fail(`${ch.name} is abroad, beyond the reach of the police.`);
@@ -184,41 +320,57 @@ export function applyOp(w, actor, op) {
       if (!inCustody && rand(w) < risk * .45) { news(w, `${ch.name} resisted arrest in ${c.name}.`, { kind: 'plot', countries: [c.id] }); ch.loyalty = 0; return fail('The arrest met resistance.'); }
       if (seated && ch.role === 'general') Object.values(w.units).filter(u => u.country === c.id).forEach(u => u.loyalty = clamp(u.loyalty - 8, 0, 100));
       c.pressFreedom = clamp(c.pressFreedom - 3, 0, 100);
+      // The arrest of a public figure is noticed wherever there is a press to notice it, and the fortune they kept at home is taken with them.
+      if (seated && !inCustody) { c.legitimacy = clamp(c.legitimacy - 6 * c.pressFreedom / 100, 0, 100); c.mods.push({ key: 'unrest', delta: clamp(ch.power / 15, 1, 5) * (.3 + c.pressFreedom / 100), turns: 3, label: `Arrest of ${ch.name}` }); if (ch.role === 'opposition') c.rivalJailed = w.turn; }
+      const seized = inCustody ? 0 : Math.max(0, ch.wealth - (ch.abroad || 0)) * (fate === 'exiled' ? .5 : .8), took = seized > 1 ? ` ${Math.round(seized)} of their fortune was seized for the treasury.` : '';
+      ch.wealth -= seized; c.treasury += seized * (c.rate || 1);
       if (fate === 'dead') {
         // A killing by the state is remembered by the dead person's following, and by whoever keeps files.
         news(w, `${c.name}: ${ch.name} was executed.`, { kind: 'politics', countries: [c.id] });
         c.mods.push({ key: 'unrest', delta: clamp(ch.power / 12, 1, 6) * (.5 + c.pressFreedom / 100), turns: 3, label: `Execution of ${ch.name}` });
         leaveTrace(w, actor, `Had ${ch.name} put to death.`); die(w, ch, 'was executed', { quiet: true });
-        return { ok: true, msg: `${ch.name} was executed.` };
+        return { ok: true, msg: `${ch.name} was executed.${took}` };
       }
       neutralize(w, ch, fate);
       tell(w, ch, 'The police', `You were ${fate === 'exiled' ? 'put across the border and forbidden to return' : 'arrested and locked up'} on the order of ${actor.name}.`);
       news(w, `${c.name}: ${ch.name} was ${fate === 'exiled' ? 'driven into exile' : 'arrested and imprisoned'}.`, { kind: 'politics', countries: [c.id] });
-      return { ok: true, msg: `${ch.name} is now ${fate}.` };
+      return { ok: true, msg: `${ch.name} is now ${fate}.${took}` };
     }
     case 'release': { const ch = w.characters[op.character]; if (!ch?.alive || ch.country !== c.id || !['imprisoned', 'exiled'].includes(ch.status)) return fail('No such prisoner or exile.'); const was = ch.status; ch.status = 'free'; tell(w, ch, c.name, was === 'exiled' ? 'You are allowed to return home.' : 'You are released from prison.'); news(w, `${c.name}: ${ch.name} was ${was === 'exiled' ? 'allowed to return from exile' : 'released from prison'}.`, { kind: 'politics', countries: [c.id] }); return ok(); }
     case 'designate_successor': { if (op.remove) { c.heir = null; return ok(); } const ch = personFor(w, c, op, 'heir', { power: 40, age: [18, 45], ...(c.succession === 'dynasty' && !op.name ? { family: actor.name.split(' ').at(-1) } : {}) }); if (!ch?.alive || ch.country !== c.id || ch.status !== 'free' || ch.id === c.leader) return fail('No such person to name.'); c.heir = ch.id; c._heirSecret = !!op.secret; tell(w, ch, w.characters[c.leader]?.name ?? c.name, 'You are named successor: if the ruler dies or falls, the government passes to you.'); news(w, `${c.name}: ${ch.name} was named successor.`, { kind: 'politics', countries: [c.id], secret: !!op.secret }); return ok(); }
     case 'persecute': return persecute(w, c, actor, op);
     case 'set_regime': { if (op.regime) c.regime = String(op.regime).slice(0, 60); if (op.ideology) c.ideology = String(op.ideology).slice(0, 80); if (SUCCESSION.includes(op.succession) && op.succession !== c.succession) { c.succession = op.succession; c.legitBase = (c.legitBase ?? 0) * .7; } if (typeof op.elections === 'boolean') { c.elections = op.elections; if (op.elections && c.nextElection <= w.turn) c.nextElection = w.turn + 8; if (op.elections && !c.parliament) makeParliament(c, 'Parliament'); } if (op.press_freedom !== undefined) c.pressFreedom = eased(c.pressFreedom, num(op.press_freedom, 0, 100), 'Press freedom', []); if (op.axes) for (const a of ['econ', 'auth', 'nation', 'faith']) if (op.axes[a] !== undefined) c.axes[a] = num(op.axes[a], -100, 100, c.axes[a]); c.legitimacy = clamp(c.legitimacy - 4, 0, 100); news(w, `${c.name} changed its regime: ${c.regime}.`, { kind: 'politics', countries: [c.id] }); return ok(); }
-    case 'hold_election': c.elections = true; c.nextElection = w.turn; return ok();
+    case 'hold_election': c.elections = true; c.nextElection = w.turn; if (!c.parliament) makeParliament(c, 'Parliament'); return ok();
     case 'rig_election': c.rigging = num(op.amount, 0, 25, 10); c.legitimacy = clamp(c.legitimacy - c.rigging * .15, 0, 100); return ok();
-    case 'start_plot': { const kind = ['coup', 'assassination', 'uprising'].includes(op.kind) ? op.kind : 'coup'; if (w.plots.some(x => x.active && x.leader === actor.id)) return fail('You already have a plot.'); const mark = kind === 'assassination' ? w.characters[op.character] ?? w.characters[c.leader] : null; if (kind === 'assassination' && (!mark?.alive || mark.id === actor.id)) return fail('There is no such person to strike at.'); const id = nextId(w, 'K-'); w.plots.push({ id, country: c.id, kind, leader: actor.id, members: [], target: mark?.id ?? null, progress: 5, secrecy: num(op.secrecy, 0, 1, .5), exposed: false, active: true, start: w.turn }); leaveTrace(w, actor, mark ? `Secretly began preparing the killing of ${mark.name}.` : `Secretly began preparing a plot (${kind}).`); return { ok: true, msg: `Plot started: ${id}${mark ? `, against ${mark.name}` : ''}. It gains ground each quarter; execute_plot carries it out.`, plot: id }; }
-    case 'invite_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && x.leader === actor.id); const ch = w.characters[op.character]; if (!pl || !ch?.alive || ch.country !== c.id || ch.role === 'leader') return fail('Invalid invitation.'); if (ch.aiControlled) { ch.inbox.push({ turn: w.turn, from: actor.name, text: `Secret offer: I want you to join the ${pl.kind} plot ${pl.id}. You may join, refuse or inform on it.` }); return { ok: true, msg: 'The offer was delivered; the choice is theirs.' }; } const p = clamp(.25 + ch.ambition / 180 - ch.loyalty / 220 + (w.countries[c.id].tension ?? 0) / 300, .03, .9); if (rand(w) < p) { pl.members.push(ch.id); ch.inbox.push({ turn: w.turn, from: actor.name, text: `You were approached about plot ${pl.id} (${pl.kind}) and joined.` }); return ok(); } if (ch.loyalty > 62) { pl.exposed = true; w.characters[c.leader].inbox.push({ turn: w.turn, from: ch.name, text: `${actor.name} invited me to a ${pl.kind} plot. Plot no ${pl.id}.` }); } return fail('The invitation was refused.'); }
-    case 'join_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && x.country === c.id); if (!pl || pl.leader === actor.id || pl.members.includes(actor.id)) return fail('Could not join.'); pl.members.push(actor.id); leaveTrace(w, actor, `Joined a plot (${pl.kind}).`); return ok(); }
+    case 'start_plot': { const kind = ['coup', 'assassination', 'uprising'].includes(op.kind) ? op.kind : 'coup'; if (w.plots.some(x => x.active && x.leader === actor.id)) return fail('You already have a plot.'); if (actor.id === c.leader && kind !== 'assassination') return fail('A ruler does not plot against their own government.'); const mark = kind === 'assassination' ? (op.character ? w.characters[op.character] : w.characters[c.leader]) : null; if (kind === 'assassination' && (!mark?.alive || mark.id === actor.id)) return fail('There is no such person to strike at.'); const id = nextId(w, 'K-'); w.plots.push({ id, country: c.id, kind, leader: actor.id, members: [], target: mark?.id ?? null, progress: 5, secrecy: num(op.secrecy, 0, 1, .5), exposed: false, active: true, start: w.turn }); leaveTrace(w, actor, mark ? `Secretly began preparing the killing of ${mark.name}.` : `Secretly began preparing a plot (${kind}).`); return { ok: true, msg: `Plot started: ${id}${mark ? `, against ${mark.name}` : ''}. It gains ground each quarter; execute_plot carries it out.`, plot: id }; }
+    case 'invite_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && x.leader === actor.id); const ch = w.characters[op.character]; if (!pl || !ch?.alive || ch.country !== c.id || (ch.id === c.leader && pl.kind !== 'assassination') || ch.id === actor.id) return fail('Invalid invitation.'); if (ch.aiControlled) { ch.inbox.push({ turn: w.turn, from: actor.name, text: `Secret offer: I want you to join the ${pl.kind} plot ${pl.id}. You may join, refuse or inform on it.` }); return { ok: true, msg: 'The offer was delivered; the choice is theirs.' }; } const p = clamp(.25 + ch.ambition / 180 - ch.loyalty / 220 + (w.countries[c.id].tension ?? 0) / 300, .03, .9); if (rand(w) < p) { pl.members.push(ch.id); ch.inbox.push({ turn: w.turn, from: actor.name, text: `You were approached about plot ${pl.id} (${pl.kind}) and joined.` }); return ok(); } if (ch.loyalty > 62) { pl.exposed = true; w.characters[c.leader].inbox.push({ turn: w.turn, from: ch.name, text: `${actor.name} invited me to a ${pl.kind} plot. Plot no ${pl.id}.` }); } return fail('The invitation was refused.'); }
+    case 'join_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && x.country === c.id); if (!pl || pl.leader === actor.id || pl.members.includes(actor.id)) return fail('Could not join.'); if (actor.id === c.leader && pl.kind !== 'assassination') return fail('A ruler cannot join a plot against their own government.'); pl.members.push(actor.id); leaveTrace(w, actor, `Joined a plot (${pl.kind}).`); return ok(); }
     case 'betray_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && x.country === c.id); if (!pl) return fail('No such plot.'); pl.exposed = true; actor.loyalty = clamp(actor.loyalty + 20, 0, 100); w.characters[c.leader].inbox.push({ turn: w.turn, from: actor.name, text: `Plot report ${pl.id}: ${pl.kind}, ringleader ${w.characters[pl.leader].name}.` }); return ok(); }
-    case 'execute_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && [x.leader, ...x.members].includes(actor.id)); if (!pl) return fail('No such plot.'); return { ok: true, msg: executePlot(w, pl) }; }
+    case 'execute_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && [x.leader, ...x.members].includes(actor.id)); if (!pl) return fail('No such plot.'); if (actor.id === w.countries[pl.country]?.leader && pl.kind !== 'assassination') return fail('A ruler cannot carry out a plot against their own government.'); return { ok: true, msg: executePlot(w, pl) }; }
     case 'fund_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && x.country === c.id); if (!pl) return fail('No such plot.'); const m = num(op.amount, 0, actor.wealth); actor.wealth -= m; pl.progress = clamp(pl.progress + m * .5, 0, 100); return ok(); }
-    case 'bribe': { const ch = w.characters[op.character]; if (!ch?.alive) return fail('No such target.'); const m = num(op.amount, 0, actor.wealth); actor.wealth -= m; ch.wealth += m; leaveTrace(w, actor, `Paid ${ch.name} a bribe of ${Math.round(m)}.`); leaveTrace(w, ch, `Took a bribe of ${Math.round(m)} from ${actor.name}.`); if (ch.aiControlled) tell(w, ch, actor.name, `Sent you ${Math.round(m)} in money.`); else ch.loyalty = clamp(ch.loyalty + (op.direction === 'down' ? -1 : 1) * m * .25 * ch.greed / 50, 0, 100); return ok(); }
-    case 'capital_flight': { if (c.capitalClosed) return fail('Capital controls blocked moving the money out.'); const m = c.reserves * num(op.share, 0, .25, .1); c.reserves -= m; actor.wealth += m * .1; const haven = aliveCountries(w).filter(o => o.id !== c.id && !o.capitalClosed).sort((a, b) => b.legitimacy - a.legitimacy)[0]; if (haven) haven.reserves += m * .9; leaveTrace(w, actor, 'Secretly moved capital out of the country.'); c.blocs.capital.sat = clamp(c.blocs.capital.sat - 4, 0, 100); news(w, `${c.name}: investors are pulling capital out of the country.`, { kind: 'economy', countries: [c.id], secret: true }); return ok(); }
+    case 'bribe': { const ch = w.characters[op.character]; if (!ch?.alive || ch.id === actor.id) return fail('No such target.'); const m = num(op.amount, 0, actor.wealth); if (m <= 0) return fail('No money to give.'); actor.wealth -= m; ch.wealth += m; leaveTrace(w, actor, `Paid ${ch.name} a bribe of ${Math.round(m)}.`); leaveTrace(w, ch, `Took a bribe of ${Math.round(m)} from ${actor.name}.`); if (ch.aiControlled) tell(w, ch, actor.name, `Sent you ${Math.round(m)} in money.`); else ch.loyalty = clamp(ch.loyalty + (op.direction === 'down' ? -1 : 1) * m * .25 * ch.greed / 50, 0, 100); return ok(); }
+    case 'capital_flight': {
+      // A fortune is moved abroad as gold: it leaves the country's reserve, and once out it is beyond the state's reach.
+      if (c.capitalClosed) return fail('Capital controls blocked moving the money out.');
+      const home = Math.max(0, actor.wealth - (actor.abroad || 0)), m = Math.min(allowance(w, actor, 'flight', home * .5, home * num(op.share, 0, .5, .1)), Math.max(c.reserves, 0)); if (m <= 0) return fail('There is nothing to move, or no gold left in the country to move it in.');
+      const haven = aliveCountries(w).filter(o => o.id !== c.id && !o.capitalClosed).sort((a, b) => b.legitimacy - a.legitimacy)[0]; if (!haven) return fail('No country abroad is open to it.');
+      c.reserves -= m; haven.reserves += m; actor.abroad = (actor.abroad || 0) + m;
+      leaveTrace(w, actor, 'Secretly moved capital out of the country.'); c.blocs.capital.sat = clamp(c.blocs.capital.sat - 4, 0, 100); news(w, `${c.name}: investors are pulling capital out of the country.`, { kind: 'economy', countries: [c.id], secret: true });
+      return { ok: true, msg: `${Math.round(m)} of your fortune now lies in ${haven.name}, out of the state's reach.` };
+    }
     case 'invest': { const m = num(op.amount, 0, actor.wealth); actor.wealth -= m; const p = countryProvinces(w, c.id)[0]; if (p) p.plants.goods = clamp(p.plants.goods + m * .004, 0, 8); return ok(); }
-    case 'embezzle': { const m = Math.min(c.treasury, gdp * num(op.pct_gdp, 0, .1)); c.treasury -= m; actor.wealth += m * .2; leaveTrace(w, actor, `Embezzled ${Math.round(m)} from the treasury.`); c.corruption = clamp(c.corruption + m / gdp * 80, 0, 100); if (rand(w) < .25) { c.legitimacy = clamp(c.legitimacy - 5, 0, 100); news(w, `${c.name}: allegations of corruption against ${actor.name} have spread.`, { kind: 'politics', countries: [c.id] }); } return ok(); }
-    case 'create_institution': { const inst = makeInstitution(w, c, actor, op); news(w, `${c.name}: ${inst.name} was founded.`, { kind: 'politics', countries: [c.id] }); return { ok: true, msg: `Institution founded: ${inst.id}${inst.sponsor ? '' : `, costing ${(inst.budget * 100).toFixed(2)}% of GDP a quarter`}`, institution: inst.id }; }
+    case 'embezzle': { const m = Math.min(Math.max(c.treasury, 0), gdp * allowance(w, actor, 'embezzle', .02, num(op.pct_gdp, 0, .1))); if (m <= 0) return fail('There is nothing within reach to take this quarter.'); c.treasury -= m; actor.wealth += m * .2 / Math.max(c.priceLevel, .01); leaveTrace(w, actor, `Embezzled ${Math.round(m)} from the treasury.`); c.corruption = clamp(c.corruption + m / gdp * 80, 0, 100); if (rand(w) < .25) { c.legitimacy = clamp(c.legitimacy - 5, 0, 100); news(w, `${c.name}: allegations of corruption against ${actor.name} have spread.`, { kind: 'politics', countries: [c.id] }); } return { ok: true, msg: `${Math.round(m)} left the treasury.` }; }
+    case 'create_institution': { const inst = makeInstitution(w, c, actor, op); if (!inst) return fail('There is no room for another institution; one must be dissolved first.'); news(w, `${c.name}: ${inst.name} was founded.`, { kind: 'politics', countries: [c.id] }); return { ok: true, msg: `Institution founded: ${inst.id}${inst.sponsor ? '' : `, costing ${(inst.budget * 100).toFixed(2)}% of GDP a quarter`}`, institution: inst.id }; }
     case 'fund_institution': { const inst = (c.institutions || []).find(i => i.id === op.id); if (!inst || inst.sponsor) return fail('No such state institution.'); inst.budget = num(op.budget_pct_gdp, 0, MAX_AGENCY_BUDGET, inst.budget); return ok(); }
-    case 'appoint_institution': { const inst = (c.institutions || []).find(i => i.id === op.id); if (!inst) return fail('No such institution.'); if (actor.id !== c.leader && actor.id !== inst.head && actor.id !== inst.sponsor) return fail('You cannot make appointments to this institution.'); const ch = personFor(w, c, op, 'official'); if (!ch?.alive || ch.country !== c.id) return fail('No such target.'); inst.members = inst.members.filter(x => x !== ch.id); if (op.remove) { if (inst.head === ch.id) inst.head = null; return ok(); } if (op.role === 'head') { if (inst.head) inst.members.push(inst.head); inst.head = ch.id; } else if (inst.head !== ch.id) inst.members.push(ch.id); tell(w, ch, inst.name, op.role === 'head' ? `You were appointed head of ${inst.name}.` : `You were made a member of ${inst.name}.`); return ok(); }
+    case 'appoint_institution': { const inst = (c.institutions || []).find(i => i.id === op.id); if (!inst) return fail('No such institution.'); if (!governs(w, c, actor) && actor.id !== inst.head && actor.id !== inst.sponsor) return fail('You cannot make appointments to this institution.'); const ch = personFor(w, c, op, 'official'); if (!ch?.alive || ch.country !== c.id) return fail('No such target.'); inst.members = inst.members.filter(x => x !== ch.id); if (op.remove) { if (inst.head === ch.id) inst.head = null; tell(w, ch, inst.name, `You were removed from ${inst.name}.`); return ok(); } if (ch.status !== 'free') return fail(`${ch.name} is ${ch.status} and can hold no post.`); if (op.role === 'head') { if (inst.head) inst.members.push(inst.head); inst.head = ch.id; } else if (inst.head !== ch.id) inst.members.push(ch.id); tell(w, ch, inst.name, op.role === 'head' ? `You were appointed head of ${inst.name}.` : `You were made a member of ${inst.name}.`); return ok(); }
     case 'dissolve_institution': { const i = (c.institutions || []).findIndex(x => x.id === op.id); if (i < 0) return fail('No such institution.'); const inst = c.institutions[i]; c.institutions.splice(i, 1); c.legitimacy = clamp(c.legitimacy - (inst.strength ?? 0) * 6, 0, 100); news(w, `${c.name}: ${inst.name} was dissolved.`, { kind: 'politics', countries: [c.id] }); return ok(); }
     case 'create_parliament': { if (c.parliament) return fail('There is already a parliament.'); makeParliament(c, op.name, op.legislative !== false); news(w, `${c.name}: ${c.parliament.name} convened.`, { kind: 'politics', countries: [c.id] }); return ok(); }
-    case 'suspend_parliament': { if (!parliamentOpen(w, c)) return fail('There is no parliament in session.'); const n = Math.round(num(op.turns, 1, 40, 4)); c.parliament.suspendedUntil = w.turn + n; c.legitimacy = clamp(c.legitimacy - (4 + n * .5), 0, 100); c.pressFreedom = clamp(c.pressFreedom - 4, 0, 100); news(w, `${c.name}: parliament suspended for ${n} quarters.`, { kind: 'politics', countries: [c.id] }); return ok(); }
-    case 'propose_law': { if (!parliamentOpen(w, c)) { if (actor.id !== c.leader) return fail('There is no parliament in session.'); const b = { id: nextId(w, 'Y'), title: String(op.title || 'Decree').slice(0, 100), text: String(op.text || '').slice(0, 500), ops: Array.isArray(op.ops) ? op.ops.slice(0, 4) : [] }; enactLaw(w, c, b, applyOp, 'decree'); news(w, `${c.name}: the "${b.title}" decree took effect.`, { kind: 'politics', countries: [c.id] }); return { ok: true, msg: `Decree: ${b.id}` }; } const bill = createBill(w, c, actor, op); return bill ? { ok: true, msg: `Bill: ${bill.id}`, bill: bill.id } : fail('The parliamentary agenda is full.'); }
+    case 'suspend_parliament': { if (!c.parliament) return fail('There is no parliament.'); const n = Math.round(num(op.turns, 0, 400, 4)); if (n === 0) { if (parliamentOpen(w, c)) return fail('It is in session already.'); c.parliament.suspendedUntil = 0; news(w, `${c.name}: parliament was recalled.`, { kind: 'politics', countries: [c.id] }); return ok(); } if (!parliamentOpen(w, c)) return fail('There is no parliament in session.'); c.parliament.suspendedUntil = w.turn + n; c.legitimacy = clamp(c.legitimacy - (4 + Math.min(n, 40) * .5), 0, 100); c.pressFreedom = clamp(c.pressFreedom - 4, 0, 100); news(w, `${c.name}: parliament suspended for ${n} quarters.`, { kind: 'politics', countries: [c.id] }); return ok(); }
+    case 'propose_law': {
+      // Where no legislature sits, only whoever governs makes law, by decree; an advisory chamber is asked nothing.
+      if (!(parliamentOpen(w, c) && c.parliament.legislative)) { if (!governs(w, c, actor)) return fail('There is no legislature in session to put a bill to.'); const b = { id: nextId(w, 'Y'), title: String(op.title || 'Decree').slice(0, 100), text: String(op.text || '').slice(0, 500), ops: Array.isArray(op.ops) ? op.ops.slice(0, 4) : [] }; const done = enactLaw(w, c, b, applyOp, 'decree'); news(w, `${c.name}: the "${b.title}" decree took effect.`, { kind: 'politics', countries: [c.id] }); return { ok: true, msg: `Decree ${b.id}.${done.length ? ` ${done.map(r => `${r.op}: ${r.msg}`).join(' ')}` : ''}` }; }
+      const bill = createBill(w, c, actor, op); return bill ? { ok: true, msg: `Bill ${bill.id} goes to a vote next quarter.${Array.isArray(op.ops) && bill.ops.length < op.ops.length ? ' A law cannot arrest people, name heirs or move troops; those parts were left out.' : ''}`, bill: bill.id } : fail('The parliamentary agenda is full.');
+    }
     case 'vote_bill': { const b = (c.bills || []).find(x => x.id === op.bill && x.status === 'pending'); if (!b) return fail('No pending bill.'); const led = leadsParties(w, c, actor); if (!led.length) return fail('You do not lead a party.'); for (const p of led) b.votes[p.id] = op.vote === 'no' ? 'no' : 'yes'; return ok(); }
     case 'lobby_bill': { const b = (c.bills || []).find(x => x.id === op.bill && x.status === 'pending'); const p = c.parties.find(x => x.id === op.party); if (!b || !p) return fail('No such bill or party.'); const m = num(op.amount, 0, actor.wealth); if (m <= 0) return fail('No money.'); actor.wealth -= m; b.lobby[p.id] = (b.lobby[p.id] || 0) + (op.side === 'no' ? -m : m); leaveTrace(w, actor, `Spent ${Math.round(m)} on ${p.name} for the ${b.title} vote.`); return ok(); }
     case 'custom': return applyCustom(w, c, actor, op);
@@ -300,16 +452,16 @@ function persecute(w, c, actor, op) {
 function build(w, c, op) {
   const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('That province is not under your control.');
   const gdp = Math.max(c.gdp, 1), share = num(op.pct_gdp, .01, .25, .03), cost = gdp * share, kind = op.kind;
-  const needsMachines = PLANTS[kind] || kind === 'mine' || kind === 'dam';
+  const needsMachines = has(PLANTS, kind) || kind === 'mine' || kind === 'dam';
   const m = share * 18; if (needsMachines && c.stock.machines < m) return fail('Not enough machinery; import or produce it.');
   const steel = share * 40; if ((kind === 'railway' || kind === 'port' || kind === 'dam') && c.stock.steel < steel) return fail('Not enough steel.');
-  if (kind === 'mine' && !p.deposits[op.resource]?.known) return fail('No such known deposit here.');
+  if (kind === 'mine' && !(has(p.deposits, op.resource) && p.deposits[op.resource].known)) return fail('No such known deposit here.');
   if (kind === 'railway' && !hasTech(c, 'railway') && p.rail >= 1) return fail('Further railway building requires the technology.');
   if (kind === 'port' && !p.coast) return fail('No coast.');
   if (kind === 'dam' && p.river < .2) return fail('No river for a dam here.');
   if (kind === 'battery' && !p.coast) return fail('Coastal batteries need a coast.');
   if (DEFENSES.includes(kind) && (p[kind] || 0) >= MAX_DEFENSE[kind]) return fail('Already at the highest level.');
-  if (!PLANTS[kind] && !['mine', 'railway', 'port', 'dam', 'farming', 'infrastructure', 'administration', ...DEFENSES].includes(kind)) return fail('Unknown building type.');
+  if (!has(PLANTS, kind) && !['mine', 'railway', 'port', 'dam', 'farming', 'infrastructure', 'administration', ...DEFENSES].includes(kind)) return fail('Unknown building type.');
   const works = DEFENSES.includes(kind) ? share * 50 : 0; if (c.stock.steel < works) return fail('Not enough steel.');
   const note = pay(c, cost); if (note === null) return fail(NO_FUNDS);
   if (needsMachines) c.stock.machines -= m; if (['railway', 'port', 'dam'].includes(kind)) c.stock.steel -= steel; c.stock.steel -= works;
