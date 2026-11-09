@@ -265,7 +265,13 @@ async function showCards(t) {
 }
 
 function paintMarks() { $('turnmarks').innerHTML = Object.entries(S.marks).map(([t, k]) => `<i title="${k === 'komplo' ? 'Komplo' : 'Savaş'}, ${quarter(+t)}" style="left:${S.last ? t / S.last * 100 : 0}%;background:${k === 'komplo' ? '#b89adb' : '#d1584f'}"></i>`).join(''); }
-async function refreshLast() { const m = await api('/api/meta'); S.meta = m; if (m.lastTurn < 0) return; const fresh = m.lastTurn > S.last && S.last >= 0; S.last = m.lastTurn; S.marks = m.marks || {}; $('slider').max = m.lastTurn; $('pause').textContent = m.paused ? 'Oyunu sürdür' : 'Oyunu durdur'; if (S.live || !S.data) await load(m.lastTurn); paintMarks(); if (fresh) showCards(m.lastTurn); }
+const amount = n => n >= 1e6 ? `${(n / 1e6).toLocaleString('tr-TR', { maximumFractionDigits: 1 })} milyon` : `${Math.round(n / 1000)} bin`;
+function paintUsage(u) {
+  const el = $('usage'); el.hidden = !u?.calls; if (!u?.calls) return;
+  el.textContent = `Son tur: ${u.calls} çağrı, ${amount(u.input + u.cacheRead + u.cacheWrite)} token`;
+  el.title = `Önbellekten okunan ${amount(u.cacheRead)}, önbelleğe yazılan ${amount(u.cacheWrite)}, önbelleksiz ${amount(u.input)}, üretilen ${amount(u.output)}. En büyük oturum ${amount(u.largest)}.`;
+}
+async function refreshLast() { const m = await api('/api/meta'); S.meta = m; paintUsage(m.usage); if (m.lastTurn < 0) return; const fresh = m.lastTurn > S.last && S.last >= 0; S.last = m.lastTurn; S.marks = m.marks || {}; $('slider').max = m.lastTurn; $('pause').textContent = m.paused ? 'Oyunu sürdür' : 'Oyunu durdur'; if (S.live || !S.data) await load(m.lastTurn); paintMarks(); if (fresh) showCards(m.lastTurn); }
 function setLive(v) { S.live = v; $('live').classList.toggle('on', v); if (v) refreshLast(); }
 const go = t => { setLive(false); load(Math.max(0, Math.min(S.last, t))); };
 $('prev').onclick = () => go(S.turn - 1); $('next').onclick = () => go(S.turn + 1); $('slider').oninput = e => go(+e.target.value); $('live').onclick = () => setLive(!S.live);

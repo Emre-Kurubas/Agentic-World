@@ -4,7 +4,7 @@ import { beginTurn, stepWorld } from '../engine/step.js';
 import { applyOp } from '../engine/ops.js';
 import { executePlot } from '../engine/politics.js';
 import { Game, shouldWake, isAI } from '../agents/game.js';
-import { LimitError } from '../agents/backend.js';
+import { LimitError, SessionLostError } from '../agents/backend.js';
 
 const base = { seed: 42, countries: 5, provinces: 130, agentRoles: ['leader', 'general', 'opposition', 'oligarch'], countryAgentRoles: {}, models: { leader: 'a', referee: 'a', secondary: 'b' }, concurrency: 2, wakeEvery: 2, wakeTension: 45, maxMessagesPerActor: 3, maxDecisionsPerActor: 5, limitRetryMinutes: 0, maxTurns: 0 };
 const fresh = () => { const w = createWorld(base); w.status = 'oyunda'; for (const c of aliveCountries(w)) c.majorityEth ??= ''; run(w, 4); return w; };
@@ -202,4 +202,54 @@ await (async () => {
   fs.rmSync(store.dir, { recursive: true, force: true });
 })();
 assert.equal(fold('İŞÇİ Ağı ÇÖLÜ'), 'isci agi colu');
+
+const sessionWorld = () => { const cfg = { ...base, agentRoles: ['leader'], maxLookupRounds: 1, concurrency: 1 }, w = createWorld(cfg); w.status = 'oyunda'; return { cfg, w, leader: w.countries.U1.leader }; };
+const memoryStore = () => { let saved = {}, pending = null; return { savePending(p) { pending = JSON.parse(JSON.stringify(p)); }, loadPending(t) { return pending?.turn === t ? pending : null; }, clearPending() { pending = null; }, commit() {}, loadSessions: () => JSON.parse(JSON.stringify(saved)), saveSessions(s) { saved = JSON.parse(JSON.stringify(s)); } }; };
+const reply = (p, extra = {}) => { if (p.includes('hukumler')) return { hukumler: [] }; if (!p.includes('şimdi karar ver')) return { bak: ['ekonomi'] }; return { kararlar: [], mesajlar: [], ic_ses: 'x', ...extra }; };
+
+await (async () => {
+  const { cfg, w, leader } = sessionWorld(), mine = [], name = w.characters[leader].name;
+  const backend = { kind: 'claude', async ask(p, model, session) { if (session && p.includes(name) || mine.length && session?.id === mine[0].session.id) mine.push({ p, session: { ...session } }); return reply(p); } };
+  const g = new Game({ world: w, cfg, backend, store: memoryStore() });
+  await g.turn();
+  assert.equal(mine.length, 2); assert.equal(mine[0].session.resume, false); assert.equal(mine[1].session.resume, true); assert.equal(mine[0].session.id, mine[1].session.id);
+  assert.ok(mine[0].p.includes('Bu senin hayatın'), 'ilk çağrı karakteri kurar');
+  assert.ok(!mine[1].p.includes('Adın:') && mine[1].p.includes('BAKTIKLARIN'), 'ikinci çağrı yalnızca yeni cevapları gönderir');
+  await g.turn();
+  assert.equal(mine[2].session.id, mine[0].session.id); assert.equal(mine[2].session.resume, true);
+  assert.ok(mine[2].p.includes('Adın:') && !mine[2].p.includes('Bu senin hayatın'), 'sonraki tur yalnızca günün raporudur');
+  console.log('geçti  Her karakter tek oturumda sürer, yalnızca yeni bilgi gönderilir');
+})();
+
+await (async () => {
+  const { cfg, w, leader } = sessionWorld(), ch = w.characters[leader]; ch.diary.push('Eski bir yemin ettim.'); ch.persona = 'Kuşkucu biri.';
+  const seen = []; let lost = true;
+  const backend = { kind: 'claude', async ask(p, model, session) { if (p.includes(ch.name)) { seen.push({ p, session: { ...session } }); if (session.resume && lost) { lost = false; throw new SessionLostError('yok'); } } return reply(p, { kararlar: [] }); } };
+  const store = memoryStore(), g = new Game({ world: w, cfg: { ...cfg, maxLookupRounds: 0 }, backend, store });
+  g.sessions[leader] = { id: 'eski', calls: 9, done: 9, intro: true };
+  await g.turn();
+  assert.equal(seen.length, 2); assert.notEqual(seen[1].session.id, 'eski'); assert.equal(seen[1].session.resume, false);
+  assert.ok(seen[1].p.includes('Eski bir yemin') && seen[1].p.includes('Kuşkucu') && seen[1].p.includes('ULAŞILAMIYOR'), 'kayıp oturumda karakter elinde kalanları görür');
+  assert.equal(store.loadSessions()[leader].id, seen[1].session.id, 'yeni oturum kayda geçer');
+  console.log('geçti  Kayıp oturumda karakter günlüğüyle yeniden başlar');
+})();
+
+await (async () => {
+  const { cfg, w, leader } = sessionWorld(), ch = w.characters[leader], seen = []; let fail = true;
+  const backend = { kind: 'claude', async ask(p, model, session) { if (p.includes(ch.name)) { seen.push({ p, resume: session.resume }); if (fail) { fail = false; throw new LimitError('limit'); } } return reply(p); } };
+  const g = new Game({ world: w, cfg: { ...cfg, maxLookupRounds: 0 }, backend, store: memoryStore() });
+  await g.turn();
+  assert.equal(seen.length, 2); assert.equal(seen[1].resume, true); assert.ok(!seen[0].p.includes('sisteme ulaşmadı') && seen[1].p.includes('sisteme ulaşmadı'), 'yarım kalan tur karaktere söylenir');
+  assert.equal(w.turn, 1); console.log('geçti  Limit sonrası karakter yarım kalan sabahı bilerek yanıt verir');
+})();
+
+await (async () => {
+  const { cfg, w, leader } = sessionWorld(), ch = w.characters[leader], prompts = [];
+  const backend = { kind: 'claude', async ask(p) { if (p.includes(ch.name) && !p.includes('hukumler')) { prompts.push(p); return { kararlar: ['Yeni takvim'], mesajlar: [] }; } if (p.includes('hukumler')) return { hukumler: [{ aktor: leader, karar: 0, aciklama: 'Takvim kabul edildi', olasilik: 1, islemler: [] }] }; return { kararlar: [], mesajlar: [] }; } };
+  const g = new Game({ world: w, cfg: { ...cfg, maxLookupRounds: 0 }, backend, store: memoryStore() });
+  await g.turn(); await g.turn(); await g.turn();
+  assert.ok(!prompts[0].includes('Takvim kabul edildi') && prompts[1].includes('Takvim kabul edildi'), 'sonuç bir sonraki uyanışta bildirilir');
+  assert.equal(prompts[2].split('Takvim kabul edildi').length, 2, 'her uyanışta yalnızca kendi yeni sonucu gelir');
+  console.log('geçti  Zincir: karar, hüküm, ertesi sabah yalnızca yeni sonuç');
+})();
 console.log('Tüm kontroller geçti.');

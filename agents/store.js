@@ -123,6 +123,14 @@ export class Store {
     return { items, next: null };
   }
 
+  loadSessions() { try { return JSON.parse(fs.readFileSync(this.file('sessions.json'), 'utf8')); } catch { return {}; } }
+  saveSessions(s) { this.atomic(this.file('sessions.json'), JSON.stringify(s)); }
+  saveUsage(u) { fs.appendFileSync(this.file('usage.ndjson'), `${JSON.stringify(u)}\n`); this.usage = u; }
+  lastUsage() {
+    if (this.usage) return this.usage;
+    try { return this.usage = JSON.parse(fs.readFileSync(this.file('usage.ndjson'), 'utf8').trim().split('\n').at(-1)); } catch { return null; }
+  }
+
   people() { try { return JSON.parse(fs.readFileSync(this.file('people.json'), 'utf8')); } catch { return {}; } }
   updatePeople(w, entries) {
     const all = this.people(), counts = {};

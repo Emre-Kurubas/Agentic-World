@@ -32,6 +32,9 @@ const baseDir = cfg.saveDir || path.join(os.homedir(), 'ajan-dunyasi-kayitlar');
 const dir = path.join(baseDir, cfg.runName);
 if (flag('new') && fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
 const store = new Store(dir);
+// Karakter oturumları bu boş ve uygulamaya özel klasörden açılır; dışarıdaki proje ayarları okunmaz.
+const sessionDir = path.join(dir, 'oturumlar');
+fs.mkdirSync(sessionDir, { recursive: true });
 
 let world;
 if (store.exists()) { world = store.loadWorld(); console.log(`Kayıt bulundu, tur ${world.turn} üzerinden devam ediliyor.`); }
@@ -39,7 +42,7 @@ else { world = createWorld(cfg); store.saveMap(world); console.log('Yeni dünya 
 
 const clients = new Set();
 const send = msg => { const line = `data: ${JSON.stringify(msg)}\n\n`; for (const r of clients) r.write(line); };
-const game = new Game({ world, cfg, backend: makeBackend(cfg), store, onUpdate: send });
+const game = new Game({ world, cfg, backend: makeBackend(cfg, sessionDir), store, onUpdate: send });
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.ico': 'image/x-icon' };
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1)(:\d+)?$/i, panelDir = path.join(root, 'panel');
@@ -62,7 +65,7 @@ function handle(req, res) {
   if (!LOCAL_HOST.test(req.headers.host ?? '')) { res.writeHead(403); return res.end('Yalnızca yerel erişim'); }
   const url = new URL(req.url, 'http://x');
   const json = (body, code = 200) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(body); };
-  if (url.pathname === '/api/meta') return json(JSON.stringify({ lastTurn: store.lastTurn(), marks: store.marks(), status: game.status, paused: !!game.paused, progress: game.progress, runName: cfg.runName, backend: cfg.backend, maxTurns: cfg.maxTurns, agentRoles: cfg.agentRoles, countryAgentRoles: cfg.countryAgentRoles }));
+  if (url.pathname === '/api/meta') return json(JSON.stringify({ lastTurn: store.lastTurn(), marks: store.marks(), status: game.status, paused: !!game.paused, progress: game.progress, runName: cfg.runName, backend: cfg.backend, maxTurns: cfg.maxTurns, agentRoles: cfg.agentRoles, countryAgentRoles: cfg.countryAgentRoles, usage: store.lastUsage() }));
   if (url.pathname === '/api/map') return json(store.readMap());
   if (url.pathname === '/api/control' && req.method === 'POST') {
     if (req.headers['x-panel'] !== '1') return json('{"error":"Yetkisiz istek."}', 403);

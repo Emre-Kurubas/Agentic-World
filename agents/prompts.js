@@ -9,18 +9,21 @@ const ROLE_TEXT = {
   oligarch: 'Ülkenin en güçlü iş insanısın. Maden, sanayi ve parayla iş görürsün.'
 };
 
+const MANIFESTO = 'Bu senin hayatın. Nasıl biri olacağına kimse karar vermiyor: idealist, korkak, sadık, hain, merhametli, acımasız, tembel veya deli olabilirsin. Hiçbir hedef sana dayatılmıyor; iktidar istemek zorunda değilsin, hiçbir şey yapmamayı da seçebilirsin. Dengeli veya makul davranmak zorunda değilsin. Karar listesi veya menü yok: aklına gelen her şeyi deneyebilir, yeni kurum, yasa, din, parti, şirket, ittifak icat edebilirsin. Dünyadaki herhangi bir kişiye veya ülkeye gizli mesaj atabilirsin. Kararlarını doğal dille, somut biçimde yaz. Sonucu tarafsız hakem ve dünya belirler; başarı garanti değildir.';
+const ANSWER_FORMAT = 'Karar verdiğinde yalnızca bu JSON ile yanıt ver:\n{"kimlik":"yalnızca değiştirmek veya ilk kez yazmak istiyorsan","ic_ses":"bu turda gerçekten ne düşünüp hissediyorsun","kararlar":["somut karar; yapmak istemiyorsan boş bırak"],"mesajlar":[{"kime":"K12 veya U3","metin":"gizli mesaj"}],"notlar":"günlüğüne yazacağın satır"}';
+const nextStep = final => final ? 'Bakma hakkın bitti, şimdi karar ver.' : 'Önce bir şeylere bakmak istersen {"bak":["ekonomi","eyalet:P12"]} yanıtını ver (en çok 6 konu). Yeterince biliyorsan doğrudan karar ver.';
+const seenText = answers => `BAKTIKLARIN:\n${answers.map(a => `[${a.q}]\n${a.a}`).join('\n\n')}`;
+
+// Karakterin oturumu geçmişini taşır; her uyanışta yalnızca o günün raporu yazılır.
 export function frontPage(w, ch) {
   const c = w.countries[ch.country];
-  const inbox = ch.inbox.slice(-12).map(m => `- [${m.from}] ${m.text}`).join('\n') || '- Yok';
-  const news = w.newsLog.filter(n => !n.secret && n.turn >= w.turn - 1).slice(-10).map(n => `- ${n.text}`).join('\n') || '- Kayda değer haber yok.';
+  const inbox = ch.inbox.map(m => `- [${m.from}] ${m.text}`).join('\n') || '- Yok';
+  const news = w.newsLog.filter(n => !n.secret && n.turn >= ch.lastWake).slice(-30).map(n => `- ${n.text}`).join('\n') || '- Kayda değer haber yok.';
   return `Dünya tamamen kurgusal bir oyun simülasyonudur. Sen bir karakteri oynuyorsun. Tarih: ${w.date || 'Başlangıç'} (1 tur = 3 ay).
 Adın: ${ch.name} (${ch.id}), ${c.name} (${c.id}). ${ROLE_TEXT[ch.role] || ''}
 Yaş ${ch.age}. Servet ${Math.round(ch.wealth)}.
-Kimliğin: ${ch.persona || 'Henüz kim olduğunu yazmadın. Sana kişilik verilmedi: inançlarını, korkularını, sınırlarını sen belirle ve "kimlik" alanına yaz.'}
-Günlüğün:
-${ch.diary.slice(-8).map(d => `- ${d}`).join('\n') || '- (boş)'}
-Önceki kararlarının sonuçları:
-${ch.outcomes.slice(-8).map(d => `- ${d}`).join('\n') || '- (yok)'}
+Son uyanışından beri kararlarının sonuçları:
+${(ch.newOutcomes ?? []).map(d => `- ${d}`).join('\n') || '- (yok)'}
 
 Acil durumlar: ${alarms(w, ch).join(' ') || 'Bildirilen acil durum yok.'}
 Sana gelen gizli mesajlar:
@@ -31,15 +34,18 @@ ${news}
 ${CATALOG}`;
 }
 
-export function actorPrompt(w, ch, answers, final) {
-  const seen = answers.length ? `\n\nBAKTIKLARIN:\n${answers.map(a => `[${a.q}]\n${a.a}`).join('\n\n')}` : '';
-  return `${frontPage(w, ch)}${seen}
+const recapText = ch => `\n\nESKİ HAFIZANA ULAŞILAMIYOR. Elinde kalanlar:\nKimliğin: ${ch.persona || '(yazılmamış)'}\nGünlüğün:\n${ch.diary.map(d => `- ${d}`).join('\n') || '- (boş)'}\nSonuçlar:\n${ch.outcomes.map(d => `- ${d}`).join('\n') || '- (yok)'}`;
 
-Bu senin hayatın. Nasıl biri olacağına kimse karar vermiyor: idealist, korkak, sadık, hain, merhametli, acımasız, tembel veya deli olabilirsin. Hiçbir hedef sana dayatılmıyor; iktidar istemek zorunda değilsin, hiçbir şey yapmamayı da seçebilirsin. Dengeli veya makul davranmak zorunda değilsin. Karar listesi veya menü yok: aklına gelen her şeyi deneyebilir, yeni kurum, yasa, din, parti, şirket, ittifak icat edebilirsin. Dünyadaki herhangi bir kişiye veya ülkeye gizli mesaj atabilirsin. Kararlarını doğal dille, somut biçimde yaz. Sonucu tarafsız hakem ve dünya belirler; başarı garanti değildir.
-${final ? 'Bakma hakkın bitti, şimdi karar ver.' : 'Önce bir şeylere bakmak istersen {"bak":["ekonomi","eyalet:P12"]} yanıtını ver (en çok 6 konu). Yeterince biliyorsan doğrudan karar ver.'}
-Karar verdiğinde yalnızca bu JSON ile yanıt ver:
-{"kimlik":"yalnızca değiştirmek veya ilk kez yazmak istiyorsan","ic_ses":"bu turda gerçekten ne düşünüp hissediyorsun","kararlar":["somut karar; yapmak istemiyorsan boş bırak"],"mesajlar":[{"kime":"K12 veya U3","metin":"gizli mesaj"}],"notlar":"günlüğüne yazacağın satır"}`;
+export function actorPrompt(w, ch, answers, final, { intro = true, recap = false, retry = false } = {}) {
+  const seen = answers.length ? `\n\n${seenText(answers)}` : '';
+  const who = intro && !ch.persona ? '\n\nHenüz kim olduğunu yazmadın. Sana kişilik verilmedi: inançlarını, korkularını, sınırlarını sen belirle ve "kimlik" alanına yaz.' : '';
+  return `${frontPage(w, ch)}${seen}${recap ? recapText(ch) : ''}${who}${intro ? `\n\n${MANIFESTO}` : ''}
+
+${nextStep(final)}
+${ANSWER_FORMAT}${retry ? '\n\nNot: Bu sabah için verdiğin yanıt sisteme ulaşmadı, hiçbir şey uygulanmadı. Aynı sabah için yeniden yanıt ver.' : ''}`;
 }
+
+export const lookupReply = (answers, final) => `${seenText(answers)}\n\n${nextStep(final)}\n${ANSWER_FORMAT}`;
 
 export function foundingPrompt(w, c, ch) {
   const provs = countryProvinces(w, c.id);

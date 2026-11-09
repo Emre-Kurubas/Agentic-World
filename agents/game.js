@@ -1,12 +1,12 @@
-import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { aliveCountries, ROLES, countryProvinces } from '../engine/world.js';
 import { beginTurn, stepWorld } from '../engine/step.js';
 import { applyOp } from '../engine/ops.js';
 import { news, rand, clamp } from '../engine/util.js';
 import { npcDecide, npcFounding } from './npc.js';
-import { actorPrompt, foundingPrompt, refereePrompt } from './prompts.js';
+import { actorPrompt, foundingPrompt, refereePrompt, lookupReply } from './prompts.js';
 import { answer } from './queries.js';
-import { LimitError } from './backend.js';
+import { LimitError, SessionLostError } from './backend.js';
 import { snapshotState, buildEntries } from './ledger.js';
 
 export function rolesFor(cfg, c) {
@@ -44,7 +44,7 @@ async function pool(items, n, fn) {
 }
 
 export class Game {
-  constructor({ world, cfg, backend, store, onUpdate }) { Object.assign(this, { w: world, cfg, backend, store, onUpdate }); this.status = 'hazır'; this.progress = ''; this.stop = false; }
+  constructor({ world, cfg, backend, store, onUpdate }) { Object.assign(this, { w: world, cfg, backend, store, onUpdate }); this.status = 'hazır'; this.progress = ''; this.stop = false; this.sessions = store?.loadSessions?.() ?? {}; }
   setStatus(status, progress = '') { this.status = status; this.progress = progress; this.onUpdate?.({ type: 'status', status, progress, turn: this.w.turn }); }
 
   async withRetry(fn) {
@@ -57,6 +57,28 @@ export class Game {
         this.setStatus('limit bekleniyor', `Kullanım limiti doldu. ${until.toLocaleTimeString('tr-TR')} civarı yeniden denenecek. Oyun kaldığı yerden sürecek.`);
         await new Promise(r => setTimeout(r, this.cfg.limitRetryMinutes * 60000));
         if (this.stop) throw e;
+      }
+    }
+  }
+
+  // Her yapay zekâ karakterinin tek ve kalıcı Claude oturumu vardır. Kayıt çağrıdan önce yazılır ki yarım kalan çağrı da bilinsin.
+  sessionOf(ch) { return this.sessions[ch.id] ||= { id: randomUUID(), calls: 0, done: 0, intro: false }; }
+  saveSessions() { this.store?.saveSessions?.(this.sessions); }
+
+  async askAs(ch, build, model) {
+    let s = this.sessionOf(ch), fresh = false, recap = false;
+    for (;;) {
+      const resume = s.calls > 0, intro = !s.intro;
+      s.calls++; this.saveSessions();
+      try {
+        const r = await this.backend.ask(build({ intro, fresh, recap }), model, { id: s.id, resume });
+        s.done++; if (build.isActor) s.intro = true; this.saveSessions();
+        return r;
+      } catch (e) {
+        if (!(e instanceof SessionLostError)) throw e;
+        recap = s.done > 0; fresh = true;
+        s = this.sessions[ch.id] = { id: randomUUID(), calls: 0, done: 0, intro: false };
+        this.report(ch, recap ? 'Oturum dosyası bulunamadı, karakter günlüğüyle yeni oturum açıldı.' : 'Oturum henüz oluşmamıştı, yeniden açıldı.');
       }
     }
   }
@@ -79,7 +101,7 @@ export class Game {
       const ch = w.characters[c.leader];
       let f = null;
       if (this.backend.kind !== 'mock' && isAI(this.cfg, c, ch)) {
-        try { f = await this.backend.ask(foundingPrompt(w, c, ch), this.cfg.models.leader); }
+        try { f = await this.askAs(ch, () => foundingPrompt(w, c, ch), this.cfg.models.leader); }
         catch (e) { if (e instanceof LimitError) throw e; this.report(ch, `Kuruluş yanıtı alınamadı: ${e.message}`); }
       }
       this.pending.founding[c.id] = f || npcFounding(w, c, i);
@@ -112,10 +134,18 @@ export class Game {
       if (this.backend.kind === 'mock') r = mockThought(w, ch);
       else {
         try {
-          const rounds = Math.max(0, cfg.maxLookupRounds ?? 4), answers = (this.pending.lookups ||= {})[ch.id] ||= [];
+          const rounds = Math.max(0, cfg.maxLookupRounds ?? 4), answers = (this.pending.lookups ||= {})[ch.id] ||= [], sent = this.pending.sent ||= {};
+          let retry = !!sent[ch.id];
+          if (!retry) { sent[ch.id] = true; this.store.savePending(this.pending); }
           for (;;) {
-            const used = new Set(answers.map(a => a.round)).size, final = used >= rounds;
-            r = await this.backend.ask(actorPrompt(w, ch, answers, final), modelFor(cfg, ch));
+            const used = new Set(answers.map(a => a.round)).size, final = used >= rounds, again = retry;
+            // Normalde oturum raporu bilir, sonraki bakışlarda yalnızca yeni cevaplar gider. Yarım kalmışsa her şey yeniden yazılır.
+            const build = ({ intro, fresh, recap }) => used === 0 || fresh || again
+              ? actorPrompt(w, ch, answers, final, { intro, recap, retry: again })
+              : lookupReply(answers.filter(a => a.round === used - 1), final);
+            build.isActor = true;
+            r = await this.askAs(ch, build, modelFor(cfg, ch));
+            retry = false;
             if (final || !Array.isArray(r?.bak) || !r.bak.length) break;
             for (const q of r.bak.slice(0, 6)) answers.push({ q: String(q).slice(0, 40), a: answer(w, ch, q), round: used });
             this.store.savePending(this.pending);
@@ -153,6 +183,7 @@ export class Game {
     const w = this.w, cfg = this.cfg, trace = [], rulings = [];
     const awake = new Set(actors.map(a => a.id));
     const outgoing = [];
+    for (const ch of actors) if (!this.pending.actors[ch.id]?.fallback) ch.newOutcomes = [];
     for (const ch of currentActors(w)) {
       const c = w.countries[ch.country];
       const ai = isAI(cfg, c, ch);
@@ -190,7 +221,7 @@ export class Game {
     const success = prob >= 1 || rand(w) < prob;
     const results = success ? ops.map(op => ({ op: op.op, ...safeApply(w, ch, op) })) : [];
     if (narrative && pub && success && source === 'hakem') news(w, `${c?.name ?? ''}: ${narrative}`, { kind: 'siyaset', countries: [ch.country] });
-    if (source === 'hakem' && narrative) { ch.outcomes.push(`${w.date}: ${success ? 'Gerçekleşti' : 'Başarısız'}: ${narrative}`); ch.outcomes = ch.outcomes.slice(-16); }
+    if (source === 'hakem' && narrative) { ch.outcomes.push(`${w.date}: ${success ? 'Gerçekleşti' : 'Başarısız'}: ${narrative}`); ch.outcomes = ch.outcomes.slice(-16); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1)); }
     return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, probability: prob, success, results, source, decision, ops };
   }
 
@@ -205,6 +236,7 @@ export class Game {
     const before = snapshotState(w), log = this.execute(actors);
     stepWorld(w);
     this.store.commit(w, buildEntries(w, log, before, this.pending.lookups));
+    if (this.backend.resetUsage) this.store.saveUsage?.({ t: w.turn, ...this.backend.resetUsage() });
     this.store.clearPending();
     this.onUpdate?.({ type: 'turn', turn: w.turn });
   }
