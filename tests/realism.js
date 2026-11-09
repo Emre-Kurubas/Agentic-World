@@ -133,4 +133,73 @@ const unlimited = async () => {
   await g.run(0); assert.equal(w.turn, 300); assert.ok(Object.keys(w.characters).length < 400, `karakter ${Object.keys(w.characters).length}`); console.log(`geçti  300 tur sınırsız çalıştı (dünya boyutu ${Math.round(JSON.stringify(w).length / 1024)} KB, ${aliveCountries(w).length} güç)`);
 };
 await counting(); await limit(); await unlimited();
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { Store, keepSnapshot } from '../agents/store.js';
+import { snapshotState, buildEntries, fold } from '../agents/ledger.js';
+
+const tempStore = () => new Store(fs.mkdtempSync(path.join(os.tmpdir(), 'ajan-defter-')));
+const dirSize = d => fs.readdirSync(d, { withFileTypes: true }).reduce((a, x) => a + (x.isDirectory() ? dirSize(path.join(d, x.name)) : fs.statSync(path.join(d, x.name)).size), 0);
+
+await (async () => {
+  const cfg = { ...base, agentRoles: ['leader'], maxLookupRounds: 1 }, w = createWorld(cfg), store = tempStore(); w.status = 'oyunda';
+  let n = 0;
+  const backend = { kind: 'claude', async ask(p) {
+    if (p.includes('hukumler')) { const id = /"aktor"/.test(p); return { hukumler: [] , id }; }
+    if (!p.includes('şimdi karar ver')) return { bak: ['ekonomi'] };
+    return { ic_ses: 'Hazine kurursa ordu beni bırakır.', kararlar: [], mesajlar: [{ kime: 'U2', metin: 'Sınırda sükûnet istiyoruz.' }], notlar: '' };
+  } };
+  const g = new Game({ world: w, cfg, backend, store });
+  await g.turn();
+  const all = store.queryLedger({ limit: 500 }).items, kinds = new Set(all.map(e => e.k));
+  for (const k of ['dusunce', 'sorgu', 'mesaj']) assert.ok(kinds.has(k), `defterde ${k} yok`);
+  assert.ok(all.some(e => e.k === 'sorgu' && e.q === 'ekonomi' && e.text.includes('GSYH')), 'sorgu cevabı saklanmalı');
+  assert.ok(all.some(e => e.k === 'kural' && e.a.length), 'kural tabanlı eylem kayda geçmeli');
+  assert.ok(store.queryLedger({ q: 'SÜKUNET sinirda' }).items.some(e => e.k === 'mesaj'), 'Türkçe harf ve büyük harf aramayı bozmamalı');
+  const ld1 = w.countries.U1.leader;
+  assert.ok(store.queryLedger({ character: ld1 }).items.every(e => e.a.includes(ld1)), 'karakter süzgeci');
+  assert.ok(store.people()[ld1].events > 0, 'kişi dizini');
+  const view = JSON.parse(store.readTurn(1));
+  assert.ok(view.log.trace.length && view.log.messages.length && view.log.rulings.length, 'eski tur görünümü defterden kurulmalı');
+  console.log('geçti  Defter: düşünce, sorgu, mesaj, kural eylemi saklanır ve aranır');
+})();
+
+ok('Defter: başarısız işlem ve durum değişimleri yazılır', () => {
+  const w = fresh(), c = w.countries.U1, g = new Game({ world: w, cfg: base, backend: { kind: 'mock' }, store: nullStore() });
+  const before = snapshotState(w), oldLeader = c.leader, general = w.characters[c.general];
+  const r = g.applyRuling(general, { narrative: 'vergi', prob: 1, public: false, ops: [{ op: 'set_tax', kind: 'income', rate: .5 }], source: 'kural' });
+  c.leader = general.id; const p = countryProvinces(w, 'U1').at(-1); p.controller = 'U2'; c.unrest = 90; c.bankCrisis = true;
+  const list = buildEntries(w, { trace: [], rulings: [r], messages: [] }, before);
+  const failed = list.find(e => e.k === 'kural'); assert.equal(failed.ok, false); assert.equal(failed.x.ops[0].op, 'set_tax'); assert.ok(failed.text.length > 5);
+  const changes = list.filter(e => e.k === 'durum');
+  assert.ok(changes.some(e => e.imp === 3 && e.a.includes(oldLeader) && e.a.includes(general.id)), 'lider değişimi');
+  assert.ok(changes.some(e => e.p === p.id && e.c.includes('U2')), 'eyalet el değiştirmesi konumuyla');
+  assert.ok(changes.some(e => e.text.includes('ayaklanma eşiğinde')), 'huzursuzluk eşiği');
+  assert.ok(changes.some(e => e.text.includes('bankacılık krizi')), 'banka krizi');
+  const again = snapshotState(w); c.unrest = 86; assert.ok(!buildEntries(w, { trace: [], rulings: [], messages: [] }, again).some(e => e.text.includes('ayaklanma')), 'aynı eşik yeniden yazılmamalı');
+});
+
+await (async () => {
+  const w = createWorld(base), store = tempStore(), g = new Game({ world: w, cfg: base, backend: { kind: 'mock' }, store });
+  const orig = g.turn.bind(g); g.turn = async () => { await orig(); if (w.turn >= 520) g.stop = true; };
+  await g.run(0);
+  const last = store.lastTurn(); assert.equal(last, 520);
+  const expected = Array.from({ length: last + 1 }, (_, t) => t).filter(t => keepSnapshot(t, last));
+  assert.deepEqual(store.turns, expected, 'kopya seyreltme kuralı');
+  assert.ok(store.turns.length < 150, `kopya sayısı ${store.turns.length}`);
+  const ledger = fs.readdirSync(path.join(store.dir, 'ledger'));
+  assert.ok(ledger.filter(x => x.startsWith('s-')).length === 5 && ledger.filter(x => x.startsWith('t-')).length <= 100, `defter dosyaları: ${ledger.length}`);
+  const old = JSON.parse(store.readTurn(1)), thin = JSON.parse(store.readTurn(101));
+  assert.ok(old.log.trace.length, 'en eski turun zihinleri duruyor'); assert.notEqual(thin.snapshotTurn, 101); assert.equal(thin.turn, 101); assert.ok(thin.log.trace.length, 'seyreltilen turun kaydı defterden gelir');
+  assert.deepEqual(store.entriesOfTurn(250).map(e => e.id), store.queryLedger({ turn: 250, limit: 500 }).items.map(e => e.id).reverse(), 'segmentten okuma');
+  const p1 = store.queryLedger({ limit: 50 }), p2 = store.queryLedger({ limit: 50, cursor: p1.next });
+  assert.equal(new Set([...p1.items, ...p2.items].map(e => e.id)).size, 100, 'sayfalar çakışmamalı');
+  store.writeTurnEntries(520, store.entriesOfTurn(520)); assert.equal(new Set(store.queryLedger({ turn: 520, limit: 500 }).items.map(e => e.id)).size, store.queryLedger({ turn: 520, limit: 500 }).items.length, 'yeniden oynanan tur çiftlenmemeli');
+  assert.ok(Object.keys(w).includes('ledgerBands'));
+  console.log(`geçti  Defter 520 turda sınırlı kaldı (${store.turns.length} dünya kopyası, ${Math.round(dirSize(store.dir) / 1048576)} MB)`);
+  fs.rmSync(store.dir, { recursive: true, force: true });
+})();
+assert.equal(fold('İŞÇİ Ağı ÇÖLÜ'), 'isci agi colu');
 console.log('Tüm kontroller geçti.');

@@ -1,7 +1,13 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 
 export class LimitError extends Error {}
+
+// Ajanlar proje ayarı okuyabilecek klasörde çalışır; paylaşılan geçici klasördeki yabancı ayarlar yüklenmesin diye klasör uygulamaya özel ve boştur.
+let workDir;
+const agentCwd = () => workDir ??= fs.mkdtempSync(path.join(os.tmpdir(), 'ajan-dunyasi-'));
 
 const LIMIT_RE = /(usage limit|rate limit|limit reached|hit your .*limit|session limit|weekly limit|credit balance|overloaded|too many requests|429)/i;
 
@@ -23,10 +29,13 @@ function callClaude(prompt, model, timeoutMs = 300000) {
     const env = { ...process.env };
     // Kullanım API faturasına değil, Claude aboneliğine yazılsın.
     for (const k of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT']) delete env[k];
-    const args = ['-p', '--model', model, '--output-format', 'json', '--no-session-persistence', '--tools', '""', '--strict-mcp-config', '--disable-slash-commands', '--setting-sources', 'project'];
-    const child = spawn('claude', args, { shell: true, cwd: os.tmpdir(), env, windowsHide: true });
+    // Windows'ta claude bir .cmd olabilir; kabuk gerekir. Node 24 kabukla dizi argümanı uyarı verdiği için komut tek satır.
+    const command = `claude -p --model ${model} --output-format json --no-session-persistence --tools "" --strict-mcp-config --disable-slash-commands --setting-sources project`;
+    const child = spawn(command, { shell: true, cwd: agentCwd(), env, windowsHide: true });
     let out = '', err = '';
-    const timer = setTimeout(() => { child.kill(); reject(new Error('Ajan zaman aşımına uğradı')); }, timeoutMs);
+    // Windows'ta child.kill yalnızca kabuğu kapatır; claude süreci açık kalmasın diye tüm ağaç kapatılır.
+    const killTree = () => process.platform === 'win32' ? spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true }) : child.kill();
+    const timer = setTimeout(() => { killTree(); reject(new Error('Ajan zaman aşımına uğradı')); }, timeoutMs);
     child.stdout.on('data', d => out += d);
     child.stderr.on('data', d => err += d);
     child.on('error', e => { clearTimeout(timer); reject(e); });

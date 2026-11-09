@@ -7,6 +7,7 @@ import { npcDecide, npcFounding } from './npc.js';
 import { actorPrompt, foundingPrompt, refereePrompt } from './prompts.js';
 import { answer } from './queries.js';
 import { LimitError } from './backend.js';
+import { snapshotState, buildEntries } from './ledger.js';
 
 export function rolesFor(cfg, c) {
   const root = c.parent ?? c.id;
@@ -92,7 +93,7 @@ export class Game {
     });
     w.status = 'oyunda';
     w.newsLog.push(...w.newsThisTurn);
-    this.store.commit(w, { trace, rulings: [] });
+    this.store.commit(w, buildEntries(w, { trace, rulings: [] }, null));
     this.store.clearPending();
     this.onUpdate?.({ type: 'turn', turn: w.turn });
   }
@@ -181,7 +182,7 @@ export class Game {
       if (target?.alive) target.inbox.push({ turn: w.turn, from: `${m.from.name} (${w.countries[m.from.country]?.name})`, text: m.text });
       else m.undelivered = true;
     }
-    return { trace, rulings, messages: outgoing.map(m => ({ from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text })) };
+    return { trace, rulings, messages: outgoing.map(m => { const target = w.characters[m.to] ?? w.characters[w.countries[m.to]?.leader]; return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered }; }) };
   }
 
   applyRuling(ch, { narrative, prob, public: pub, ops, source, decision }) {
@@ -190,7 +191,7 @@ export class Game {
     const results = success ? ops.map(op => ({ op: op.op, ...safeApply(w, ch, op) })) : [];
     if (narrative && pub && success && source === 'hakem') news(w, `${c?.name ?? ''}: ${narrative}`, { kind: 'siyaset', countries: [ch.country] });
     if (source === 'hakem' && narrative) { ch.outcomes.push(`${w.date}: ${success ? 'Gerçekleşti' : 'Başarısız'}: ${narrative}`); ch.outcomes = ch.outcomes.slice(-16); }
-    return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, probability: prob, success, results, source, decision };
+    return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, probability: prob, success, results, source, decision, ops };
   }
 
   async turn() {
@@ -201,9 +202,9 @@ export class Game {
     const actors = await this.think();
     await this.judge(actors);
     this.setStatus('dünya işliyor', 'Ekonomi, savaş ve siyaset hesaplanıyor');
-    const log = this.execute(actors);
+    const before = snapshotState(w), log = this.execute(actors);
     stepWorld(w);
-    this.store.commit(w, log);
+    this.store.commit(w, buildEntries(w, log, before, this.pending.lookups));
     this.store.clearPending();
     this.onUpdate?.({ type: 'turn', turn: w.turn });
   }

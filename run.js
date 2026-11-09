@@ -41,8 +41,25 @@ const clients = new Set();
 const send = msg => { const line = `data: ${JSON.stringify(msg)}\n\n`; for (const r of clients) r.write(line); };
 const game = new Game({ world, cfg, backend: makeBackend(cfg), store, onUpdate: send });
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.ico': 'image/x-icon' };
+const LOCAL_HOST = /^(localhost|127\.0\.0\.1)(:\d+)?$/i, panelDir = path.join(root, 'panel');
+
+// Kısayolla açılınca pencere kapanırsa oyun arka planda kullanım harcamaya devam etmesin.
+const closeWithWindow = !!flag('pencere');
+let idleTimer = null;
+function watchWindow(wait = 20000) {
+  if (!closeWithWindow) return;
+  clearTimeout(idleTimer);
+  if (clients.size === 0) idleTimer = setTimeout(() => { game.stop = true; console.log('Pencere kapandı, oyun kaydedildi.'); process.exit(0); }, wait);
+}
+
 const server = http.createServer((req, res) => {
+  try { handle(req, res); }
+  catch (e) { console.error(e); if (!res.headersSent) res.writeHead(400); res.end('İstek işlenemedi'); }
+});
+
+function handle(req, res) {
+  if (!LOCAL_HOST.test(req.headers.host ?? '')) { res.writeHead(403); return res.end('Yalnızca yerel erişim'); }
   const url = new URL(req.url, 'http://x');
   const json = (body, code = 200) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(body); };
   if (url.pathname === '/api/meta') return json(JSON.stringify({ lastTurn: store.lastTurn(), marks: store.marks(), status: game.status, paused: !!game.paused, progress: game.progress, runName: cfg.runName, backend: cfg.backend, maxTurns: cfg.maxTurns, agentRoles: cfg.agentRoles, countryAgentRoles: cfg.countryAgentRoles }));
@@ -54,19 +71,25 @@ const server = http.createServer((req, res) => {
     if (action === 'resume') game.paused = false;
     return json('{"ok":true}');
   }
+  if (url.pathname === '/api/people') return json(JSON.stringify(store.people()));
+  if (url.pathname === '/api/ledger') {
+    const q = url.searchParams, num = k => q.has(k) && q.get(k) !== '' ? Number(q.get(k)) : null;
+    return json(JSON.stringify(store.queryLedger({ q: q.get('q') ?? '', kinds: q.get('k') ? q.get('k').split(',') : null, country: q.get('c'), character: q.get('ch'), source: q.get('s'), ok: q.has('ok') ? q.get('ok') === '1' : null, imp: num('imp'), turn: num('turn'), from: num('from'), to: num('to'), limit: num('limit'), cursor: q.get('cursor') })));
+  }
   const m = /^\/api\/turn\/(\d+)$/.exec(url.pathname);
   if (m) { const d = store.readTurn(+m[1]); return d ? json(d) : json('{"error":"Bu tur henüz yok."}', 404); }
   if (url.pathname === '/api/stream') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
     res.write(`data: ${JSON.stringify({ type: 'status', status: game.status, progress: game.progress, turn: world.turn })}\n\n`);
-    clients.add(res); req.on('close', () => clients.delete(res)); return;
+    clients.add(res); watchWindow(); req.on('close', () => { clients.delete(res); watchWindow(); }); return;
   }
   const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
-  const file = path.normalize(path.join(root, 'panel', rel));
-  if (!file.startsWith(path.join(root, 'panel')) || !fs.existsSync(file)) { res.writeHead(404); return res.end('Bulunamadı'); }
-  res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream' });
-  fs.createReadStream(file).pipe(res);
-});
+  const file = path.normalize(path.join(panelDir, rel));
+  if (!file.startsWith(panelDir + path.sep) || !fs.statSync(file, { throwIfNoEntry: false })?.isFile()) { res.writeHead(404); return res.end('Bulunamadı'); }
+  const cached = /\.(woff2|ico)$/.test(file) ? { 'cache-control': 'max-age=31536000' } : {};
+  res.writeHead(200, { 'content-type': MIME[path.extname(file)] || 'application/octet-stream', ...cached });
+  fs.createReadStream(file).on('error', () => res.destroy()).pipe(res);
+}
 
 async function main() {
   server.listen(cfg.port, '127.0.0.1', () => console.log(`Panel: http://localhost:${cfg.port}`));
