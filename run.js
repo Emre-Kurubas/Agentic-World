@@ -75,6 +75,14 @@ function handle(req, res) {
     return json('{"ok":true}');
   }
   if (url.pathname === '/api/people') return json(JSON.stringify(store.people()));
+  if (url.pathname === '/api/art') return json(JSON.stringify(store.artIndex()));
+  const artFile = /^\/api\/art\/([\w-]+)\.svg$/.exec(url.pathname);
+  if (artFile) {
+    const file = store.artPath(artFile[1]);
+    if (!fs.statSync(file, { throwIfNoEntry: false })?.isFile()) { res.writeHead(404); return res.end('Yok'); }
+    res.writeHead(200, { 'content-type': 'image/svg+xml', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'", 'x-content-type-options': 'nosniff' });
+    return fs.createReadStream(file).on('error', () => res.destroy()).pipe(res);
+  }
   if (url.pathname === '/api/ledger') {
     const q = url.searchParams, num = k => q.has(k) && q.get(k) !== '' ? Number(q.get(k)) : null;
     return json(JSON.stringify(store.queryLedger({ q: q.get('q') ?? '', kinds: q.get('k') ? q.get('k').split(',') : null, country: q.get('c'), character: q.get('ch'), source: q.get('s'), ok: q.has('ok') ? q.get('ok') === '1' : null, imp: num('imp'), turn: num('turn'), from: num('from'), to: num('to'), limit: num('limit'), cursor: q.get('cursor') })));

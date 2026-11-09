@@ -37,8 +37,9 @@ ${CATALOG}`;
 
 // Yalnızca bir kez, oturumun başında verilir: karakterin içine doğduğu devlet ve bildiği geçmiş.
 function inheritedText(w, ch) {
-  const c = w.countries[ch.country], past = (w.past || []).filter(e => e.countries.includes(c.id)).slice(-10);
-  return `\n\nDevraldığın ülke: ${c.regime}. Resmî ideoloji: ${c.ideology}. ${c.elections ? 'Seçim yapılıyor.' : 'Seçim yapılmıyor.'}${ch.rise ? `\nİktidara gelişin: ${ch.rise}` : ''}${ch.background ? `\nGeçmişin: ${ch.background}` : ''}${past.length ? `\nBildiğin geçmiş:\n${past.map(e => `- ${e.text}`).join('\n')}` : ''}\nBunlardan ne çıkardığın sana kalmış; hiçbirine bağlı değilsin, düzeni değiştirebilir veya yıkabilirsin.`;
+  const c = w.countries[ch.country], past = (w.past || []).filter(e => e.countries.includes(c.id)).slice(-10), o = ch.origin, k = c.culture;
+  const chron = (c.chronicle || []).map(e => `- ${e.year}: ${e.text}`).join('\n'), life = (ch.life || []).map(e => `- ${e.year}: ${e.text}`).join('\n');
+  return `\n\nDevraldığın ülke: ${c.regime}. Resmî ideoloji: ${c.ideology}. ${c.elections ? 'Seçim yapılıyor.' : 'Seçim yapılmıyor.'}${k ? `\nKültür: dil ${k.language}, çoğunluk ${k.majority}, inanç ${k.faith}. ${k.myth} ${k.custom}${k.minorities?.length ? ` Azınlıklar: ${k.minorities.join(', ')}.` : ''}` : ''}${chron ? `\nÜlkenin tarihi:\n${chron}` : ''}${past.length ? `\nKomşularla geçmiş:\n${past.map(e => `- ${e.text}`).join('\n')}` : ''}${ch.rise ? `\nİktidara gelişin: ${ch.rise}` : ''}${ch.background ? `\nGeçmişin: ${ch.background}` : ''}${o ? `\nDoğum yerin ${o.birthplace}, halkın ${o.eth}, inancın ${o.rel}. ${o.family}` : ''}${life ? `\nHayatın:\n${life}` : ''}\nBunlardan ne çıkardığın sana kalmış; hiçbirine bağlı değilsin, düzeni değiştirebilir veya yıkabilirsin.`;
 }
 
 const recapText = ch => `\n\nESKİ HAFIZANA ULAŞILAMIYOR. Elinde kalanlar:\nKimliğin: ${ch.persona || '(yazılmamış)'}\nGünlüğün:\n${ch.diary.map(d => `- ${d}`).join('\n') || '- (boş)'}\nSonuçlar:\n${ch.outcomes.map(d => `- ${d}`).join('\n') || '- (yok)'}`;

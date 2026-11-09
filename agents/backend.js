@@ -29,10 +29,11 @@ const num = v => Number(v) || 0;
 
 // Karakterler Claude Code'un yazılım asistanı talimatıyla değil, yalnızca bu tarafsız çerçeveyle çalışır. Kişilik yazmaz.
 const ACTOR_SYSTEM = 'Kurgusal bir oyun dünyasında yaşayan bir insansın. Yazılım asistanı değilsin ve kullanıcıya yardım etmiyorsun; yalnızca bu kişi olarak kendi çıkarına, inancına veya korkusuna göre yaşıyorsun. Yanıtını yalnızca istenen JSON biçiminde ver.';
+const ART_SYSTEM = 'Kurgusal bir oyun dünyasında yaşayan bir insansın ve bu dünyanın ressamı gibi çiziyorsun. Yalnızca istenen biçimde yanıt ver.';
 const ACTOR_SYSTEM_FILE = 'ajan-sistem.txt';
 
 // session verilirse karakterin kendi oturumu sürer; verilmezse (hakem, bağlantı denemesi) çağrı iz bırakmaz.
-function callClaude(prompt, model, { timeoutMs = 300000, session = null, cwd = null } = {}) {
+function callClaude(prompt, model, { timeoutMs = 300000, session = null, cwd = null, frame = false } = {}) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
     // Kullanım API faturasına değil, Claude aboneliğine yazılsın.
@@ -40,8 +41,8 @@ function callClaude(prompt, model, { timeoutMs = 300000, session = null, cwd = n
     // Windows'ta claude bir .cmd olabilir; kabuk gerekir. Node 24 kabukla dizi argümanı uyarı verdiği için komut tek satır.
     const memory = !session ? '--no-session-persistence' : session.resume ? `--resume ${session.id}` : `--session-id ${session.id}`;
     const dir = cwd ?? agentCwd();
-    if (session) fs.writeFileSync(path.join(dir, ACTOR_SYSTEM_FILE), ACTOR_SYSTEM);
-    const system = session ? ` --system-prompt-file ${ACTOR_SYSTEM_FILE}` : '';
+    if (session || frame) fs.writeFileSync(path.join(dir, ACTOR_SYSTEM_FILE), frame ? ART_SYSTEM : ACTOR_SYSTEM);
+    const system = session || frame ? ` --system-prompt-file ${ACTOR_SYSTEM_FILE}` : '';
     const command = `claude -p --model ${model} --output-format json ${memory}${system} --tools "" --strict-mcp-config --disable-slash-commands --setting-sources project`;
     const child = spawn(command, { shell: true, cwd: dir, env, windowsHide: true });
     let out = '', err = '';
@@ -83,6 +84,8 @@ export function makeBackend(cfg, cwd = null) {
       const t = backend.usage, input = num(u.input_tokens), read = num(u.cache_read_input_tokens), write = num(u.cache_creation_input_tokens);
       t.calls++; t.input += input; t.cacheRead += read; t.cacheWrite += write; t.output += num(u.output_tokens); t.largest = Math.max(t.largest, input + read + write);
     },
+    // Görseller oturum dışında üretilir: uzun SVG karakterin hafızasını şişirmesin.
+    async askText(prompt, model) { const r = await callClaude(prompt, model, { cwd, frame: true, timeoutMs: 600000 }); backend.record(r.usage); return r.text; },
     async ask(prompt, model, session = null) {
       let last, current = session;
       for (let i = 0; i < 2; i++) {

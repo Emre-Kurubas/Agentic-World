@@ -155,14 +155,16 @@ const NEWS_IMP = { komplo: 2, felaket: 1, savas: 1 };
 export function buildEntries(w, log, before, lookups = {}) {
   const out = [];
   for (const x of log.trace || []) {
-    out.push({ k: 'dusunce', s: x.ai ? 'ajan' : 'kural', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, text: cut(x.monologue), x: { persona: cut(x.persona, 900), decisions: x.decisions || [], lookups: x.lookups || [], ai: x.ai } });
+    out.push({ k: 'dusunce', s: x.ai ? 'ajan' : 'kural', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, text: cut(x.monologue), x: { persona: cut(x.persona, 900), decisions: x.decisions || [], lookups: x.lookups || [], ai: x.ai, notes: x.notes || '' } });
     for (const q of lookups[x.actor] || []) out.push({ k: 'sorgu', s: 'ajan', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, q: q.q, text: cut(q.a, MAX_ANSWER) });
   }
   for (const m of log.messages || []) out.push({ k: 'mesaj', s: 'ajan', n: m.fromName, to: m.toName, c: [m.fromCountry, m.toCountry].filter(Boolean), a: [m.from, m.toActor].filter(Boolean), imp: 0, ok: !m.undelivered, text: cut(m.text), x: { read: !!m.read, round: m.round ?? 0 } });
   for (const r of log.rulings || []) {
     const failed = (r.results || []).filter(y => y.ok === false), ok = !!r.success && !failed.length, detail = (r.results || []).map(y => y.msg).filter(Boolean).join('; ');
-    out.push({ k: r.source === 'hakem' ? 'hukum' : 'kural', s: r.source, n: r.name, r: r.role, c: [r.country], a: [r.actor], imp: 0, ok, text: cut(r.source === 'hakem' ? r.narrative : `${r.narrative}${detail ? `: ${detail}` : ''}`), x: { narrative: cut(r.narrative, 400), probability: r.probability, success: r.success, results: r.results || [], ops: r.ops || [], decision: r.decision } });
+    out.push({ k: r.source === 'hakem' ? 'hukum' : 'kural', s: r.source, n: r.name, r: r.role, c: [r.country], a: [r.actor], imp: 0, ok, text: cut(r.source === 'hakem' ? r.narrative : `${r.narrative}${detail ? `: ${detail}` : ''}`), x: { narrative: cut(r.narrative, 400), probability: r.probability, success: r.success, results: r.results || [], ops: r.ops || [], decision: r.decision, decisionText: r.decisionText ?? '' } });
   }
+  for (const b of w.battles || []) out.push({ k: 'muharebe', s: 'motor', c: [b.attacker, b.defender], p: b.province, imp: 1, text: `${w.provinces[b.province]?.name ?? b.province} Muharebesi: ${w.countries[b.attackerWon ? b.attacker : b.defender]?.name} üstün geldi. Kayıplar: saldıran ${b.lossA} bin, savunan ${b.lossD} bin.`, x: { ...b } });
+  for (const y of log.system || []) out.push({ k: 'sistem', s: 'motor', c: [], n: y.name, imp: 0, text: cut(y.text, 500) });
   for (const n of w.newsThisTurn || []) out.push({ k: 'haber', s: 'motor', c: n.countries || [], imp: n.secret ? 0 : NEWS_IMP[n.kind] ?? 0, text: cut(n.text), x: { kind: n.kind, secret: !!n.secret } });
   if (before) out.push(...stateChanges(w, before));
   const t = w.turn, d = w.date || 'Başlangıç';
@@ -182,7 +184,7 @@ export function logFromEntries(entries) {
 
 export function entryHaystack(e) {
   const x = e.x || {};
-  return fold([e.d, e.n, e.to, e.q, e.text, x.persona, x.decision, x.terms, ...(x.decisions || []), ...(x.lookups || []), ...(x.results || []).map(y => `${y.op} ${y.msg}`)].filter(Boolean).join(' '));
+  return fold([e.d, e.n, e.to, e.q, e.text, x.persona, x.decisionText, x.notes, x.terms, ...(x.decisions || []), ...(x.lookups || []), ...(x.results || []).map(y => `${y.op} ${y.msg}`)].filter(Boolean).join(' '));
 }
 
 export function matches(e, f) {

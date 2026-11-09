@@ -2,16 +2,16 @@ import { WorldMap, TERR, ETHC } from './map.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const TABS = [['dunya', 'Dünya'], ['ulke', 'Ülke'], ['eyalet', 'Eyalet'], ['kisi', 'Kişiler'], ['kaynak', 'Kaynaklar'], ['zihin', 'Zihinler'], ['gizli', 'Yazışmalar'], ['hakem', 'Hakem'], ['defter', 'Defter']];
+const TABS = [['dunya', 'Dünya'], ['ulke', 'Ülke'], ['eyalet', 'Eyalet'], ['kisi', 'Kişiler'], ['kaynak', 'Kaynaklar'], ['zihin', 'Zihinler'], ['gizli', 'Yazışmalar'], ['hakem', 'Hakem'], ['galeri', 'Galeri'], ['defter', 'Defter']];
 const LAYERS = [['siyasi', 'Siyasi'], ['arazi', 'Arazi'], ['kaynak', 'Kaynaklar'], ['rota', 'Ticaret'], ['huzur', 'Huzursuzluk'], ['etnik', 'Etnik']];
 const ROLE = { leader: 'Lider', general: 'General', opposition: 'Muhalefet', oligarch: 'Oligark', eski_lider: 'Eski lider' };
 const GTR = { grain: 'Tahıl', timber: 'Kereste', coal: 'Kömür', iron: 'Demir', copper: 'Bakır', oil: 'Petrol', phosphate: 'Fosfat', rare: 'Nadir metal', gold: 'Altın', steel: 'Çelik', fuel: 'Yakıt', fertilizer: 'Gübre', machines: 'Makine', goods: 'Tüketim malı', arms: 'Silah' };
 const CHIP = { coal: 'Kö', iron: 'De', copper: 'Ba', oil: 'Pe', phosphate: 'Fo', rare: 'Na', gold: 'Al' };
 const TERR_TR = { ova: 'Ova', orman: 'Orman', tepe: 'Tepelik', dag: 'Dağ', col: 'Çöl', bataklik: 'Bataklık', tundra: 'Tundra' };
 const ST = { bogaz: 'Boğaz', gecit: 'Geçit', kopru: 'Köprü', liman: 'Doğal liman', kanal_adayi: 'Kanal güzergâhı', kanal: 'Kanal' };
-const KINDS = [['durum', 'Durum değişimi'], ['haber', 'Haber'], ['dusunce', 'Düşünce'], ['hukum', 'Hakem'], ['kural', 'Kural eylemi'], ['mesaj', 'Mesaj'], ['sorgu', 'Sorgu']];
+const KINDS = [['durum', 'Durum değişimi'], ['muharebe', 'Muharebe'], ['haber', 'Haber'], ['dusunce', 'Düşünce'], ['hukum', 'Hakem'], ['kural', 'Kural eylemi'], ['mesaj', 'Mesaj'], ['sorgu', 'Sorgu'], ['sistem', 'Teknik']];
 const KIND_TR = Object.fromEntries(KINDS);
-const WIDE = new Set(['defter', 'kisi']);
+const WIDE = new Set(['defter', 'kisi', 'galeri']);
 const S = { meta: null, turn: 0, last: -1, data: null, tab: 'dunya', layer: 'siyasi', country: null, province: null, live: true, marks: {}, person: null, led: { q: '', kinds: new Set(), country: '', fail: false, imp: false, from: '', to: '' }, cardsAt: -1 };
 const fmt = n => Math.round(n).toLocaleString('tr-TR');
 const api = p => fetch(p, { cache: 'no-store' }).then(r => r.json());
@@ -133,6 +133,7 @@ const views = {
     return `<h2>${esc(c.name)}</h2><p class="muted small">${esc(c.regime)}. ${esc(c.ideology)}.${c.motto ? ` “${esc(c.motto)}”` : ''}</p>
     <div class="kv"><div><b>${fmt(c.realGdp)}</b><span>Reel GSYH</span></div><div><b>${Math.round(c.legitimacy)}</b><span>Meşruiyet</span></div><div><b>${fmt(units.reduce((a, u) => a + u.men, 0))} bin</b><span>Asker</span></div><div><b>${fmt(c.treasury)}</b><span>Hazine</span></div><div><b>${fmt(c.reserves)}</b><span>Altın rezervi</span></div><div><b>${(c.rate ?? 1).toLocaleString('tr-TR', { maximumFractionDigits: 3 })}</b><span>${esc(c.currency?.name ?? 'Para')} / altın</span></div><div><b>${{ serbest: 'Serbest', altin: 'Altına bağlı', bagli: 'Bağlı kur' }[c.fxRegime] ?? '-'}</b><span>Kur rejimi</span></div><div><b>%${Math.round(c.foodRatio * 100)}</b><span>Gıda</span></div><div><b>%${Math.round((c.inputRatio ?? 1) * 100)}</b><span>Sanayi girdisi</span></div><div><b>%${Math.round(c.literacy)}</b><span>Okuryazarlık</span></div><div><b>${Math.round(c.bankHealth)}</b><span>Banka sağlığı</span></div></div>
     <div class="charts">${chart('Para değeri', s('fx'))}${chart('Reel GSYH', s('gdp'))}${chart('Enflasyon', s('infl'), '%')}${chart('İşsizlik', s('unemp'), '%')}${chart('Borç/GSYH', s('debt'), '%')}${chart('Meşruiyet', s('legit'))}${chart('Huzursuzluk', s('unrest'))}</div>
+    ${c.chronicle?.length ? `<h3>Tarih</h3>${c.culture ? `<p class="small muted">Dil ${esc(c.culture.language)}. ${esc(c.culture.myth)} ${esc(c.culture.custom)}</p>` : ''}<ul class="small life">${c.chronicle.map(e => `<li><b>${e.year}</b> ${esc(e.text)}</li>`).join('')}</ul>` : ''}
     <h3>Partiler</h3>${c.parties.map(p => `<div class="bar2"><span>${esc(p.name.slice(0, 13))}</span><i><b style="width:${Math.min(100, p.support)}%"></b></i><span>%${Math.round(p.support)}</span></div>`).join('')}
     <h3>Güç grupları</h3>${Object.entries(c.blocs).map(([k, b]) => `<div class="bar2"><span>${k}</span><i><b style="width:${b.sat}%"></b></i><span>${Math.round(b.sat)}</span></div>`).join('')}
     <h3>Stoklar</h3><table>${Object.entries(c.stock).filter(([, v]) => v >= .5).map(([k, v]) => `<tr><td>${GTR[k] ?? esc(k)}</td><td class="n">${fmt(v)}</td></tr>`).join('')}</table>
@@ -249,13 +250,20 @@ async function mountKisi(body) {
   S.mounted = { tab: 'kisi', list };
   const colorOf = p => S.data.world.countries[p.country]?.colors?.[0] ?? '#8a9a94';
   const items = (needle = '') => { const n = needle.toLocaleLowerCase('tr'); $('pitems').innerHTML = people.filter(p => !n || `${p.name} ${p.countryName}`.toLocaleLowerCase('tr').includes(n)).slice(0, 300).map(p => `<button type="button" data-id="${p.id}" aria-current="${p.id === S.person}" class="${p.alive ? '' : 'gone'}"><span class="swatch" style="background:${colorOf(p)}"></span><span>${esc(p.name)}<small>${ROLE[p.role] || esc(p.role)}, ${esc(p.countryName)}${p.alive ? '' : `, ${esc(p.status)}`}</small></span></button>`).join(''); $('pitems').querySelectorAll('button').forEach(b => b.onclick = () => { S.person = b.dataset.id; items($('pq').value); head(); list.refresh(); }); };
-  const head = () => { const p = people.find(x => x.id === S.person), ch = S.data.world.characters[S.person]; $('phead').innerHTML = `<h2>${esc(p.name)}</h2><p class="muted small">${ROLE[p.role] || esc(p.role)}, ${esc(p.countryName)}${ch ? `, ${ch.age} yaşında` : ''}. ${p.alive ? (p.ai ? 'Yapay zekâ oynuyor.' : 'Kuralla oynuyor.') : `Durum: ${esc(p.status)}.`} ${fmt(p.events)} kayıt, ${quarter(p.first)} ile ${quarter(p.last)} arası.</p>${ch?.rise ? `<p class="small">İktidara gelişi: ${esc(ch.rise)}</p>` : ''}${ch?.background ? `<p class="small">Geçmişi: ${esc(ch.background)}</p>` : ''}${ch?.persona ? `<div class="persona">${esc(ch.persona)}</div>` : ''}`; };
+  const head = () => { const p = people.find(x => x.id === S.person), ch = S.data.world.characters[S.person]; const lifeHtml = (p.life || []).length ? `<ul class="small life">${p.life.map(e => `<li><b>${e.year}</b> ${esc(e.text)}</li>`).join('')}</ul>` : ''; $('phead').innerHTML = `<div class="phead"><img class="portrait" src="/api/art/portre-${p.id}.svg" alt="" onerror="this.remove()"><div><h2>${esc(p.name)}</h2><p class="muted small">${ROLE[p.role] || esc(p.role)}, ${esc(p.countryName)}${ch ? `, ${ch.age} yaşında` : ''}. ${p.alive ? (p.ai ? 'Yapay zekâ oynuyor.' : 'Kuralla oynuyor.') : `Durum: ${esc(p.status)}.`} ${fmt(p.events)} kayıt, ${quarter(p.first)} ile ${quarter(p.last)} arası.</p>${ch?.rise ? `<p class="small">İktidara gelişi: ${esc(ch.rise)}</p>` : ''}${ch?.background ? `<p class="small">Geçmişi: ${esc(ch.background)}</p>` : ''}${(p.persona || ch?.persona) ? `<div class="persona">${esc(p.persona || ch.persona)}</div>` : ''}</div></div>${p.origin ? `<p class="small">${esc(p.origin.birthplace)} doğumlu, ${esc(p.origin.eth)}, ${esc(p.origin.rel)}. ${esc(p.origin.family)}</p>` : ''}${lifeHtml}`; };
   $('pq').oninput = e => items(e.target.value);
   items(); head(); list.refresh();
 }
 
+async function mountGaleri(body) {
+  const art = (await api('/api/art')).reverse();
+  if (S.tab !== 'galeri') return;
+  body.innerHTML = art.length ? `<div class="gallery">${art.map(a => `<figure><img src="/api/art/${a.id}.svg" alt="${esc(a.caption || a.event || a.witnessName)}" loading="lazy"><figcaption><b>${esc(a.caption)}</b><span class="small muted">${a.kind === 'portrait' ? `Portre: ${esc(a.witnessName)}` : `${esc(a.date)}. Tanık: ${esc(a.witnessName)}. ${esc(a.event)}`}</span></figcaption></figure>`).join('')}</div>` : '<p class="empty">Henüz görsel yok. Portreler ilk turdan sonra, olay tabloları büyük olaylarda çizilir.</p>';
+}
+
 function renderBody() {
   const body = $('body');
+  if (S.tab === 'galeri') { S.mounted = null; mountGaleri(body); return; }
   if (S.tab === 'defter') { if (S.mounted?.tab !== 'defter') mountDefter(body); else if (body.scrollTop < 40 && S.live) S.mounted.list.refresh(); return; }
   if (S.tab === 'kisi') { if (S.mounted?.tab !== 'kisi' || S.mounted.person !== S.person) { Promise.resolve(mountKisi(body)).then(() => { if (S.mounted) S.mounted.person = S.person; }); } else if (body.scrollTop < 40 && S.live) S.mounted.list.refresh(); return; }
   S.mounted = null;

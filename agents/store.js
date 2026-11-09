@@ -31,6 +31,7 @@ export class Store {
     const { map, ...lean } = w, t = w.turn;
     this.writeTurnEntries(t, entries);
     this.updatePeople(w, entries);
+    this.saveStats(w);
     this.atomic(this.turnFile(t), zlib.gzipSync(JSON.stringify({ world: lean })));
     if (this.turns.at(-1) !== t) this.turns.push(t);
     const n = w.newsThisTurn || [], kind = n.some(x => x.kind === 'komplo' && !x.secret) ? 'komplo' : n.some(x => x.kind === 'savas') ? 'savas' : null;
@@ -131,11 +132,24 @@ export class Store {
     try { return this.usage = JSON.parse(fs.readFileSync(this.file('usage.ndjson'), 'utf8').trim().split('\n').at(-1)); } catch { return null; }
   }
 
+  // Grafikler için: kırpılmayan, tur tur ülke sayıları.
+  saveStats(w) {
+    const line = { t: w.turn, d: w.date || 'Başlangıç', c: Object.values(w.countries).filter(c => c.alive).map(c => ({ id: c.id, name: c.name, gdp: Math.round(c.realGdp), legit: Math.round(c.legitimacy), unrest: Math.round(c.unrest ?? 0), infl: +(c.inflation * 100).toFixed(1), food: +(c.foodRatio * 100).toFixed(0), treasury: Math.round(c.treasury), gold: Math.round(c.reserves), rate: +(c.rate ?? 1).toFixed(3), debt: Math.round(c.debt), men: Math.round(Object.values(w.units).filter(u => u.country === c.id).reduce((a, u) => a + u.men, 0)), ships: Math.round(Object.values(w.fleets).filter(f => f.country === c.id).reduce((a, f) => a + f.ships, 0)), provinces: Object.values(w.provinces).filter(p => p.controller === c.id).length })) };
+    fs.appendFileSync(this.file('stats.ndjson'), `${JSON.stringify(line)}\n`);
+  }
+
+  artDir() { const d = this.file('sanat'); fs.mkdirSync(d, { recursive: true }); return d; }
+  artPath(id) { return path.join(this.artDir(), `${id}.svg`); }
+  saveArt(rec, svg) { fs.writeFileSync(this.artPath(rec.id), svg); fs.appendFileSync(this.file('sanat.ndjson'), `${JSON.stringify({ ...rec, file: `${rec.id}.svg` })}\n`); }
+  artIndex() { try { return fs.readFileSync(this.file('sanat.ndjson'), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { return []; } }
+  loadArtQueue() { try { return JSON.parse(fs.readFileSync(this.file('sanat-kuyruk.json'), 'utf8')); } catch { return []; } }
+  saveArtQueue(q) { this.atomic(this.file('sanat-kuyruk.json'), JSON.stringify(q)); }
+
   people() { try { return JSON.parse(fs.readFileSync(this.file('people.json'), 'utf8')); } catch { return {}; } }
   updatePeople(w, entries) {
     const all = this.people(), counts = {};
     for (const e of entries) for (const id of e.a || []) counts[id] = (counts[id] || 0) + 1;
-    for (const ch of Object.values(w.characters)) all[ch.id] = { id: ch.id, name: ch.name, role: ch.role, country: ch.country, countryName: w.countries[ch.country]?.name ?? all[ch.id]?.countryName ?? '', alive: ch.alive, status: ch.status, ai: !!ch.aiControlled, first: all[ch.id]?.first ?? w.turn, last: w.turn, events: (all[ch.id]?.events ?? 0) + (counts[ch.id] || 0) };
+    for (const ch of Object.values(w.characters)) all[ch.id] = { id: ch.id, name: ch.name, role: ch.role, country: ch.country, countryName: w.countries[ch.country]?.name ?? all[ch.id]?.countryName ?? '', alive: ch.alive, status: ch.status, ai: !!ch.aiControlled, age: ch.age, persona: ch.persona || all[ch.id]?.persona || '', background: ch.background, rise: ch.rise, origin: ch.origin, life: ch.life, first: all[ch.id]?.first ?? w.turn, last: w.turn, events: (all[ch.id]?.events ?? 0) + (counts[ch.id] || 0) };
     for (const id of Object.keys(counts)) if (!w.characters[id] && all[id]) { all[id].events += counts[id]; all[id].last = w.turn; }
     this.atomic(this.file('people.json'), JSON.stringify(all));
   }

@@ -12,6 +12,7 @@ import { Game, shouldWake, isAI } from '../agents/game.js';
 import { LimitError, SessionLostError } from '../agents/backend.js';
 import { npcDecide } from '../agents/npc.js';
 import { actorPrompt } from '../agents/prompts.js';
+import { sanitizeSvg, parseArt } from '../agents/art.js';
 
 const base = { plainStates: true, seed: 42, countries: 5, provinces: 130, agentRoles: ['leader', 'general', 'opposition', 'oligarch'], countryAgentRoles: {}, models: { leader: 'a', referee: 'a', secondary: 'b' }, concurrency: 2, wakeEvery: 2, wakeTension: 45, maxMessagesPerActor: 3, maxDecisionsPerActor: 5, limitRetryMinutes: 0, maxTurns: 0 };
 const fresh = () => { const w = createWorld(base); w.status = 'oyunda'; for (const c of aliveCountries(w)) c.majorityEth ??= ''; run(w, 4); return w; };
@@ -251,6 +252,40 @@ ok('İç fiyatı kıtlık yükseltir, sermaye kısıtı kaçışı durdurur', ()
   c.capitalClosed = true; assert.equal(applyOp(w, ol, { op: 'capital_flight', share: .2 }).ok, false);
 });
 const inherited = (seed = 1848, countries = 5) => createWorld({ ...base, plainStates: false, seed, countries });
+ok('Ülke kronikleri ve karakter hayatları olaydır, duygu yazmaz, ülkeye göre değişir', () => {
+  const w = inherited(), cs = aliveCountries(w);
+  for (const c of cs) { assert.ok(c.chronicle.length >= 5, c.name); assert.ok(c.culture.language && c.culture.myth); assert.ok(c.chronicle.every((e, i, a) => !i || a[i - 1].year <= e.year), 'tarih sırası'); }
+  assert.equal(new Set(cs.map(c => c.chronicle[0].text)).size, cs.length, 'kronikler farklı');
+  const all = Object.values(w.characters); assert.ok(all.every(ch => ch.life?.length >= 3 && ch.origin?.birthplace), 'herkesin hayatı var');
+  for (const ch of all) assert.ok(w.provinces && ch.life[0].year === ch.origin.born);
+  const text = JSON.stringify([...cs.map(c => c.chronicle), ...all.map(a => a.life)]); assert.ok(!/nefret|öfke|intikam|kin duy|korkak|cesur/i.test(text), 'duygu veya kişilik yazılmaz');
+  const l = w.characters[cs[0].leader], p = actorPrompt(w, l, [], true, { intro: true }); assert.ok(p.includes('Ülkenin tarihi') && p.includes('Hayatın') && p.includes(l.origin.birthplace)); assert.ok(!actorPrompt(w, l, [], true, { intro: false }).includes('Hayatın'));
+  const n = spawnCharacter(w, cs[0].id, 'general', cs[0].axes); assert.ok(n.life?.length >= 3, 'sonradan gelen karakterin de hayatı olur');
+});
+ok('Svg temizlenir: script, olay ve dış bağlantı kalmaz', () => {
+  const dirty = '<svg xmlns="x"><script>alert(1)</script><rect onclick="x()" width="5"/><a href="http://k.com"/><image href="http://k/a.png"/><use href="#ok"/><path style="fill:url(http://k/x)"/></svg>', s = sanitizeSvg(dirty);
+  assert.ok(!/script|onclick|http:\/\/k|<image/.test(s), s); assert.ok(s.includes('href="#ok"')); assert.equal(sanitizeSvg('merhaba'), null);
+  const a = parseArt('giriş <svg viewBox="0 0 1 1"><rect/></svg>\nBETIMLEME: sepia portrait\nALTYAZI: Yaşlı vezir'); assert.equal(a.prompt, 'sepia portrait'); assert.equal(a.caption, 'Yaşlı vezir');
+});
+await (async () => {
+  const cfg = { ...base, plainStates: false, agentRoles: ['leader'], maxLookupRounds: 0, concurrency: 2, artEventsPerTurn: 1 }, w = createWorld(cfg), store = tempStore(); w.status = 'oyunda'; let limit = false; const prompts = [];
+  const svg = '<svg viewBox="0 0 600 800"><rect width="600" height="800"/></svg>\nBETIMLEME: a portrait\nALTYAZI: Bir kişi';
+  const backend = { kind: 'claude', async ask(p) { if (p.includes('hukumler')) return { hukumler: [] }; return { kimlik: 'Bir lider.', ic_ses: 'x', kararlar: [], mesajlar: [], notlar: 'Günlük notum' }; }, async askText(p) { prompts.push(p); if (limit) throw new LimitError('limit'); return svg; } };
+  const g = new Game({ world: w, cfg, backend, store }); await g.turn();
+  const portraits = store.artIndex().filter(a => a.kind === 'portrait'); assert.equal(portraits.length, 5, 'her yapay zekâ lider kendini çizer'); assert.ok(prompts[0].includes('stüdyo') && prompts[0].includes('Bir lider.')); assert.ok(fs.existsSync(store.artPath(portraits[0].id)));
+  const before = prompts.length; beginTurn(w); await g.artStep([]); assert.equal(prompts.length, before, 'portre tekrar çizilmez');
+  const e = { id: '9-1', k: 'durum', t: 9, d: '1902 Ç2', imp: 3, text: 'Savaş başladı: Bir Savaş', c: ['U1', 'U2'], a: [], p: null }; await g.artStep([e]);
+  const tablo = store.artIndex().find(a => a.kind === 'event'); assert.ok(tablo && tablo.witnessName && tablo.prompt, 'tablo ve betimleme'); assert.ok(prompts.at(-1).includes('Rönesans') && prompts.at(-1).includes('tanık'));
+  limit = true; await g.artStep([{ ...e, id: '9-2', text: 'Savaş başladı: İkinci' }]); assert.equal(store.loadArtQueue().length, 1, 'limit dolunca görsel kuyrukta kalır'); limit = false; await g.artStep([]); assert.equal(store.loadArtQueue().length, 0); assert.equal(store.artIndex().filter(a => a.kind === 'event').length, 2);
+  const all = store.queryLedger({ limit: 500 }).items; assert.ok(all.some(x => x.k === 'dusunce' && x.x.notes === 'Günlük notum'), 'günlük notu deftere yazılır');
+  assert.ok(fs.readFileSync(store.file('stats.ndjson'), 'utf8').includes('"gold"'), 'tur istatistikleri'); assert.ok(store.people()[w.countries.U1.leader].life.length, 'kişi dizininde hayat');
+  console.log('geçti  Portreler ve olay tabloları çizilir, kuyruk limitten kurtulur, kayıt eksiksiz');
+})();
+ok('Muharebeler ve teknik hatalar deftere yazılır, kararın metni hükme bağlanır', () => {
+  const w = fresh(), id = Object.keys(w.provinces)[0]; w.battles = [{ province: id, attacker: 'U1', defender: 'U2', attackerWon: true, lossA: 3, lossD: 9 }]; w.newsThisTurn = [];
+  const list = buildEntries(w, { trace: [], messages: [], system: [{ name: 'hakem', text: 'zaman aşımı' }], rulings: [{ actor: 'K1', name: 'A', country: 'U1', role: 'leader', narrative: 'n', probability: 1, success: true, results: [], source: 'hakem', decisionText: 'Köprüyü yak', ops: [] }] }, null);
+  assert.ok(list.some(e => e.k === 'muharebe' && e.x.lossD === 9 && e.p === id)); assert.ok(list.some(e => e.k === 'sistem' && e.text === 'zaman aşımı')); assert.equal(list.find(e => e.k === 'hukum').x.decisionText, 'Köprüyü yak');
+});
 const firmWorld = () => { const w = fresh(), c = w.countries.U1; run(w, 1); const p = countryProvinces(w, 'U1').find(q => q.plants.goods > .1) ?? countryProvinces(w, 'U1')[0]; p.plants.goods = 2; const f = { id: 'SRX', name: 'Test Dokuma', country: 'U1', province: p.id, sector: 'goods', resource: null, stake: 1, owner: c.oligarch, cash: 0, lastProfit: 0, founded: 0, status: 'acik', bad: 0, offer: null }; w.firms.SRX = f; return { w, c, p, f, ol: w.characters[c.oligarch] }; };
 const sellGoods = (c, goods = 100, timber = 1) => { Object.assign(c.prices, { goods, timber, coal: 1, steel: 1 }); c._made = { ...c._made, goods: 200 }; };
 chain('Şirket iç piyasadan kâr eder, sahibine temettü gider, devletinse hazineye', () => {

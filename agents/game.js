@@ -8,6 +8,7 @@ import { actorPrompt, refereePrompt, lookupReply, talkText } from './prompts.js'
 import { answer } from './queries.js';
 import { LimitError, SessionLostError } from './backend.js';
 import { snapshotState, buildEntries } from './ledger.js';
+import { isPaintable, portraitPrompt, paintingPrompt, parseArt, witnessFor } from './art.js';
 
 export function rolesFor(cfg, c) {
   const root = c.parent ?? c.id;
@@ -94,7 +95,36 @@ export class Game {
     this.onUpdate?.({ type: 'turn', turn: w.turn });
   }
 
-  report(ch, text) { console.error(`[${ch?.name ?? 'hakem'}] ${text}`); }
+  report(ch, text) { console.error(`[${ch?.name ?? 'hakem'}] ${text}`); (this.sysLog ||= []).push({ name: ch?.name ?? 'hakem', text }); }
+
+  // Portreler ve olay tabloları tur akışını durdurmaz; limit dolarsa kuyrukta kalır, bir sonraki tur sürer.
+  async artStep(entries) {
+    const { backend, store, cfg, w } = this;
+    if (!backend.askText || cfg.art === false || !store.saveArt) return;
+    const queue = store.loadArtQueue(), done = new Set(store.artIndex().filter(a => a.kind === 'portrait').map(a => a.character));
+    const isAIch = ch => !!ch.aiControlled;
+    for (const ch of Object.values(w.characters)) if (ch.alive && ch.aiControlled && ch.persona && !done.has(ch.id) && !queue.some(q => q.character === ch.id)) queue.push({ kind: 'portrait', character: ch.id });
+    const seen = new Set();
+    for (const e of (entries || []).filter(isPaintable).sort((a, b) => (b.imp ?? 0) - (a.imp ?? 0)).slice(0, cfg.artEventsPerTurn ?? 2)) {
+      const key = `${e.c?.[0]}`; if (seen.has(key)) continue; seen.add(key);
+      queue.push({ kind: 'event', entry: { id: e.id, t: e.t, d: e.d, text: e.text, c: e.c, a: e.a, p: e.p } });
+    }
+    if (!queue.length) return;
+    this.setStatus('tablolar çiziliyor', `${queue.length} görsel`);
+    const remaining = [...queue]; let stop = false;
+    await pool(queue, cfg.concurrency, async item => {
+      if (stop) return;
+      const ch = item.kind === 'portrait' ? w.characters[item.character] : witnessFor(w, item.entry, isAIch);
+      if (!ch || (item.kind === 'portrait' && !ch.alive)) { remaining.splice(remaining.indexOf(item), 1); return; }
+      try {
+        const text = await backend.askText(item.kind === 'portrait' ? portraitPrompt(w, ch) : paintingPrompt(w, ch, item.entry), cfg.models.art ?? cfg.models.leader), art = parseArt(text);
+        if (art) store.saveArt({ id: item.kind === 'portrait' ? `portre-${ch.id}` : `tablo-${item.entry.id}`, kind: item.kind, turn: item.entry?.t ?? w.turn, date: item.entry?.d ?? w.date, character: item.kind === 'portrait' ? ch.id : null, witness: item.kind === 'event' ? ch.id : null, witnessName: ch.name, event: item.entry?.text ?? null, country: ch.country, caption: art.caption, prompt: art.prompt }, art.svg);
+        else this.report(ch, 'Görsel yanıtında geçerli SVG yoktu.');
+        remaining.splice(remaining.indexOf(item), 1);
+      } catch (e) { if (e instanceof LimitError) stop = true; else { this.report(ch, `Görsel çizilemedi: ${e.message}`); remaining.splice(remaining.indexOf(item), 1); } }
+    });
+    store.saveArtQueue(remaining);
+  }
 
   async think() {
     const w = this.w, cfg = this.cfg;
@@ -214,7 +244,7 @@ export class Game {
         if (r.identity) ch.persona = r.identity;
         if (r.notes) { ch.diary.push(`${w.date || 'Başlangıç'}: ${r.notes}`); ch.diary = ch.diary.slice(-16); }
         for (const m of r.messages) outgoing.push({ from: ch, ...m });
-        trace.push({ actor: ch.id, country: c.id, role: ch.role, name: ch.name, ai, persona: ch.persona, lookups: (this.pending.lookups?.[ch.id] || []).map(a => a.q), monologue: r.monologue, decisions: r.decisions, messages: r.messages });
+        trace.push({ actor: ch.id, country: c.id, role: ch.role, name: ch.name, ai, persona: ch.persona, lookups: (this.pending.lookups?.[ch.id] || []).map(a => a.q), monologue: r.monologue, decisions: r.decisions, messages: r.messages, notes: r.notes });
         if (r._ops) for (const op of r._ops) rulings.push(this.applyRuling(ch, { narrative: describe(op), prob: 1, public: false, ops: [op], source: 'mock' }));
       } else {
         const ops = npcDecide(w, ch);
@@ -225,7 +255,7 @@ export class Game {
       for (const h of Array.isArray(r?.hukumler) ? r.hukumler : []) {
         const ch = w.characters[h.aktor];
         if (!ch || !actors.some(a => a.id === ch.id)) continue;
-        rulings.push(this.applyRuling(ch, { narrative: String(h.aciklama || '').slice(0, 400), prob: clamp(Number(h.olasilik ?? .5), 0, 1), public: !!h.kamuya_acik, ops: Array.isArray(h.islemler) ? h.islemler.slice(0, 6) : [], decision: h.karar, source: 'hakem' }));
+        rulings.push(this.applyRuling(ch, { narrative: String(h.aciklama || '').slice(0, 400), prob: clamp(Number(h.olasilik ?? .5), 0, 1), public: !!h.kamuya_acik, ops: Array.isArray(h.islemler) ? h.islemler.slice(0, 6) : [], decision: h.karar, decisionText: this.pending.actors[ch.id]?.decisions?.[h.karar], source: 'hakem' }));
       }
     }
     for (const ch of actors) ch.inbox = [];
@@ -234,16 +264,16 @@ export class Game {
       if (!target?.alive) m.undelivered = true;
       else if (!m.read) target.inbox.push({ turn: w.turn, from: `${m.from.name} (${w.countries[m.from.country]?.name})`, text: m.text });
     }
-    return { trace, rulings, messages: outgoing.map(m => { const target = w.characters[m.to] ?? w.characters[w.countries[m.to]?.leader]; return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, read: !!m.read, round: m.round ?? 0 }; }) };
+    return { trace, rulings, system: (this.sysLog ||= []).splice(0), messages: outgoing.map(m => { const target = w.characters[m.to] ?? w.characters[w.countries[m.to]?.leader]; return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, read: !!m.read, round: m.round ?? 0 }; }) };
   }
 
-  applyRuling(ch, { narrative, prob, public: pub, ops, source, decision }) {
+  applyRuling(ch, { narrative, prob, public: pub, ops, source, decision, decisionText }) {
     const w = this.w, c = w.countries[ch.country];
     const success = prob >= 1 || rand(w) < prob;
     const results = success ? ops.map(op => ({ op: op.op, ...safeApply(w, ch, op) })) : [];
     if (narrative && pub && success && source === 'hakem') news(w, `${c?.name ?? ''}: ${narrative}`, { kind: 'siyaset', countries: [ch.country] });
     if (source === 'hakem' && narrative) { ch.outcomes.push(`${w.date}: ${success ? 'Gerçekleşti' : 'Başarısız'}: ${narrative}`); ch.outcomes = ch.outcomes.slice(-16); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1)); }
-    return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, probability: prob, success, results, source, decision, ops };
+    return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, probability: prob, success, results, source, decision, decisionText, ops };
   }
 
   async turn() {
@@ -257,7 +287,9 @@ export class Game {
     this.setStatus('dünya işliyor', 'Ekonomi, savaş ve siyaset hesaplanıyor');
     const before = snapshotState(w), log = this.execute(actors);
     stepWorld(w);
-    this.store.commit(w, buildEntries(w, log, before, this.pending.lookups));
+    const entries = buildEntries(w, log, before, this.pending.lookups);
+    this.store.commit(w, entries);
+    await this.artStep(entries);
     if (this.backend.resetUsage) this.store.saveUsage?.({ t: w.turn, ...this.backend.resetUsage() });
     this.store.clearPending();
     this.onUpdate?.({ type: 'turn', turn: w.turn });

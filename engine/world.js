@@ -1,10 +1,11 @@
 import { clamp, sum, rand, between, pick, nextId } from './util.js';
 import { inheritStates } from './inherit.js';
 import { issueCurrency } from './money.js';
+import { writeLife } from './chronicle.js';
 
 const SYL = ['ar','ven','tor','mi','sa','lor','ka','zen','ol','ri','dan','ve','gar','su','thal','ne','bor','ha','lin','es','mar','ku','ra','dor','iv','al','pe','ten'];
-const FIRST = ['Aren','Besra','Cemre','Davor','Elif','Faren','Giray','Hale','Ilgaz','Jale','Kerem','Lale','Mirza','Nehir','Orhun','Pelin','Rüzgar','Selin','Tarkan','Umay','Vedat','Yelda','Zafer','Alara','Bora','Defne','Emre','Feride','Göktan','Hazal'];
-const LAST = ['Tarhan','Vedris','Korhal','Sunay','Melik','Ardıç','Dorsan','Kaya','Ilgın','Marven','Toral','Yeltan','Ozan','Belis','Karan','Sevin','Aydar','Numan','Rasil','Erkin'];
+export const FIRST = ['Aren','Besra','Cemre','Davor','Elif','Faren','Giray','Hale','Ilgaz','Jale','Kerem','Lale','Mirza','Nehir','Orhun','Pelin','Rüzgar','Selin','Tarkan','Umay','Vedat','Yelda','Zafer','Alara','Bora','Defne','Emre','Feride','Göktan','Hazal'];
+export const LAST = ['Tarhan','Vedris','Korhal','Sunay','Melik','Ardıç','Dorsan','Kaya','Ilgın','Marven','Toral','Yeltan','Ozan','Belis','Karan','Sevin','Aydar','Numan','Rasil','Erkin'];
 const ETH = ['Varenli','Tolgar','Sumeri','Hazen','Ordalı','Kelti','Marun','Isparlı'];
 const REL = ['Güneş Yolu','Kadim Ocak','Bir Tanrı Kilisesi','Atalar Yolu','Sessiz Tarikat'];
 
@@ -165,6 +166,7 @@ function spawnCharacter(w, cid, role, axes) {
     notes: '', lastWake: -99, inbox: []
   };
   w.characters[id].background = lifeOf(w, id, w.characters[id].name, role);
+  if (w.lifeReady) writeLife(w, w.characters[id]);
   return w.characters[id];
 }
 export { spawnCharacter, bfsSea };
