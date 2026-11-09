@@ -3,7 +3,7 @@ import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_TR, PLANTS, TECHS, countryProvinc
 
 const RECIPE = {
   steel: { iron: 1, coal: .8 }, fuel: { oil: 1.25 }, fertilizer: { phosphate: 1, coal: .2 },
-  machines: { steel: .7, copper: .2 }, goods: { timber: .4, coal: .2, steel: .1 }, arms: { steel: .7, coal: .3 }
+  machines: { steel: .7, copper: .2 }, goods: { timber: .2, coal: .2, steel: .1 }, arms: { steel: .7, coal: .3 }
 };
 const ORDER = ['steel', 'fuel', 'fertilizer', 'machines', 'arms', 'goods'];
 export const hasTech = (c, t) => !!c.techs?.[t];
@@ -210,9 +210,11 @@ function consume(w, c, prev) {
   c.realGdp = real; c.growth = g;
   const prevM = c._lastMoney ?? c.money, mg = prevM > 0 ? c.money / prevM - 1 : 0; c._lastMoney = c.money;
   const shortage = Math.max(0, 1 - Math.min(c.foodRatio, 1)) * .55 + Math.max(0, 1 - Math.min(consumer, 1)) * .25 + (hasTech(c, 'petrol_motoru') ? Math.max(0, 1 - Math.min(c.fuelRatio, 1)) * .18 : 0);
-  c.inflation = clamp(.35 * c.inflation + .85 * (mg - g * .6) + shortage * .4 + (c.reserves < 0 ? .03 : 0) + (c.bankHealth < 30 ? .02 : 0) + .004, -.04, 4);
+  // Kıtlık fiyatı bir kez yükseltir; sürekli enflasyon için kıtlığın kötüleşmesi veya para artışı gerekir.
+  const shock = shortage - (c._lastShortage ?? shortage); c._lastShortage = shortage;
+  c.inflation = clamp(.35 * c.inflation + .85 * (mg - g * .6) + shock * .4 + (c.reserves < 0 ? .03 : 0) + (c.bankHealth < 30 ? .02 : 0) + .004, -.04, 4);
   c.priceLevel *= 1 + c.inflation; c.wageIndex += (c.priceLevel - c.wageIndex) * .35;
-  c.gdp = real * c.priceLevel; c.money *= 1 + Math.max(0, g) * .6 + .002;
+  c.gdp = real * c.priceLevel; c.money *= 1 + g * .6 + .002;
   c.fx = Math.round(100 / c.priceLevel * 100) / 100;
   c.unemployment += (clamp(.06 + (1 - c.inputRatio) * .3 + c._dev * .3 + Math.max(0, -g) * .9, .02, .6) - c.unemployment) * .4;
   // Kaynak gelirine bağımlılık: kolay para yolsuzluğu ve oligarkları besler, sanayiyi zayıflatır.

@@ -209,6 +209,24 @@ const sessionWorld = () => { const cfg = { ...base, agentRoles: ['leader'], maxL
 const memoryStore = () => { let saved = {}, pending = null; return { savePending(p) { pending = JSON.parse(JSON.stringify(p)); }, loadPending(t) { return pending?.turn === t ? pending : null; }, clearPending() { pending = null; }, commit() {}, loadSessions: () => JSON.parse(JSON.stringify(saved)), saveSessions(s) { saved = JSON.parse(JSON.stringify(s)); } }; };
 const reply = (p, extra = {}) => { if (p.includes('hukumler')) return { hukumler: [] }; if (!p.includes('şimdi karar ver')) return { bak: ['ekonomi'] }; return { kararlar: [], mesajlar: [], ic_ses: 'x', ...extra }; };
 
+chain('Kalıcı mal kıtlığı fiyatı bir kez yükseltir, her çeyrek enflasyon üretmez', () => {
+  const w = fresh(), c = w.countries.U1; let peak = 0;
+  for (let i = 0; i < 24; i++) { c.stock.goods = 0; for (const p of countryProvinces(w, 'U1')) p.plants.goods = 0; beginTurn(w); stepWorld(w); if (i < 4) peak = Math.max(peak, c.inflation); }
+  assert.ok(peak > .02, `ilk şok görünmeli: ${peak}`); assert.ok(c.inflation < .05, `kıtlık sürerken enflasyon ${c.inflation}`);
+});
+chain('Kötü hasat kalıcı enflasyon bırakmaz: para durgunlukta da daralır', () => {
+  const w = fresh(), c = w.countries.U1; c.stock.grain = 1e6;
+  for (let i = 0; i < 40; i++) { for (const p of Object.values(w.provinces)) if (i % 2) p.fertility *= .9; else p.fertility /= .9; beginTurn(w); stepWorld(w); c.stock.grain = 1e6; }
+  assert.ok(c.priceLevel < 2.2, `fiyat düzeyi ${c.priceLevel}`);
+});
+await (async () => {
+  const w = createWorld(base), g = new Game({ world: w, cfg: base, backend: { kind: 'mock' }, store: nullStore() }); const orig = g.turn.bind(g);
+  g.turn = async () => { await orig(); if (w.turn >= 100) g.stop = true; }; await g.run(0);
+  const med = a => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)], cs = aliveCountries(w);
+  assert.ok(med(cs.map(c => c.inflation)) < .05, `enflasyon ${med(cs.map(c => c.inflation))}`); assert.ok(med(cs.map(c => c.priceLevel)) < 20, `fiyat ${med(cs.map(c => c.priceLevel))}`); assert.ok(med(cs.map(c => c.inputRatio)) > .75, `sanayi girdisi ${med(cs.map(c => c.inputRatio))}`);
+  console.log('geçti  100 turda ekonomi kendi başına çökmez');
+})();
+
 const leaderOf = (w, id = 'U1') => w.characters[w.countries[id].leader];
 const parliamentWorld = () => { const w = fresh(), c = w.countries.U1; c.elections = true; makeParliament(c, 'Divan'); return { w, c, l: leaderOf(w) }; };
 const stepOnce = w => { beginTurn(w); stepWorld(w); };
