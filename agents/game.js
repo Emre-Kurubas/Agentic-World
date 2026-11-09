@@ -4,7 +4,7 @@ import { beginTurn, stepWorld } from '../engine/step.js';
 import { applyOp } from '../engine/ops.js';
 import { news, rand, clamp } from '../engine/util.js';
 import { npcDecide, npcFounding } from './npc.js';
-import { actorPrompt, foundingPrompt, refereePrompt, lookupReply } from './prompts.js';
+import { actorPrompt, foundingPrompt, refereePrompt, lookupReply, talkText } from './prompts.js';
 import { answer } from './queries.js';
 import { LimitError, SessionLostError } from './backend.js';
 import { snapshotState, buildEntries } from './ledger.js';
@@ -160,6 +160,53 @@ export class Game {
     return actors;
   }
 
+  // Aynı çeyrek içinde pazarlık: mesaj alan yapay zekâ karakterler cevap yazar, kararını değiştirir, sırası gelene kadar uyuyan da uyanır.
+  async negotiate(actors) {
+    const w = this.w, cfg = this.cfg, rounds = Math.max(0, cfg.negotiationRounds ?? 2);
+    if (this.backend.kind === 'mock' || !rounds) return;
+    const talk = this.pending.talk ||= { round: 0, skip: {} };
+    const reachable = new Map(currentActors(w).filter(ch => isAI(cfg, w.countries[ch.country], ch)).map(ch => [ch.id, ch]));
+    for (const ch of reachable.values()) if (this.pending.actors[ch.id] && !actors.includes(ch)) actors.push(ch);
+    while (talk.round < rounds) {
+      const unread = new Map();
+      for (const from of [...actors]) {
+        for (const m of this.pending.actors[from.id]?.messages ?? []) {
+          const target = reachable.get(m.to) ?? reachable.get(w.countries[m.to]?.leader);
+          if (m.read || !target || target.id === from.id || talk.skip[target.id] || this.pending.actors[target.id]?.fallback) continue;
+          if (!unread.has(target.id)) unread.set(target.id, []);
+          unread.get(target.id).push({ m, from });
+        }
+      }
+      if (!unread.size) break;
+      const round = talk.round + 1, last = round >= rounds;
+      this.setStatus('ajanlar pazarlık ediyor', `${round}. görüşme, ${unread.size} karakter cevaplıyor`);
+      await this.withRetry(() => pool([...unread], cfg.concurrency, async ([id, items]) => {
+        const waiting = items.filter(i => !i.m.read);
+        if (!waiting.length) return;
+        const ch = reachable.get(id), joined = !this.pending.actors[id];
+        const text = talkText(waiting.map(i => ({ from: `${i.from.name} (${w.countries[i.from.country]?.name})`, text: i.m.text })), last);
+        const build = ({ intro, fresh, recap }) => joined || fresh ? `${actorPrompt(w, ch, [], true, { intro, recap })}\n\n${text}` : text;
+        build.isActor = joined;
+        let r;
+        try { r = await this.askAs(ch, build, modelFor(cfg, ch)); }
+        catch (e) { if (e instanceof LimitError) throw e; this.report(ch, `Pazarlık yanıtı alınamadı: ${e.message}`); talk.skip[id] = true; this.store.savePending(this.pending); return; }
+        for (const i of waiting) i.m.read = true;
+        const clean = sanitize(r, cfg), sentNow = clean.messages.map(m => ({ ...m, round }));
+        if (joined) { this.pending.actors[id] = { ...clean, messages: sentNow }; actors.push(ch); }
+        else {
+          const cur = this.pending.actors[id];
+          if (Array.isArray(r?.kararlar)) cur.decisions = clean.decisions;
+          cur.messages.push(...sentNow.slice(0, Math.max(0, cfg.maxMessagesPerActor * 2 - cur.messages.length)));
+          if (clean.monologue) cur.monologue = [cur.monologue, clean.monologue].filter(Boolean).join('\n\n');
+          if (clean.notes) cur.notes = [cur.notes, clean.notes].filter(Boolean).join(' ');
+          if (clean.identity) cur.identity = clean.identity;
+        }
+        this.store.savePending(this.pending);
+      }));
+      talk.round = round; this.store.savePending(this.pending);
+    }
+  }
+
   async judge(actors) {
     const w = this.w, cfg = this.cfg;
     const groups = {};
@@ -210,10 +257,10 @@ export class Game {
     for (const ch of actors) ch.inbox = [];
     for (const m of outgoing) {
       const target = w.characters[m.to] ?? w.characters[w.countries[m.to]?.leader];
-      if (target?.alive) target.inbox.push({ turn: w.turn, from: `${m.from.name} (${w.countries[m.from.country]?.name})`, text: m.text });
-      else m.undelivered = true;
+      if (!target?.alive) m.undelivered = true;
+      else if (!m.read) target.inbox.push({ turn: w.turn, from: `${m.from.name} (${w.countries[m.from.country]?.name})`, text: m.text });
     }
-    return { trace, rulings, messages: outgoing.map(m => { const target = w.characters[m.to] ?? w.characters[w.countries[m.to]?.leader]; return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered }; }) };
+    return { trace, rulings, messages: outgoing.map(m => { const target = w.characters[m.to] ?? w.characters[w.countries[m.to]?.leader]; return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, read: !!m.read, round: m.round ?? 0 }; }) };
   }
 
   applyRuling(ch, { narrative, prob, public: pub, ops, source, decision }) {
@@ -231,6 +278,7 @@ export class Game {
     this.pending = this.store.loadPending(w.turn) || { turn: w.turn, actors: {}, referee: {} };
     beginTurn(w);
     const actors = await this.think();
+    await this.negotiate(actors);
     await this.judge(actors);
     this.setStatus('dünya işliyor', 'Ekonomi, savaş ve siyaset hesaplanıyor');
     const before = snapshotState(w), log = this.execute(actors);

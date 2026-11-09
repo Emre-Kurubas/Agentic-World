@@ -4,7 +4,7 @@ import { countryProvinces, aliveCountries, atWar, hasTreaty, GOODS, GOOD_TR, PLA
 export const CATALOG = `Bakabileceğin konular (birden çok seçebilirsin):
 Kendi ülken: ekonomi, butce, stoklar, uretim, kaynaklar, eyaletler, eyalet:P12, ordu, filo, gruplar, partiler, kurumlar, kisiler, kisi:K12, komplolar, teknoloji
 Dünya: dunya, ulke:U3, piyasa, rotalar, stratejik, deniz:D5, antlasmalar, savaslar, haberler
-Birisi hakkında sahip olduğun dosyalar: dosyalar`;
+Sana özel: dosyalar (başkaları hakkında topladıkların), borclar (verdiğin ve aldığın borçlar)`;
 
 // Her karakter ancak erişebildiği kadarını görür: gerçek rakam, tahmin veya dedikodu.
 const INSIDE = { leader: ['ekonomi', 'butce', 'stoklar', 'uretim', 'kaynaklar', 'ordu', 'filo', 'gruplar', 'komplolar', 'teknoloji'], general: ['ordu', 'filo', 'stoklar', 'kaynaklar', 'teknoloji'], oligarch: ['ekonomi', 'uretim', 'kaynaklar', 'stoklar'], opposition: [] };
@@ -36,10 +36,10 @@ export function answer(w, ch, raw) {
     partiler: () => c.parties.map(p => `${p.id} ${p.name}: destek %${Math.round(p.support)}${p.banned ? ' (yasak)' : ''}${p.id === c.rulingParty ? ' (iktidar)' : ''}`).join('; '),
     kurumlar: () => `Rejim: ${c.regime}. İdeoloji: ${c.ideology}. Seçim: ${c.elections ? `tur ${c.nextElection}` : 'yok'}. Basın özgürlüğü ${Math.round(c.pressFreedom)}, mahkeme bağımsızlığı ${Math.round(c.courts)}, sendikalar ${c.unions ? 'serbest' : 'yasak'}, polis ${Math.round(c.police)}, istihbarat ${Math.round(c.intelligence)}, yolsuzluk ${Math.round(c.corruption)}, okuryazarlık %${Math.round(c.literacy)}. Yaratılanlar: ${c.institutions.map(i => `${i.name}: ${i.description}`).join('; ') || 'yok'}`,
     kisiler: () => Object.values(w.characters).filter(x => x.country === c.id && x.alive && x.id !== ch.id).map(x => `${x.id} ${x.name}, ${x.role}, yaş ${x.age}, ${x.status}`).join('; '),
-    kisi: () => { const x = w.characters[arg]; if (!x) return `Kişi bulunamadı: ${arg}`; const kin = x.name.split(' ').at(-1) === ch.name.split(' ').at(-1) ? ' Seninle aynı aileden olabilir.' : ''; return `${x.name}, ${x.role}, ${w.countries[x.country]?.name}, yaş ${x.age}, durum ${x.status}. Kamuoyundaki kimliği: ${x.persona ? x.persona.slice(0, 200) : 'bilinmiyor'}.${ch.dossiers[x.id] ? ` Elinde dosyası var; servet ${Math.round(x.wealth)}, kişisel sadakat ${Math.round(x.loyalty)}.` : ''}${kin}`; },
+    kisi: () => { const x = w.characters[arg]; if (!x) return `Kişi bulunamadı: ${arg}`; const kin = x.name.split(' ').at(-1) === ch.name.split(' ').at(-1) ? ' Seninle aynı aileden olabilir.' : ''; return `${x.name}, ${x.role}, ${w.countries[x.country]?.name}, yaş ${x.age}, durum ${x.status}. Kamuoyundaki kimliği: ${x.persona ? x.persona.slice(0, 200) : 'bilinmiyor'}.${ch.dossiers[x.id] ? ` Elinde dosyası var; servet ${Math.round(x.wealth)}. Dosyada: ${ch.dossiers[x.id].facts?.join(' ') || 'aleyhine bir şey yok'}` : ''}${kin}`; },
     komplolar: () => w.plots.filter(p => p.active && p.country === c.id && ([p.leader, ...p.members].includes(ch.id) || (ch.role === 'leader' && p.exposed))).map(p => `${p.id} ${p.kind}, ilerleme ${Math.round(p.progress)}, ${p.exposed ? 'sızdı' : 'gizli'}, üye ${p.members.length + 1}`).join('; ') || 'Bildiğin bir komplo yok.',
     teknoloji: () => `Sahip: ${Object.keys(c.techs).map(t => TECHS[t].name).join(', ') || 'yok'}. Araştırılan: ${c.research.target ? TECHS[c.research.target].name : 'yok'} (${Math.round(c.research.progress)}). Çalışılabilir: ${Object.entries(TECHS).filter(([k, t]) => !c.techs[k] && t.req.every(r => c.techs[r])).map(([k, t]) => `${k} (${t.name})`).join(', ') || 'yok'}.`,
-    dunya: () => aliveCountries(w).filter(o => o.id !== c.id).map(o => `${o.id} ${o.name}, ${o.regime}, ${o.ideology}, lider ${w.characters[o.leader]?.name}, ilişki ${Math.round(c.relations[o.id] ?? 0)}${atWar(w, c.id, o.id) ? ', SAVAŞTA' : ''}${hasTreaty(w, c.id, o.id, 'ittifak') ? ', müttefik' : ''}`).join('\n'),
+    dunya: () => aliveCountries(w).filter(o => o.id !== c.id).map(o => `${o.id} ${o.name}, ${o.regime}, ${o.ideology}, lider ${w.characters[o.leader]?.name}${atWar(w, c.id, o.id) ? ', SAVAŞTA' : ''}${w.treaties.filter(t => t.active && t.parties.includes(c.id) && t.parties.includes(o.id)).map(t => `, ${t.kind} antlaşması var`).join('')}${c.embargo.includes(o.id) ? ', ona ambargo uyguluyorsun' : ''}${o.embargo.includes(c.id) ? ', sana ambargo uyguluyor' : ''}`).join('\n'),
     ulke: () => { const o = w.countries[arg]; if (!o?.alive) return `Ülke bulunamadı: ${arg}`; const i = c.intel[o.id] ?? 15, n = v => i >= 60 ? Math.round(v) : fuzzy(v); return `${o.name}: ${o.regime}, ${o.ideology}. GSYH ${n(o.realGdp)}, asker ${n(Object.values(w.units).filter(u => u.country === o.id).reduce((a, u) => a + u.men, 0))} bin, gemi ${n(Object.values(w.fleets).filter(f => f.country === o.id).reduce((a, f) => a + f.ships, 0))}, eyalet ${countryProvinces(w, o.id).length}. Kontrol ettiği stratejik noktalar: ${w.strategic.filter(s => s.controller === o.id).map(s => s.name).join(', ') || 'yok'}. Bilinen teknolojiler: ${i >= 40 ? Object.keys(o.techs).join(', ') || 'yok' : 'bilinmiyor'}. Eyaletleri: ${countryProvinces(w, o.id).map(p => p.id).join(',')}.`; },
     piyasa: () => GOODS.map(g => `${GOOD_TR[g]} ${round(w.globalPrice[g], 1)}`).join(', '),
     rotalar: () => aliveCountries(w).filter(o => o.id !== c.id).map(o => { const k = c.id < o.id ? `${c.id}|${o.id}` : `${o.id}|${c.id}`, r = w.routes[k]; return `${o.name}: ${r ? `${r.mode} yolu, maliyet çarpanı ${round(r.cost, 2)}${r.tolls.length ? `, geçiş ücretli` : ''}` : 'rota yok'}`; }).join('\n'),
@@ -48,7 +48,8 @@ export function answer(w, ch, raw) {
     antlasmalar: () => w.treaties.filter(t => t.active && t.parties.includes(c.id)).map(t => `${t.id} ${t.kind}: ${t.parties.join('-')}`).join('; ') + ` Bekleyen teklifler: ${w.treaties.filter(t => t.pending && t.parties.includes(c.id)).map(t => `${t.id} ${t.kind} ${t.proposer} ${t.terms}`).join('; ') || 'yok'}`,
     savaslar: () => w.wars.filter(x => x.active).map(x => `${x.id} ${x.name}, başlangıç tur ${x.start}, taraflar a:${x.a.join(',')} b:${x.b.join(',')}`).join('\n') || 'Savaş yok.',
     haberler: () => w.newsLog.filter(n => !n.secret).slice(-20).map(n => `- ${n.text}`).join('\n') || 'Haber yok.',
-    dosyalar: () => Object.values(ch.dossiers).map(d => d.about).join(', ') || 'Dosyan yok.'
+    dosyalar: () => Object.entries(ch.dossiers).map(([id, d]) => `${id} ${d.about}: ${d.facts?.join(' ') || 'aleyhine bir şey çıkmadı'}`).join('\n') || 'Dosyan yok.',
+    borclar: () => (w.debts || []).filter(d => ['acik', 'gecikmis'].includes(d.status) && [d.creditor, d.debtor].includes(ch.id)).map(d => d.debtor === ch.id ? `${d.id}: ${w.characters[d.creditor]?.name} kişisine borçlusun, ${Math.round(d.owed)}, vade tur ${d.due}${d.status === 'gecikmis' ? ' (GECİKMİŞ)' : ''}. ${d.terms}` : `${d.id}: ${w.characters[d.debtor]?.name} sana borçlu, ${Math.round(d.owed)}, vade tur ${d.due}${d.status === 'gecikmis' ? ' (GECİKMİŞ)' : ''}. ${d.terms}`).join('\n') || 'Açık borcun veya alacağın yok.'
   };
   return T[topic] ? T[topic]() : `"${q}" konusunda bilgi yok. ${CATALOG}`;
 }
@@ -61,6 +62,8 @@ export const alarms = (w, ch) => {
   if (c.strike) out.push('Genel grev sürüyor.');
   if (w.wars.some(x => x.active && (x.a.includes(c.id) || x.b.includes(c.id)))) out.push('Ülke savaşta.');
   if (ch.role === 'leader' && w.treaties.some(t => t.pending && t.parties.includes(c.id) && t.proposer !== c.id)) out.push('Yanıt bekleyen antlaşma teklifi var.');
+  if ((w.debts || []).some(d => d.status === 'gecikmis' && d.debtor === ch.id)) out.push('Vadesi geçmiş borcun var.');
+  if ((w.debts || []).some(d => d.status === 'gecikmis' && d.creditor === ch.id)) out.push('Vadesi geçmiş bir alacağın var.');
   if (w.epidemics.some(e => e.active && Object.keys(e.provinces).some(id => w.provinces[id].controller === c.id))) out.push('Ülkede salgın var.');
   return out;
 };

@@ -25,6 +25,8 @@ const provIsBorder = (w, p, id) => p.neighbors.some(n => w.provinces[n].controll
 export function npcDecide(w, ch) {
   const c = w.countries[ch.country], ops = [];
   if (!c?.alive) return ops;
+  const dueDebt = (w.debts || []).find(d => d.debtor === ch.id && d.status === 'gecikmis' && ch.wealth >= d.owed * 1.5);
+  if (dueDebt) return [{ op: 'repay_debt', debt: dueDebt.id }];
   if (ch.role === 'leader') return npcLeader(w, ch, c);
   const myPlot = w.plots.find(p => p.active && p.leader === ch.id);
   const joined = w.plots.find(p => p.active && p.members.includes(ch.id));

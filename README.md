@@ -36,6 +36,7 @@ Kalıcı yapmak için `config.json` içindeki `agentRoles` listesini değiştir.
 - `wakeEvery`: Yapay zekâ olan ikincil karakterlerin en geç kaç turda bir uyanacağı.
 - `wakeTension`: Gerilim bu değeri geçince ikincil karakterler her tur uyanır.
 - `maxLookupRounds`: Bir karakterin tur başına kaç kez bilgi sorgulayabileceği. Her sorgu turu bir ajan çağrısıdır.
+- `negotiationRounds`: Aynı çeyrek içinde kaç görüşme turu yapılabileceği. 0 yaparsan mesajlar gelecek çeyreğe kalır. Her görüşme, mesaj alan her yapay zekâ karakter için bir çağrıdır.
 - `models`: lider, hakem ve ikincil karakterlerin modeli.
 - `concurrency`: Aynı anda çalışan ajan sayısı.
 - `saveDir`: Boşsa kayıtlar OneDrive dışında `kullanıcı klasörün\ajan-dunyasi-kayitlar` altına yazılır.

@@ -134,6 +134,20 @@ function depositsFor(w, s, basin) {
   return d;
 }
 
+// Geçmiş yalnızca olaydır; karakterin bundan ne çıkaracağı kendine kalır. Dünya rastgeleliğini tüketmez.
+const LIFE_COMMON = ['Bir kıtlıkta iki kardeşini kaybetti, köyünden kente yürüyerek geldi.', 'Küçükken ailesi borç yüzünden toprağını kaybetti.', 'Gençliğini sürgünde geçirdi, yabancı bir ülkede matbaada çalıştı.', 'Babası bir maden kazasında öldü, on iki yaşında ocağa girdi.', 'Bir salgında bütün ailesini yitirdi, bir tapınakta büyüdü.', 'Yoksul bir kâtibin çocuğu olarak burslu okudu.', 'Büyük bir toprak sahibinin tek mirasçısı olarak büyüdü.', 'Ailesi azınlık olduğu için bir kıyımdan kaçtı.', 'Bir liman kentinde yabancı tüccarların çevirmenliğini yaptı.', 'Çocukluğu bir kuraklıkla göç eden çoban obasında geçti.'];
+const LIFE_ROLE = {
+  leader: ['Bir eyalet valisinin yardımcısıydı, valinin devrildiği gece yönetimi devraldı.', 'Hukukçu olarak tanındı, bir anayasa komisyonunda görev aldı.', 'Kalabalık bir ailenin en küçüğüydü, kardeşleri arasındaki miras davası yıllarca sürdü.', 'Genç yaşta bir ayaklanmaya katıldı, iki yıl hapis yattı.'],
+  general: ['Bir sınır savaşında alayının çoğu öldü, kendisi şarapnel yarasıyla döndü.', 'Harp okulunu birincilikle bitirdi, ilk görevinde bir köy ayaklanmasını bastırdı.', 'On beş yıl uzak bir garnizonda komutanlık yaptı.', 'Savaşta esir düştü, iki yıl düşman kampında kaldı.', 'Köylü bir ailenin çocuğu olarak erden generalliğe yükseldi.'],
+  opposition: ['Bir grevde vurulan arkadaşlarının cenazesini taşıdığı için hapis yattı.', 'Yedi yıl sürgünde yaşadı, dönüşünde bir gazete kurdu.', 'Üniversiteden atıldı, yıllarca gizli broşür bastı.', 'Öğretmenlikten siyasi nedenle kovuldu.'],
+  oligarch: ['Liman hamalıyken gemi kiraladı, bir savaş sırasında tahıl satarak zengin oldu.', 'Bir maden imtiyazını kumarda kazandı.', 'Aile bankasını iflastan kurtarmak için ortağını mahkemeye verdi.', 'Yabancı bir şirketin temsilcisiyken kendi işini kurdu.']
+};
+function lifeOf(id, name, role) {
+  const pool = [...(LIFE_ROLE[role] || []), ...LIFE_COMMON];
+  let h = 7; for (const ch of `${id}|${name}`) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  return pool[h % pool.length];
+}
+
 function spawnCharacter(w, cid, role, axes) {
   const id = nextId(w, 'K');
   const t = () => Math.round(between(w, 15, 90));
@@ -145,6 +159,7 @@ function spawnCharacter(w, cid, role, axes) {
     axes: { econ: axes.econ + between(w, -40, 40), auth: axes.auth + between(w, -40, 40), nation: axes.nation + between(w, -40, 40), faith: axes.faith + between(w, -40, 40) },
     notes: '', lastWake: -99, inbox: []
   };
+  w.characters[id].background = lifeOf(id, w.characters[id].name, role);
   return w.characters[id];
 }
 export { spawnCharacter, bfsSea };
@@ -165,7 +180,7 @@ export function makeCountry(w, id, patch = {}) {
 }
 
 export function createWorld(cfg) {
-  const w = { rng: cfg.seed | 0, seq: 0, turn: 0, status: 'kuruluyor', provinces: {}, seas: {}, countries: {}, characters: {}, units: {}, fleets: {}, wars: [], treaties: [], plots: [], epidemics: [], strategic: [], canals: [], routes: {}, tradeFlows: {}, globalPrice: { ...BASE_PRICE }, priceHistory: [], newsThisTurn: [], newsLog: [], map: null };
+  const w = { rng: cfg.seed | 0, seq: 0, turn: 0, status: 'kuruluyor', provinces: {}, seas: {}, countries: {}, characters: {}, units: {}, fleets: {}, wars: [], treaties: [], plots: [], epidemics: [], strategic: [], canals: [], routes: {}, tradeFlows: {}, globalPrice: { ...BASE_PRICE }, priceHistory: [], newsThisTurn: [], newsLog: [], debts: [], map: null };
   const { W, H, sites, lands, nBasin } = buildMap(w, cfg.provinces);
   const pid = s => `P${s.i}`, sid = s => `D${s.i}`;
   for (const s of sites) {

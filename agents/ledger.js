@@ -31,7 +31,8 @@ function levelOf(value, steps, prev) {
 }
 
 export function snapshotState(w) {
-  const countries = {}, provinces = {}, characters = {}, wars = {}, treaties = {}, plots = {}, strategic = {};
+  const countries = {}, provinces = {}, characters = {}, wars = {}, treaties = {}, plots = {}, strategic = {}, debts = {};
+  for (const d of w.debts || []) debts[d.id] = d.status;
   for (const c of Object.values(w.countries)) countries[c.id] = { alive: c.alive, name: c.name, regime: c.regime, capital: c.capital, leader: c.leader, general: c.general, opposition: c.opposition, oligarch: c.oligarch, strike: !!c.strike, bankCrisis: !!c.bankCrisis, defaulted: !!c.defaulted, techs: Object.keys(c.techs || {}) };
   for (const p of Object.values(w.provinces)) provinces[p.id] = p.controller;
   for (const ch of Object.values(w.characters)) characters[ch.id] = { alive: ch.alive, status: ch.status, role: ch.role, country: ch.country, name: ch.name };
@@ -39,7 +40,7 @@ export function snapshotState(w) {
   for (const t of w.treaties) treaties[t.id] = { active: !!t.active, pending: !!t.pending };
   for (const p of w.plots) plots[p.id] = { active: !!p.active, exposed: !!p.exposed };
   for (const s of w.strategic) strategic[s.id] = { controller: s.controller, closed: !!s.closed, toll: s.toll || 0 };
-  return { countries, provinces, characters, wars, treaties, plots, strategic };
+  return { countries, provinces, characters, wars, treaties, plots, strategic, debts };
 }
 
 function stateChanges(w, was) {
@@ -108,6 +109,12 @@ function stateChanges(w, was) {
     if (b && !b.exposed && pl.exposed) add(`Açığa çıktı: ${label}`, 2, { c: [pl.country], a: people });
     if (b?.active && !pl.active) add(`Sona erdi: ${label}`, 1, { c: [pl.country], a: people });
   }
+  const DEBT_TR = { gecikmis: 'vadesinde ödenmedi', odendi: 'ödendi', silindi: 'silindi', dustu: 'taraflardan biri öldüğü için düştü' };
+  for (const d of w.debts || []) {
+    const prev = was.debts[d.id], people = [d.creditor, d.debtor], label = `${who(d.debtor)} borcu, alacaklı ${who(d.creditor)}, ${Math.round(d.amount)}`, c = [w.characters[d.debtor]?.country].filter(Boolean);
+    if (!prev) add(`Yeni borç: ${label}`, 0, { c, a: people, x: { secret: true, terms: d.terms } });
+    else if (prev !== d.status) add(`${label}: ${DEBT_TR[d.status] ?? d.status}`, 0, { c, a: people, x: { secret: true } });
+  }
   for (const s of w.strategic) {
     const b = was.strategic[s.id], ref = s.ref;
     if (!b) continue;
@@ -126,7 +133,7 @@ export function buildEntries(w, log, before, lookups = {}) {
     out.push({ k: 'dusunce', s: x.ai ? 'ajan' : 'kural', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, text: cut(x.monologue), x: { persona: cut(x.persona, 900), decisions: x.decisions || [], lookups: x.lookups || [], ai: x.ai } });
     for (const q of lookups[x.actor] || []) out.push({ k: 'sorgu', s: 'ajan', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, q: q.q, text: cut(q.a, MAX_ANSWER) });
   }
-  for (const m of log.messages || []) out.push({ k: 'mesaj', s: 'ajan', n: m.fromName, to: m.toName, c: [m.fromCountry, m.toCountry].filter(Boolean), a: [m.from, m.toActor].filter(Boolean), imp: 0, ok: !m.undelivered, text: cut(m.text) });
+  for (const m of log.messages || []) out.push({ k: 'mesaj', s: 'ajan', n: m.fromName, to: m.toName, c: [m.fromCountry, m.toCountry].filter(Boolean), a: [m.from, m.toActor].filter(Boolean), imp: 0, ok: !m.undelivered, text: cut(m.text), x: { read: !!m.read, round: m.round ?? 0 } });
   for (const r of log.rulings || []) {
     const failed = (r.results || []).filter(y => y.ok === false), ok = !!r.success && !failed.length, detail = (r.results || []).map(y => y.msg).filter(Boolean).join('; ');
     out.push({ k: r.source === 'hakem' ? 'hukum' : 'kural', s: r.source, n: r.name, r: r.role, c: [r.country], a: [r.actor], imp: 0, ok, text: cut(r.source === 'hakem' ? r.narrative : `${r.narrative}${detail ? `: ${detail}` : ''}`), x: { narrative: cut(r.narrative, 400), probability: r.probability, success: r.success, results: r.results || [], ops: r.ops || [], decision: r.decision } });
@@ -143,7 +150,7 @@ export function logFromEntries(entries) {
   for (const e of entries) {
     if (e.k === 'dusunce') log.trace.push({ actor: e.a[0], country: e.c[0], role: e.r, name: e.n, ai: e.x.ai, persona: e.x.persona, lookups: e.x.lookups, monologue: e.text, decisions: e.x.decisions, messages: [] });
     else if (e.k === 'hukum' || e.k === 'kural') log.rulings.push({ actor: e.a[0], name: e.n, country: e.c[0], role: e.r, narrative: e.x.narrative, probability: e.x.probability, success: e.x.success, results: e.x.results, source: e.s, decision: e.x.decision });
-    else if (e.k === 'mesaj') log.messages.push({ from: e.a[0], fromName: e.n, fromCountry: e.c[0], toName: e.to, text: e.text, undelivered: e.ok === false });
+    else if (e.k === 'mesaj') log.messages.push({ from: e.a[0], fromName: e.n, fromCountry: e.c[0], toName: e.to, text: e.text, undelivered: e.ok === false, read: !!e.x?.read, round: e.x?.round ?? 0 });
   }
   return log;
 }

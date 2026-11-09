@@ -5,6 +5,7 @@ import { applyOp } from '../engine/ops.js';
 import { executePlot } from '../engine/politics.js';
 import { Game, shouldWake, isAI } from '../agents/game.js';
 import { LimitError, SessionLostError } from '../agents/backend.js';
+import { npcDecide } from '../agents/npc.js';
 
 const base = { seed: 42, countries: 5, provinces: 130, agentRoles: ['leader', 'general', 'opposition', 'oligarch'], countryAgentRoles: {}, models: { leader: 'a', referee: 'a', secondary: 'b' }, concurrency: 2, wakeEvery: 2, wakeTension: 45, maxMessagesPerActor: 3, maxDecisionsPerActor: 5, limitRetryMinutes: 0, maxTurns: 0 };
 const fresh = () => { const w = createWorld(base); w.status = 'oyunda'; for (const c of aliveCountries(w)) c.majorityEth ??= ''; run(w, 4); return w; };
@@ -206,6 +207,81 @@ assert.equal(fold('İŞÇİ Ağı ÇÖLÜ'), 'isci agi colu');
 const sessionWorld = () => { const cfg = { ...base, agentRoles: ['leader'], maxLookupRounds: 1, concurrency: 1 }, w = createWorld(cfg); w.status = 'oyunda'; return { cfg, w, leader: w.countries.U1.leader }; };
 const memoryStore = () => { let saved = {}, pending = null; return { savePending(p) { pending = JSON.parse(JSON.stringify(p)); }, loadPending(t) { return pending?.turn === t ? pending : null; }, clearPending() { pending = null; }, commit() {}, loadSessions: () => JSON.parse(JSON.stringify(saved)), saveSessions(s) { saved = JSON.parse(JSON.stringify(s)); } }; };
 const reply = (p, extra = {}) => { if (p.includes('hukumler')) return { hukumler: [] }; if (!p.includes('şimdi karar ver')) return { bak: ['ekonomi'] }; return { kararlar: [], mesajlar: [], ic_ses: 'x', ...extra }; };
+
+ok('Ülke ilişkisi sayı olarak görünmez, olgular görünür', () => {
+  const w = fresh(), c = w.countries.U1, o = w.countries.U2; c.embargo.push('U2');
+  w.wars.push({ id: 'SY', a: ['U1'], b: ['U3'], civil: false, active: true, start: w.turn, name: 'Y' });
+  const a = answer(w, ld(w, c), 'dunya'); assert.ok(!/ilişki/.test(a), a); assert.ok(a.includes('SAVAŞTA') && a.includes('ona ambargo uyguluyorsun'), a); assert.ok(o);
+});
+ok('Rüşvet yapay zekâ karakterin sadakatini yazmaz, parası ve haberi gelir', () => {
+  const w = fresh(), c = w.countries.U1, ol = w.characters[c.oligarch], g = w.characters[c.general]; ol.wealth = 500; g.aiControlled = true; const loyal = g.loyalty, money = g.wealth;
+  assert.equal(applyOp(w, ol, { op: 'bribe', character: g.id, amount: 100 }).ok, true);
+  assert.equal(g.loyalty, loyal); assert.equal(g.wealth, money + 100); assert.ok(g.inbox.at(-1).text.includes('100'));
+  const n = w.characters[c.opposition]; n.aiControlled = false; n.greed = 80; const before = n.loyalty; applyOp(w, ol, { op: 'bribe', character: n.id, amount: 100 }); assert.ok(n.loyalty !== before || before === 100, 'kural tabanlı karakterde sayı değişir');
+});
+chain('Zimmet → iz → dosya → şantaj ve ifşa meşruiyeti düşürür', () => {
+  const w = fresh(), c = w.countries.U1, l = ld(w, c), o = w.characters[c.opposition]; c.intelligence = 100; c.treasury = c.gdp; c.pressFreedom = 80;
+  const clean = w.characters[c.general]; for (let i = 0; i < 40 && !o.dossiers[clean.id]; i++) applyOp(w, o, { op: 'gather_dossier', character: clean.id });
+  assert.ok(o.dossiers[clean.id], 'dosya açılmalı'); assert.equal(applyOp(w, o, { op: 'blackmail', character: clean.id, demand: 'x' }).ok, false, 'boş dosyayla şantaj olmaz');
+  assert.equal(applyOp(w, l, { op: 'embezzle', pct_gdp: .05 }).ok, true);
+  delete o.dossiers[l.id]; for (let i = 0; i < 40 && !o.dossiers[l.id]; i++) applyOp(w, o, { op: 'gather_dossier', character: l.id });
+  assert.ok(o.dossiers[l.id].facts[0].includes('zimmet'), JSON.stringify(o.dossiers[l.id]));
+  assert.equal(applyOp(w, o, { op: 'blackmail', character: l.id, demand: 'Çekil' }).ok, true); assert.ok(l.inbox.at(-1).text.includes('zimmet') && l.inbox.at(-1).text.includes('Çekil'));
+  assert.ok(answer(w, o, 'dosyalar').includes('zimmet'));
+  const legit = c.legitimacy; assert.equal(applyOp(w, o, { op: 'publish_dossier', character: l.id }).ok, true);
+  assert.ok(c.legitimacy < legit); assert.ok(w.newsThisTurn.some(n => n.text.includes('Sızan belgeler') && !n.secret)); assert.ok(!o.dossiers[l.id]);
+});
+chain('Borç → para geçer → vade dolar → iki taraf öğrenir, sonrası onların', () => {
+  const w = fresh(), c = w.countries.U1, ol = w.characters[c.oligarch], g = w.characters[c.general]; ol.wealth = 500; g.wealth = 10; g.aiControlled = true; ol.aiControlled = true; const loyal = g.loyalty;
+  const r = applyOp(w, ol, { op: 'lend_private', character: g.id, amount: 100, interest: .2, due_turns: 1, terms: 'Sessiz kal.' }); assert.equal(r.ok, true); assert.equal(g.wealth, 110); assert.equal(ol.wealth, 400);
+  assert.ok(answer(w, g, 'borclar').includes('borçlusun')); assert.ok(answer(w, ol, 'borclar').includes('sana borçlu'));
+  const debt = w.debts.at(-1); run(w, 1); assert.equal(debt.status, 'acik', 'vade gelmeden gecikmez');
+  const snap = snapshotState(w); g.inbox = []; ol.inbox = []; beginTurn(w); stepWorld(w);
+  assert.equal(debt.status, 'gecikmis'); assert.ok(g.inbox.some(m => m.from === 'Noter')); assert.ok(ol.inbox.some(m => m.from === 'Noter')); assert.equal(g.loyalty, loyal, 'gecikme duyguyu kod yazmaz');
+  assert.ok(buildEntries(w, { trace: [], rulings: [], messages: [] }, snap).some(e => e.text.includes('vadesinde ödenmedi') && e.a.includes(g.id)), 'deftere geçer');
+  g.wealth = 200; assert.equal(applyOp(w, g, { op: 'repay_debt', debt: debt.id }).ok, true); assert.equal(debt.status, 'odendi'); assert.equal(Math.round(g.wealth), 80); assert.equal(Math.round(ol.wealth), 520);
+  assert.equal(applyOp(w, ol, { op: 'forgive_debt', debt: debt.id }).ok, false);
+});
+ok('Vadesi geçen borcunu kural tabanlı karakter parası varsa öder', () => {
+  const w = fresh(), c = w.countries.U1, n = w.characters[c.general], ol = w.characters[c.oligarch]; n.wealth = 1000; w.debts.push({ id: 'B-1', creditor: ol.id, debtor: n.id, amount: 50, owed: 50, due: 0, terms: '', status: 'gecikmis', turn: 0 });
+  assert.deepEqual(npcDecide(w, n), [{ op: 'repay_debt', debt: 'B-1' }]);
+});
+ok('Karakter geçmişi kişilik yazmaz, karakterler arasında çeşitlidir', () => {
+  const w = createWorld(base), list = Object.values(w.characters).map(x => x.background); assert.ok(list.every(Boolean)); assert.ok(new Set(list).size >= 6, `çeşit ${new Set(list).size}`);
+  assert.ok(!list.some(b => /temkinli|cesur|acımasız|idealist|korkak/.test(b)), 'yalnızca olay olmalı');
+  assert.equal(createWorld(base).rng, w.rng, 'dünya üretimi tekrarlanabilir');
+});
+
+await (async () => {
+  const { cfg, w } = sessionWorld(); const a = w.countries.U1.leader, b = w.countries.U2.leader, A = w.characters[a], B = w.characters[b], log = []; let judged = '';
+  const backend = { kind: 'claude', async ask(p, model, session) {
+    if (p.includes('hukumler')) { if (p.includes('A planı') || p.includes('B planı')) judged += p; return { hukumler: [] }; }
+    if (p.includes(A.name) && !p.includes('AYNI ÇEYREK')) { log.push('A1'); return { kararlar: ['A planı'], mesajlar: [{ kime: 'U2', metin: 'Sınırı açalım mı?' }] }; }
+    if (p.includes(B.name) && !p.includes('AYNI ÇEYREK')) { log.push('B1'); return { kararlar: ['B planı'], mesajlar: [] }; }
+    if (p.includes('Sınırı açalım')) { log.push('B2'); assert.ok(session.resume); return { ic_ses: 'Olur.', mesajlar: [{ kime: a, metin: 'Tamam, şartım gümrük.' }] }; }
+    if (p.includes('şartım gümrük')) { log.push('A2'); return { kararlar: ['A planı: gümrüksüz sınır'], mesajlar: [{ kime: 'U2', metin: 'Anlaştık.' }] }; }
+    return { kararlar: [], mesajlar: [] };
+  } };
+  const g = new Game({ world: w, cfg: { ...cfg, maxLookupRounds: 0, negotiationRounds: 2 }, backend, store: memoryStore() });
+  await g.turn();
+  assert.deepEqual(log.filter(x => x !== 'A1' && x !== 'B1'), ['B2', 'A2'], 'iki görüşmeyle sınırlı');
+  assert.ok(judged.includes('gümrüksüz sınır') && !/\bA planı\n/.test(judged), 'hakem son kararı görür');
+  assert.ok(!B.inbox.some(m => m.text.includes('Sınırı açalım')), 'okunan mesaj ertesi tura kalmaz');
+  assert.ok(B.inbox.some(m => m.text === 'Anlaştık.'), 'son görüşmeden sonraki mesaj gelecek çeyreğe kalır');
+  console.log('geçti  Zincir: aynı çeyrek pazarlığı kararı değiştirir, hakem son hâli görür');
+})();
+
+await (async () => {
+  const cfg = { ...base, agentRoles: ['leader', 'general'], maxLookupRounds: 0, concurrency: 1, wakeEvery: 99, wakeTension: 999 }, w = createWorld(cfg); w.status = 'oyunda';
+  const c = w.countries.U1, l = c.leader, gen = w.characters[c.general]; for (const x of Object.values(w.characters)) x.lastWake = 0; w.turn = 1; let woke = null;
+  const backend = { kind: 'claude', async ask(p, model, session) { if (p.includes('hukumler')) return { hukumler: [] }; if (p.includes(gen.name) && p.includes('AYNI ÇEYREK')) { woke = { p, resume: session.resume }; return { kararlar: ['Birliği hazırla'], mesajlar: [] }; } if (p.includes(w.characters[l].name) && !p.includes('AYNI ÇEYREK')) return { kararlar: [], mesajlar: [{ kime: gen.id, metin: 'Hazır ol.' }] }; return { kararlar: [], mesajlar: [] }; } };
+  const g = new Game({ world: w, cfg, backend, store: memoryStore() });
+  await g.turn();
+  assert.ok(woke?.p.includes('Adın:') && woke.p.includes('Hazır ol.') && woke.p.includes(gen.background), 'uyuyan karakter tam raporla uyanır');
+  assert.equal(gen.lastWake, 1, 'uyanmış sayılır');
+  console.log('geçti  Mesaj alan uyuyan yapay zekâ karakter aynı çeyrekte uyanır');
+})();
+
 
 await (async () => {
   const { cfg, w, leader } = sessionWorld(), mine = [], name = w.characters[leader].name;

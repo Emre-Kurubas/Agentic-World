@@ -1,6 +1,6 @@
 import { economyStep } from './economy.js';
 import { militaryStep } from './military.js';
-import { satisfactionStep, plotStep, uprisingStep, electionStep, collapseStep, relationDrift, lifeStep, pruneStep, partyStep } from './politics.js';
+import { satisfactionStep, plotStep, uprisingStep, electionStep, collapseStep, relationDrift, lifeStep, pruneStep, partyStep, debtStep } from './politics.js';
 import { countryProvinces, aliveCountries, provincePop } from './world.js';
 import { sum, quarterLabel } from './util.js';
 
@@ -15,6 +15,7 @@ export function stepWorld(w) {
   uprisingStep(w);
   electionStep(w);
   lifeStep(w);
+  debtStep(w);
   collapseStep(w);
   relationDrift(w);
   pruneStep(w);

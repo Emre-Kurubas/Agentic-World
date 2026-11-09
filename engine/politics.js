@@ -304,8 +304,23 @@ export function lifeStep(w) {
   }
 }
 
+// Kod yalnızca olguyu yürütür: vade dolunca iki taraf öğrenir, sonrası onların kararıdır.
+export function debtStep(w) {
+  for (const d of w.debts ||= []) {
+    if (!['acik', 'gecikmis'].includes(d.status)) continue;
+    const debtor = w.characters[d.debtor], creditor = w.characters[d.creditor];
+    if (!debtor?.alive || !creditor?.alive) { d.status = 'dustu'; d.closedAt = w.turn; continue; }
+    if (d.status === 'acik' && w.turn >= d.due) {
+      d.status = 'gecikmis';
+      debtor.inbox.push({ turn: w.turn, from: 'Noter', text: `Borç ${d.id}: ${creditor.name} için ${Math.round(d.owed)} ödemenin vadesi doldu.` });
+      creditor.inbox.push({ turn: w.turn, from: 'Noter', text: `Borç ${d.id}: ${debtor.name} sana olan ${Math.round(d.owed)} borcunu vadesinde ödemedi.` });
+    }
+  }
+}
+
 export function pruneStep(w) {
   const keep = w.turn - 40;
+  w.debts = (w.debts || []).filter(d => ['acik', 'gecikmis'].includes(d.status) || d.closedAt >= keep);
   for (const [id, ch] of Object.entries(w.characters)) if (!ch.alive) { ch.goneAt ??= w.turn; if (ch.goneAt < keep) delete w.characters[id]; }
   w.plots = w.plots.filter(p => p.active || p.start >= keep);
   w.treaties = w.treaties.filter(t => t.active || t.turn >= keep);

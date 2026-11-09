@@ -38,7 +38,8 @@ const recapText = ch => `\n\nESKİ HAFIZANA ULAŞILAMIYOR. Elinde kalanlar:\nKim
 
 export function actorPrompt(w, ch, answers, final, { intro = true, recap = false, retry = false } = {}) {
   const seen = answers.length ? `\n\n${seenText(answers)}` : '';
-  const who = intro && !ch.persona ? '\n\nHenüz kim olduğunu yazmadın. Sana kişilik verilmedi: inançlarını, korkularını, sınırlarını sen belirle ve "kimlik" alanına yaz.' : '';
+  const life = (intro || recap) && ch.background ? `\n\nGeçmişin: ${ch.background} Bundan ne çıkardığın sana kalmış.` : '';
+  const who = `${life}${intro && !ch.persona ? '\n\nHenüz kim olduğunu yazmadın. Sana kişilik verilmedi: inançlarını, korkularını, sınırlarını sen belirle ve "kimlik" alanına yaz.' : ''}`;
   return `${frontPage(w, ch)}${seen}${recap ? recapText(ch) : ''}${who}${intro ? `\n\n${MANIFESTO}` : ''}
 
 ${nextStep(final)}
@@ -47,10 +48,18 @@ ${ANSWER_FORMAT}${retry ? '\n\nNot: Bu sabah için verdiğin yanıt sisteme ula�
 
 export const lookupReply = (answers, final) => `${seenText(answers)}\n\n${nextStep(final)}\n${ANSWER_FORMAT}`;
 
+// Aynı çeyrek içinde gelen mesajlar: karakter cevap yazabilir ve kararını değiştirebilir.
+export const talkText = (items, last) => `AYNI ÇEYREK İÇİNDE SANA YENİ MESAJLAR GELDİ:
+${items.map(i => `- [${i.from}] ${i.text}`).join('\n')}
+
+Cevap yazabilir, yeni kişilere yazabilir veya kararlarını değiştirebilirsin. "kararlar" alanını yazarsan önceki listenin tamamının yerine geçer, boş liste hepsini iptal eder; alanı hiç yazmazsan önceki kararların geçerli kalır. Bakma hakkın yok, şimdi karar ver.${last ? ' Bu çeyrekte artık yazacağın mesajlar karşı tarafa ancak gelecek çeyrekte ulaşır.' : ''}
+Yalnızca bu JSON ile yanıt ver:
+{"ic_ses":"şu an ne düşünüyorsun","kararlar":["yalnızca değiştireceksen"],"mesajlar":[{"kime":"K12 veya U3","metin":"gizli mesaj"}],"notlar":"günlüğüne yazacağın satır"}`;
+
 export function foundingPrompt(w, c, ch) {
   const provs = countryProvinces(w, c.id);
   const totals = { farm: provs.reduce((a, p) => a + p.fertility, 0) };
-  return `Kurgusal bir dünyada yeni kurulan bir ülkenin kurucu lideri ${ch.name} karakterini oynuyorsun. Ülkenin adı, rejimi, ideolojisi ve senin kim olduğun tamamen senin kararın. Hazır bir kalıbı seçmek zorunda değilsin; hiç görülmemiş bir düzen de kurabilirsin.
+  return `Kurgusal bir dünyada yeni kurulan bir ülkenin kurucu lideri ${ch.name} karakterini oynuyorsun.${ch.background ? ` Geçmişin: ${ch.background} Bundan ne çıkardığın sana kalmış.` : ''} Ülkenin adı, rejimi, ideolojisi ve senin kim olduğun tamamen senin kararın. Hazır bir kalıbı seçmek zorunda değilsin; hiç görülmemiş bir düzen de kurabilirsin.
 ${provs.length} eyalet. Ortalama toprak verimi ${round(totals.farm / provs.length)}. Bilinen yataklar: ${[...new Set(provs.flatMap(p => Object.entries(p.deposits).filter(([, d]) => d.known).map(([k]) => k)))].join(', ') || 'yok'}. Araziler: ${[...new Set(provs.map(p => p.terrain))].join(', ')}. Çoğunluk: ${c.majorityEth}, inanç: ${c.majorityRel}. 
 Bugünün dünyasındaki gerçek ülke, kişi veya parti adlarını kullanma. Özgün bir devlet düşün. Eksenler -100..100: econ (sol-sağ), auth (özgürlükçü-otoriter), nation (enternasyonal-milliyetçi), faith (seküler-dindar).
 Yalnızca bu JSON ile yanıt ver:
@@ -64,6 +73,7 @@ recruit{province,men,unit_kind:piyade|topcu|zirhli|hava} disband{unit} move{unit
 propose_treaty{target,kind:ittifak|saldirmazlik|ticaret|askeri_gecis|baris,terms,annex,reparations} accept_treaty{id} break_treaty{id} send_aid{target,pct_gdp,arms,secret}
 spy{target,kind:bilgi|sabotaj|isyan_fonla} propaganda{strength} repress{strength} concession{cls:koylu|isci|orta|elit,pct_gdp} purge{character,fate:hapis|surgun|olu}
 set_regime{regime,ideology,elections,press_freedom,axes} hold_election{} rig_election{amount}
+lend_private{character,amount,interest,due_turns,terms} repay_debt{debt,amount} forgive_debt{debt} publish_dossier{character}
 start_plot{kind:darbe|suikast|isyan,secrecy} invite_plot{plot,character} join_plot{plot} betray_plot{plot} execute_plot{plot} fund_plot{plot,amount} bribe{character,amount,direction:up|down} capital_flight{share} invest{amount} embezzle{pct_gdp} set_strait{id,closed,toll} build_canal{id} build_ship{province,ships} move_fleet{fleet,to} amphibious{unit,to} found_party{name,axes,base} ban_party{party} set_institutions{courts,unions,ruling_party} gather_dossier{character} blackmail{character,demand} create_institution{name,description,effects}
 custom{label,effects:[{target?,stat,delta,turns}],turns} stat: legitimacy corruption bureaucracy police intelligence pressFreedom warExhaustion repress sat.koylu sat.isci sat.orta sat.elit sat.all sat.ordu sat.sermaye sat.din sat.burokrasi unrest
 Abluka için düşman limanlarına komşu denize filo gönderilir (move_fleet). Teknoloji anahtarları: ${Object.keys(TECHS).join(',')}.

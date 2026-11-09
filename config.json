@@ -26,5 +26,6 @@
   "turnDelayMs": 0,
   "limitRetryMinutes": 10,
   "saveDir": "",
-  "maxLookupRounds": 4
+  "maxLookupRounds": 4,
+  "negotiationRounds": 2
 }
