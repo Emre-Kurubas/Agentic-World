@@ -185,7 +185,7 @@ export function makeCountry(w, id, patch = {}) {
 }
 
 export function createWorld(cfg) {
-  const w = { rng: cfg.seed | 0, seq: 0, turn: 0, status: 'kuruluyor', provinces: {}, seas: {}, countries: {}, characters: {}, units: {}, fleets: {}, wars: [], treaties: [], plots: [], epidemics: [], strategic: [], canals: [], routes: {}, tradeFlows: {}, globalPrice: { ...BASE_PRICE }, priceHistory: [], newsThisTurn: [], newsLog: [], debts: [], map: null };
+  const w = { rng: cfg.seed | 0, seq: 0, turn: 0, status: 'kuruluyor', provinces: {}, seas: {}, countries: {}, characters: {}, units: {}, fleets: {}, wars: [], treaties: [], plots: [], epidemics: [], strategic: [], canals: [], routes: {}, tradeFlows: {}, globalPrice: { ...BASE_PRICE }, priceHistory: [], newsThisTurn: [], newsLog: [], debts: [], firms: {}, map: null };
   const { W, H, sites, lands, nBasin } = buildMap(w, cfg.provinces);
   const pid = s => `P${s.i}`, sid = s => `D${s.i}`;
   for (const s of sites) {

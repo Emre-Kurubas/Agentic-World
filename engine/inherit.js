@@ -5,6 +5,8 @@ import { countryProvinces, aliveCountries, word, GOOD_TR } from './world.js';
 import { partyStep } from './politics.js';
 import { makeParliament } from './polity.js';
 import { issueCurrency } from './money.js';
+import { initFirms } from './firms.js';
+import { updateStrategic, updateRoutes } from './economy.js';
 
 const R = (a, b) => [a, b];
 const ARCHETYPES = [
@@ -93,6 +95,9 @@ export function inheritStates(w) {
   const cs = aliveCountries(w), bag = shuffled(w, ARCHETYPES);
   cs.forEach((c, i) => applyArchetype(w, c, bag[i % bag.length], i));
   w.past = makePast(w);
+  initFirms(w);
+  // İlk çeyrekte de sevkiyat ve kredi kararları verilebilsin diye yollar baştan bilinir.
+  updateStrategic(w); updateRoutes(w);
   for (let i = 0; i < 8; i++) partyStep(w);
   for (const c of cs) {
     const a = ARCHETYPES.find(x => x.key === c.archetype);

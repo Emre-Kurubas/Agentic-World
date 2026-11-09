@@ -2,6 +2,7 @@ import { economyStep } from './economy.js';
 import { militaryStep } from './military.js';
 import { satisfactionStep, plotStep, uprisingStep, electionStep, collapseStep, relationDrift, lifeStep, pruneStep, partyStep, debtStep } from './politics.js';
 import { treatyStep, institutionStep, billStep } from './polity.js';
+import { firmStep } from './firms.js';
 import { applyOp } from './ops.js';
 import { countryProvinces, aliveCountries, provincePop } from './world.js';
 import { sum, quarterLabel } from './util.js';
@@ -11,6 +12,7 @@ export function beginTurn(w) { w.newsThisTurn = []; w.battles = []; }
 export function stepWorld(w) {
   treatyStep(w);
   economyStep(w);
+  firmStep(w);
   militaryStep(w);
   institutionStep(w);
   satisfactionStep(w);
@@ -28,7 +30,7 @@ export function stepWorld(w) {
     const provs = countryProvinces(w, c.id);
     c.history.push({
       fuel: +((c.fuelRatio ?? 1) * 100).toFixed(0), t: w.turn, gdp: Math.round(c.realGdp), infl: +(c.inflation * 100).toFixed(1), unemp: +(c.unemployment * 100).toFixed(1), debt: +((c.debt / Math.max(c.gdp * 4, 1)) * 100).toFixed(0),
-      pop: Math.round(sum(provs, provincePop)), legit: Math.round(c.legitimacy), unrest: Math.round(c.unrest), men: Math.round(sum(Object.values(w.units).filter(u => u.country === c.id), u => u.men)), food: +(c.foodRatio * 100).toFixed(0), treasury: Math.round(c.treasury), reserves: Math.round(c.reserves), input: +((c.inputRatio ?? 1) * 100).toFixed(0)
+      pop: Math.round(sum(provs, provincePop)), legit: Math.round(c.legitimacy), unrest: Math.round(c.unrest), men: Math.round(sum(Object.values(w.units).filter(u => u.country === c.id), u => u.men)), food: +(c.foodRatio * 100).toFixed(0), treasury: Math.round(c.treasury), reserves: Math.round(c.reserves), fx: c.fx ?? 100, input: +((c.inputRatio ?? 1) * 100).toFixed(0)
     });
     if (c.history.length > 240) c.history.shift();
   }

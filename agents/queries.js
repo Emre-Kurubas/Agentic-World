@@ -1,11 +1,13 @@
 import { round } from '../engine/util.js';
 import { countryProvinces, aliveCountries, atWar, hasTreaty, GOODS, GOOD_TR, PLANTS, TECHS, provincePop } from '../engine/world.js';
 import { clauseText, leadsParties } from '../engine/polity.js';
+import { isOpen, ownerName } from '../engine/firms.js';
 
 export const CATALOG = `Bakabileceğin konular (birden çok seçebilirsin):
 Kendi ülken: ekonomi, para, butce, stoklar, uretim, kaynaklar, eyaletler, eyalet:P12, ordu, filo, gruplar, partiler, meclis, kurumlar, kisiler, kisi:K12, komplolar, teknoloji
 Dünya: tarih, dunya, kurlar, ulke:U3, piyasa, rotalar, stratejik, deniz:D5, antlasmalar, savaslar, haberler
-Sana özel: dosyalar (başkaları hakkında topladıkların), borclar (verdiğin ve aldığın borçlar)`;
+Sana özel: dosyalar (başkaları hakkında topladıkların), borclar (verdiğin ve aldığın borçlar), sirketlerim
+Ülke şirketleri: sirketler`;
 
 // Her karakter ancak erişebildiği kadarını görür: gerçek rakam, tahmin veya dedikodu.
 const INSIDE = { leader: ['ekonomi', 'butce', 'stoklar', 'uretim', 'kaynaklar', 'ordu', 'filo', 'gruplar', 'komplolar', 'teknoloji'], general: ['ordu', 'filo', 'stoklar', 'kaynaklar', 'teknoloji'], oligarch: ['ekonomi', 'uretim', 'kaynaklar', 'stoklar'], opposition: [] };
@@ -25,6 +27,8 @@ export function answer(w, ch, raw) {
   const c = w.countries[ch.country], provs = countryProvinces(w, c.id);
   const T = {
     para: () => `Para birimi: ${c.currency.name}, ${c.fxRegime === 'altin' ? 'altına bağlı' : c.fxRegime === 'bagli' ? `${w.countries[c.pegTo]?.currency.name} kuruna bağlı` : 'serbest kur'}. Bir altın ${round(c.rate, 3)} yerel para. Sermaye ${c.capitalClosed ? 'kısıtlı' : 'serbest'}. ${can(ch, 'ekonomi') ? `Altın rezervi ${Math.round(c.reserves)}, reel kur ${round(c.rer ?? 1, 2)} (1 üstü paran pahalı, ithal ucuz).` : ''} Dış borç: ${can(ch, 'butce') ? `${Object.entries(c.creditors).map(([id, a]) => `${w.countries[id]?.name} ${Math.round(a)}`).join(', ') || 'yok'}, faiz %${round((c.foreignRate ?? 0) * 100, 1)}` : 'ayrıntısı sana açık değil'}.`,
+    sirketler: () => Object.values(w.firms || {}).filter(f => isOpen(f) && f.country === c.id).map(f => `${f.id} ${f.name} (${w.provinces[f.province].name}), sahibi ${ownerName(w, f)}, son kâr ${f.owner === ch.id || ch.role === 'leader' ? round(f.lastProfit, 1) : fuzzy(f.lastProfit)}`).join('\n') || 'Kayıtlı şirket yok.',
+    sirketlerim: () => Object.values(w.firms || {}).filter(f => isOpen(f) && f.owner === ch.id).map(f => `${f.id} ${f.name}, ${w.countries[f.country]?.name}, kasa ${Math.round(f.cash)}, son kâr ${round(f.lastProfit, 1)}${f.offer ? `, teklif ${Math.round(f.offer.price)}` : ''}`).join('\n') || 'Şirketin yok.',
     kurlar: () => aliveCountries(w).map(o => `${o.name}: ${o.currency.name}, bir altın ${round(o.rate, 3)}, ${o.fxRegime}`).join('\n'),
     ekonomi: () => `GSYH ${show(ch, 'ekonomi', c.realGdp)}, büyüme ${pct(c.growth || 0)}, enflasyon ${pct(c.inflation)}, işsizlik ${pct(c.unemployment)}, altın rezervi ${show(ch, 'ekonomi', c.reserves)}, para değeri ${c.fx ?? 100}, banka sağlığı ${show(ch, 'ekonomi', c.bankHealth)}, grev ${c.strike ? 'var' : 'yok'}, doğal kaynak rant payı ${pct(c.rentShare || 0)}, gıda karşılama ${pct(c.foodRatio)}, sanayi girdi karşılama ${pct(c.inputRatio ?? 1)}`,
     butce: () => can(ch, 'butce') ? `Hazine ${Math.round(c.treasury)}, gelir ${Math.round(c.lastRevenue || 0)}, harcama ${Math.round(c.lastSpending || 0)}, borç/GSYH ${pct(c.debt / Math.max(c.gdp * 4, 1))}, faiz ${pct(c.interestRate || 0)}, alacaklılar ${JSON.stringify(c.creditors)}. Vergi: gelir ${pct(c.tax.income)}, toprak ${pct(c.tax.land)}, şirket ${pct(c.tax.business)}, gümrük ${pct(c.tariff)}. Bütçe payları: ${JSON.stringify(c.budget)}` : `Hükümet bütçesinin ayrıntıları sana açık değil. Söylentiye göre hazine ${fuzzy(c.treasury)}, borç oranı ${fuzzy(c.debt / Math.max(c.gdp * 4, 1) * 100)}%.`,

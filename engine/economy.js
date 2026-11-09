@@ -2,7 +2,7 @@ import { clamp, sum, news, between, rand } from './util.js';
 import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_TR, PLANTS, TECHS, countryProvinces, provincePop, aliveCountries, atWar, hasTreaty } from './world.js';
 import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep } from './money.js';
 
-const RECIPE = {
+export const RECIPE = {
   steel: { iron: 1, coal: .8 }, fuel: { oil: 1.25 }, fertilizer: { phosphate: 1, coal: .2 },
   machines: { steel: .7, copper: .2 }, goods: { timber: .2, coal: .2, steel: .1 }, arms: { steel: .7, coal: .3 }
 };

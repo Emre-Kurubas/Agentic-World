@@ -5,19 +5,21 @@ import { capture, pathStep } from './military.js';
 import { makeFleet, TECHS, PLANTS, DEPOSITS, GOOD_TR } from './world.js';
 import { hasTech } from './economy.js';
 import { FX_REGIMES, foreignRate, externalDebt } from './money.js';
+import { firmOp } from './firms.js';
 import { delegated, vetoedBy, makeInstitution, mustPassParliament, createBill, parliamentOpen, makeParliament, leadsParties, enactLaw, normalizeClauses, activateClauses, allocateSeats, clauseText } from './polity.js';
 
+const FIRM_OPS = new Set(['found_company', 'invest_company', 'sell_company', 'buy_company', 'nationalize_company', 'privatize_company']);
 const PERMISSIONS = {
   leader: null,
-  general: new Set(['propose_law', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'embezzle', 'create_institution', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda']),
-  opposition: new Set(['propose_law', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'create_institution', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda', 'seek_foreign_aid']),
-  oligarch: new Set(['propose_law', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'lend_private', 'embezzle', 'create_institution', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda', 'capital_flight', 'invest', 'fund_plot'])
+  general: new Set(['found_company', 'invest_company', 'sell_company', 'buy_company', 'propose_law', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'embezzle', 'create_institution', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda']),
+  opposition: new Set(['found_company', 'invest_company', 'sell_company', 'buy_company', 'propose_law', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'create_institution', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda', 'seek_foreign_aid']),
+  oligarch: new Set(['found_company', 'invest_company', 'sell_company', 'buy_company', 'propose_law', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'lend_private', 'embezzle', 'create_institution', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda', 'capital_flight', 'invest', 'fund_plot'])
 };
 const CUSTOM_LIMITS = { legitimacy: 12, corruption: 12, bureaucracy: 12, police: 12, intelligence: 12, pressFreedom: 25, warExhaustion: 12, repress: 25 };
 const CUSTOM_MODS = new Set(['sat.koylu', 'sat.isci', 'sat.orta', 'sat.elit', 'sat.all', 'sat.ordu', 'sat.sermaye', 'sat.din', 'sat.burokrasi', 'unrest', 'legitimacy']);
 const BUDGET = ['military', 'welfare', 'infrastructure', 'education', 'police', 'administration'];
 const TREATY = ['ittifak', 'saldirmazlik', 'ticaret', 'askeri_gecis', 'baris'];
-const LAW_TITLE = { set_tax: 'Vergi düzenlemesi', set_budget: 'Bütçe değişikliği', set_tariff: 'Gümrük tarifesi', borrow: 'Borçlanma yetkisi', declare_war: 'Savaş kararı', ban_party: 'Parti kapatma', land_reform: 'Toprak reformu', nationalize: 'Devletleştirme', privatize: 'Özelleştirme' };
+const LAW_TITLE = { nationalize_company: 'Şirket devletleştirme', set_tax: 'Vergi düzenlemesi', set_budget: 'Bütçe değişikliği', set_tariff: 'Gümrük tarifesi', borrow: 'Borçlanma yetkisi', declare_war: 'Savaş kararı', ban_party: 'Parti kapatma', land_reform: 'Toprak reformu', nationalize: 'Devletleştirme', privatize: 'Özelleştirme' };
 
 const num = (v, a, b, d = a) => clamp(Number.isFinite(Number(v)) ? Number(v) : d, a, b);
 const alive = (w, id) => { const c = w.countries[id]; return c?.alive ? c : null; };
@@ -59,6 +61,7 @@ export function applyOp(w, actor, op) {
   }
   const target = op.target ? alive(w, op.target) : null;
   const gdp = Math.max(c.gdp, 1);
+  if (FIRM_OPS.has(op.op)) return firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num);
   switch (op.op) {
     case 'set_tax': if (!c.tax[op.kind] && c.tax[op.kind] !== 0) return fail('Vergi türü yok.'); c.tax[op.kind] = num(op.rate, 0, .7); return ok();
     case 'set_budget': if (!BUDGET.includes(op.category)) return fail('Bütçe kalemi yok.'); c.budget[op.category] = num(op.share, 0, .45); return ok();

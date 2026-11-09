@@ -5,6 +5,9 @@ import { applyOp } from '../engine/ops.js';
 import { executePlot } from '../engine/politics.js';
 import { makeParliament, treatyStep } from '../engine/polity.js';
 import { currencyStep, displacedDemand, exportEdge, localPrices } from '../engine/money.js';
+import { firmStep, STATE } from '../engine/firms.js';
+import { spawnCharacter } from '../engine/world.js';
+const spawnHeir = (w, c) => spawnCharacter(w, c.id, 'oligarch', c.axes);
 import { Game, shouldWake, isAI } from '../agents/game.js';
 import { LimitError, SessionLostError } from '../agents/backend.js';
 import { npcDecide } from '../agents/npc.js';
@@ -247,7 +250,44 @@ ok('İç fiyatı kıtlık yükseltir, sermaye kısıtı kaçışı durdurur', ()
   const ol = w.characters[c.oligarch], total = aliveCountries(w).reduce((a, x) => a + x.reserves, 0); applyOp(w, ol, { op: 'capital_flight', share: .2 }); assert.ok(aliveCountries(w).reduce((a, x) => a + x.reserves, 0) > total * .97, 'kaçan para dünyadan silinmez');
   c.capitalClosed = true; assert.equal(applyOp(w, ol, { op: 'capital_flight', share: .2 }).ok, false);
 });
-const inherited =(seed = 1848, countries = 5) => createWorld({ ...base, plainStates: false, seed, countries });
+const inherited = (seed = 1848, countries = 5) => createWorld({ ...base, plainStates: false, seed, countries });
+const firmWorld = () => { const w = fresh(), c = w.countries.U1; run(w, 1); const p = countryProvinces(w, 'U1').find(q => q.plants.goods > .1) ?? countryProvinces(w, 'U1')[0]; p.plants.goods = 2; const f = { id: 'SRX', name: 'Test Dokuma', country: 'U1', province: p.id, sector: 'goods', resource: null, stake: 1, owner: c.oligarch, cash: 0, lastProfit: 0, founded: 0, status: 'acik', bad: 0, offer: null }; w.firms.SRX = f; return { w, c, p, f, ol: w.characters[c.oligarch] }; };
+const sellGoods = (c, goods = 100, timber = 1) => { Object.assign(c.prices, { goods, timber, coal: 1, steel: 1 }); c._made = { ...c._made, goods: 200 }; };
+chain('Şirket iç piyasadan kâr eder, sahibine temettü gider, devletinse hazineye', () => {
+  const { w, c, f, ol } = firmWorld(); sellGoods(c); const before = ol.wealth;
+  firmStep(w); assert.ok(f.lastProfit > 0, `kâr ${f.lastProfit}`); assert.ok(ol.wealth > before, 'sahip temettü alır'); assert.ok(f.cash > 0, 'şirket kasası');
+  f.owner = STATE; const t = c.treasury; firmStep(w); assert.ok(c.treasury > t, 'devlet şirketi hazineye yazar');
+});
+chain('Yabancı sahibin kârı altın olarak ülkeden çıkar', () => {
+  const { w, c, f } = firmWorld(), foreign = w.characters[w.countries.U2.oligarch], home = w.countries.U2; f.owner = foreign.id; c.reserves = 1000; const r = [c.reserves, home.reserves]; sellGoods(c);
+  firmStep(w); assert.ok(c.reserves < r[0] && home.reserves > r[1], `${c.reserves}/${home.reserves}`);
+});
+chain('Zarar eden şirket batar, kapasite düşer, huzursuzluk gelir', () => {
+  const { w, c, f, p } = firmWorld(); f.cash = -5; const cap = p.plants.goods, unrest = p.unrest;
+  for (let i = 0; i < 6; i++) { sellGoods(c, 1, 300); firmStep(w); } assert.equal(f.status, 'iflas'); assert.ok(p.plants.goods < cap); assert.ok(p.unrest > unrest);
+});
+chain('Devletleştirme meclise takılır, geçerse sahip şirketi kaybeder, yabancı öfkelenir', () => {
+  const { w, c, f } = firmWorld(), l = ld(w, c), foreign = w.characters[w.countries.U2.oligarch]; f.owner = foreign.id; const rel = w.countries.U2.relations.U1 ?? 0, sat = c.blocs.sermaye.sat;
+  assert.equal(applyOp(w, l, { op: 'nationalize_company', id: 'SRX' }).ok, true); assert.equal(f.owner, STATE); assert.ok(w.countries.U2.relations.U1 < rel); assert.ok(c.blocs.sermaye.sat < sat); assert.ok(foreign.inbox.some(m => m.text.includes('el koydu')));
+  c.elections = true; makeParliament(c, 'Divan'); f.owner = foreign.id; const r = applyOp(w, l, { op: 'nationalize_company', id: 'SRX' }); assert.ok(r.msg.includes('Meclise sevk'), r.msg); assert.equal(f.owner, foreign.id);
+});
+ok('Şirket satılır, kurulur, yatırımla büyür; yetkisiz el sürülemez', () => {
+  const { w, c, f, p, ol } = firmWorld(), g = w.characters[c.general]; ol.wealth = 500; g.wealth = 500;
+  assert.equal(applyOp(w, g, { op: 'invest_company', id: 'SRX', amount: 10 }).ok, false); assert.equal(applyOp(w, ol, { op: 'sell_company', id: 'SRX', buyer: g.id, price: 100 }).ok, true); assert.equal(applyOp(w, g, { op: 'buy_company', id: 'SRX' }).ok, true); assert.equal(f.owner, g.id); assert.equal(g.wealth, 400); assert.equal(ol.wealth, 600);
+  const cap = p.plants.goods; assert.equal(applyOp(w, g, { op: 'invest_company', id: 'SRX', amount: 100 }).ok, true); assert.ok(p.plants.goods > cap); assert.ok(Math.abs(f.stake - 1) < 1e-9);
+  const r = applyOp(w, ol, { op: 'found_company', name: 'Yeni Dokuma', sector: 'goods', province: p.id, amount: 200 }); assert.equal(r.ok, true, r.msg); const n = w.firms[r.firm]; assert.ok(n.stake > 0 && f.stake < 1, 'ortak eyaletteki pay bölünür'); assert.ok(Math.abs(n.stake + f.stake - 1) < 1e-9);
+  c.capitalClosed = true; assert.equal(applyOp(w, w.characters[w.countries.U2.oligarch], { op: 'found_company', sector: 'goods', province: p.id, amount: 5 }).ok, false, 'sermaye kısıtı yabancıyı durdurur');
+});
+ok('Sahibi ölünce şirket mirasçıya kalır, ülke değişince sahipsiz kalır', () => {
+  const { w, c, f, ol, p } = firmWorld(); ol.alive = false; const heir = spawnHeir(w, c); c.oligarch = heir.id; firmStep(w); assert.equal(f.owner, heir.id); p.controller = 'U2'; firmStep(w); assert.equal(f.country, 'U2'); assert.equal(f.owner, null);
+});
+ok('İlk çeyrekte yollar bilinir, sevkiyat kararı boşa gitmez', () => {
+  const w = inherited(); assert.ok(Object.keys(w.routes).length > 0, 'rota yok'); const [k] = Object.keys(w.routes), [a, b] = k.split('|'); w.countries[a].stock.grain = 100; assert.equal(applyOp(w, leaderOf(w, a), { op: 'ship_goods', target: b, good: 'grain', amount: 10 }).ok, true);
+});
+ok('Devralınan dünyada şirketler ve sahipleri vardır, işler ve kâr üretir', () => {
+  const w = inherited(), firms = Object.values(w.firms); assert.ok(firms.length >= 15, `şirket ${firms.length}`); assert.ok(firms.some(f => w.characters[f.owner]?.role === 'oligarch')); assert.ok(firms.some(f => f.owner === null)); assert.ok(firms.every(f => f.name && !f.name.includes('undefined')));
+  for (let i = 0; i < 8; i++) { beginTurn(w); stepWorld(w); } assert.ok(Object.values(w.firms).some(f => f.lastProfit > 0), 'kâr eden şirket olmalı'); console.log(`       kâr örneği: ${Object.values(w.firms).map(f => Math.round(f.lastProfit)).sort((a, b) => b - a).slice(0, 8).join(', ')}; oligark serveti: ${aliveCountries(w).map(c => Math.round(w.characters[c.oligarch]?.wealth ?? 0)).join(', ')}`);
+});
 ok('Devletler devralınır: rejim, ordu, para ve borç ülkeden ülkeye ayrışır', () => {
   const w = inherited(), cs = aliveCountries(w), men = c => Object.values(w.units).filter(u => u.country === c.id).reduce((a, u) => a + u.men, 0);
   assert.equal(w.status, 'kuruluyor'); assert.equal(new Set(cs.map(c => c.archetype)).size, 5, 'aynı tip iki kez çıkmamalı'); assert.ok(new Set(cs.map(c => c.regime)).size >= 4); assert.ok(cs.every(c => c.name && !c.name.startsWith('Bölge')));

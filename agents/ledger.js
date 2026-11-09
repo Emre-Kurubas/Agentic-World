@@ -33,6 +33,7 @@ function levelOf(value, steps, prev) {
 export function snapshotState(w) {
   const countries = {}, provinces = {}, characters = {}, wars = {}, treaties = {}, plots = {}, strategic = {}, debts = {};
   for (const d of w.debts || []) debts[d.id] = d.status;
+  const firms = {}; for (const f of Object.values(w.firms || {})) firms[f.id] = { owner: f.owner, status: f.status };
   for (const c of Object.values(w.countries)) countries[c.id] = { alive: c.alive, name: c.name, regime: c.regime, capital: c.capital, leader: c.leader, general: c.general, opposition: c.opposition, oligarch: c.oligarch, fxRegime: c.fxRegime, rate: c.rate, strike: !!c.strike, bankCrisis: !!c.bankCrisis, defaulted: !!c.defaulted, techs: Object.keys(c.techs || {}), institutions: Object.fromEntries((c.institutions || []).filter(i => i.id).map(i => [i.id, { name: i.name, head: i.head }])), bills: Object.fromEntries((c.bills || []).map(b => [b.id, b.status])), suspended: (c.parliament?.suspendedUntil ?? 0) > w.turn };
   for (const p of Object.values(w.provinces)) provinces[p.id] = p.controller;
   for (const ch of Object.values(w.characters)) characters[ch.id] = { alive: ch.alive, status: ch.status, role: ch.role, country: ch.country, name: ch.name };
@@ -40,7 +41,7 @@ export function snapshotState(w) {
   for (const t of w.treaties) treaties[t.id] = { active: !!t.active, pending: !!t.pending, breaches: t.breaches?.length ?? 0 };
   for (const p of w.plots) plots[p.id] = { active: !!p.active, exposed: !!p.exposed };
   for (const s of w.strategic) strategic[s.id] = { controller: s.controller, closed: !!s.closed, toll: s.toll || 0 };
-  return { countries, provinces, characters, wars, treaties, plots, strategic, debts };
+  return { countries, provinces, characters, wars, treaties, plots, strategic, debts, firms };
 }
 
 function stateChanges(w, was) {
@@ -125,6 +126,13 @@ function stateChanges(w, was) {
     if (!b && pl.active) add(`Gizli ${label} kuruldu`, 0, { c: [pl.country], a: people, x: { secret: true } });
     if (b && !b.exposed && pl.exposed) add(`Açığa çıktı: ${label}`, 2, { c: [pl.country], a: people });
     if (b?.active && !pl.active) add(`Sona erdi: ${label}`, 1, { c: [pl.country], a: people });
+  }
+  const ownerLabel = o => o === 'devlet' ? 'devlet' : o ? who(o) : 'halka açık';
+  for (const f of Object.values(w.firms || {})) {
+    const b = was.firms?.[f.id], people = [f.owner, b?.owner].filter(o => o && o !== 'devlet');
+    if (!b) add(`Yeni şirket: ${f.name} (${cn(f.country)}), sahibi ${ownerLabel(f.owner)}`, 1, { c: [f.country], a: people, p: f.province });
+    else if (b.status === 'acik' && f.status === 'iflas') add(`${f.name} iflas etti (${cn(f.country)})`, 2, { c: [f.country], a: people, p: f.province });
+    else if (b.owner !== f.owner) add(`${f.name} el değiştirdi: ${ownerLabel(b.owner)} yerine ${ownerLabel(f.owner)}`, f.owner === 'devlet' ? 2 : 1, { c: [f.country], a: people, p: f.province });
   }
   const DEBT_TR = { gecikmis: 'vadesinde ödenmedi', odendi: 'ödendi', silindi: 'silindi', dustu: 'taraflardan biri öldüğü için düştü' };
   for (const d of w.debts || []) {
