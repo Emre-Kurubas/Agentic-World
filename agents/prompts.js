@@ -11,7 +11,7 @@ import { upkeepCost } from '../engine/military.js';
 
 const ROLE_TEXT = {
   leader: 'You are the head of state of the country. Your formal powers are broad, but the army, capital, the people and your rivals can bring you down.',
-  general: 'You are the chief of the general staff. You have close ties to the army. Formal decisions are made by the leader.',
+  general: 'You are the chief of the general staff. You direct where the army\'s units and the fleet\'s squadrons stand and who commands them. Raising or disbanding troops, war and peace, and every other formal decision belong to the leader.',
   opposition: 'You are the leader of the opposition. You have no formal power; you work through the people, your party network, foreigners and rumors.',
   oligarch: 'You are the most powerful businessperson in the country. You work through mines, industry and money.'
 };
@@ -109,7 +109,7 @@ What a treaty can settle besides its clauses: cede lists provinces that change h
 A law can set taxes, budgets, tariffs, money, debt, war, parties, the regime, institutions and elections (${[...LEGISLATIVE].join(',')}); it cannot arrest people, name heirs or move troops, so do not put those into propose_law. Where no legislature sits, propose_law by whoever governs is a decree. suspend_parliament{turns:0} recalls a suspended parliament.
 Several things can only be done so far in one quarter and a repeated order adds nothing: printing money, devaluing, borrowing, nationalising and privatising, raising men from one province, embezzling. privatize_company makes an offer that the buyer must take with buy_company. A landing (amphibious) needs the unit on a coast, a sea route, and a surface fleet with ships enough holding the water off the target.
 A blockade is a fleet moved to a sea next to the enemy's ports. Technology keys: ${Object.keys(TECHS).join(',')}.
-Authority: the ruler may order anything. The chief of staff, the opposition leader and the oligarch may deal, lend, bribe, plot, speak and use their own specialist operations, but not the state's (taxes, war, troops, purges) unless an institution delegates them. Someone out of office, imprisoned or exiled can do less still. The engine itself refuses what an actor may not do, so translate the decision as it was meant.`;
+Authority: the ruler may order anything. The chief of staff may move units and fleets and appoint their commanders (move, move_army, move_fleet, appoint_commander), but not raise or disband them or make war. The chief of staff, the opposition leader and the oligarch may deal, lend, bribe, plot, speak and use their own specialist operations, but not the state's (taxes, war, recruiting, purges) unless an institution delegates them. Someone out of office, imprisoned or exiled can do less still. The engine itself refuses what an actor may not do, so translate the decision as it was meant.`;
 
 export function refereePrompt(w, c, entries) {
   const nm = id => w.countries[id]?.name ?? id, P = id => `${id}=${w.provinces[id]?.name}`, cut = (s, n) => String(s ?? '').replace(/\s+/g, ' ').slice(0, n);

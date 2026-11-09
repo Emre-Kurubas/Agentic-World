@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { aliveCountries, ROLES, countryProvinces } from '../engine/world.js';
 import { beginTurn, stepWorld } from '../engine/step.js';
 import { applyOp } from '../engine/ops.js';
-import { news, rand, clamp } from '../engine/util.js';
+import { news, rand, clamp, quarterLabel } from '../engine/util.js';
 import { npcDecide } from './npc.js';
 import { actorPrompt, refereePrompt, lookupReply, talkText } from './prompts.js';
 import { answer } from './queries.js';
@@ -301,7 +301,7 @@ export class Game {
       if (!mine?.decisions?.length || mine._ops || mine.fallback || !ruled) continue;
       for (const { decisions, indices } of unruled([{ actor: ch, decisions: mine.decisions }], ruled)) decisions.forEach((d, k) => {
         this.report(ch, `The referee gave no ruling on decision ${indices[k]}: ${d.slice(0, 160)}`);
-        ch.outcomes.push(`${w.date}: Not carried out, no ruling was given: ${d.slice(0, 200)}`); ch.outcomes = ch.outcomes.slice(-16); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
+        ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: Not carried out, no ruling was given: ${d.slice(0, 200)}`); ch.outcomes = ch.outcomes.slice(-16); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
       });
     }
     // Those who never read their mail (rule-based players, sleepers) do not keep every letter for ever.
@@ -329,7 +329,7 @@ export class Game {
     if (source === 'referee' && narrative) {
       const plain = m => m && !['Applied.', 'Recorded.'].includes(m), said = results.filter(r => plain(r.msg)).map(r => `${r.ok ? '' : `${r.op} was NOT carried out: `}${r.msg}`).join(' ');
       const verdict = !success ? 'Failed' : !refused.length ? 'Succeeded' : refused.length < results.length ? 'Only partly carried out' : 'Not carried out';
-      ch.outcomes.push(`${w.date}: ${verdict}: ${narrative}${said ? ` [${said.slice(0, 500)}]` : ''}`); ch.outcomes = ch.outcomes.slice(-16); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
+      ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: ${verdict}: ${narrative}${said ? ` [${said.slice(0, 500)}]` : ''}`); ch.outcomes = ch.outcomes.slice(-16); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
     }
     return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, probability: prob, success, results, source, decision, decisionText, ops };
   }

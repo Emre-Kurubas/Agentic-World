@@ -22,6 +22,9 @@ const PERMISSIONS = {
 // What anyone may do whatever their office: deal, lend, scheme, speak.
 const PRIVATE = ['propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'fund_plot', 'bribe', 'custom', 'propaganda', 'noop'];
 PERMISSIONS.private = new Set(PRIVATE);
+// The chief of staff directs where the army's units and squadrons stand and who commands them. Raising and disbanding troops, war and peace stay with the ruler.
+for (const op of ['move', 'move_army', 'move_fleet', 'appoint_commander']) PERMISSIONS.general.add(op);
+for (const seat of ['general', 'opposition', 'oligarch']) PERMISSIONS[seat].add('noop');
 PERMISSIONS.exiled = new Set(PRIVATE.filter(x => !['found_party', 'execute_plot', 'gather_dossier'].includes(x)));
 PERMISSIONS.imprisoned = new Set(['accept_contract', 'cancel_contract', 'repay_debt', 'forgive_debt', 'join_plot', 'betray_plot', 'bribe', 'custom', 'noop']);
 // The office is the seat, not the title: a deposed or jailed leader keeps only what any private person has.
