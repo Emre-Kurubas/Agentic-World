@@ -2,12 +2,12 @@ import { clamp, sum, rand, between, pick, nextId } from './util.js';
 import { inheritStates } from './inherit.js';
 import { issueCurrency } from './money.js';
 import { writeLife } from './chronicle.js';
+import { ETHNICITIES, FAITHS, givenNames, familyNames, placeName, hashOf } from './names.js';
 
 const SYL = ['ar','ven','tor','mi','sa','lor','ka','zen','ol','ri','dan','ve','gar','su','thal','ne','bor','ha','lin','es','mar','ku','ra','dor','iv','al','pe','ten'];
 export const FIRST = ['Aren','Besra','Cemre','Davor','Elif','Faren','Giray','Hale','Ilgaz','Jale','Kerem','Lale','Mirza','Nehir','Orhun','Pelin','Rüzgar','Selin','Tarkan','Umay','Vedat','Yelda','Zafer','Alara','Bora','Defne','Emre','Feride','Göktan','Hazal'];
 export const LAST = ['Tarhan','Vedris','Korhal','Sunay','Melik','Ardıç','Dorsan','Kaya','Ilgın','Marven','Toral','Yeltan','Ozan','Belis','Karan','Sevin','Aydar','Numan','Rasil','Erkin'];
-const ETH = ['Varenli','Tolgar','Sumeri','Hazen','Ordalı','Kelti','Marun','Isparlı'];
-const REL = ['Güneş Yolu','Kadim Ocak','Bir Tanrı Kilisesi','Atalar Yolu','Sessiz Tarikat'];
+const ETH = ETHNICITIES, REL = FAITHS;
 
 export const ROLES = ['leader', 'general', 'opposition', 'oligarch'];
 export const CLASSES = ['koylu', 'isci', 'orta', 'elit'];
@@ -158,7 +158,7 @@ function spawnCharacter(w, cid, role, axes) {
   const id = nextId(w, 'K');
   const t = () => Math.round(between(w, 15, 90));
   w.characters[id] = {
-    id, country: cid, role, name: `${pick(w, FIRST)} ${pick(w, LAST)}`, alive: true, status: 'serbest',
+    id, country: cid, role, name: `${pick(w, givenNames(w.countries[cid]?.majorityEth, w.countries[cid]?.majorityRel))} ${pick(w, familyNames(w.countries[cid]?.majorityEth))}`, skill: .75 + (hashOf(id) % 61) / 100, alive: true, status: 'serbest',
     age: Math.round(between(w, 34, 68)), persona: '', diary: [], outcomes: [], ties: {}, dossiers: {}, ambition: t(), loyalty: role === 'leader' ? 100 : t(), ruthless: t(), greed: t(),
     power: role === 'leader' ? 70 : Math.round(between(w, 30, 65)),
     wealth: Math.round(between(w, 10, role === 'oligarch' ? 300 : 40)),
@@ -187,7 +187,7 @@ export function makeCountry(w, id, patch = {}) {
 }
 
 export function createWorld(cfg) {
-  const w = { rng: cfg.seed | 0, seq: 0, turn: 0, status: 'kuruluyor', provinces: {}, seas: {}, countries: {}, characters: {}, units: {}, fleets: {}, wars: [], treaties: [], plots: [], epidemics: [], strategic: [], canals: [], routes: {}, tradeFlows: {}, globalPrice: { ...BASE_PRICE }, priceHistory: [], newsThisTurn: [], newsLog: [], debts: [], firms: {}, map: null };
+  const w = { rng: cfg.seed | 0, seq: 0, turn: 0, status: 'kuruluyor', provinces: {}, seas: {}, countries: {}, characters: {}, units: {}, fleets: {}, wars: [], treaties: [], plots: [], epidemics: [], strategic: [], canals: [], routes: {}, tradeFlows: {}, globalPrice: { ...BASE_PRICE }, priceHistory: [], newsThisTurn: [], newsLog: [], debts: [], firms: {}, projects: [], contracts: [], seaRaids: {}, map: null };
   const { W, H, sites, lands, nBasin } = buildMap(w, cfg.provinces);
   const pid = s => `P${s.i}`, sid = s => `D${s.i}`;
   for (const s of sites) {
@@ -245,6 +245,8 @@ export function createWorld(cfg) {
     bootEconomy(w, c);
   });
   findStrategic(w);
+  const taken = new Set();
+  for (const p of Object.values(w.provinces)) { let name = placeName(p.eth, p.id), n = 0; while (taken.has(name)) name = placeName(p.eth, `${p.id}#${++n}`); taken.add(name); p.name = name; }
   for (const c of aliveCountries(w)) issueCurrency(c);
   if (!cfg.plainStates) inheritStates(w);
   return w;

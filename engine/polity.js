@@ -7,8 +7,8 @@ export const num = (v, a, b, d = a) => clamp(Number.isFinite(Number(v)) ? Number
 
 export const STATE_POWERS = ['denetim', 'yargi', 'guvenlik', 'istihbarat', 'burokrasi', 'banka', 'ordu'];
 export const CIVIL_POWERS = ['egitim', 'refah', 'propaganda', 'din', 'sermaye', 'tarim', 'sanayi', 'arastirma'];
-export const DELEGABLE = new Set(['set_fx_regime', 'devalue', 'borrow_foreign', 'repay_foreign', 'set_capital_controls', 'ship_goods', 'set_tax', 'set_budget', 'set_tariff', 'set_arms_share', 'print_money', 'borrow', 'embargo', 'build', 'survey', 'set_research', 'move', 'move_army', 'recruit', 'repress', 'concession', 'purge', 'ban_party', 'set_institutions', 'propose_treaty', 'accept_treaty', 'spy', 'steal_tech', 'gather_dossier']);
-export const GATED = new Set(['nationalize_company', 'set_tax', 'set_budget', 'set_tariff', 'borrow', 'declare_war', 'ban_party', 'land_reform', 'nationalize', 'privatize']);
+export const DELEGABLE = new Set(['appoint_governor', 'appoint_commander', 'set_culture_policy', 'set_fx_regime', 'devalue', 'borrow_foreign', 'repay_foreign', 'set_capital_controls', 'ship_goods', 'set_tax', 'set_budget', 'set_tariff', 'set_arms_share', 'print_money', 'borrow', 'embargo', 'build', 'survey', 'set_research', 'move', 'move_army', 'recruit', 'repress', 'concession', 'purge', 'ban_party', 'set_institutions', 'propose_treaty', 'accept_treaty', 'spy', 'steal_tech', 'gather_dossier']);
+export const GATED = new Set(['set_culture_policy', 'nationalize_company', 'set_tax', 'set_budget', 'set_tariff', 'borrow', 'declare_war', 'ban_party', 'land_reform', 'nationalize', 'privatize']);
 const MAX_OPEN_BILLS = 6;
 
 const activeInstitutions = c => (c.institutions || []).filter(i => i.id);

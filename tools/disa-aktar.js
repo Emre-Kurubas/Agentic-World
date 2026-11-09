@@ -28,6 +28,7 @@ write('dunya-gecmisi.json', world.past ?? []);
 write('harita.json', JSON.parse(store.readMap()));
 write('isaretler.json', store.marks());
 if (fs.existsSync(store.file('stats.ndjson'))) fs.copyFileSync(store.file('stats.ndjson'), path.join(out, 'istatistik.ndjson'));
+if (fs.existsSync(store.file('positions.ndjson'))) fs.copyFileSync(store.file('positions.ndjson'), path.join(out, 'positions.ndjson'));
 if (fs.existsSync(store.file('usage.ndjson'))) fs.copyFileSync(store.file('usage.ndjson'), path.join(out, 'token-kullanimi.ndjson'));
 for (const a of art) fs.copyFileSync(store.artPath(a.id), path.join(artOut, a.file));
 write('sanat.json', art);

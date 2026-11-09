@@ -1,6 +1,7 @@
 // Ülke kronikleri ve karakter hayatları. Yalnızca olay yazılır; kimin ne hissedeceği yazılmaz.
 // Yerel rastgelelik kullanır, dünya üretimini ve motoru etkilemez.
-import { FIRST, LAST, countryProvinces, aliveCountries, GOOD_TR } from './world.js';
+import { countryProvinces, aliveCountries, GOOD_TR } from './world.js';
+import { givenNames, familyNames, personName } from './names.js';
 
 function seeded(key) {
   let h = 2166136261; for (const ch of key) { h ^= ch.codePointAt(0); h = Math.imul(h, 16777619) >>> 0; }
@@ -8,7 +9,7 @@ function seeded(key) {
 }
 const pickOf = (r, list) => list[Math.floor(r() * list.length)];
 const between = (r, a, b) => a + Math.floor(r() * (b - a + 1));
-const person = r => `${pickOf(r, FIRST)} ${pickOf(r, LAST)}`;
+const person = (r, eth, rel) => `${pickOf(r, givenNames(eth, rel))} ${pickOf(r, familyNames(eth))}`;
 
 const ARCS = {
   cunta: (x) => [[x.y(1790, 1830), `${x.name} topraklarında dağınık beylikler ${x.cap} çevresinde tek orduda birleşti.`], [x.y(1845, 1870), `Subay okulu ${x.cap} kentinde açıldı; devlet memurlarının çoğu ordudan alınmaya başlandı.`], [x.y(1872, 1888), `${x.past1} yönetimindeki sivil hükümet asker maaşlarını iki yıl ödemedi.`], [x.y(1889, 1896), `Garnizonlar ayaklandı, ${x.past1} ülkeyi terk etti ve meclis kapatıldı.`]],
@@ -26,8 +27,8 @@ const LANGUAGE_END = ['ca', 'ce', 'ça', 'çe'];
 
 export function writeChronicles(w) {
   for (const c of aliveCountries(w)) {
-    const r = seeded(`${c.id}|${c.name}`), provs = countryProvinces(w, c.id), root = c.name.split(' ')[0];
-    const x = { name: c.name, cap: w.provinces[c.capital]?.name ?? root, faith: c.majorityRel, y: (a, b) => between(r, a, b), past1: person(r), past2: person(r) };
+    const r = seeded(`${c.id}|${c.name}`), provs = countryProvinces(w, c.id), root = c.rootName ?? c.name.split(' ')[0];
+    const x = { name: c.name, cap: w.provinces[c.capital]?.name ?? root, faith: c.majorityRel, y: (a, b) => between(r, a, b), past1: person(r, c.majorityEth, c.majorityRel), past2: person(r, c.majorityEth, c.majorityRel) };
     const minorities = [...new Set(provs.filter(p => p.eth !== c.majorityEth).map(p => p.eth))], faiths = [...new Set(provs.filter(p => p.rel !== c.majorityRel).map(p => p.rel))];
     const deposits = [...new Set(provs.flatMap(p => Object.entries(p.deposits).filter(([, d]) => d.known && d.mine > 0).map(([k]) => GOOD_TR[k])))];
     const events = (ARCS[c.archetype] ?? ARCS.cumhuriyet)(x).map(([year, text]) => ({ year, text }));
@@ -65,6 +66,7 @@ export function writeLife(w, ch) {
     const other = pickOf(r, peers), y = Math.min(now - 1, year(between(r, 30, Math.max(31, ch.age - 2))));
     life.push({ year: y, text: pickOf(r, [`${other.name} ile bir mahkeme davasında karşı karşıya geldi; dava ${r() < .5 ? ch.name : other.name} lehine bitti.`, `${other.name} ile aynı komisyonda çalıştı.`, `${other.name}, ${ch.name} için önemli bir kefalet verdi.`, `${other.name}, onun bir atamasını son anda engelledi.`]) });
   }
+  if (home.eth !== c.majorityEth) ch.name = personName(home.eth, home.rel, ch.id);
   ch.origin = { birthplace: home.name, born, eth: home.eth, rel: home.rel, family: pickOf(r, FAMILY) };
   ch.life = life.sort((a, b) => a.year - b.year);
 }

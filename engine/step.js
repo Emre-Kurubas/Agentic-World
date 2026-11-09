@@ -3,6 +3,10 @@ import { militaryStep } from './military.js';
 import { satisfactionStep, plotStep, uprisingStep, electionStep, collapseStep, relationDrift, lifeStep, pruneStep, partyStep, debtStep } from './politics.js';
 import { treatyStep, institutionStep, billStep } from './polity.js';
 import { firmStep } from './firms.js';
+import { projectStep } from './projects.js';
+import { cultureStep } from './culture.js';
+import { adminStep } from './admin.js';
+import { contractStep } from './contracts.js';
 import { applyOp } from './ops.js';
 import { countryProvinces, aliveCountries, provincePop } from './world.js';
 import { sum, quarterLabel } from './util.js';
@@ -10,11 +14,15 @@ import { sum, quarterLabel } from './util.js';
 export function beginTurn(w) { w.newsThisTurn = []; w.battles = []; }
 
 export function stepWorld(w) {
+  projectStep(w);
+  adminStep(w);
   treatyStep(w);
   economyStep(w);
   firmStep(w);
+  contractStep(w);
   militaryStep(w);
   institutionStep(w);
+  cultureStep(w);
   satisfactionStep(w);
   partyStep(w);
   plotStep(w);

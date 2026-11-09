@@ -2,6 +2,8 @@ import { clamp, sum, news, rand, between, nextId, pick } from './util.js';
 import { CLASSES, ROLES, countryProvinces, provincePop, aliveCountries, makeCountry, spawnCharacter, atWar, clampRel } from './world.js';
 import { allocateSeats } from './polity.js';
 import { issueCurrency } from './money.js';
+import { culturePenalty, leaderForeignness, minorityShare } from './culture.js';
+import { adminPressure } from './admin.js';
 
 const CLASS_AXES = { koylu: { econ: -15, auth: 15, nation: 15, faith: 35 }, isci: { econ: -55, auth: -10, nation: 5, faith: 0 }, orta: { econ: 20, auth: -35, nation: 0, faith: -10 }, elit: { econ: 65, auth: 25, nation: 15, faith: 10 } };
 
@@ -33,14 +35,13 @@ export function satisfactionStep(w) {
         if (k === 'orta') t += (c.pressFreedom - 50) * .12;
         if (k === 'elit') t -= c.ownership * 30;
         if (p.controller !== p.owner) t -= 18;
-        if (p.eth !== c.majorityEth) t -= Math.max(0, c.axes.nation) * .22 + 3;
-        if (p.rel !== c.majorityRel) t -= Math.max(0, c.axes.faith) * .18 + 2;
+        t -= culturePenalty(c, p);
         t += modValue(c, `sat.${k}`) + modValue(c, 'sat.all');
         pop.sat = clamp(pop.sat + (clamp(t, 0, 100) - pop.sat) * .28, 0, 100);
       }
       const pp = provincePop(p);
       const meanSat = CLASSES.reduce((a, k) => a + p.pops[k].sat * p.pops[k].n, 0) / Math.max(pp, 1);
-      const pressure = 88 - meanSat * 1.3 + (c.pressFreedom > 70 ? 3 : 0) - c.police * .13 - c.repress * .35 + modValue(c, 'unrest');
+      const pressure = 88 - meanSat * 1.3 + (c.pressFreedom > 70 ? 3 : 0) - c.police * .13 - c.repress * .35 + modValue(c, 'unrest') + adminPressure(p);
       p.unrest = clamp(p.unrest + (clamp(pressure, 0, 100) - p.unrest) * .35, 0, 100);
       unrestSum += p.unrest * pp; popSum += pp;
     }
@@ -49,7 +50,7 @@ export function satisfactionStep(w) {
     c.repress = Math.max(0, c.repress - 6);
     const meanPop = weightedSat(w, c);
     c.popularity = meanPop;
-    const legitTarget = clamp(22 + meanPop * .75 + (c.growth || 0) * 40 - c.arrears * 4, 5, 95);
+    const legitTarget = clamp(22 + meanPop * .75 + (c.growth || 0) * 40 - c.arrears * 4 - leaderForeignness(w, c), 5, 95);
     c.legitimacy = clamp(c.legitimacy + (legitTarget - c.legitimacy) * .1 + modValue(c, 'legitimacy'), 0, 100);
     c.mods = c.mods.map(m => ({ ...m, turns: m.turns - 1 })).filter(m => m.turns > 0);
     c.tension = clamp(c.unrest * .55 + (100 - c.legitimacy) * .3 + (100 - c.blocs.ordu.sat) * .25 + w.plots.filter(x => x.active && x.country === c.id).length * 10 + (inWar ? 10 : 0), 0, 100);
@@ -237,7 +238,7 @@ export function uprisingStep(w) {
     const total = countryProvinces(w, c.id).length;
     if (canSplit(w, c) && hot.length >= Math.ceil(total * .5) && rand(w) < .14) {
       const oppId = c.opposition, opp = w.characters[oppId];
-      const minority = hot.filter(p => p.eth !== c.majorityEth).length > hot.length / 2;
+      const minority = sum(hot, p => minorityShare(p, c)) > hot.length / 2;
       if (opp?.alive && opp.status === 'serbest') startCivilWar(w, c, opp, minority ? 'Ayrılıkçılar' : 'Halk Cephesi', hot.filter(p => p.id !== c.capital).map(p => p.id));
     }
   }

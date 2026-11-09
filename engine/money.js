@@ -3,7 +3,7 @@
 import { clamp, news, sum } from './util.js';
 import { aliveCountries, BASE_PRICE, GOODS } from './world.js';
 
-const UNITS = ['akçesi', 'altunu', 'sikkesi', 'talları', 'kronu', 'gümüşü', 'dirhemi', 'parası'];
+const UNITS = ['crown', 'thaler', 'mark', 'florin', 'ducat', 'shilling', 'dirham', 'guilder'];
 export const FX_REGIMES = ['serbest', 'altin', 'bagli'];
 const OUTPUT_SHIELD = .03, CRISIS_TURNS = 2, GLUT_TURNS = 10;
 

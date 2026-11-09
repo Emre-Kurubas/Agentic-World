@@ -136,6 +136,7 @@ export class Store {
   saveStats(w) {
     const line = { t: w.turn, d: w.date || 'Başlangıç', c: Object.values(w.countries).filter(c => c.alive).map(c => ({ id: c.id, name: c.name, gdp: Math.round(c.realGdp), legit: Math.round(c.legitimacy), unrest: Math.round(c.unrest ?? 0), infl: +(c.inflation * 100).toFixed(1), food: +(c.foodRatio * 100).toFixed(0), treasury: Math.round(c.treasury), gold: Math.round(c.reserves), rate: +(c.rate ?? 1).toFixed(3), debt: Math.round(c.debt), men: Math.round(Object.values(w.units).filter(u => u.country === c.id).reduce((a, u) => a + u.men, 0)), ships: Math.round(Object.values(w.fleets).filter(f => f.country === c.id).reduce((a, f) => a + f.ships, 0)), provinces: Object.values(w.provinces).filter(p => p.controller === c.id).length })) };
     fs.appendFileSync(this.file('stats.ndjson'), `${JSON.stringify(line)}\n`);
+    fs.appendFileSync(this.file('positions.ndjson'), `${JSON.stringify({ t: w.turn, units: Object.values(w.units).map(u => [u.id, u.country, u.province, Math.round(u.men), u.kind, u.target ?? null]), fleets: Object.values(w.fleets).map(f => [f.id, f.country, f.sea, Math.round(f.ships), f.kind ?? 'cruiser', f.target ?? null]) })}\n`);
   }
 
   artDir() { const d = this.file('sanat'); fs.mkdirSync(d, { recursive: true }); return d; }

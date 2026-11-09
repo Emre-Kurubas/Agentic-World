@@ -6,6 +6,12 @@ import { executePlot } from '../engine/politics.js';
 import { makeParliament, treatyStep } from '../engine/polity.js';
 import { currencyStep, displacedDemand, exportEdge, localPrices } from '../engine/money.js';
 import { firmStep, STATE } from '../engine/firms.js';
+import { militaryStep } from '../engine/military.js';
+import { culturePenalty, cultureStep, migrate, leaderForeignness } from '../engine/culture.js';
+import { initAdmin, adminStep, adminPressure } from '../engine/admin.js';
+import { contractStep } from '../engine/contracts.js';
+import { makeUnit, makeFleet } from '../engine/world.js';
+import { givenNames } from '../engine/names.js';
 import { spawnCharacter } from '../engine/world.js';
 const spawnHeir = (w, c) => spawnCharacter(w, c.id, 'oligarch', c.axes);
 import { Game, shouldWake, isAI } from '../agents/game.js';
@@ -286,6 +292,67 @@ ok('Muharebeler ve teknik hatalar deftere yazılır, kararın metni hükme bağl
   const list = buildEntries(w, { trace: [], messages: [], system: [{ name: 'hakem', text: 'zaman aşımı' }], rulings: [{ actor: 'K1', name: 'A', country: 'U1', role: 'leader', narrative: 'n', probability: 1, success: true, results: [], source: 'hakem', decisionText: 'Köprüyü yak', ops: [] }] }, null);
   assert.ok(list.some(e => e.k === 'muharebe' && e.x.lossD === 9 && e.p === id)); assert.ok(list.some(e => e.k === 'sistem' && e.text === 'zaman aşımı')); assert.equal(list.find(e => e.k === 'hukum').x.decisionText, 'Köprüyü yak');
 });
+const frontWorld = () => { const w = fresh(); run(w, 1); const a = w.countries.U1, p = countryProvinces(w, 'U1').find(q => q.id !== a.capital && q.neighbors.some(n => w.provinces[n].controller === 'U2')), q = w.provinces[p.neighbors.find(n => w.provinces[n].controller === 'U2')]; for (const u of Object.values(w.units)) if (['U1', 'U2'].includes(u.country)) delete w.units[u.id]; w.wars.push({ id: 'SF', a: ['U2'], b: ['U1'], civil: false, active: true, start: w.turn, name: 'F' }); return { w, a, b: w.countries.U2, p, q }; };
+const soldier = (w, c, province, men = 100) => { const u = makeUnit(w, c, province, men, 1, 80); u.morale = 70; u.equip = 1; return u; };
+chain('İnşaat zaman alır, biter, eyalet düşerse boşa gider', () => {
+  const w = fresh(), c = w.countries.U1, p = countryProvinces(w, 'U1')[0], l = ld(w, c); c.treasury = c.gdp * 3; c.stock.machines = 100; const before = p.plants.steel;
+  const r = applyOp(w, l, { op: 'build', province: p.id, kind: 'steel', pct_gdp: .05 }); assert.equal(r.ok, true, r.msg); assert.equal(p.plants.steel, before, 'hemen bitmez'); assert.ok(r.msg.includes('quarters'));
+  run(w, 3); assert.ok(p.plants.steel < before + .4, 'üç çeyrek sonra hâlâ bitmedi'); const mid = w.projects.at(-1); assert.ok(mid.turnsLeft > 0 && !mid.status); run(w, 1); assert.ok(p.plants.steel > before + .5, 'tamamlanınca kapasite artar');
+  const q = countryProvinces(w, 'U1')[1]; c.treasury = c.gdp * 3; applyOp(w, l, { op: 'build', province: q.id, kind: 'trench', pct_gdp: .02 }); q.controller = 'U2'; run(w, 1); assert.equal(q.trench ?? 0, 0, 'kaybedilen eyaletteki inşaat biter');
+});
+chain('Asker toplamak ve gemi inşa etmek süre ister', () => {
+  const w = fresh(), c = w.countries.U1, l = ld(w, c), p = countryProvinces(w, 'U1')[0], n = Object.keys(w.units).length; c.treasury = c.gdp * 3; c.stock.arms = 1000; c.stock.steel = 1000; applyOp(w, l, { op: 'recruit', province: p.id, men: 10, unit_kind: 'topcu' }); assert.equal(Object.keys(w.units).length, n, 'hemen gelmez'); run(w, 1); assert.equal(Object.keys(w.units).length, n, 'topçu 2 çeyrek'); run(w, 1); assert.equal(Object.keys(w.units).length, n + 1);
+  const port = countryProvinces(w, 'U1').find(q => q.port > 0) ?? p; port.port = 1; port.seas = port.seas.length ? port.seas : Object.keys(w.seas).slice(0, 1); const f = Object.keys(w.fleets).length; applyOp(w, l, { op: 'build_ship', province: port.id, ships: 2, kind: 'battleship' }); run(w, 5); assert.equal(Object.keys(w.fleets).length, f); run(w, 1); assert.equal(Object.values(w.fleets).at(-1).kind, 'battleship');
+});
+chain('Kale savunanı güçlendirir, kuşatılınca eyalet hemen düşmez', () => {
+  const battle = fort => { const { w, a, p } = frontWorld(); p.fort = fort; soldier(w, 'U1', p.id, 100); soldier(w, 'U2', p.id, 130); militaryStep(w); return w.battles.at(-1).attackerWon; };
+  assert.equal(battle(0), true, 'kalesiz düşer'); assert.equal(battle(3), false, 'kale tutar');
+  const { w, p } = frontWorld(); p.fort = 2; soldier(w, 'U2', p.id, 80); militaryStep(w); assert.equal(p.controller, 'U1', 'ilk çeyrek kuşatma'); assert.ok(p.siege.turns === 1); militaryStep(w); militaryStep(w); militaryStep(w); assert.equal(p.controller, 'U2', 'kuşatma sonunda düşer'); assert.ok((p.fort || 0) < 2);
+});
+chain('General yeteneği savaşı etkiler, savaş sicile yazılır', () => {
+  const run1 = (a, b) => { const { w, p } = frontWorld(); w.characters[w.countries.U1.general].skill = a; w.characters[w.countries.U2.general].skill = b; soldier(w, 'U1', p.id, 100); soldier(w, 'U2', p.id, 110); militaryStep(w); return { won: w.battles.at(-1).attackerWon, gen: w.characters[w.countries.U1.general] }; };
+  assert.equal(run1(.7, 1.4).won, true); const r = run1(1.5, .7); assert.equal(r.won, false); assert.equal(r.gen.record.won, 1);
+});
+chain('Cephe oluşur: düşmana değen birlik durur, kuşatılan birlik erir', () => {
+  const { w, p, q } = frontWorld(), far = q.neighbors.find(n => n !== p.id && w.provinces[n].controller === 'U2') ?? q.id, u = soldier(w, 'U1', p.id, 50); soldier(w, 'U2', far, 50); u.target = far; militaryStep(w); assert.ok(u.province !== far || w.battles.length, 'temas yürüyüşü keser');
+  const e = frontWorld(), cut = soldier(e.w, 'U1', Object.values(e.w.provinces).find(x => x.controller === 'U3' && !x.neighbors.some(n => e.w.provinces[n].controller === 'U1')).id, 100); e.w.wars.push({ id: 'SC', a: ['U1'], b: ['U3'], civil: false, active: true, start: 0, name: 'C' }); const m = cut.men; militaryStep(e.w); assert.ok(cut.men < m || !e.w.units[cut.id], `ikmalsiz ${cut.men}`);
+});
+chain('Asimilasyon nüfusu değiştirir, azınlık bedel öder, göç halkı taşır', () => {
+  const w = inherited(), c = aliveCountries(w)[0], p = countryProvinces(w, c.id)[0]; p.groups = [{ eth: 'Marun', rel: c.majorityRel, share: .6 }, { eth: c.majorityEth, rel: c.majorityRel, share: .4 }]; p.eth = 'Marun'; c.languagePolicy = 'assimilate'; c.literacy = 60; const pen = culturePenalty(c, p), before = p.groups.find(g => g.eth === c.majorityEth).share;
+  for (let i = 0; i < 40; i++) cultureStep(w); assert.ok(p.groups.find(g => g.eth === c.majorityEth).share > before + .05, 'asimilasyon'); c.languagePolicy = 'autonomy'; assert.ok(culturePenalty(c, p) < pen, 'özerklik baskıyı azaltır');
+  const q = countryProvinces(w, c.id)[1]; q.groups = [{ eth: c.majorityEth, rel: c.majorityRel, share: 1 }]; const r = { groups: [{ eth: 'Marun', rel: 'Silent Order', share: 1 }], pops: { koylu: { n: 500 }, isci: { n: 0 }, orta: { n: 0 }, elit: { n: 0 } } }; migrate(r, q, .4); assert.ok(q.groups.some(g => g.eth === 'Marun'), 'göç eden halk gelir');
+  assert.equal(applyOp(w, w.characters[c.leader], { op: 'set_culture_policy', language: 'tolerate', _law: true }).ok, true); assert.equal(c.languagePolicy, 'tolerate');
+});
+ok('Başka halktan lider milliyetçi ülkede meşruiyet kaybeder', () => {
+  const w = inherited(), c = aliveCountries(w)[0], l = w.characters[c.leader]; c.axes.nation = 80; l.origin = { eth: c.majorityEth, rel: c.majorityRel }; assert.equal(leaderForeignness(w, c), 0); l.origin = { eth: 'Keltish-x', rel: c.majorityRel }; assert.ok(leaderForeignness(w, c) > 5);
+});
+chain('Uzak eyalete devletin eli az uzanır, vali uzatır, tahsilat değişir', () => {
+  const w = inherited(), c = aliveCountries(w).find(x => countryProvinces(w, x.id).length > 8), provs = countryProvinces(w, c.id); initAdmin(w); const cap = w.provinces[c.capital], far = provs.reduce((a, b) => (a.admin < b.admin ? a : b)); assert.ok(cap.admin > far.admin, `${cap.admin} / ${far.admin}`);
+  const before = far.admin; assert.equal(applyOp(w, w.characters[c.leader], { op: 'appoint_governor', province: far.id, character: c.general }).ok, true); for (let i = 0; i < 30; i++) adminStep(w); assert.ok(far.admin > before, 'vali erişimi artırır'); assert.ok(c._adminFactor > 0);
+  far.admin = .1; assert.ok(adminPressure(far) > 0, 'zayıf idare huzursuzluk');
+});
+chain('Sözleşme kabulle başlar, ödeme ve teslimat yürür, ihlal yazılır', () => {
+  const w = fresh(), c = w.countries.U1, a = w.characters[c.oligarch], b = w.characters[w.countries.U2.oligarch], A0 = 500; a.wealth = A0; b.wealth = 100; run(w, 1); w.routes['U1|U2'] = { mode: 'kara', cost: 1, path: [], tolls: [] };
+  const r = applyOp(w, a, { op: 'propose_contract', to: b.id, terms: 'Demir anlaşması', pay_per_turn: 10, good: 'iron', amount: 5, seller: 'them', turns: 3 }); assert.equal(r.ok, true); assert.equal(a.wealth, A0, 'kabulden önce para yürümez'); const k = w.contracts.at(-1);
+  contractStep(w); assert.equal(k.status, 'proposed'); assert.equal(applyOp(w, b, { op: 'accept_contract', id: k.id }).ok, true); w.firms.SRY = { id: 'SRY', status: 'acik', owner: b.id, sector: 'maden', resource: 'iron', country: 'U2', province: countryProvinces(w, 'U2')[0].id, stake: 0, cash: 0, lastProfit: 0, bad: 0 };
+  w.countries.U2.stock.iron = 100; c.stock.iron = 0; contractStep(w); assert.equal(a.wealth, A0 - 10); assert.equal(b.wealth, 110); assert.equal(c.stock.iron, 5);
+  w.countries.U2.stock.iron = 0; contractStep(w); assert.ok(k.breaches?.some(x => x.who === b.id), 'kısa teslimat ihlal'); assert.ok(a.inbox.some(m => m.text.includes('breached')));
+  w.turn = k.until; contractStep(w); assert.equal(k.status, 'finished');
+});
+chain('Gemi türleri: zırhlı daha güçlü, denizaltı ticareti vurur ama denizi tutamaz', () => {
+  const setup = (a, b) => { const w = fresh(), sea = Object.keys(w.seas)[0]; for (const f of Object.values(w.fleets)) delete w.fleets[f.id]; w.wars.push({ id: 'SD', a: ['U1'], b: ['U2'], civil: false, active: true, start: 0, name: 'D' }); const fa = makeFleet(w, 'U1', sea, 5), fb = makeFleet(w, 'U2', sea, 12); fa.kind = a; fb.kind = b; return { w, sea, fa, fb }; };
+  const s = setup('battleship', 'cruiser'); militaryStep(s.w); assert.equal(s.w.seaControl[s.sea], 'U1');
+  const t = setup('submarine', 'cruiser'); t.fb.ships = 1; militaryStep(t.w); assert.notEqual(t.w.seaControl[t.sea], 'U1', 'denizaltı denizi tutmaz'); assert.ok(t.w.seaRaids[t.sea].includes('U1'));
+  const w = fresh(), c = w.countries.U1, p = countryProvinces(w, 'U1').find(q => q.coast) ?? countryProvinces(w, 'U1')[0]; p.port = 1; c.treasury = c.gdp * 3; c.stock.steel = 1000; assert.equal(applyOp(w, ld(w, c), { op: 'build_ship', province: p.id, ships: 1, kind: 'submarine' }).ok, false, 'teknoloji gerekir');
+});
+ok('İsimler kültüre göre: ülke, kişi ve eyalet adları halkın dilinden gelir', () => {
+  const w = inherited(), cs = aliveCountries(w); assert.ok(cs.every(c => /Kingdom|Republic|Empire|Confederation|Provinces|State|Council|Government|Ports|Principality|Crown/.test(c.name)), cs.map(c => c.name).join(', ')); assert.ok(new Set(Object.values(w.provinces).map(p => p.name)).size === Object.keys(w.provinces).length, 'eyalet adları tekil');
+  for (const c of cs) { const eth = c.majorityEth, names = Object.values(w.characters).filter(x => x.country === c.id && x.origin?.eth === eth).map(x => x.name.split(' ')[0]); assert.ok(names.every(n => givenNames(eth, c.majorityRel).includes(n)), `${eth}: ${names}`); }
+  assert.ok(!cs.some(c => /[çğıöşüÇĞİÖŞÜ]/.test(c.name)), 'İngilizce yazım');
+});
+await (async () => {
+  const w = inherited(), store = tempStore(); w.status = 'oyunda'; beginTurn(w); stepWorld(w); store.commit(w, []); const line = JSON.parse(fs.readFileSync(store.file('positions.ndjson'), 'utf8').trim()); assert.ok(line.units.length && line.units[0].length === 6, 'birlik konumu'); assert.ok(line.t === w.turn); fs.rmSync(store.dir, { recursive: true, force: true }); console.log('geçti  Birliklerin ve filoların konumu her tur kaydedilir');
+})();
 const firmWorld = () => { const w = fresh(), c = w.countries.U1; run(w, 1); const p = countryProvinces(w, 'U1').find(q => q.plants.goods > .1) ?? countryProvinces(w, 'U1')[0]; p.plants.goods = 2; const f = { id: 'SRX', name: 'Test Dokuma', country: 'U1', province: p.id, sector: 'goods', resource: null, stake: 1, owner: c.oligarch, cash: 0, lastProfit: 0, founded: 0, status: 'acik', bad: 0, offer: null }; w.firms.SRX = f; return { w, c, p, f, ol: w.characters[c.oligarch] }; };
 const sellGoods = (c, goods = 100, timber = 1) => { Object.assign(c.prices, { goods, timber, coal: 1, steel: 1 }); c._made = { ...c._made, goods: 200 }; };
 chain('Şirket iç piyasadan kâr eder, sahibine temettü gider, devletinse hazineye', () => {
@@ -332,7 +399,7 @@ ok('Devletler devralınır: rejim, ordu, para ve borç ülkeden ülkeye ayrış�
 ok('Geçmiş olgudur: kaybedilen eyaletin halkı, borçlar ve iktidara geliş gerçektir', () => {
   for (const seed of [1848, 42, 7]) {
     const w = inherited(seed); assert.ok(w.past.length >= 2, `olay ${w.past.length}`); assert.ok(aliveCountries(w).every(c => w.characters[c.leader].rise));
-    assert.ok(!w.past.some(e => /nefret|öfke|intikam|kin/i.test(e.text)), 'duygu yazılmaz');
+    assert.ok(!w.past.some(e => /\b(nefret|öfke|intikam|kin|hatred|anger|revenge|grudge)\b/i.test(e.text)), 'duygu yazılmaz');
     for (const c of aliveCountries(w)) for (const [id, amt] of Object.entries(c.creditors)) { assert.ok(amt > 0 && w.countries[id]); assert.ok(w.past.some(e => e.countries.includes(id) && e.countries.includes(c.id) && e.text.includes('borçlu'))); }
     for (const e of w.past.filter(x => x.text.includes('elinden'))) { const p = Object.values(w.provinces).find(q => e.text.includes(`${q.name} eyaleti`)), loser = w.countries[e.countries[1]]; assert.equal(p.eth, loser.majorityEth, 'kayıp eyaletin halkı gerçekten karşı taraftan'); assert.equal(p.controller, e.countries[0]); }
   }

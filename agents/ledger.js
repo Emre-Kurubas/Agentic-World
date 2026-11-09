@@ -34,6 +34,11 @@ export function snapshotState(w) {
   const countries = {}, provinces = {}, characters = {}, wars = {}, treaties = {}, plots = {}, strategic = {}, debts = {};
   for (const d of w.debts || []) debts[d.id] = d.status;
   const firms = {}; for (const f of Object.values(w.firms || {})) firms[f.id] = { owner: f.owner, status: f.status };
+  const projects = {}; for (const x of w.projects || []) projects[x.id] = x.status ?? 'active';
+  const contracts = {}; for (const k of w.contracts || []) contracts[k.id] = { status: k.status, breaches: k.breaches?.length ?? 0 };
+  const sieges = {}, policies = {}, governors = {};
+  for (const p of Object.values(w.provinces)) { if (p.siege) sieges[p.id] = p.siege.by; if (p.governor) governors[p.id] = p.governor; }
+  for (const c of Object.values(w.countries)) policies[c.id] = `${c.languagePolicy}|${c.faithPolicy}`;
   for (const c of Object.values(w.countries)) countries[c.id] = { alive: c.alive, name: c.name, regime: c.regime, capital: c.capital, leader: c.leader, general: c.general, opposition: c.opposition, oligarch: c.oligarch, fxRegime: c.fxRegime, rate: c.rate, strike: !!c.strike, bankCrisis: !!c.bankCrisis, defaulted: !!c.defaulted, techs: Object.keys(c.techs || {}), institutions: Object.fromEntries((c.institutions || []).filter(i => i.id).map(i => [i.id, { name: i.name, head: i.head }])), bills: Object.fromEntries((c.bills || []).map(b => [b.id, b.status])), suspended: (c.parliament?.suspendedUntil ?? 0) > w.turn };
   for (const p of Object.values(w.provinces)) provinces[p.id] = p.controller;
   for (const ch of Object.values(w.characters)) characters[ch.id] = { alive: ch.alive, status: ch.status, role: ch.role, country: ch.country, name: ch.name };
@@ -41,7 +46,7 @@ export function snapshotState(w) {
   for (const t of w.treaties) treaties[t.id] = { active: !!t.active, pending: !!t.pending, breaches: t.breaches?.length ?? 0 };
   for (const p of w.plots) plots[p.id] = { active: !!p.active, exposed: !!p.exposed };
   for (const s of w.strategic) strategic[s.id] = { controller: s.controller, closed: !!s.closed, toll: s.toll || 0 };
-  return { countries, provinces, characters, wars, treaties, plots, strategic, debts, firms };
+  return { countries, provinces, characters, wars, treaties, plots, strategic, debts, firms, projects, contracts, sieges, policies, governors };
 }
 
 function stateChanges(w, was) {
@@ -127,6 +132,23 @@ function stateChanges(w, was) {
     if (b && !b.exposed && pl.exposed) add(`Açığa çıktı: ${label}`, 2, { c: [pl.country], a: people });
     if (b?.active && !pl.active) add(`Sona erdi: ${label}`, 1, { c: [pl.country], a: people });
   }
+  for (const x of w.projects || []) {
+    const prev = was.projects?.[x.id], name = `${x.label ?? x.kind} at ${w.provinces[x.province]?.name}`;
+    if (!prev) add(`${cn(x.country)} began work: ${name} (${x.turns} quarters)`, ['fort', 'canal', 'battery', 'ship'].includes(x.kind) ? 1 : 0, { c: [x.country], p: x.province, x: { kind: x.kind } });
+    else if (prev === 'active' && x.status === 'done') add(`${cn(x.country)} completed: ${name}`, ['fort', 'canal', 'battery', 'ship'].includes(x.kind) ? 1 : 0, { c: [x.country], p: x.province, x: { kind: x.kind } });
+    else if (prev === 'active' && x.status === 'lost') add(`${cn(x.country)} lost work in progress: ${name}`, 1, { c: [x.country], p: x.province });
+  }
+  for (const k of w.contracts || []) {
+    const b = was.contracts?.[k.id], people = [k.a, k.b];
+    if (!b) add(`Contract offered between ${who(k.a)} and ${who(k.b)}: ${k.terms}`, 0, { a: people, x: { secret: true } });
+    else if (b.status !== k.status) add(`Contract between ${who(k.a)} and ${who(k.b)}: ${k.status}`, 0, { a: people, x: { secret: true } });
+    else if ((k.breaches?.length ?? 0) > b.breaches) add(`Contract breached: ${k.breaches.at(-1).text}`, 1, { a: people, x: { secret: true } });
+  }
+  for (const p of Object.values(w.provinces)) {
+    if (p.siege && !was.sieges?.[p.id]) add(`Siege of ${p.name} began`, 2, { c: [p.siege.by, p.controller], p: p.id });
+    if (p.governor && was.governors?.[p.id] !== p.governor) add(`${who(p.governor)} became governor of ${p.name}`, 1, { c: [p.controller], a: [p.governor], p: p.id });
+  }
+  for (const c of Object.values(w.countries)) if (c.alive && was.policies?.[c.id] && was.policies[c.id] !== `${c.languagePolicy}|${c.faithPolicy}`) add(`${c.name} changed its policy: language ${c.languagePolicy}, faith ${c.faithPolicy}`, 2, { c: [c.id], p: c.capital });
   const ownerLabel = o => o === 'devlet' ? 'devlet' : o ? who(o) : 'halka açık';
   for (const f of Object.values(w.firms || {})) {
     const b = was.firms?.[f.id], people = [f.owner, b?.owner].filter(o => o && o !== 'devlet');

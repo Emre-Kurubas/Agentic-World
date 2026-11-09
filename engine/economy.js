@@ -1,5 +1,6 @@
 import { clamp, sum, news, between, rand } from './util.js';
 import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_TR, PLANTS, TECHS, countryProvinces, provincePop, aliveCountries, atWar, hasTreaty } from './world.js';
+import { migrate } from './culture.js';
 import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep } from './money.js';
 
 export const RECIPE = {
@@ -64,7 +65,8 @@ export function updateRoutes(w) {
     const path = seaRoute(w, a, b);
     if (path) {
       const tolls = path.map(s => straitAt(w, s)).filter(s => s && s.toll && s.controller && ![a.id, b.id].includes(s.controller));
-      w.routes[k] = { mode: 'deniz', cost: 1.05 + path.length * .008 + sum(tolls, t => t.toll), path, tolls: tolls.map(t => t.id) };
+      const raided = path.filter(s => (w.seaRaids?.[s] || []).some(x => atWar(w, x, a.id) || atWar(w, x, b.id))).length;
+      w.routes[k] = { mode: 'deniz', cost: 1.05 + path.length * .008 + sum(tolls, t => t.toll) + raided * .15, path, tolls: tolls.map(t => t.id) };
     }
   }
 }
@@ -236,7 +238,7 @@ function consume(w, c, prev) {
 }
 
 function fiscal(w, c) {
-  const eff = clamp((.4 + c.bureaucracy / 120) * (1 - c.corruption / 130) * (1 - c.unrest / 400), .2, 1);
+  const eff = clamp((.4 + c.bureaucracy / 120) * (1 - c.corruption / 130) * (1 - c.unrest / 400) * (c._adminFactor ?? 1), .2, 1);
   const land = c._raw.grain * 10 * c.priceLevel * c.tax.land, business = (sum(RAW.filter(g => g !== 'grain'), g => c._raw[g] * BASE_PRICE[g]) + sum(Object.keys(RECIPE), g => (c._made[g] || 0) * BASE_PRICE[g] * .45)) * c.priceLevel * c.tax.business;
   const revenue = (c.gdp * .45 * c.tax.income + land + business + (c._imports || 0) * c.priceLevel * c.tariff) * eff + (c._tolls || 0) * c.priceLevel;
   const b = c.budget, programs = (b.military + b.welfare + b.infrastructure + b.education + b.police + b.administration) * c.gdp;
@@ -276,7 +278,7 @@ function demography(w, c) {
     const mv = p.pops.koylu.n * clamp((sum(Object.values(p.plants)) - .3) * .002 + c.literacy * .00002, 0, .01); p.pops.koylu.n -= mv; p.pops.isci.n += mv * .8; p.pops.orta.n += mv * .2;
     if (gap > .12 || p.devastation > .45) {
       const outs = p.neighbors.map(n => w.provinces[n]).filter(n => (n.controller !== p.controller && !atWar(w, n.controller, p.controller)) || (n.controller === p.controller && n.devastation < p.devastation - .1));
-      if (outs.length) { const rate = clamp(gap * .12 + p.devastation * .04, 0, .1); for (const k of ['koylu', 'isci']) { const m = p.pops[k].n * rate; p.pops[k].n -= m; fled += m; const to = outs[Math.floor(rand(w) * outs.length)]; to.pops[k].n += m; to.unrest = clamp(to.unrest + m / Math.max(provincePop(to), 1) * 120, 0, 100); } }
+      if (outs.length) { const rate = clamp(gap * .12 + p.devastation * .04, 0, .1); for (const k of ['koylu', 'isci']) { const m = p.pops[k].n * rate; p.pops[k].n -= m; fled += m; const to = outs[Math.floor(rand(w) * outs.length)]; to.pops[k].n += m; migrate(p, to, rate); to.unrest = clamp(to.unrest + m / Math.max(provincePop(to), 1) * 120, 0, 100); } }
     }
     p.devastation = Math.max(0, p.devastation - .02 - c.budget.infrastructure * .4);
   }
