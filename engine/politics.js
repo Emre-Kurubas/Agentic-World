@@ -1,9 +1,10 @@
 import { clamp, sum, news, rand, between, nextId, pick } from './util.js';
 import { CLASSES, ROLES, countryProvinces, provincePop, aliveCountries, makeCountry, spawnCharacter, atWar, clampRel } from './world.js';
+import { allocateSeats } from './polity.js';
 
 const CLASS_AXES = { koylu: { econ: -15, auth: 15, nation: 15, faith: 35 }, isci: { econ: -55, auth: -10, nation: 5, faith: 0 }, orta: { econ: 20, auth: -35, nation: 0, faith: -10 }, elit: { econ: 65, auth: 25, nation: 15, faith: 10 } };
 
-const distance = (a, b) => (Math.abs(a.econ - b.econ) * 1.2 + Math.abs(a.auth - b.auth) + Math.abs(a.nation - b.nation) * .5 + Math.abs(a.faith - b.faith) * .8) / 3.5;
+export const distance = (a, b) => (Math.abs(a.econ - b.econ) * 1.2 + Math.abs(a.auth - b.auth) + Math.abs(a.nation - b.nation) * .5 + Math.abs(a.faith - b.faith) * .8) / 3.5;
 
 export function modValue(c, key) { return sum(c.mods.filter(m => m.key === key), m => m.delta); }
 
@@ -269,6 +270,7 @@ export function electionStep(w) {
     const rival = Math.max(1, ...c.parties.filter(p => p.id !== c.rulingParty && !p.banned).map(p => p.support));
     const share = clamp(rulingSupport / (rulingSupport + rival) * 100 + (1 - fairness) * 12 + c.rigging + between(w, -4, 4), 2, 98);
     c.rigging = 0;
+    if (c.parliament) c.parliament.seats = allocateSeats(c);
     if (share >= 50 || !opp?.alive || opp.status !== 'serbest') {
       news(w, `${c.name} seçimi: ${inc.name} oyların %${Math.round(share)} kadarını alarak görevde kaldı.`, { kind: 'siyaset', countries: [c.id] });
       c.legitimacy = clamp(c.legitimacy + 6 * fairness, 0, 100);

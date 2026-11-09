@@ -145,7 +145,7 @@ function trade(w, cs) {
       const wgt = a => a.x.s / a.r.cost * (hasTreaty(w, b.c.id, a.x.c.id, 'ticaret') ? 1.5 : 1), tot = sum(acc, wgt);
       if (!tot) continue;
       for (const a of acc) {
-        const landed = price * a.r.cost * (1 + b.c.tariff * .3);
+        const landed = price * a.r.cost * (1 + (b.c.tariffDeals?.[a.x.c.id] ?? b.c.tariff) * .3);
         const q = Math.min(a.x.s, b.d * wgt(a) / tot, Math.max(0, b.c.reserves) / landed);
         if (q <= 0) continue;
         const v = q * price; a.x.s -= q; b.d -= q; moved += q;

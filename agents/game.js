@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { aliveCountries, ROLES, countryProvinces } from '../engine/world.js';
 import { beginTurn, stepWorld } from '../engine/step.js';
 import { applyOp } from '../engine/ops.js';
+import { makeParliament } from '../engine/polity.js';
 import { news, rand, clamp } from '../engine/util.js';
 import { npcDecide, npcFounding } from './npc.js';
 import { actorPrompt, foundingPrompt, refereePrompt, lookupReply, talkText } from './prompts.js';
@@ -88,6 +89,7 @@ export class Game {
     Object.assign(c, { name: String(f.name || c.name).slice(0, 60), ideology: String(f.ideology || 'Belirsiz').slice(0, 80), regime: String(f.regime || 'Yönetim').slice(0, 60), elections: !!f.elections, pressFreedom: clamp(Number(f.press_freedom ?? 50), 0, 100), motto: String(f.motto || '').slice(0, 120) });
     if (f.axes) for (const a of ['econ', 'auth', 'nation', 'faith']) c.axes[a] = clamp(Number(f.axes[a] ?? 0), -100, 100);
     if (Array.isArray(f.colors) && /^#[0-9a-f]{6}$/i.test(f.colors[0])) c.colors = [f.colors[0], /^#[0-9a-f]{6}$/i.test(f.colors[1]) ? f.colors[1] : '#efe6c9'];
+    if (c.elections && !c.parliament) makeParliament(c, 'Meclis');
     news(w, `Yeni devlet: ${c.name}. ${c.regime}, ideolojisi ${c.ideology}. "${c.motto}"`, { kind: 'siyaset', countries: [c.id] });
   }
 

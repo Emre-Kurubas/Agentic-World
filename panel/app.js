@@ -102,6 +102,17 @@ function chart(title, data, unit = '') {
 function wireCharts() { document.querySelectorAll('.chart[data-points]').forEach(c => { const pts = JSON.parse(c.dataset.points), unit = c.dataset.unit, span = c.querySelector('.v'), base = span.textContent, svg = c.querySelector('svg'); svg.onmousemove = e => { const r = svg.getBoundingClientRect(), i = Math.round((e.clientX - r.left) / r.width * (pts.length - 1)), p = pts[Math.max(0, Math.min(pts.length - 1, i))]; span.textContent = `${quarter(p.t ?? i)}: ${Number(p.v).toLocaleString('tr-TR')}${unit}`; }; svg.onmouseleave = () => span.textContent = base; }); }
 
 const views = {
+  meclisHtml(c, w) {
+    const p = c.parliament, laws = (c.laws || []).slice(-6).reverse(), open = (c.bills || []).filter(b => b.status === 'bekliyor');
+    if (!p && !laws.length) return '';
+    const seats = p ? c.parties.filter(x => p.seats[x.id]).sort((a, b) => p.seats[b.id] - p.seats[a.id]).map(x => `<div class="bar2"><span>${esc(x.name.slice(0, 13))}${x.id === c.rulingParty ? ' ★' : ''}</span><i><b style="width:${p.seats[x.id]}%"></b></i><span>${p.seats[x.id]}</span></div>`).join('') : '';
+    return `<h3>${p ? esc(p.name) : 'Yasalar'}</h3>${p ? `<p class="small muted">${p.legislative ? 'Yasama yetkili' : 'Danışma meclisi'}${w.turn < (p.suspendedUntil ?? 0) ? `, ${quarter(p.suspendedUntil)} dönemine dek askıda` : ''}.</p>${seats}` : ''}${open.length ? `<h4 class="sub">Oylanacak teklifler</h4>${open.map(b => `<div class="news">${esc(b.title)}<div class="small muted">${esc(b.proposerName)}</div></div>`).join('')}` : ''}${laws.length ? `<h4 class="sub">Son yasalar</h4>${laws.map(l => `<div class="news">${esc(l.title)}<div class="small muted">${quarter(l.turn)}, ${l.via === 'meclis' ? 'meclisten geçti' : 'kararname'}${l.text ? `. ${esc(l.text)}` : ''}</div></div>`).join('')}` : ''}`;
+  },
+  treatiesHtml(c, w) {
+    const list = w.treaties.filter(t => t.active && t.parties.includes(c.id));
+    if (!list.length) return '';
+    return `<h3>Antlaşmalar</h3>${list.map(t => `<div class="entry"><span class="who2">${esc(t.kind)}</span> <span class="muted">${esc(country(t.parties.find(x => x !== c.id))?.name)}</span>${t.terms ? `<div class="small">${esc(t.terms)}</div>` : ''}${t.clauses?.length ? `<ul>${t.clauses.map(x => `<li>${esc(x.text ?? x.type)}</li>`).join('')}</ul>` : ''}${t.breaches?.length ? t.breaches.slice(-3).map(b => `<div class="news savas small">${quarter(b.turn)}: ${esc(b.text)}</div>`).join('') : ''}</div>`).join('')}`;
+  },
   dunya() {
     const w = S.data.world, cs = Object.values(w.countries).filter(c => c.alive).sort((a, b) => b.realGdp - a.realGdp), wars = w.wars.filter(x => x.active);
     return `<h2>${quarter(S.turn)}</h2><p class="muted small">${cs.length} güç yaşıyor. ${wars.length ? `${wars.length} savaş sürüyor.` : 'Şu an savaş yok.'}</p>
@@ -120,7 +131,9 @@ const views = {
     <h3>Stoklar</h3><table>${Object.entries(c.stock).filter(([, v]) => v >= .5).map(([k, v]) => `<tr><td>${GTR[k] ?? esc(k)}</td><td class="n">${fmt(v)}</td></tr>`).join('')}</table>
     <h3>Teknoloji</h3><p class="small">${Object.keys(c.techs).join(', ') || 'Henüz yok'}${c.research?.target ? `. Üzerinde çalışılan: ${esc(c.research.target)}` : ''}</p>
     <h3>Kişiler</h3>${ch.map(x => `<div class="entry"><button class="linky" type="button" data-person="${x.id}">${esc(x.name)}</button><span class="badge">${ROLE[x.role] || esc(x.role)}</span>${x.status !== 'serbest' ? `<span class="badge no">${esc(x.status)}</span>` : ''}<span class="badge">${x.aiControlled ? 'Yapay zekâ' : 'Kural'}</span>${x.persona ? `<div class="persona">${esc(x.persona)}</div>` : ''}${x.diary?.length ? `<div class="small muted">Son günlük: ${esc(x.diary.at(-1))}</div>` : ''}</div>`).join('')}
-    ${c.institutions?.length ? `<h3>Kurduğu kurumlar</h3>${c.institutions.map(i => `<div class="entry"><span class="who2">${esc(i.name)}</span><div class="small">${esc(i.description)}</div></div>`).join('')}` : ''}
+    ${views.meclisHtml(c, w)}
+    ${c.institutions?.length ? `<h3>Kurumlar</h3>${c.institutions.map(i => `<div class="entry"><span class="who2">${esc(i.name)}</span>${i.id ? `<span class="badge">Güç ${Math.round((i.strength ?? 0) * 100)}</span><span class="badge">${i.sponsor ? `Özel, ${esc(w.characters[i.sponsor]?.name ?? '')}` : `Bütçe GSYH %${(i.budget * 100).toFixed(2)}`}</span>` : ''}<div class="small">${esc(i.description)}</div>${i.id ? `<div class="looked">Başkan: ${i.head ? `<button class="linky" type="button" data-person="${i.head}">${esc(w.characters[i.head]?.name ?? '')}</button>` : 'yok'}${i.members.length ? `, ${i.members.length} üye` : ''}${i.powers.length ? `. Alanlar: ${esc(i.powers.join(', '))}` : ''}${i.authority.length ? `. Yetkiler: ${esc(i.authority.join(', '))}` : ''}${i.veto.length ? `. Veto: ${esc(i.veto.join(', '))}` : ''}</div>` : ''}</div>`).join('')}` : ''}
+    ${views.treatiesHtml(c, w)}
     ${w.plots.some(p => p.active && p.country === c.id) ? `<h3>Komplolar</h3>${w.plots.filter(p => p.active && p.country === c.id).map(p => `<div class="news komplo">${esc(p.kind)}: ${esc(w.characters[p.leader]?.name)}, ilerleme ${Math.round(p.progress)}${p.exposed ? ' (sızdı)' : ' (gizli)'}</div>`).join('')}` : ''}`;
   },
   eyalet() {

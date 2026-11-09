@@ -1,19 +1,24 @@
 import { economyStep } from './economy.js';
 import { militaryStep } from './military.js';
 import { satisfactionStep, plotStep, uprisingStep, electionStep, collapseStep, relationDrift, lifeStep, pruneStep, partyStep, debtStep } from './politics.js';
+import { treatyStep, institutionStep, billStep } from './polity.js';
+import { applyOp } from './ops.js';
 import { countryProvinces, aliveCountries, provincePop } from './world.js';
 import { sum, quarterLabel } from './util.js';
 
 export function beginTurn(w) { w.newsThisTurn = []; w.battles = []; }
 
 export function stepWorld(w) {
+  treatyStep(w);
   economyStep(w);
   militaryStep(w);
+  institutionStep(w);
   satisfactionStep(w);
   partyStep(w);
   plotStep(w);
   uprisingStep(w);
   electionStep(w);
+  billStep(w, applyOp);
   lifeStep(w);
   debtStep(w);
   collapseStep(w);

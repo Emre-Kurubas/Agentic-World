@@ -1,6 +1,7 @@
 import { round, between } from '../engine/util.js';
 import { countryProvinces, aliveCountries, TECHS, PLANTS } from '../engine/world.js';
 import { CATALOG, alarms } from './queries.js';
+import { STATE_POWERS, CIVIL_POWERS, DELEGABLE, GATED } from '../engine/polity.js';
 
 const ROLE_TEXT = {
   leader: 'Ülkenin devlet başkanısın. Resmî yetkin geniş; ama ordu, sermaye, halk ve rakiplerin seni devirebilir.',
@@ -72,10 +73,15 @@ print_money{pct_gdp} borrow{pct_gdp} embargo{target,on} build{province,kind:stee
 recruit{province,men,unit_kind:piyade|topcu|zirhli|hava} disband{unit} move{unit,to} move_army{to,share} declare_war{target} join_war{war,side:a|b}
 propose_treaty{target,kind:ittifak|saldirmazlik|ticaret|askeri_gecis|baris,terms,annex,reparations} accept_treaty{id} break_treaty{id} send_aid{target,pct_gdp,arms,secret}
 spy{target,kind:bilgi|sabotaj|isyan_fonla} propaganda{strength} repress{strength} concession{cls:koylu|isci|orta|elit,pct_gdp} purge{character,fate:hapis|surgun|olu}
+propose_law{title,text,ops:[işlemler],axes} vote_bill{bill,vote:evet|hayir} lobby_bill{bill,party,amount,side:evet|hayir} create_parliament{name,legislative} suspend_parliament{turns}
+fund_institution{id,budget_pct_gdp} appoint_institution{id,character,role:head|member,remove} dissolve_institution{id}
 set_regime{regime,ideology,elections,press_freedom,axes} hold_election{} rig_election{amount}
 lend_private{character,amount,interest,due_turns,terms} repay_debt{debt,amount} forgive_debt{debt} publish_dossier{character}
-start_plot{kind:darbe|suikast|isyan,secrecy} invite_plot{plot,character} join_plot{plot} betray_plot{plot} execute_plot{plot} fund_plot{plot,amount} bribe{character,amount,direction:up|down} capital_flight{share} invest{amount} embezzle{pct_gdp} set_strait{id,closed,toll} build_canal{id} build_ship{province,ships} move_fleet{fleet,to} amphibious{unit,to} found_party{name,axes,base} ban_party{party} set_institutions{courts,unions,ruling_party} gather_dossier{character} blackmail{character,demand} create_institution{name,description,effects}
+start_plot{kind:darbe|suikast|isyan,secrecy} invite_plot{plot,character} join_plot{plot} betray_plot{plot} execute_plot{plot} fund_plot{plot,amount} bribe{character,amount,direction:up|down} capital_flight{share} invest{amount} embezzle{pct_gdp} set_strait{id,closed,toll} build_canal{id} build_ship{province,ships} move_fleet{fleet,to} amphibious{unit,to} found_party{name,axes,base} ban_party{party} set_institutions{courts,unions,ruling_party} gather_dossier{character} blackmail{character,demand} create_institution{name,description,budget_pct_gdp,amount,powers:[],authority:[],veto:[],head,members:[],effects}
 custom{label,effects:[{target?,stat,delta,turns}],turns} stat: legitimacy corruption bureaucracy police intelligence pressFreedom warExhaustion repress sat.koylu sat.isci sat.orta sat.elit sat.all sat.ordu sat.sermaye sat.din sat.burokrasi unrest
+Kurum powers: ${[...STATE_POWERS, ...CIVIL_POWERS].join(',')} (devlet yetkileri yalnızca lider kurabilir; kişilerin kurduğu kurumu amount ile kendi serveti besler). authority: kurum üyelerinin yapabileceği işlem adları (${[...DELEGABLE].join(',')}). veto: kurumun engelleyebileceği işlem adları. Yeni bir kurum, örgüt veya konsey kararını metin olarak bırakma: amacına uyan powers, budget_pct_gdp, head ve gerekiyorsa authority/veto ver.
+Antlaşma maddeleri: propose_treaty içine clauses:[{type:harac,payer,pct_gdp,turns}|{type:teslimat,from,good,amount,turns}|{type:gumruk,rate}|{type:silahsiz_bolge,country,provinces:[]}|{type:asker_limit,country,men}|{type:yardim}] ve isteğe bağlı turns (süre). Metindeki somut şartları bu maddelere çevir; bunlar her tur kodla uygulanır, tutulmayan ihlal olarak kaydolur.
+Meclis yasama yetkisine sahipse şu işlemler kendiliğinden yasa teklifine dönüşür ve bir sonraki çeyrekte oylanır: ${[...GATED].join(',')}.
 Abluka için düşman limanlarına komşu denize filo gönderilir (move_fleet). Teknoloji anahtarları: ${Object.keys(TECHS).join(',')}.
 Yetki: liderler her işlemi yapabilir. general, opposition ve oligarch yalnızca plot işlemleri, bribe, propaganda, custom ve kendi uzmanlık işlemlerini yapabilir; resmî devlet işlemi (vergi, savaş ilanı, birlik emri) yapamazlar.`;
 
@@ -86,7 +92,7 @@ export function refereePrompt(w, c, entries) {
   const pending = w.treaties.filter(t => t.pending && t.parties.includes(c.id)).map(t => `${t.id}:${t.kind}/${t.proposer}`).join(', ') || 'yok';
   return `Tarafsız bir simülasyon hakemisin. Kurgusal ${c.name} (${c.id}) için karakterlerin serbest kararlarını oyun işlemlerine çeviriyorsun. Tek tarafın lehine yorum yapma. Gerçekçi ol: zor, yetkisiz veya kaynak gerektiren işlere düşük olasılık ver; fiziksel olarak olanaksız işleri olasılık 0 yap. Dünya istediğini vermez. Ama alışılmadık, yaratıcı fikirleri listede yok diye reddetme: create_institution veya custom ile dünyaya kalıcı biçimde işle. Kişilerin ahlaki tercihlerini yargılama; yalnızca sonuçları belirle.
 Durum: meşruiyet ${Math.round(c.legitimacy)}, ordu memnuniyeti ${Math.round(c.blocs.ordu.sat)}, polis ${Math.round(c.police)}, hazine ${Math.round(c.treasury)}, GSYH ${Math.round(c.gdp)}.
-Kimlikler: ${refs}. Ülkeler: ${others}. Komplolar: ${plots}. Teklifler: ${pending}.
+Kimlikler: ${refs}. Ülkeler: ${others}. Komplolar: ${plots}. Teklifler: ${pending}. Meclis: ${c.parliament ? `${c.parliament.name}${c.parliament.legislative ? ', yasama yetkili' : ', danışma'}${w.turn < (c.parliament.suspendedUntil ?? 0) ? ', askıda' : ''}; bekleyen tasarılar ${(c.bills || []).filter(b => b.status === 'bekliyor').map(b => `${b.id}:${b.title}`).join(', ') || 'yok'}` : 'yok'}. Kurumlar: ${(c.institutions || []).filter(i => i.id).map(i => `${i.id}:${i.name}`).join(', ') || 'yok'}.
 Eyaletler: ${countryProvinces(w, c.id).map(p => p.id).join(',')}. Birlikler: ${Object.values(w.units).filter(u => u.country === c.id).map(u => u.id).join(',')}. Filolar: ${Object.values(w.fleets).filter(f => f.country === c.id).map(f => `${f.id}@${f.sea}`).join(',') || 'yok'}. Partiler: ${c.parties.map(p => `${p.id}:${p.name}`).join(', ')}. Stratejik: ${w.strategic.map(s => `${s.id}:${s.name}/${s.type}`).join(', ')}.
 
 ${OPS_DOC()}

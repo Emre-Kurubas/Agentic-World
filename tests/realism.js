@@ -3,6 +3,7 @@ import { createWorld, aliveCountries, countryProvinces } from '../engine/world.j
 import { beginTurn, stepWorld } from '../engine/step.js';
 import { applyOp } from '../engine/ops.js';
 import { executePlot } from '../engine/politics.js';
+import { makeParliament, treatyStep } from '../engine/polity.js';
 import { Game, shouldWake, isAI } from '../agents/game.js';
 import { LimitError, SessionLostError } from '../agents/backend.js';
 import { npcDecide } from '../agents/npc.js';
@@ -207,6 +208,97 @@ assert.equal(fold('İŞÇİ Ağı ÇÖLÜ'), 'isci agi colu');
 const sessionWorld = () => { const cfg = { ...base, agentRoles: ['leader'], maxLookupRounds: 1, concurrency: 1 }, w = createWorld(cfg); w.status = 'oyunda'; return { cfg, w, leader: w.countries.U1.leader }; };
 const memoryStore = () => { let saved = {}, pending = null; return { savePending(p) { pending = JSON.parse(JSON.stringify(p)); }, loadPending(t) { return pending?.turn === t ? pending : null; }, clearPending() { pending = null; }, commit() {}, loadSessions: () => JSON.parse(JSON.stringify(saved)), saveSessions(s) { saved = JSON.parse(JSON.stringify(s)); } }; };
 const reply = (p, extra = {}) => { if (p.includes('hukumler')) return { hukumler: [] }; if (!p.includes('şimdi karar ver')) return { bak: ['ekonomi'] }; return { kararlar: [], mesajlar: [], ic_ses: 'x', ...extra }; };
+
+const leaderOf = (w, id = 'U1') => w.characters[w.countries[id].leader];
+const parliamentWorld = () => { const w = fresh(), c = w.countries.U1; c.elections = true; makeParliament(c, 'Divan'); return { w, c, l: leaderOf(w) }; };
+const stepOnce = w => { beginTurn(w); stepWorld(w); };
+
+chain('Kurum bütçeden beslenir, yolsuzluğu düşürür, para kesilince söner', () => {
+  const a = fresh(), b = fresh(), ca = a.countries.U1, cb = b.countries.U1;
+  for (const c of [ca, cb]) { c.corruption = 50; c.treasury = c.gdp * 2; }
+  const r = applyOp(a, leaderOf(a), { op: 'create_institution', name: 'Sayıştay', description: 'Harcamaları denetler', budget_pct_gdp: .004, powers: ['denetim'] });
+  assert.equal(r.ok, true); const inst = ca.institutions.at(-1); assert.ok(inst.id && inst.head === ca.leader);
+  const before = ca.treasury; run(a, 6); run(b, 6);
+  assert.ok(ca.corruption < cb.corruption - 1, `${ca.corruption} / ${cb.corruption}`); assert.ok(inst.strength > .3, `güç ${inst.strength}`); assert.ok(before);
+  const peak = inst.strength; inst.budget = 0; run(a, 10); assert.ok(inst.strength < peak * .4, `${inst.strength}`);
+});
+ok('Kuruma verilen yetkiyi üyesi kullanır, yetki yoksa kullanamaz', () => {
+  const w = fresh(), c = w.countries.U1, g = w.characters[c.general]; c.treasury = c.gdp * 2;
+  assert.equal(applyOp(w, g, { op: 'set_tax', kind: 'income', rate: .3 }).ok, false);
+  applyOp(w, leaderOf(w), { op: 'create_institution', name: 'Maliye Kurulu', budget_pct_gdp: .004, powers: ['burokrasi'], authority: ['set_tax', 'declare_war'], head: g.id });
+  const inst = c.institutions.at(-1); assert.deepEqual(inst.authority, ['set_tax'], 'savaş kararı devredilemez'); inst.strength = .6;
+  assert.equal(applyOp(w, g, { op: 'set_tax', kind: 'income', rate: .3 }).ok, true); assert.equal(c.tax.income, .3);
+  assert.equal(applyOp(w, w.characters[c.opposition], { op: 'set_tax', kind: 'income', rate: .1 }).ok, false);
+});
+ok('Kişinin kurduğu kurum devlet yetkisi alamaz, kendi servetinden beslenir', () => {
+  const w = fresh(), c = w.countries.U1, o = w.characters[c.oligarch]; o.wealth = 400;
+  applyOp(w, o, { op: 'create_institution', name: 'Özel Üniversite', amount: 20, powers: ['egitim', 'guvenlik'], authority: ['set_tax'] });
+  const inst = c.institutions.at(-1); assert.deepEqual(inst.powers, ['egitim']); assert.deepEqual(inst.authority, []); const before = o.wealth; run(w, 1); assert.ok(o.wealth <= before - 20 + 5, `${o.wealth}/${before}`);
+});
+ok('Güçlü kurumun vetosu lideri durdurur', () => {
+  const w = fresh(), c = w.countries.U1, l = leaderOf(w); c.courts = 100;
+  applyOp(w, l, { op: 'create_institution', name: 'Anayasa Divanı', budget_pct_gdp: .003, powers: ['yargi'], veto: ['print_money'], head: c.opposition });
+  c.institutions.at(-1).strength = 1.2; let blocked = 0; for (let i = 0; i < 40; i++) if (!applyOp(w, l, { op: 'print_money', pct_gdp: .001 }).ok) blocked++;
+  assert.ok(blocked > 25, `engel ${blocked}`);
+});
+chain('Yasama meclisi vergiyi tasarıya çevirir, çoğunluk geçirirse uygulanır', () => {
+  const { w, c, l } = parliamentWorld(), rate = c.tax.income, rul = c.parties[0]; c.rulingParty = rul.id; c.parliament.seats = { [rul.id]: 60, [c.parties[1].id]: 40 };
+  const r = applyOp(w, l, { op: 'set_tax', kind: 'income', rate: .33 }); assert.ok(r.msg.includes('Meclise sevk'), r.msg); assert.equal(c.tax.income, rate, 'oylamadan önce uygulanmaz');
+  const bill = c.bills.at(-1); bill.votes[rul.id] = 'evet'; bill.votes[c.parties[1].id] = 'hayir';
+  stepOnce(w); assert.equal(bill.status, 'bekliyor', 'aynı çeyrekte oylanmaz'); stepOnce(w);
+  assert.equal(bill.status, 'kabul'); assert.equal(c.tax.income, .33); assert.ok(c.laws.some(x => x.id === bill.id));
+});
+chain('Çoğunluğu olmayan hükümetin tasarısı düşer, meclis askıya alınırsa bedeli olur', () => {
+  const { w, c, l } = parliamentWorld(), a = c.parties[0], b = c.parties[1]; c.rulingParty = a.id; c.parliament.seats = { [a.id]: 30, [b.id]: 70 }; const rate = c.tax.income;
+  applyOp(w, l, { op: 'set_tax', kind: 'income', rate: .4 }); const bill = c.bills.at(-1); bill.votes[a.id] = 'evet'; bill.votes[b.id] = 'hayir'; const legit = c.legitimacy;
+  stepOnce(w); stepOnce(w); assert.equal(bill.status, 'ret'); assert.equal(c.tax.income, rate); assert.ok(c.legitimacy < legit + 8);
+  const before = c.legitimacy; assert.equal(applyOp(w, l, { op: 'suspend_parliament', turns: 4 }).ok, true); assert.ok(c.legitimacy < before);
+  assert.equal(applyOp(w, l, { op: 'set_tax', kind: 'income', rate: .4 }).ok, true); assert.equal(c.tax.income, .4, 'askıdayken kararnameyle geçer');
+});
+ok('Parti lideri partisinin oyunu belirler, para oyu etkiler ve iz bırakır', () => {
+  const { w, c, l } = parliamentWorld(), o = w.characters[c.oligarch], rival = [...c.parties].filter(p => p.id !== c.rulingParty).sort((a, b) => b.support - a.support)[0], opp = w.characters[c.opposition]; o.wealth = 500;
+  const b = applyOp(w, opp, { op: 'propose_law', title: 'Basın Yasası', text: 'Sansür kalkar.' }).bill; const bill = c.bills.find(x => x.id === b); assert.ok(bill);
+  assert.equal(applyOp(w, opp, { op: 'vote_bill', bill: b, vote: 'hayir' }).ok, true); assert.equal(bill.votes[rival.id], 'hayir');
+  assert.equal(applyOp(w, w.characters[c.general], { op: 'vote_bill', bill: b, vote: 'evet' }).ok, false, 'partisiz general oy veremez');
+  assert.equal(applyOp(w, o, { op: 'lobby_bill', bill: b, party: c.rulingParty, amount: 100 }).ok, true); assert.equal(bill.lobby[c.rulingParty], 100); assert.ok(o.secrets.at(-1).text.includes('Basın Yasası')); assert.equal(o.wealth, 400); assert.ok(l);
+});
+chain('Harac her tur ödenir, ödenemezse ihlal kaydolur ve iki lider öğrenir', () => {
+  const w = fresh(), a = w.countries.U1, b = w.countries.U2, la = leaderOf(w), lb = leaderOf(w, 'U2'); a.reserves = 1e6;
+  assert.equal(applyOp(w, la, { op: 'propose_treaty', target: 'U2', kind: 'ticaret', terms: 'Harac', clauses: [{ type: 'harac', payer: 'U1', pct_gdp: .01, turns: 20 }, { type: 'harac', payer: 'U9', pct_gdp: .5, turns: 20 }, { type: 'bilinmeyen' }] }).ok, true);
+  const t = w.treaties.at(-1); assert.equal(t.clauses.length, 1, 'geçersiz madde atılır'); assert.equal(applyOp(w, lb, { op: 'accept_treaty', id: t.id }).ok, true);
+  beginTurn(w); const res = [a.reserves, b.reserves], treatyOnly = Math.max(a.gdp, 1) * .01; treatyStep(w); assert.ok(a.reserves < res[0] - treatyOnly * .9); assert.ok(b.reserves > res[1] + treatyOnly * .9);
+  a.reserves = 0; la.inbox = []; lb.inbox = []; treatyStep(w); assert.equal(t.breaches.at(-1).party, 'U1'); assert.ok(la.inbox.some(m => m.text.includes('ihlal')) && lb.inbox.some(m => m.text.includes('ihlal')));
+  assert.ok(answer(w, lb, 'antlasmalar').includes('haracını'));
+  const others = aliveCountries(w).filter(o => o.id !== 'U1' && o.id !== 'U2')[0], rel = others.relations.U2 ?? 0, bRel = a.relations.U2 ?? 0;
+  assert.equal(applyOp(w, lb, { op: 'break_treaty', id: t.id }).ok, true); assert.equal(others.relations.U2 ?? 0, rel, 'ihlal edene karşı fesih dünyada itibar kaybettirmez'); assert.ok((a.relations.U2 ?? 0) <= bRel);
+});
+chain('Teslimat stoktan stoğa geçer, gümrük maddesi ithalat maliyetini düşürür', () => {
+  const w = fresh(), a = w.countries.U1, b = w.countries.U2; run(w, 1); const k = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`; w.routes[k] ||= { mode: 'kara', cost: 1.04, path: [], tolls: [] }; a.stock.grain = 500; b.stock.grain = 0;
+  applyOp(w, leaderOf(w), { op: 'propose_treaty', target: 'U2', kind: 'ticaret', clauses: [{ type: 'teslimat', from: 'U1', good: 'grain', amount: 100, turns: 5 }, { type: 'gumruk', rate: 0 }] }); const t = w.treaties.at(-1); applyOp(w, leaderOf(w, 'U2'), { op: 'accept_treaty', id: t.id });
+  treatyStep(w); assert.equal(a.stock.grain, 400); assert.equal(b.stock.grain, 100); assert.equal(a.tariffDeals.U2, 0); assert.equal(b.tariffDeals.U1, 0);
+  a.stock.grain = 10; treatyStep(w); assert.ok(t.breaches.some(x => x.party === 'U1'));
+});
+ok('Silahsız bölgeye girmek ve asker sınırını aşmak ihlaldir', () => {
+  const w = fresh(), a = w.countries.U1, u = Object.values(w.units).find(x => x.country === 'U1'), men = Object.values(w.units).filter(x => x.country === 'U1').reduce((s, x) => s + x.men, 0);
+  applyOp(w, leaderOf(w), { op: 'propose_treaty', target: 'U2', kind: 'saldirmazlik', clauses: [{ type: 'silahsiz_bolge', country: 'U1', provinces: [u.province] }, { type: 'asker_limit', country: 'U1', men: men - 1 }] }); const t = w.treaties.at(-1); applyOp(w, leaderOf(w, 'U2'), { op: 'accept_treaty', id: t.id });
+  treatyStep(w); assert.equal(t.breaches.length, 2, JSON.stringify(t.breaches)); assert.ok(a);
+});
+ok('Saldırıya uğrayan müttefiki yalnız bırakmak ihlaldir', () => {
+  const w = fresh(); applyOp(w, leaderOf(w), { op: 'propose_treaty', target: 'U2', kind: 'ittifak', clauses: [{ type: 'yardim' }] }); const t = w.treaties.at(-1); applyOp(w, leaderOf(w, 'U2'), { op: 'accept_treaty', id: t.id });
+  w.wars.push({ id: 'SZ', a: ['U3'], b: ['U1'], civil: false, active: true, start: w.turn, name: 'Z' }); treatyStep(w); assert.equal(t.breaches.length, 0, 'süre tanınır');
+  w.turn += 2; treatyStep(w); assert.equal(t.breaches.at(-1).party, 'U2'); w.turn += 8; treatyStep(w); assert.equal(t.breaches.length, 1, 'aynı savaş için tek ihlal');
+});
+ok('Süreli antlaşma biter, deftere kurum ve yasa olayları yazılır', () => {
+  const { w, c, l } = parliamentWorld(); applyOp(w, l, { op: 'propose_treaty', target: 'U2', kind: 'ticaret', turns: 1, clauses: [{ type: 'gumruk', rate: .05 }] }); const t = w.treaties.at(-1); applyOp(w, leaderOf(w, 'U2'), { op: 'accept_treaty', id: t.id }); w.turn += 1; treatyStep(w); assert.equal(t.active, false);
+  const snap = snapshotState(w); applyOp(w, l, { op: 'create_institution', name: 'Liman Kurulu', budget_pct_gdp: .002, powers: ['sanayi'] }); applyOp(w, l, { op: 'propose_law', title: 'Liman Yasası', text: 'x' }); applyOp(w, l, { op: 'suspend_parliament', turns: 3 });
+  const list = buildEntries(w, { trace: [], rulings: [], messages: [] }, snap).filter(e => e.k === 'durum'); assert.ok(list.some(e => e.text.includes('Liman Kurulu'))); assert.ok(list.some(e => e.text.includes('Liman Yasası'))); assert.ok(list.some(e => e.text.includes('askıya') && e.imp === 3));
+});
+await (async () => {
+  const w = createWorld(base), g = new Game({ world: w, cfg: base, backend: { kind: 'mock' }, store: nullStore() });
+  await g.turn(); const cs = aliveCountries(w); assert.ok(cs.some(c => c.elections) ? cs.filter(c => c.elections).every(c => c.parliament) : true);
+  const orig = g.turn.bind(g); let bills = 0; g.turn = async () => { await orig(); bills = Math.max(bills, ...aliveCountries(w).map(c => (c.bills || []).length)); if (w.turn >= 200) g.stop = true; };
+  await g.run(0); assert.ok(bills <= 60, `tasarı birikti: ${bills}`); console.log(`geçti  Mock oyunda meclis 200 turda birikmedi (${aliveCountries(w).length} güç, en çok ${bills} tasarı)`);
+})();
 
 ok('Ülke ilişkisi sayı olarak görünmez, olgular görünür', () => {
   const w = fresh(), c = w.countries.U1, o = w.countries.U2; c.embargo.push('U2');

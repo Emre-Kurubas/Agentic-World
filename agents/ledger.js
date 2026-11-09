@@ -33,11 +33,11 @@ function levelOf(value, steps, prev) {
 export function snapshotState(w) {
   const countries = {}, provinces = {}, characters = {}, wars = {}, treaties = {}, plots = {}, strategic = {}, debts = {};
   for (const d of w.debts || []) debts[d.id] = d.status;
-  for (const c of Object.values(w.countries)) countries[c.id] = { alive: c.alive, name: c.name, regime: c.regime, capital: c.capital, leader: c.leader, general: c.general, opposition: c.opposition, oligarch: c.oligarch, strike: !!c.strike, bankCrisis: !!c.bankCrisis, defaulted: !!c.defaulted, techs: Object.keys(c.techs || {}) };
+  for (const c of Object.values(w.countries)) countries[c.id] = { alive: c.alive, name: c.name, regime: c.regime, capital: c.capital, leader: c.leader, general: c.general, opposition: c.opposition, oligarch: c.oligarch, strike: !!c.strike, bankCrisis: !!c.bankCrisis, defaulted: !!c.defaulted, techs: Object.keys(c.techs || {}), institutions: Object.fromEntries((c.institutions || []).filter(i => i.id).map(i => [i.id, { name: i.name, head: i.head }])), bills: Object.fromEntries((c.bills || []).map(b => [b.id, b.status])), suspended: (c.parliament?.suspendedUntil ?? 0) > w.turn };
   for (const p of Object.values(w.provinces)) provinces[p.id] = p.controller;
   for (const ch of Object.values(w.characters)) characters[ch.id] = { alive: ch.alive, status: ch.status, role: ch.role, country: ch.country, name: ch.name };
   for (const x of w.wars) wars[x.id] = x.active;
-  for (const t of w.treaties) treaties[t.id] = { active: !!t.active, pending: !!t.pending };
+  for (const t of w.treaties) treaties[t.id] = { active: !!t.active, pending: !!t.pending, breaches: t.breaches?.length ?? 0 };
   for (const p of w.plots) plots[p.id] = { active: !!p.active, exposed: !!p.exposed };
   for (const s of w.strategic) strategic[s.id] = { controller: s.controller, closed: !!s.closed, toll: s.toll || 0 };
   return { countries, provinces, characters, wars, treaties, plots, strategic, debts };
@@ -63,6 +63,20 @@ function stateChanges(w, was) {
       if (!b.bankCrisis && c.bankCrisis) add(`${c.name}: bankacılık krizi patladı`, 2, { c: cc, p: c.capital });
       if (b.bankCrisis && !c.bankCrisis) add(`${c.name}: bankacılık krizi atlatıldı`, 0, { c: cc });
       if (!b.defaulted && c.defaulted) add(`${c.name}: borçlarını ödeyemedi, temerrüt ilan edildi`, 3, { c: cc, p: c.capital });
+      for (const i of (c.institutions || []).filter(x => x.id)) {
+        const was2 = b.institutions[i.id];
+        if (!was2) add(`${c.name}: yeni kurum, ${i.name}${i.head ? ` (başkan ${who(i.head)})` : ''}`, 1, { c: cc, a: [i.head].filter(Boolean), x: { description: i.description, powers: i.powers, authority: i.authority, veto: i.veto } });
+        else if (was2.head !== i.head && i.head) add(`${i.name}: yeni başkan ${who(i.head)}`, 1, { c: cc, a: [i.head] });
+      }
+      for (const [id, inst] of Object.entries(b.institutions)) if (!(c.institutions || []).some(i => i.id === id)) add(`${c.name}: ${inst.name} kapatıldı`, 1, { c: cc });
+      for (const bill of c.bills || []) {
+        const prev = b.bills[bill.id];
+        if (!prev) add(`${c.name}: mecliste yeni teklif, ${bill.title} (${bill.proposerName})`, 1, { c: cc, a: [bill.proposer], x: { text: bill.text } });
+        else if (prev !== bill.status && bill.status !== 'bekliyor') add(`${c.name} meclisi: ${bill.title} ${{ kabul: 'kabul edildi', ret: 'reddedildi', dustu: 'düştü' }[bill.status] ?? bill.status}${bill.tally ? ` (${bill.tally.yes} evet, ${bill.tally.no} hayır)` : ''}`, bill.byGov || bill.status === 'kabul' ? 2 : 1, { c: cc, a: [bill.proposer], x: { text: bill.text } });
+      }
+      const nowSuspended = (c.parliament?.suspendedUntil ?? 0) > w.turn;
+      if (!b.suspended && nowSuspended) add(`${c.name}: meclis askıya alındı`, 3, { c: cc, p: c.capital });
+      if (b.suspended && !nowSuspended && c.parliament) add(`${c.name}: meclis yeniden açıldı`, 1, { c: cc });
       for (const t of Object.keys(c.techs || {})) if (!b.techs.includes(t)) add(`${c.name}: yeni teknoloji, ${TECHS[t]?.name ?? t}`, 1, { c: cc });
     }
     if (!c.alive) continue;
@@ -99,7 +113,8 @@ function stateChanges(w, was) {
   }
   for (const t of w.treaties) {
     const b = was.treaties[t.id], label = `${TREATY_TR[t.kind] ?? t.kind} (${t.parties.map(cn).join(', ')})`;
-    if (!b?.active && t.active) add(`Antlaşma yürürlüğe girdi: ${label}`, 2, { c: t.parties, x: { terms: cut(t.terms ?? '', 400) } });
+    if (b && (t.breaches?.length ?? 0) > b.breaches) add(t.breaches.at(-1).text, 2, { c: t.parties });
+    if (!b?.active && t.active) add(`Antlaşma yürürlüğe girdi: ${label}${t.clauses?.length ? `. ${t.clauses.map(x => x.text).join('; ')}` : ''}`, 2, { c: t.parties, x: { terms: cut(t.terms ?? '', 400) } });
     else if (b?.active && !t.active) add(`Antlaşma sona erdi: ${label}`, 2, { c: t.parties });
     else if (!b && t.pending) add(`Antlaşma teklif edildi: ${label}`, 1, { c: t.parties, x: { terms: cut(t.terms ?? '', 400) } });
   }
