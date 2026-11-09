@@ -1,7 +1,7 @@
 {
-  "name": "ajan-dunyasi",
+  "name": "agent-world",
   "version": "0.1.0",
-  "description": "Yapay zeka ajanlarinin oynadigi tur tabanli politika simulasyonu",
+  "description": "Turn-based politics simulation played by AI agents",
   "type": "module",
   "engines": { "node": ">=20" },
   "scripts": {

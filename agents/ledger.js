@@ -1,6 +1,6 @@
-// Olay defteri: bir turda olan her şeyi tek biçimde kayda geçirir.
-// Girdi alanları: t tur, d tarih, k tür, s kaynak, n kişi, c ülkeler, a kişi kimlikleri,
-// p konum, ok başarı, imp önem (0-3), text metin, x türe özel ayrıntı.
+// Event ledger: records everything that happens in a turn in one format.
+// Entry fields: t turn, d date, k kind, s source, n person, c countries, a person ids,
+// p location, ok success, imp importance (0-3), text body, x kind-specific details.
 
 import { TECHS } from '../engine/world.js';
 
@@ -9,18 +9,18 @@ const cut = (s, n = MAX_TEXT) => { const t = String(s ?? ''); return t.length > 
 
 export const fold = s => String(s ?? '').replace(/[İIı]/g, 'i').replace(/[Şş]/g, 's').replace(/[Ğğ]/g, 'g').replace(/[Üü]/g, 'u').replace(/[Öö]/g, 'o').replace(/[Çç]/g, 'c').replace(/[Ââ]/g, 'a').replace(/[Ûû]/g, 'u').replace(/[Îî]/g, 'i').toLowerCase();
 
-const ROLE_TR = { leader: 'lider', general: 'general', opposition: 'muhalefet', oligarch: 'oligark', eski_lider: 'eski lider' };
-const POSTS = [['leader', 'Lider'], ['general', 'Genelkurmay'], ['opposition', 'Muhalefet lideri'], ['oligarch', 'Oligark']];
-const TREATY_TR = { ittifak: 'ittifak', saldirmazlik: 'saldırmazlık', ticaret: 'ticaret', askeri_gecis: 'askerî geçiş', baris: 'barış' };
-const FATE = { olu: 'öldü', surgun: 'sürgüne gitti', emekli: 'emekli oldu', hapis: 'hapse atıldı', serbest: 'serbest kaldı' };
+const ROLE_LABEL = { leader: 'leader', general: 'general', opposition: 'opposition', oligarch: 'oligarch', former_leader: 'former leader' };
+const POSTS = [['leader', 'Leader'], ['general', 'Chief of Staff'], ['opposition', 'Opposition leader'], ['oligarch', 'Oligarch']];
+const TREATY_LABEL = { alliance: 'alliance', nonaggression: 'non-aggression', trade: 'trade', military_access: 'military access', peace: 'peace' };
+const FATE = { dead: 'died', exiled: 'went into exile', retired: 'retired', imprisoned: 'was imprisoned', free: 'was released' };
 
-// Eşikler bir kez aşılınca geri dönüş için GAP kadar iyileşme ister; sınırda gidip gelen değer defteri doldurmaz.
+// Once a threshold is crossed, returning needs GAP of recovery; a value hovering at the line does not flood the ledger.
 const GAP = 6;
 const GAUGES = [
-  { key: 'unrest', read: c => c.unrest ?? 0, steps: [50, 70, 85], up: ['huzursuzluk tehlikeli düzeye çıktı', 'ülke kaynıyor, huzursuzluk çok yüksek', 'ayaklanma eşiğinde'], down: 'huzursuzluk geriledi', top: 2 },
-  { key: 'legit', read: c => 100 - (c.legitimacy ?? 50), steps: [70, 85], up: ['hükümetin meşruiyeti zayıfladı', 'hükümetin meşruiyeti tükenmek üzere'], down: 'meşruiyet toparlandı', top: 2 },
-  { key: 'food', read: c => 100 - (c.foodRatio ?? 1) * 100, steps: [5, 25], up: ['gıda kıtlığı başladı', 'açlık yayılıyor'], down: 'gıda sıkıntısı geçti', top: 2 },
-  { key: 'input', read: c => 100 - (c.inputRatio ?? 1) * 100, steps: [60], up: ['sanayi girdisiz kaldı'], down: 'sanayiye girdi akışı düzeldi', top: 1 }
+  { key: 'unrest', read: c => c.unrest ?? 0, steps: [50, 70, 85], up: ['unrest reached dangerous levels', 'the country is boiling, unrest is very high', 'on the brink of uprising'], down: 'unrest receded', top: 2 },
+  { key: 'legit', read: c => 100 - (c.legitimacy ?? 50), steps: [70, 85], up: ['the government\'s legitimacy has weakened', 'the government\'s legitimacy is nearly gone'], down: 'legitimacy recovered', top: 2 },
+  { key: 'food', read: c => 100 - (c.foodRatio ?? 1) * 100, steps: [5, 25], up: ['a food shortage has begun', 'hunger is spreading'], down: 'the food shortage has passed', top: 2 },
+  { key: 'input', read: c => 100 - (c.inputRatio ?? 1) * 100, steps: [60], up: ['industry is out of inputs'], down: 'the flow of inputs to industry has recovered', top: 1 }
 ];
 
 function levelOf(value, steps, prev) {
@@ -50,42 +50,42 @@ export function snapshotState(w) {
 }
 
 function stateChanges(w, was) {
-  const out = [], add = (text, imp, o = {}) => out.push({ k: 'durum', s: 'motor', text, imp, ...o });
-  const cn = id => w.countries[id]?.name ?? was.countries[id]?.name ?? id, who = id => w.characters[id]?.name ?? was.characters[id]?.name ?? 'bilinmeyen biri';
+  const out = [], add = (text, imp, o = {}) => out.push({ k: 'state', s: 'engine', text, imp, ...o });
+  const cn = id => w.countries[id]?.name ?? was.countries[id]?.name ?? id, who = id => w.characters[id]?.name ?? was.characters[id]?.name ?? 'someone unknown';
   w.ledgerBands ||= {};
 
   for (const c of Object.values(w.countries)) {
     const b = was.countries[c.id], cc = [c.id];
-    if (!b) { if (c.alive) add(`Yeni devlet doğdu: ${c.name}`, 3, { c: cc, p: c.capital }); }
+    if (!b) { if (c.alive) add(`A new state was born: ${c.name}`, 3, { c: cc, p: c.capital }); }
     else {
-      if (b.alive && !c.alive) add(`${b.name} yıkıldı`, 3, { c: cc, p: b.capital });
+      if (b.alive && !c.alive) add(`${b.name} collapsed`, 3, { c: cc, p: b.capital });
       if (!c.alive) { delete w.ledgerBands[c.id]; continue; }
-      if (b.name !== c.name) add(`${b.name} adını ${c.name} olarak değiştirdi`, 2, { c: cc, p: c.capital });
-      if (b.regime !== c.regime) add(`${c.name}: rejim değişti, ${b.regime} yerine ${c.regime}`, 2, { c: cc, p: c.capital });
-      if (b.capital !== c.capital) add(`${c.name}: başkent ${w.provinces[c.capital]?.name ?? '?'} oldu`, 2, { c: cc, p: c.capital });
-      for (const [post, label] of POSTS) if (b[post] !== c[post]) add(`${c.name}: ${label} değişti, ${who(b[post])} yerine ${who(c[post])}`, post === 'leader' ? 3 : 1, { c: cc, a: [b[post], c[post]].filter(Boolean), p: c.capital });
-      if (b.fxRegime !== c.fxRegime) add(`${c.name}: ${c.currency?.name} ${c.fxRegime === 'serbest' ? 'serbest kura geçti' : c.fxRegime === 'altin' ? 'altına bağlandı' : 'başka bir paraya bağlandı'}`, 2, { c: cc, p: c.capital });
-      else if (c.rate > b.rate * 1.2) add(`${c.name}: ${c.currency?.name} bir çeyrekte %${Math.round((1 - b.rate / c.rate) * 100)} değer kaybetti`, 2, { c: cc, p: c.capital });
-      if (!b.strike && c.strike) add(`${c.name}: genel grev başladı`, 1, { c: cc, p: c.capital });
-      if (b.strike && !c.strike) add(`${c.name}: genel grev sona erdi`, 0, { c: cc });
-      if (!b.bankCrisis && c.bankCrisis) add(`${c.name}: bankacılık krizi patladı`, 2, { c: cc, p: c.capital });
-      if (b.bankCrisis && !c.bankCrisis) add(`${c.name}: bankacılık krizi atlatıldı`, 0, { c: cc });
-      if (!b.defaulted && c.defaulted) add(`${c.name}: borçlarını ödeyemedi, temerrüt ilan edildi`, 3, { c: cc, p: c.capital });
+      if (b.name !== c.name) add(`${b.name} changed its name to ${c.name}`, 2, { c: cc, p: c.capital });
+      if (b.regime !== c.regime) add(`${c.name}: regime changed, ${b.regime} replaced by ${c.regime}`, 2, { c: cc, p: c.capital });
+      if (b.capital !== c.capital) add(`${c.name}: the capital is now ${w.provinces[c.capital]?.name ?? '?'}`, 2, { c: cc, p: c.capital });
+      for (const [post, label] of POSTS) if (b[post] !== c[post]) add(`${c.name}: ${label} changed, ${who(b[post])} replaced by ${who(c[post])}`, post === 'leader' ? 3 : 1, { c: cc, a: [b[post], c[post]].filter(Boolean), p: c.capital });
+      if (b.fxRegime !== c.fxRegime) add(`${c.name}: ${c.currency?.name} ${c.fxRegime === 'floating' ? 'moved to a floating rate' : c.fxRegime === 'gold' ? 'was pegged to gold' : 'was pegged to another currency'}`, 2, { c: cc, p: c.capital });
+      else if (c.rate > b.rate * 1.2) add(`${c.name}: ${c.currency?.name} lost ${Math.round((1 - b.rate / c.rate) * 100)}% of its value in a quarter`, 2, { c: cc, p: c.capital });
+      if (!b.strike && c.strike) add(`${c.name}: a general strike began`, 1, { c: cc, p: c.capital });
+      if (b.strike && !c.strike) add(`${c.name}: the general strike ended`, 0, { c: cc });
+      if (!b.bankCrisis && c.bankCrisis) add(`${c.name}: a banking crisis erupted`, 2, { c: cc, p: c.capital });
+      if (b.bankCrisis && !c.bankCrisis) add(`${c.name}: the banking crisis has passed`, 0, { c: cc });
+      if (!b.defaulted && c.defaulted) add(`${c.name}: could not pay its debts and declared default`, 3, { c: cc, p: c.capital });
       for (const i of (c.institutions || []).filter(x => x.id)) {
         const was2 = b.institutions[i.id];
-        if (!was2) add(`${c.name}: yeni kurum, ${i.name}${i.head ? ` (başkan ${who(i.head)})` : ''}`, 1, { c: cc, a: [i.head].filter(Boolean), x: { description: i.description, powers: i.powers, authority: i.authority, veto: i.veto } });
-        else if (was2.head !== i.head && i.head) add(`${i.name}: yeni başkan ${who(i.head)}`, 1, { c: cc, a: [i.head] });
+        if (!was2) add(`${c.name}: new institution, ${i.name}${i.head ? ` (head ${who(i.head)})` : ''}`, 1, { c: cc, a: [i.head].filter(Boolean), x: { description: i.description, powers: i.powers, authority: i.authority, veto: i.veto } });
+        else if (was2.head !== i.head && i.head) add(`${i.name}: new head ${who(i.head)}`, 1, { c: cc, a: [i.head] });
       }
-      for (const [id, inst] of Object.entries(b.institutions)) if (!(c.institutions || []).some(i => i.id === id)) add(`${c.name}: ${inst.name} kapatıldı`, 1, { c: cc });
+      for (const [id, inst] of Object.entries(b.institutions)) if (!(c.institutions || []).some(i => i.id === id)) add(`${c.name}: ${inst.name} was dissolved`, 1, { c: cc });
       for (const bill of c.bills || []) {
         const prev = b.bills[bill.id];
-        if (!prev) add(`${c.name}: mecliste yeni teklif, ${bill.title} (${bill.proposerName})`, 1, { c: cc, a: [bill.proposer], x: { text: bill.text } });
-        else if (prev !== bill.status && bill.status !== 'bekliyor') add(`${c.name} meclisi: ${bill.title} ${{ kabul: 'kabul edildi', ret: 'reddedildi', dustu: 'düştü' }[bill.status] ?? bill.status}${bill.tally ? ` (${bill.tally.yes} evet, ${bill.tally.no} hayır)` : ''}`, bill.byGov || bill.status === 'kabul' ? 2 : 1, { c: cc, a: [bill.proposer], x: { text: bill.text } });
+        if (!prev) add(`${c.name}: new bill in parliament, ${bill.title} (${bill.proposerName})`, 1, { c: cc, a: [bill.proposer], x: { text: bill.text } });
+        else if (prev !== bill.status && bill.status !== 'pending') add(`${c.name} parliament: ${bill.title} ${{ passed: 'passed', rejected: 'was rejected', lapsed: 'lapsed' }[bill.status] ?? bill.status}${bill.tally ? ` (${bill.tally.yes} yes, ${bill.tally.no} no)` : ''}`, bill.byGov || bill.status === 'passed' ? 2 : 1, { c: cc, a: [bill.proposer], x: { text: bill.text } });
       }
       const nowSuspended = (c.parliament?.suspendedUntil ?? 0) > w.turn;
-      if (!b.suspended && nowSuspended) add(`${c.name}: meclis askıya alındı`, 3, { c: cc, p: c.capital });
-      if (b.suspended && !nowSuspended && c.parliament) add(`${c.name}: meclis yeniden açıldı`, 1, { c: cc });
-      for (const t of Object.keys(c.techs || {})) if (!b.techs.includes(t)) add(`${c.name}: yeni teknoloji, ${TECHS[t]?.name ?? t}`, 1, { c: cc });
+      if (!b.suspended && nowSuspended) add(`${c.name}: parliament was suspended`, 3, { c: cc, p: c.capital });
+      if (b.suspended && !nowSuspended && c.parliament) add(`${c.name}: parliament reopened`, 1, { c: cc });
+      for (const t of Object.keys(c.techs || {})) if (!b.techs.includes(t)) add(`${c.name}: new technology, ${TECHS[t]?.name ?? t}`, 1, { c: cc });
     }
     if (!c.alive) continue;
     const bands = w.ledgerBands[c.id] ||= {};
@@ -102,35 +102,35 @@ function stateChanges(w, was) {
     const from = was.provinces[p.id];
     if (from === undefined || from === p.controller) continue;
     const capital = w.countries[from]?.capital === p.id;
-    add(`${p.name} eyaleti ${cn(p.controller)} denetimine geçti (önceki: ${cn(from)})`, capital ? 3 : 1, { c: [p.controller, from], p: p.id });
+    add(`${p.name} passed to the control of ${cn(p.controller)} (previously: ${cn(from)})`, capital ? 3 : 1, { c: [p.controller, from], p: p.id });
   }
 
   for (const ch of Object.values(w.characters)) {
-    const b = was.characters[ch.id], label = `${ch.name} (${ROLE_TR[ch.role] ?? ch.role}, ${cn(ch.country)})`;
-    if (!b) { add(`Sahneye yeni biri çıktı: ${label}`, 0, { c: [ch.country], a: [ch.id] }); continue; }
-    if (b.alive && !ch.alive) add(`${label} ${FATE[ch.status] ?? 'sahneden çekildi'}`, b.role === 'leader' ? 2 : 1, { c: [ch.country], a: [ch.id] });
-    else if (b.status !== ch.status) add(`${label} ${FATE[ch.status] ?? `durumu: ${ch.status}`}`, 1, { c: [ch.country], a: [ch.id] });
-    if (b.role !== ch.role) add(`${ch.name} artık ${ROLE_TR[ch.role] ?? ch.role} (önceden ${ROLE_TR[b.role] ?? b.role})`, 0, { c: [ch.country], a: [ch.id] });
-    if (b.country !== ch.country) add(`${ch.name} ${cn(b.country)} tarafından ${cn(ch.country)} tarafına geçti`, 1, { c: [b.country, ch.country], a: [ch.id] });
+    const b = was.characters[ch.id], label = `${ch.name} (${ROLE_LABEL[ch.role] ?? ch.role}, ${cn(ch.country)})`;
+    if (!b) { add(`A new figure appeared: ${label}`, 0, { c: [ch.country], a: [ch.id] }); continue; }
+    if (b.alive && !ch.alive) add(`${label} ${FATE[ch.status] ?? 'left the stage'}`, b.role === 'leader' ? 2 : 1, { c: [ch.country], a: [ch.id] });
+    else if (b.status !== ch.status) add(`${label} ${FATE[ch.status] ?? `status: ${ch.status}`}`, 1, { c: [ch.country], a: [ch.id] });
+    if (b.role !== ch.role) add(`${ch.name} is now ${ROLE_LABEL[ch.role] ?? ch.role} (previously ${ROLE_LABEL[b.role] ?? b.role})`, 0, { c: [ch.country], a: [ch.id] });
+    if (b.country !== ch.country) add(`${ch.name} moved from ${cn(b.country)} to ${cn(ch.country)}`, 1, { c: [b.country, ch.country], a: [ch.id] });
   }
 
   for (const x of w.wars) {
     const parties = [...x.a, ...x.b];
-    if (!(x.id in was.wars) && x.active) add(`Savaş başladı: ${x.name}`, 3, { c: parties });
-    else if (was.wars[x.id] && !x.active) add(`Savaş bitti: ${x.name}`, 3, { c: parties });
+    if (!(x.id in was.wars) && x.active) add(`War began: ${x.name}`, 3, { c: parties });
+    else if (was.wars[x.id] && !x.active) add(`War ended: ${x.name}`, 3, { c: parties });
   }
   for (const t of w.treaties) {
-    const b = was.treaties[t.id], label = `${TREATY_TR[t.kind] ?? t.kind} (${t.parties.map(cn).join(', ')})`;
+    const b = was.treaties[t.id], label = `${TREATY_LABEL[t.kind] ?? t.kind} (${t.parties.map(cn).join(', ')})`;
     if (b && (t.breaches?.length ?? 0) > b.breaches) add(t.breaches.at(-1).text, 2, { c: t.parties });
-    if (!b?.active && t.active) add(`Antlaşma yürürlüğe girdi: ${label}${t.clauses?.length ? `. ${t.clauses.map(x => x.text).join('; ')}` : ''}`, 2, { c: t.parties, x: { terms: cut(t.terms ?? '', 400) } });
-    else if (b?.active && !t.active) add(`Antlaşma sona erdi: ${label}`, 2, { c: t.parties });
-    else if (!b && t.pending) add(`Antlaşma teklif edildi: ${label}`, 1, { c: t.parties, x: { terms: cut(t.terms ?? '', 400) } });
+    if (!b?.active && t.active) add(`Treaty took effect: ${label}${t.clauses?.length ? `. ${t.clauses.map(x => x.text).join('; ')}` : ''}`, 2, { c: t.parties, x: { terms: cut(t.terms ?? '', 400) } });
+    else if (b?.active && !t.active) add(`Treaty ended: ${label}`, 2, { c: t.parties });
+    else if (!b && t.pending) add(`Treaty proposed: ${label}`, 1, { c: t.parties, x: { terms: cut(t.terms ?? '', 400) } });
   }
   for (const pl of w.plots) {
-    const b = was.plots[pl.id], people = [pl.leader, ...(pl.members || [])], label = `${pl.kind} komplosu, ${who(pl.leader)}, ${cn(pl.country)}`;
-    if (!b && pl.active) add(`Gizli ${label} kuruldu`, 0, { c: [pl.country], a: people, x: { secret: true } });
-    if (b && !b.exposed && pl.exposed) add(`Açığa çıktı: ${label}`, 2, { c: [pl.country], a: people });
-    if (b?.active && !pl.active) add(`Sona erdi: ${label}`, 1, { c: [pl.country], a: people });
+    const b = was.plots[pl.id], people = [pl.leader, ...(pl.members || [])], label = `${pl.kind} plot, ${who(pl.leader)}, ${cn(pl.country)}`;
+    if (!b && pl.active) add(`Secret ${label} formed`, 0, { c: [pl.country], a: people, x: { secret: true } });
+    if (b && !b.exposed && pl.exposed) add(`Exposed: ${label}`, 2, { c: [pl.country], a: people });
+    if (b?.active && !pl.active) add(`Ended: ${label}`, 1, { c: [pl.country], a: people });
   }
   for (const x of w.projects || []) {
     const prev = was.projects?.[x.id], name = `${x.label ?? x.kind} at ${w.provinces[x.province]?.name}`;
@@ -149,57 +149,57 @@ function stateChanges(w, was) {
     if (p.governor && was.governors?.[p.id] !== p.governor) add(`${who(p.governor)} became governor of ${p.name}`, 1, { c: [p.controller], a: [p.governor], p: p.id });
   }
   for (const c of Object.values(w.countries)) if (c.alive && was.policies?.[c.id] && was.policies[c.id] !== `${c.languagePolicy}|${c.faithPolicy}`) add(`${c.name} changed its policy: language ${c.languagePolicy}, faith ${c.faithPolicy}`, 2, { c: [c.id], p: c.capital });
-  const ownerLabel = o => o === 'devlet' ? 'devlet' : o ? who(o) : 'halka açık';
+  const ownerLabel = o => o === 'state' ? 'state' : o ? who(o) : 'publicly held';
   for (const f of Object.values(w.firms || {})) {
-    const b = was.firms?.[f.id], people = [f.owner, b?.owner].filter(o => o && o !== 'devlet');
-    if (!b) add(`Yeni şirket: ${f.name} (${cn(f.country)}), sahibi ${ownerLabel(f.owner)}`, 1, { c: [f.country], a: people, p: f.province });
-    else if (b.status === 'acik' && f.status === 'iflas') add(`${f.name} iflas etti (${cn(f.country)})`, 2, { c: [f.country], a: people, p: f.province });
-    else if (b.owner !== f.owner) add(`${f.name} el değiştirdi: ${ownerLabel(b.owner)} yerine ${ownerLabel(f.owner)}`, f.owner === 'devlet' ? 2 : 1, { c: [f.country], a: people, p: f.province });
+    const b = was.firms?.[f.id], people = [f.owner, b?.owner].filter(o => o && o !== 'state');
+    if (!b) add(`New company: ${f.name} (${cn(f.country)}), owner ${ownerLabel(f.owner)}`, 1, { c: [f.country], a: people, p: f.province });
+    else if (b.status === 'open' && f.status === 'bankrupt') add(`${f.name} went bankrupt (${cn(f.country)})`, 2, { c: [f.country], a: people, p: f.province });
+    else if (b.owner !== f.owner) add(`${f.name} changed hands: ${ownerLabel(f.owner)} replaced ${ownerLabel(b.owner)}`, f.owner === 'state' ? 2 : 1, { c: [f.country], a: people, p: f.province });
   }
-  const DEBT_TR = { gecikmis: 'vadesinde ödenmedi', odendi: 'ödendi', silindi: 'silindi', dustu: 'taraflardan biri öldüğü için düştü' };
+  const DEBT_LABEL = { overdue: 'not paid on time', paid: 'paid', forgiven: 'forgiven', void: 'void because one of the parties died' };
   for (const d of w.debts || []) {
-    const prev = was.debts[d.id], people = [d.creditor, d.debtor], label = `${who(d.debtor)} borcu, alacaklı ${who(d.creditor)}, ${Math.round(d.amount)}`, c = [w.characters[d.debtor]?.country].filter(Boolean);
-    if (!prev) add(`Yeni borç: ${label}`, 0, { c, a: people, x: { secret: true, terms: d.terms } });
-    else if (prev !== d.status) add(`${label}: ${DEBT_TR[d.status] ?? d.status}`, 0, { c, a: people, x: { secret: true } });
+    const prev = was.debts[d.id], people = [d.creditor, d.debtor], label = `${who(d.debtor)} debt, creditor ${who(d.creditor)}, ${Math.round(d.amount)}`, c = [w.characters[d.debtor]?.country].filter(Boolean);
+    if (!prev) add(`New debt: ${label}`, 0, { c, a: people, x: { secret: true, terms: d.terms } });
+    else if (prev !== d.status) add(`${label}: ${DEBT_LABEL[d.status] ?? d.status}`, 0, { c, a: people, x: { secret: true } });
   }
   for (const s of w.strategic) {
     const b = was.strategic[s.id], ref = s.ref;
     if (!b) continue;
-    if (b.controller && b.controller !== s.controller) add(`${s.name} artık ${cn(s.controller)} denetiminde (önceki: ${cn(b.controller)})`, 2, { c: [s.controller, b.controller].filter(Boolean), p: ref });
-    if (b.closed !== !!s.closed) add(`${s.name} ${s.closed ? 'kapatıldı' : 'yeniden açıldı'}`, 2, { c: [s.controller].filter(Boolean), p: ref });
-    if (b.toll !== (s.toll || 0)) add(`${s.name}: geçiş ücreti %${Math.round((s.toll || 0) * 100)} oldu`, 1, { c: [s.controller].filter(Boolean), p: ref });
+    if (b.controller && b.controller !== s.controller) add(`${s.name} is now under the control of ${cn(s.controller)} (previously: ${cn(b.controller)})`, 2, { c: [s.controller, b.controller].filter(Boolean), p: ref });
+    if (b.closed !== !!s.closed) add(`${s.name} ${s.closed ? 'was closed' : 'reopened'}`, 2, { c: [s.controller].filter(Boolean), p: ref });
+    if (b.toll !== (s.toll || 0)) add(`${s.name}: toll is now ${Math.round((s.toll || 0) * 100)}%`, 1, { c: [s.controller].filter(Boolean), p: ref });
   }
   return out;
 }
 
-const NEWS_IMP = { komplo: 2, felaket: 1, savas: 1 };
+const NEWS_IMP = { plot: 2, disaster: 1, war: 1 };
 
 export function buildEntries(w, log, before, lookups = {}) {
   const out = [];
   for (const x of log.trace || []) {
-    out.push({ k: 'dusunce', s: x.ai ? 'ajan' : 'kural', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, text: cut(x.monologue), x: { persona: cut(x.persona, 900), decisions: x.decisions || [], lookups: x.lookups || [], ai: x.ai, notes: x.notes || '' } });
-    for (const q of lookups[x.actor] || []) out.push({ k: 'sorgu', s: 'ajan', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, q: q.q, text: cut(q.a, MAX_ANSWER) });
+    out.push({ k: 'thought', s: x.ai ? 'agent' : 'rule', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, text: cut(x.monologue), x: { persona: cut(x.persona, 900), decisions: x.decisions || [], lookups: x.lookups || [], ai: x.ai, notes: x.notes || '' } });
+    for (const q of lookups[x.actor] || []) out.push({ k: 'query', s: 'agent', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, q: q.q, text: cut(q.a, MAX_ANSWER) });
   }
-  for (const m of log.messages || []) out.push({ k: 'mesaj', s: 'ajan', n: m.fromName, to: m.toName, c: [m.fromCountry, m.toCountry].filter(Boolean), a: [m.from, m.toActor].filter(Boolean), imp: 0, ok: !m.undelivered, text: cut(m.text), x: { read: !!m.read, round: m.round ?? 0 } });
+  for (const m of log.messages || []) out.push({ k: 'message', s: 'agent', n: m.fromName, to: m.toName, c: [m.fromCountry, m.toCountry].filter(Boolean), a: [m.from, m.toActor].filter(Boolean), imp: 0, ok: !m.undelivered, text: cut(m.text), x: { read: !!m.read, round: m.round ?? 0 } });
   for (const r of log.rulings || []) {
     const failed = (r.results || []).filter(y => y.ok === false), ok = !!r.success && !failed.length, detail = (r.results || []).map(y => y.msg).filter(Boolean).join('; ');
-    out.push({ k: r.source === 'hakem' ? 'hukum' : 'kural', s: r.source, n: r.name, r: r.role, c: [r.country], a: [r.actor], imp: 0, ok, text: cut(r.source === 'hakem' ? r.narrative : `${r.narrative}${detail ? `: ${detail}` : ''}`), x: { narrative: cut(r.narrative, 400), probability: r.probability, success: r.success, results: r.results || [], ops: r.ops || [], decision: r.decision, decisionText: r.decisionText ?? '' } });
+    out.push({ k: r.source === 'referee' ? 'ruling' : 'rule', s: r.source, n: r.name, r: r.role, c: [r.country], a: [r.actor], imp: 0, ok, text: cut(r.source === 'referee' ? r.narrative : `${r.narrative}${detail ? `: ${detail}` : ''}`), x: { narrative: cut(r.narrative, 400), probability: r.probability, success: r.success, results: r.results || [], ops: r.ops || [], decision: r.decision, decisionText: r.decisionText ?? '' } });
   }
-  for (const b of w.battles || []) out.push({ k: 'muharebe', s: 'motor', c: [b.attacker, b.defender], p: b.province, imp: 1, text: `${w.provinces[b.province]?.name ?? b.province} Muharebesi: ${w.countries[b.attackerWon ? b.attacker : b.defender]?.name} üstün geldi. Kayıplar: saldıran ${b.lossA} bin, savunan ${b.lossD} bin.`, x: { ...b } });
-  for (const y of log.system || []) out.push({ k: 'sistem', s: 'motor', c: [], n: y.name, imp: 0, text: cut(y.text, 500) });
-  for (const n of w.newsThisTurn || []) out.push({ k: 'haber', s: 'motor', c: n.countries || [], imp: n.secret ? 0 : NEWS_IMP[n.kind] ?? 0, text: cut(n.text), x: { kind: n.kind, secret: !!n.secret } });
+  for (const b of w.battles || []) out.push({ k: 'battle', s: 'engine', c: [b.attacker, b.defender], p: b.province, imp: 1, text: `Battle of ${w.provinces[b.province]?.name ?? b.province}: ${w.countries[b.attackerWon ? b.attacker : b.defender]?.name} prevailed. Losses: attacker ${b.lossA}k, defender ${b.lossD}k.`, x: { ...b } });
+  for (const y of log.system || []) out.push({ k: 'system', s: 'engine', c: [], n: y.name, imp: 0, text: cut(y.text, 500) });
+  for (const n of w.newsThisTurn || []) out.push({ k: 'news', s: 'engine', c: n.countries || [], imp: n.secret ? 0 : NEWS_IMP[n.kind] ?? 0, text: cut(n.text), x: { kind: n.kind, secret: !!n.secret } });
   if (before) out.push(...stateChanges(w, before));
-  const t = w.turn, d = w.date || 'Başlangıç';
+  const t = w.turn, d = w.date || 'Start';
   return out.map((e, i) => ({ id: `${t}-${i}`, t, i, d, ...e }));
 }
 
-// Eski tur görünümleri (Zihinler, Yazışmalar, Hakem) defterden yeniden kurulur.
+// Old turn views (Minds, Correspondence, Referee) are rebuilt from the ledger.
 export function logFromEntries(entries) {
   const log = { trace: [], rulings: [], messages: [] };
   for (const e of entries) {
-    if (e.k === 'dusunce') log.trace.push({ actor: e.a[0], country: e.c[0], role: e.r, name: e.n, ai: e.x.ai, persona: e.x.persona, lookups: e.x.lookups, monologue: e.text, decisions: e.x.decisions, messages: [] });
-    else if (e.k === 'hukum' || e.k === 'kural') log.rulings.push({ actor: e.a[0], name: e.n, country: e.c[0], role: e.r, narrative: e.x.narrative, probability: e.x.probability, success: e.x.success, results: e.x.results, source: e.s, decision: e.x.decision });
-    else if (e.k === 'mesaj') log.messages.push({ from: e.a[0], fromName: e.n, fromCountry: e.c[0], toName: e.to, text: e.text, undelivered: e.ok === false, read: !!e.x?.read, round: e.x?.round ?? 0 });
+    if (e.k === 'thought') log.trace.push({ actor: e.a[0], country: e.c[0], role: e.r, name: e.n, ai: e.x.ai, persona: e.x.persona, lookups: e.x.lookups, monologue: e.text, decisions: e.x.decisions, messages: [] });
+    else if (e.k === 'ruling' || e.k === 'rule') log.rulings.push({ actor: e.a[0], name: e.n, country: e.c[0], role: e.r, narrative: e.x.narrative, probability: e.x.probability, success: e.x.success, results: e.x.results, source: e.s, decision: e.x.decision });
+    else if (e.k === 'message') log.messages.push({ from: e.a[0], fromName: e.n, fromCountry: e.c[0], toName: e.to, text: e.text, undelivered: e.ok === false, read: !!e.x?.read, round: e.x?.round ?? 0 });
   }
   return log;
 }

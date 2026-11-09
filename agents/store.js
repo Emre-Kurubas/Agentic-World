@@ -6,7 +6,7 @@ import { fold, matches, logFromEntries } from './ledger.js';
 const SEGMENT = 100, CACHE = 12;
 export const FULL_WINDOW = 40, YEARLY_WINDOW = 400;
 
-// Yakın geçmişin her turu, sonra yılda bir, sonra beş yılda bir dünya kopyası tutulur. Defter hiç seyreltilmez.
+// Every turn of the recent past, then one per year, then one per five years is kept as a world copy. The ledger is never thinned.
 export function keepSnapshot(t, last) {
   const age = last - t;
   return t === 0 || age <= FULL_WINDOW || (age <= YEARLY_WINDOW ? t % 4 === 0 : t % 20 === 0);
@@ -24,7 +24,14 @@ export class Store {
   turnFile(t) { return path.join(this.dir, 'turns', `t-${pad(t)}.json.gz`); }
   exists() { return fs.existsSync(this.file('world.json')); }
   loadWorld() { return JSON.parse(fs.readFileSync(this.file('world.json'), 'utf8')); }
-  atomic(f, data) { const tmp = `${f}.tmp`; fs.writeFileSync(tmp, data); fs.renameSync(tmp, f); }
+  // On Windows an antivirus or indexer can briefly lock a file; a save must not end the game over that.
+  atomic(f, data) {
+    const tmp = `${f}.tmp`; fs.writeFileSync(tmp, data);
+    for (let i = 0; ; i++) {
+      try { fs.renameSync(tmp, f); return; }
+      catch (e) { if (i >= 20 || !['EPERM', 'EBUSY', 'EACCES'].includes(e.code)) throw e; Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50); }
+    }
+  }
   saveMap(w) { this.atomic(this.file('map.json'), JSON.stringify(w.map)); }
 
   commit(w, entries = []) {
@@ -34,14 +41,14 @@ export class Store {
     this.saveStats(w);
     this.atomic(this.turnFile(t), zlib.gzipSync(JSON.stringify({ world: lean })));
     if (this.turns.at(-1) !== t) this.turns.push(t);
-    const n = w.newsThisTurn || [], kind = n.some(x => x.kind === 'komplo' && !x.secret) ? 'komplo' : n.some(x => x.kind === 'savas') ? 'savas' : null;
+    const n = w.newsThisTurn || [], kind = n.some(x => x.kind === 'plot' && !x.secret) ? 'plot' : n.some(x => x.kind === 'war') ? 'war' : null;
     if (kind) { const m = this.marks(); m[t] = kind; this.atomic(this.file('marks.json'), JSON.stringify(m)); }
     this.atomic(this.file('world.json'), JSON.stringify(w));
     this.thin(t);
     this.compact(t);
   }
 
-  // Yaşı pencereyi yeni aşan iki turu kontrol etmek yeter; her commit sabit iş yapar.
+  // Checking the two turns that just aged past the window is enough; each commit does constant work.
   thin(last) {
     for (const t of [last - FULL_WINDOW - 1, last - YEARLY_WINDOW - 1]) {
       if (t < 0 || keepSnapshot(t, last)) continue;
@@ -71,7 +78,7 @@ export class Store {
   loadPending(turn) { try { const p = JSON.parse(fs.readFileSync(this.file('pending.json'), 'utf8')); return p.turn === turn ? p : null; } catch { return null; } }
   clearPending() { try { fs.unlinkSync(this.file('pending.json')); } catch {} }
 
-  // Defter: her tur kendi dosyasına yazılır, aynı tur tekrar oynanırsa üzerine yazar. 100 tur dolunca tek segmente birleşir.
+  // Ledger: each turn is written to its own file; replaying a turn overwrites it. After 100 turns they are merged into one segment.
   ledgerFile(n) { return path.join(this.dir, 'ledger', n); }
   writeTurnEntries(t, entries) {
     const name = `t-${pad(t)}.ndjson.gz`;
@@ -106,7 +113,7 @@ export class Store {
     for (const s of parts) { fs.rmSync(this.ledgerFile(s.name), { force: true }); this.cache.delete(s.name); }
   }
 
-  // Yeniden eskiye tarar, limit dolunca durur; imleçle sayfalanır.
+  // Scans newest to oldest, stops when the limit is reached; paginated by cursor.
   queryLedger(o = {}) {
     const limit = Math.max(1, Math.min(500, o.limit || 100)), f = { ...o, words: fold(o.q ?? '').split(/\s+/).filter(Boolean) }, items = [];
     const [ct, ci] = o.cursor ? o.cursor.split('-').map(Number) : [Infinity, Infinity];
@@ -132,19 +139,19 @@ export class Store {
     try { return this.usage = JSON.parse(fs.readFileSync(this.file('usage.ndjson'), 'utf8').trim().split('\n').at(-1)); } catch { return null; }
   }
 
-  // Grafikler için: kırpılmayan, tur tur ülke sayıları.
+  // For charts: per-turn country numbers, never thinned.
   saveStats(w) {
-    const line = { t: w.turn, d: w.date || 'Başlangıç', c: Object.values(w.countries).filter(c => c.alive).map(c => ({ id: c.id, name: c.name, gdp: Math.round(c.realGdp), legit: Math.round(c.legitimacy), unrest: Math.round(c.unrest ?? 0), infl: +(c.inflation * 100).toFixed(1), food: +(c.foodRatio * 100).toFixed(0), treasury: Math.round(c.treasury), gold: Math.round(c.reserves), rate: +(c.rate ?? 1).toFixed(3), debt: Math.round(c.debt), men: Math.round(Object.values(w.units).filter(u => u.country === c.id).reduce((a, u) => a + u.men, 0)), ships: Math.round(Object.values(w.fleets).filter(f => f.country === c.id).reduce((a, f) => a + f.ships, 0)), provinces: Object.values(w.provinces).filter(p => p.controller === c.id).length })) };
+    const line = { t: w.turn, d: w.date || 'Start', c: Object.values(w.countries).filter(c => c.alive).map(c => ({ id: c.id, name: c.name, gdp: Math.round(c.realGdp), legit: Math.round(c.legitimacy), unrest: Math.round(c.unrest ?? 0), infl: +(c.inflation * 100).toFixed(1), food: +(c.foodRatio * 100).toFixed(0), treasury: Math.round(c.treasury), gold: Math.round(c.reserves), rate: +(c.rate ?? 1).toFixed(3), debt: Math.round(c.debt), men: Math.round(Object.values(w.units).filter(u => u.country === c.id).reduce((a, u) => a + u.men, 0)), ships: Math.round(Object.values(w.fleets).filter(f => f.country === c.id).reduce((a, f) => a + f.ships, 0)), provinces: Object.values(w.provinces).filter(p => p.controller === c.id).length })) };
     fs.appendFileSync(this.file('stats.ndjson'), `${JSON.stringify(line)}\n`);
     fs.appendFileSync(this.file('positions.ndjson'), `${JSON.stringify({ t: w.turn, units: Object.values(w.units).map(u => [u.id, u.country, u.province, Math.round(u.men), u.kind, u.target ?? null]), fleets: Object.values(w.fleets).map(f => [f.id, f.country, f.sea, Math.round(f.ships), f.kind ?? 'cruiser', f.target ?? null]) })}\n`);
   }
 
-  artDir() { const d = this.file('sanat'); fs.mkdirSync(d, { recursive: true }); return d; }
+  artDir() { const d = this.file('art'); fs.mkdirSync(d, { recursive: true }); return d; }
   artPath(id) { return path.join(this.artDir(), `${id}.svg`); }
-  saveArt(rec, svg) { fs.writeFileSync(this.artPath(rec.id), svg); fs.appendFileSync(this.file('sanat.ndjson'), `${JSON.stringify({ ...rec, file: `${rec.id}.svg` })}\n`); }
-  artIndex() { try { return fs.readFileSync(this.file('sanat.ndjson'), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { return []; } }
-  loadArtQueue() { try { return JSON.parse(fs.readFileSync(this.file('sanat-kuyruk.json'), 'utf8')); } catch { return []; } }
-  saveArtQueue(q) { this.atomic(this.file('sanat-kuyruk.json'), JSON.stringify(q)); }
+  saveArt(rec, svg) { fs.writeFileSync(this.artPath(rec.id), svg); fs.appendFileSync(this.file('art.ndjson'), `${JSON.stringify({ ...rec, file: `${rec.id}.svg` })}\n`); }
+  artIndex() { try { return fs.readFileSync(this.file('art.ndjson'), 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l)); } catch { return []; } }
+  loadArtQueue() { try { return JSON.parse(fs.readFileSync(this.file('art-queue.json'), 'utf8')); } catch { return []; } }
+  saveArtQueue(q) { this.atomic(this.file('art-queue.json'), JSON.stringify(q)); }
 
   people() { try { return JSON.parse(fs.readFileSync(this.file('people.json'), 'utf8')); } catch { return {}; } }
   updatePeople(w, entries) {

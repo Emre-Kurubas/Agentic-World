@@ -1,8 +1,8 @@
-// Harita: açılışta bir kez çizilen taş baskı rölyef ve her tur güncellenen siyasi katmanlar.
+// Map: a lithographic relief drawn once at startup, and political layers updated every turn.
 const NS = 'http://www.w3.org/2000/svg';
 const MARGIN = 400, SEA_DEEP = '#1c4c5e';
 const SEA_BANDS = [[9, '#9fd0c4'], [22, '#7cbab3'], [40, '#5ba2a6'], [64, '#438a97'], [98, '#357487'], [150, '#2a6275'], [230, '#215668']];
-export const TERR = { ova: '#bcc78c', orman: '#86a268', tepe: '#c4b481', dag: '#a8977d', col: '#e3cd92', bataklik: '#8aa585', tundra: '#d6dcd3' };
+export const TERR = { plains: '#bcc78c', forest: '#86a268', hills: '#c4b481', mountain: '#a8977d', desert: '#e3cd92', marsh: '#8aa585', tundra: '#d6dcd3' };
 export const ETHC = ['#4f7fa3', '#b5684a', '#7b8f46', '#8a6aa8', '#c29a3c', '#4a9a8b', '#b0607f', '#71706a'];
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -74,14 +74,14 @@ function boxBlur(src, w, h, r) {
 
 function paintLand(map, world, noise) {
   const S = 2, { W, H } = map, w = W * S, h = H * S, list = Object.entries(map.polys).map(([id, poly]) => ({ id, poly }));
-  const prov = id => world.provinces[id], colors = layerOf(w, h, S, list, id => TERR[prov(id)?.terrain] ?? TERR.ova, 15);
+  const prov = id => world.provinces[id], colors = layerOf(w, h, S, list, id => TERR[prov(id)?.terrain] ?? TERR.plains, 15);
   const elev = layerOf(w, h, S, list, id => { const v = Math.round(clamp(prov(id)?.elevation ?? .2, 0, 1) * 255); return `rgb(${v},${v},${v})`; }, 22);
   const maskC = canvas(w, h), mc = maskC.getContext('2d', { willReadFrequently: true });
   mc.scale(S, S); mc.fillStyle = '#fff'; mc.strokeStyle = '#fff'; mc.lineWidth = .6;
   for (const { poly } of list) { tracePoly(mc, poly); mc.fill(); mc.stroke(); }
   const alpha = mc.getImageData(0, 0, w, h).data, hf = new Float32Array(w * h), base = new Float32Array(w * h);
   for (let i = 0; i < w * h; i++) base[i] = elev[i * 4] / 255;
-  // 8 bitlik yükseklik gölgede basamak yapar; ortalama alınca değerler kesirli olur.
+  // 8-bit elevation makes steps in the shading; averaging gives fractional values.
   boxBlur(base, w, h, 5); boxBlur(base, w, h, 5);
   for (let i = 0; i < w * h; i++) {
     if (!alpha[i * 4 + 3]) continue;
@@ -122,11 +122,11 @@ function drawGlyphs(g, list, prov) {
     const p = prov(id); if (!p) continue;
     const box = bounds(poly), r = makeRandom(parseInt(id.slice(1), 10) * 7919 + 13), a = area(poly);
     const scatter = (count, sink, pad = 6) => { for (let i = 0, tries = 0; i < count && tries < count * 8; tries++) { const x = box.x0 + r() * (box.x1 - box.x0), y = box.y0 + r() * (box.y1 - box.y0); if (!inPoly(x, y, poly) || Math.hypot(x - p.cx, y - p.cy) < 17 || !poly.every(([u, v]) => Math.hypot(u - x, v - y) > pad)) continue; sink.push({ x, y, s: .75 + r() * .55 }); i++; } };
-    if (p.terrain === 'dag') scatter(Math.ceil(a / 620), peaks, 9);
-    if (p.terrain === 'tepe') scatter(Math.ceil(a / 1500), peaks.hills ||= [], 8);
-    if (p.terrain === 'orman') scatter(Math.ceil(a / 165), trees, 4);
-    if (p.terrain === 'col') scatter(Math.ceil(a / 620), dunes, 6);
-    if (p.terrain === 'bataklik') scatter(Math.ceil(a / 300), tufts, 5);
+    if (p.terrain === 'mountain') scatter(Math.ceil(a / 620), peaks, 9);
+    if (p.terrain === 'hills') scatter(Math.ceil(a / 1500), peaks.hills ||= [], 8);
+    if (p.terrain === 'forest') scatter(Math.ceil(a / 165), trees, 4);
+    if (p.terrain === 'desert') scatter(Math.ceil(a / 620), dunes, 6);
+    if (p.terrain === 'marsh') scatter(Math.ceil(a / 300), tufts, 5);
   }
   for (const t of [...trees].sort((a, b) => a.y - b.y)) {
     g.fillStyle = 'rgba(46,70,44,.35)'; g.beginPath(); g.ellipse(t.x + .7, t.y + 2.7 * t.s, 3 * t.s, 1.4 * t.s, 0, 0, 7); g.fill();
@@ -238,9 +238,9 @@ export class WorldMap {
   }
 
   tintFor(p, layer, w, eths) {
-    if (layer === 'arazi' || layer === 'kaynak') return null;
-    if (layer === 'huzur') { const t = clamp(p.unrest / 100, 0, 1); return `rgb(${Math.round(250 - t * 60)},${Math.round(240 - t * 190)},${Math.round(226 - t * 190)})`; }
-    if (layer === 'etnik') return ETHC[eths.indexOf(p.eth) % ETHC.length];
+    if (layer === 'terrain' || layer === 'resources') return null;
+    if (layer === 'unrest') { const t = clamp(p.unrest / 100, 0, 1); return `rgb(${Math.round(250 - t * 60)},${Math.round(240 - t * 190)},${Math.round(226 - t * 190)})`; }
+    if (layer === 'ethnic') return ETHC[eths.indexOf(p.eth) % ETHC.length];
     const col = id => w.countries[id]?.colors?.[0] ?? '#8a9a94';
     if (p.controller === p.owner) return col(p.controller);
     const key = `h-${p.controller}-${p.owner}`;
@@ -251,10 +251,10 @@ export class WorldMap {
   render(w, { layer, country, province }) {
     if (!this.g) return;
     const eths = [...new Set(Object.values(w.provinces).map(p => p.eth))];
-    this.g.tints.setAttribute('class', layer === 'rota' ? 'faint' : layer === 'huzur' ? 'heat' : '');
+    this.g.tints.setAttribute('class', layer === 'trade' ? 'faint' : layer === 'unrest' ? 'heat' : '');
     for (const [id, el] of Object.entries(this.tints)) { const p = w.provinces[id], f = p ? this.tintFor(p, layer, w, eths) : null; el.setAttribute('fill', f ?? 'none'); }
     const owner = id => w.provinces[id]?.controller;
-    const political = layer === 'siyasi' || layer === 'rota';
+    const political = layer === 'political' || layer === 'trade';
     let borders = '', sel = '';
     for (const e of this.edges) {
       const a = owner(e.a), b = e.b ? owner(e.b) : null;
@@ -263,7 +263,7 @@ export class WorldMap {
     }
     this.g.borders.setAttribute('d', borders); this.g.selglow.setAttribute('d', sel); this.g.selline.setAttribute('d', sel);
     this.g.provsel.setAttribute('d', province && this.map.polys[province] ? `M${this.map.polys[province].map(q => q.join()).join('L')}Z` : '');
-    this.g.routes.innerHTML = layer === 'rota' ? this.routes(w) : '';
+    this.g.routes.innerHTML = layer === 'trade' ? this.routes(w) : '';
     this.g.marks.innerHTML = this.marks(w, layer);
     this.g.labels.innerHTML = this.labels(w, political);
   }
@@ -273,8 +273,8 @@ export class WorldMap {
     for (const [k, r] of Object.entries(w.routes || {})) {
       const [a, b] = k.split('|'), v = Object.values(flows[k] || {}).reduce((s, n) => s + n, 0); if (!v) continue;
       const A = cap(a), B = cap(b); if (!A || !B) continue;
-      const pts = r.mode === 'deniz' ? [[A.cx, A.cy], ...r.path.map(s => [w.seas[s].cx, w.seas[s].cy]), [B.cx, B.cy]] : [[A.cx, A.cy], [B.cx, B.cy]];
-      x += `<polyline class="route" stroke="${r.mode === 'deniz' ? '#f6df98' : '#6c3f1c'}" stroke-width="${Math.min(8, 1 + Math.sqrt(v) * .07)}" stroke-dasharray="${r.tolls.length ? '7 5' : '0'}" points="${pts.map(q => q.join()).join(' ')}"/>`;
+      const pts = r.mode === 'sea' ? [[A.cx, A.cy], ...r.path.map(s => [w.seas[s].cx, w.seas[s].cy]), [B.cx, B.cy]] : [[A.cx, A.cy], [B.cx, B.cy]];
+      x += `<polyline class="route" stroke="${r.mode === 'sea' ? '#f6df98' : '#6c3f1c'}" stroke-width="${Math.min(8, 1 + Math.sqrt(v) * .07)}" stroke-dasharray="${r.tolls.length ? '7 5' : '0'}" points="${pts.map(q => q.join()).join(' ')}"/>`;
     }
     return x;
   }
@@ -285,8 +285,8 @@ export class WorldMap {
     let x = '';
     const provs = Object.values(w.provinces), popOf = p => Object.values(p.pops).reduce((a, q) => a + q.n, 0), ranked = [...provs].sort((a, b) => popOf(b) - popOf(a)), big = new Set(ranked.slice(0, Math.ceil(provs.length * .28)).map(p => p.id));
     const capitals = new Set(Object.values(w.countries).filter(c => c.alive).map(c => c.capital));
-    if (layer === 'kaynak') {
-      const CHIP = { coal: 'Kö', iron: 'De', copper: 'Ba', oil: 'Pe', phosphate: 'Fo', rare: 'Na', gold: 'Al' };
+    if (layer === 'resources') {
+      const CHIP = { coal: 'Co', iron: 'Fe', copper: 'Cu', oil: 'Oi', phosphate: 'Ph', rare: 'Ra', gold: 'Au' };
       for (const p of provs) { const list = Object.entries(p.deposits); if (!list.length) continue; x += sym(p.cx, p.cy, list.map(([k, d], i) => `<g class="${d.amount > 0 ? '' : 'spent'}" transform="translate(${(i - (list.length - 1) / 2) * 20},0)"><rect x="-9" y="-7" width="18" height="14" rx="1" fill="${d.known ? '#f7f3e6' : 'rgba(247,243,230,.35)'}" stroke="#14242a" stroke-dasharray="${d.known ? '0' : '2 2'}"/><text y="3.6" class="chiptext">${CHIP[k]}</text></g>`).join('')); }
     }
     for (const p of provs) {
@@ -295,9 +295,9 @@ export class WorldMap {
       else x += sym(p.cx, p.cy - 3, use('s-town', 8));
       if (p.port > 0 && p.seas[0] && w.seas[p.seas[0]]) { const s = w.seas[p.seas[0]], d = Math.hypot(s.cx - p.cx, s.cy - p.cy) || 1; x += sym(p.cx + (s.cx - p.cx) / d * 18, p.cy + (s.cy - p.cy) / d * 18, use('s-port', 13), 'portmark'); }
     }
-    if (layer === 'siyasi' || layer === 'rota') {
+    if (layer === 'political' || layer === 'trade') {
       const totals = {};
-      for (const u of Object.values(w.units)) { const k = `${u.province}|${u.country}`; (totals[k] ||= { men: 0, province: u.province, country: u.country, armor: false }).men += u.men; if (u.kind === 'zirhli') totals[k].armor = true; }
+      for (const u of Object.values(w.units)) { const k = `${u.province}|${u.country}`; (totals[k] ||= { men: 0, province: u.province, country: u.country, armor: false }).men += u.men; if (u.kind === 'armor') totals[k].armor = true; }
       const seen = {};
       for (const t of Object.values(totals)) {
         const p = w.provinces[t.province]; if (!p) continue;
@@ -307,7 +307,7 @@ export class WorldMap {
       for (const f of Object.values(w.fleets || {})) { const s = w.seas[f.sea]; if (s) x += sym(s.cx, s.cy, `<rect x="-16" y="-9" width="33" height="18" rx="1.5" class="chit"/><rect x="-16" y="-9" width="14" height="18" rx="1.5" fill="${color(f.country)}"/><path d="M-14 1.4h10l-2 3.4h-6zM-9 1.4v-6.6l4 4.6h-4" fill="#fff"/><text x="8" y="3.5" class="chitn">${Math.round(f.ships)}</text>`); }
       for (const b of w.battles || []) { const p = w.provinces[b.province]; if (p) x += sym(p.cx, p.cy - 16, use('s-battle', 24), 'battle'); }
     }
-    for (const s of w.strategic || []) { const q = s.type === 'bogaz' ? w.seas[s.ref] : w.provinces[s.ref]; if (!q || (s.type === 'liman' && layer !== 'rota')) continue; x += `<g class="sym" style="--x:${q.cx}px;--y:${q.cy - 20}px"><title>${esc(s.name)}</title>${use('s-strat', 14, s.closed ? '#b3362b' : '#f0c95a')}</g>`; }
+    for (const s of w.strategic || []) { const q = s.type === 'strait' ? w.seas[s.ref] : w.provinces[s.ref]; if (!q || (s.type === 'port' && layer !== 'trade')) continue; x += `<g class="sym" style="--x:${q.cx}px;--y:${q.cy - 20}px"><title>${esc(s.name)}</title>${use('s-strat', 14, s.closed ? '#b3362b' : '#f0c95a')}</g>`; }
     return x;
   }
 

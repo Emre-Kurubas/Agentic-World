@@ -38,8 +38,8 @@ export function initGroups(w) {
     add(p, eth === p.eth ? c.majorityEth : eth, rel, 1 - main);
     normalize(p);
   }
-  const FROM = { cunta: 'assimilate', monarsi: 'assimilate', teokrasi: 'tolerate', devrim: 'tolerate', cumhuriyet: 'tolerate', tacir: 'tolerate', tarim: 'tolerate', federasyon: 'autonomy' };
-  for (const c of cs) { c.languagePolicy = FROM[c.archetype] ?? 'tolerate'; c.faithPolicy = c.archetype === 'teokrasi' ? 'state' : c.archetype === 'devrim' ? 'secular' : 'tolerate'; }
+  const FROM = { junta: 'assimilate', monarchy: 'assimilate', theocracy: 'tolerate', revolutionary: 'tolerate', republic: 'tolerate', merchant: 'tolerate', agrarian: 'tolerate', federation: 'autonomy' };
+  for (const c of cs) { c.languagePolicy = FROM[c.archetype] ?? 'tolerate'; c.faithPolicy = c.archetype === 'theocracy' ? 'state' : c.archetype === 'revolutionary' ? 'secular' : 'tolerate'; }
 }
 
 // Part of a people's weight moves with refugees.

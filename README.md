@@ -1,52 +1,53 @@
-# Ajan Dünyası
+# Agent World
 
-Yapay zekâ karakterlerinin kurgusal bir dünyada ülke yönettiği, tur tabanlı politika simülasyonu. Sen izlersin.
+A turn-based politics simulation in which AI characters run countries in a fictional world. You watch.
 
-## Çalıştırma
+## Running
 
-Node.js 20 veya üstü ve oturumu açık Claude Code gerekir.
+Requires Node.js 20 or newer and a signed-in Claude Code.
 
-En kolayı masaüstündeki **Ajan Dünyası** kısayoluna çift tıklamak. Oyun başlar, panel kendi penceresinde açılır, pencereyi kapatınca oyun durur ve kaldığı yerden sürer. Kısayol silinirse `powershell -File kisayol-olustur.ps1` ile yeniden kurulur.
+The easiest way is to double-click the **Agent World** shortcut on the desktop. The game starts, the panel opens in its own window, and closing the window stops the game so it can resume where it left off. If the shortcut is deleted, recreate it with `powershell -File kisayol-olustur.ps1`.
 
-Terminalden:
+From a terminal:
 
 ```
 cd Desktop\ajan-dunyasi
 node run.js
 ```
 
-Sonra tarayıcıda `http://localhost:4173` adresini aç. Oyun sen durdurana kadar sürer. Durdurmak için paneldeki **Oyunu durdur** düğmesini kullan. Ctrl+C ile kapatırsan bir sonraki `node run.js` kaldığı turdan devam eder.
+Then open `http://localhost:4173` in a browser. The game runs until you stop it. To stop it use the **Pause game** button in the panel. If you close it with Ctrl+C, the next `node run.js` continues from the last turn.
 
-Claude kullanmadan paneli denemek için: `node run.js --backend mock --name deneme --delay 1500`
+To try the panel without using Claude: `node run.js --backend mock --name demo --delay 1500`
 
-## Hangi karakterler yapay zekâ olsun
+## Which characters are AI
 
-Her ülkede lider, general, muhalefet ve oligark vardır. Seçmediklerin dünyadan silinmez, kurallarla oynar: darbe de yapabilir, ihanet de edebilirler.
+Every country has a leader, a general, an opposition and an oligarch. The ones you do not select are not removed from the world; they play by rules and can still stage a coup or betray someone.
 
 ```
 node run.js --roles leader
 node run.js --roles leader,general
 ```
 
-Kalıcı yapmak için `config.json` içindeki `agentRoles` listesini değiştir. Ülkeye özel ayar için: `"countryAgentRoles": { "U1": ["leader"], "U2": ["leader", "general"] }`.
+To make it permanent, change the `agentRoles` list in `config.json`. For per-country settings: `"countryAgentRoles": { "U1": ["leader"], "U2": ["leader", "general"] }`.
 
-## Ayarlar (`config.json`)
+## Settings (`config.json`)
 
-- `maxTurns`: 0 sınırsızdır.
-- `wakeEvery`: Yapay zekâ olan ikincil karakterlerin en geç kaç turda bir uyanacağı.
-- `wakeTension`: Gerilim bu değeri geçince ikincil karakterler her tur uyanır.
-- `maxLookupRounds`: Bir karakterin tur başına kaç kez bilgi sorgulayabileceği. Her sorgu turu bir ajan çağrısıdır.
-- `negotiationRounds`: Aynı çeyrek içinde kaç görüşme turu yapılabileceği. 0 yaparsan mesajlar gelecek çeyreğe kalır. Her görüşme, mesaj alan her yapay zekâ karakter için bir çağrıdır.
-- `models`: lider, hakem ve ikincil karakterlerin modeli.
-- `concurrency`: Aynı anda çalışan ajan sayısı.
-- `saveDir`: Boşsa kayıtlar OneDrive dışında `kullanıcı klasörün\ajan-dunyasi-kayitlar` altına yazılır.
+- `maxTurns`: 0 means unlimited.
+- `wakeEvery`: how often, at the latest, AI secondary characters wake up (in turns).
+- `wakeTension`: above this tension value secondary characters wake every turn.
+- `maxLookupRounds`: how many times a character can look up information per turn. Each lookup round is one agent call.
+- `negotiationRounds`: how many rounds of talks can happen within a quarter. With 0, messages wait for the next quarter. Each round is one call for every AI character who received a message.
+- `models`: the models for the leader, referee and secondary characters.
+- `concurrency`: how many agents run at once.
+- `saveDir`: if empty, saves are written outside OneDrive under `your user folder\ajan-dunyasi-kayitlar`.
 
-Sıfırdan başlamak için: `node run.js --new`. Bu, aynı adlı kaydı siler.
+To start over: `node run.js --new`. This deletes the save with the same name.
 
-## Dosyalar
+## Files
 
-- `engine/`: dünya modeli, ekonomi, ordu, siyaset, işlemler
-- `agents/`: karakter ve hakem istekleri, kural tabanlı oyuncular, tur akışı, kayıt
-- `panel/`: izleme ekranı. **Defter** sekmesi her şeyi aranabilir tutar, **Kişiler** sekmesi karakter başına zaman çizelgesi verir
-- `agents/queries.js`: karakterlerin bakabildiği bilgiler ve erişim sınırları
-- `tests/realism.js`: gerçekçilik ve sistem kontrolleri (`node tests/realism.js`)
+- `engine/`: world model, economy, military, politics, operations
+- `agents/`: character and referee prompts, rule-based players, turn flow, saving
+- `panel/`: the viewing screen. The **Ledger** tab keeps everything searchable, the **People** tab gives a timeline per character
+- `agents/queries.js`: the information characters can look up and its access limits
+- `tests/realism.js`: realism and system checks (`node tests/realism.js`)
+- `tools/export.js`: exports a finished game into a `video-source` folder for a video-making AI (`node tools/export.js <save-name>`)

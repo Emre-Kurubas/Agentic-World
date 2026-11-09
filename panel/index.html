@@ -1,42 +1,42 @@
 <!doctype html>
-<html lang="tr">
+<html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Ajan Dünyası</title>
+<title>Agent World</title>
 <link rel="icon" href="favicon.ico">
 <link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="bar" aria-label="Seçili ülkenin durumu">
-  <label class="who"><span class="flag" id="flag"></span><select id="countrySel" aria-label="Ülke seç"></select></label>
+<header class="bar" aria-label="Status of the selected country">
+  <label class="who"><span class="flag" id="flag"></span><select id="countrySel" aria-label="Select country"></select></label>
   <div class="res" id="res"></div>
-  <div class="when"><span id="date">Başlangıç</span><span id="snapnote" class="snapnote" hidden></span></div>
+  <div class="when"><span id="date">Start</span><span id="snapnote" class="snapnote" hidden></span></div>
 </header>
 <main class="stage">
-  <section class="mapwrap" id="wrap" aria-label="Dünya haritası">
-    <svg id="map" role="img" aria-label="Eyaletler, kaynaklar ve stratejik noktalar"></svg>
-    <div id="loading" class="loading">Harita çiziliyor</div>
+  <section class="mapwrap" id="wrap" aria-label="World map">
+    <svg id="map" role="img" aria-label="Provinces, resources and strategic points"></svg>
+    <div id="loading" class="loading">Drawing the map</div>
     <div id="tip" class="tip" hidden></div>
-    <div class="layers" id="layers" role="group" aria-label="Harita katmanı"></div>
-    <div class="zoom"><button id="zin" type="button" aria-label="Yakınlaştır">+</button><button id="zout" type="button" aria-label="Uzaklaştır">−</button><button id="zreset" type="button">Tümü</button></div>
+    <div class="layers" id="layers" role="group" aria-label="Map layer"></div>
+    <div class="zoom"><button id="zin" type="button" aria-label="Zoom in">+</button><button id="zout" type="button" aria-label="Zoom out">−</button><button id="zreset" type="button">All</button></div>
     <div class="cards" id="cards" aria-live="polite"></div>
     <div class="legend" id="legend"></div>
   </section>
   <aside class="drawer" id="drawer">
-    <button id="toggle" type="button" class="toggle" aria-label="Paneli aç veya kapat">›</button>
+    <button id="toggle" type="button" class="toggle" aria-label="Open or close the panel">›</button>
     <nav class="tabs" id="tabs" role="tablist"></nav>
     <div class="body" id="body" tabindex="0"></div>
   </aside>
 </main>
 <footer class="ruler">
-  <button id="pause" type="button">Oyunu durdur</button>
-  <div class="status"><span id="statusDot" class="dot"></span><span id="status">Bağlanıyor</span><span id="progress"></span></div>
+  <button id="pause" type="button">Pause game</button>
+  <div class="status"><span id="statusDot" class="dot"></span><span id="status">Connecting</span><span id="progress"></span></div>
   <span id="usage" class="usage" hidden></span>
-  <button id="prev" type="button" aria-label="Önceki tur">‹</button>
-  <div class="track"><div id="turnmarks" class="marks"></div><input id="slider" type="range" min="0" max="0" value="0" aria-label="Tur seç"></div>
-  <button id="next" type="button" aria-label="Sonraki tur">›</button>
-  <button id="live" type="button" class="on">Canlı izle</button>
+  <button id="prev" type="button" aria-label="Previous turn">‹</button>
+  <div class="track"><div id="turnmarks" class="marks"></div><input id="slider" type="range" min="0" max="0" value="0" aria-label="Select turn"></div>
+  <button id="next" type="button" aria-label="Next turn">›</button>
+  <button id="live" type="button" class="on">Watch live</button>
 </footer>
 <script src="app.js" type="module"></script>
 </body>

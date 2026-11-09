@@ -1,5 +1,5 @@
 import { clamp, sum, news, between, rand } from './util.js';
-import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_TR, PLANTS, TECHS, countryProvinces, provincePop, aliveCountries, atWar, hasTreaty } from './world.js';
+import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_LABEL, PLANTS, TECHS, countryProvinces, provincePop, aliveCountries, atWar, hasTreaty } from './world.js';
 import { migrate } from './culture.js';
 import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep } from './money.js';
 
@@ -10,12 +10,12 @@ export const RECIPE = {
 const ORDER = ['steel', 'fuel', 'fertilizer', 'machines', 'arms', 'goods'];
 export const hasTech = (c, t) => !!c.techs?.[t];
 
-// Kural: mal ancak rotası varsa taşınır. Savaş, kapalı boğaz ve düşman filosu rotayı keser.
+// Rule: goods move only if a route exists. War, a closed strait and an enemy fleet cut the route.
 function seaLocked(w, sea, a, b) {
   const s = w.seaControl?.[sea];
   return !!s && (atWar(w, s, a) || atWar(w, s, b));
 }
-function straitAt(w, sea) { return w.strategic.find(x => x.type === 'bogaz' && x.ref === sea); }
+function straitAt(w, sea) { return w.strategic.find(x => x.type === 'strait' && x.ref === sea); }
 function canalAdj(w, sea) { return w.canals.filter(k => k.a === sea || k.b === sea).map(k => k.a === sea ? k.b : k.a); }
 
 function seaRoute(w, a, b) {
@@ -44,7 +44,7 @@ const routeKey = (a, b) => a < b ? `${a}|${b}` : `${b}|${a}`;
 
 export function updateStrategic(w) {
   for (const s of w.strategic) {
-    if (s.type === 'bogaz') {
+    if (s.type === 'strait') {
       const sea = w.seas[s.ref], counts = {};
       for (const pid of sea.coast) counts[w.provinces[pid].controller] = (counts[w.provinces[pid].controller] || 0) + 1;
       const fleet = Object.values(w.fleets).filter(f => f.sea === s.ref).sort((a, b) => b.ships - a.ships)[0];
@@ -61,12 +61,12 @@ export function updateRoutes(w) {
   for (let i = 0; i < cs.length; i++) for (let j = i + 1; j < cs.length; j++) {
     const a = cs[i], b = cs[j], k = routeKey(a.id, b.id);
     if (a.embargo.includes(b.id) || b.embargo.includes(a.id) || atWar(w, a.id, b.id)) continue;
-    if (landBorder(w, a, b)) { w.routes[k] = { mode: 'kara', cost: 1.04, path: [], tolls: [] }; continue; }
+    if (landBorder(w, a, b)) { w.routes[k] = { mode: 'land', cost: 1.04, path: [], tolls: [] }; continue; }
     const path = seaRoute(w, a, b);
     if (path) {
       const tolls = path.map(s => straitAt(w, s)).filter(s => s && s.toll && s.controller && ![a.id, b.id].includes(s.controller));
       const raided = path.filter(s => (w.seaRaids?.[s] || []).some(x => atWar(w, x, a.id) || atWar(w, x, b.id))).length;
-      w.routes[k] = { mode: 'deniz', cost: 1.05 + path.length * .008 + sum(tolls, t => t.toll) + raided * .15, path, tolls: tolls.map(t => t.id) };
+      w.routes[k] = { mode: 'sea', cost: 1.05 + path.length * .008 + sum(tolls, t => t.toll) + raided * .15, path, tolls: tolls.map(t => t.id) };
     }
   }
 }
@@ -76,9 +76,9 @@ function weatherStep(w) {
   if (rand(w) < .28) {
     const ps = Object.values(w.provinces), core = ps[Math.floor(rand(w) * ps.length)];
     const region = [core, ...core.neighbors.map(n => w.provinces[n])];
-    const kind = rand(w) < .7 ? 'kuraklık' : 'sel';
-    region.forEach(p => p.weather *= kind === 'kuraklık' ? .55 : .7);
-    news(w, `${core.name} çevresinde ${kind}: hasat ciddi biçimde düştü.`, { kind: 'felaket', countries: [core.controller] });
+    const kind = rand(w) < .7 ? 'drought' : 'flood';
+    region.forEach(p => p.weather *= kind === 'drought' ? .55 : .7);
+    news(w, `${core.name} region hit by ${kind}: the harvest fell sharply.`, { kind: 'disaster', countries: [core.controller] });
   }
   for (const p of Object.values(w.provinces)) p.waterPenalty = 0;
   for (const p of Object.values(w.provinces)) if (p.dam) { let q = p.downstream ? w.provinces[p.downstream] : null, f = .3, n = 0; while (q && n++ < 12) { q.waterPenalty += f; f *= .8; q = q.downstream ? w.provinces[q.downstream] : null; } }
@@ -87,24 +87,24 @@ function weatherStep(w) {
 function extract(w, c) {
   const raw = Object.fromEntries(RAW.map(g => [g, 0])); let gold = 0, services = 0, dev = 0, popAll = 0;
   c._cap = Object.fromEntries(Object.keys(PLANTS).map(k => [k, 0]));
-  const motor = hasTech(c, 'petrol_motoru') ? 1 + clamp(c.stock.fuel / Math.max(c._lastFuelNeed || 1, 1), 0, 1) * .25 : 1;
-  const fert = hasTech(c, 'kimyasal_gubre') ? 1 + clamp(c.stock.fertilizer / Math.max(c._pop * .002, 1), 0, 1) * .4 : 1;
+  const engine = hasTech(c, 'combustion_engine') ? 1 + clamp(c.stock.fuel / Math.max(c._lastFuelNeed || 1, 1), 0, 1) * .25 : 1;
+  const fert = hasTech(c, 'chemical_fertilizer') ? 1 + clamp(c.stock.fertilizer / Math.max(c._pop * .002, 1), 0, 1) * .4 : 1;
   const strikes = c.strike ? .65 : 1, bank = c.bankHealth < 30 ? .8 : 1;
   c._rent = 0; c._idleV = 0;
   const pace = Object.fromEntries(RAW.map(g => [g, glutFactor(c, g)]));
   for (const p of countryProvinces(w, c.id)) {
     const occ = p.controller !== p.owner ? .55 : 1;
-    const rail = 1 + p.rail * .12 + (hasTech(c, 'elektrik') ? .08 : 0);
+    const rail = 1 + p.rail * .12 + (hasTech(c, 'electricity') ? .08 : 0);
     const eff = (1 - p.devastation * .75) * (.72 + p.infra * .36) * occ * (1 - (p.unrest > 60 ? (p.unrest - 60) / 100 : 0)) * rail;
     const water = clamp(p.water - p.waterPenalty + (p.dam ? .15 : 0), .15, 1.4);
-    const grain = p.pops.koylu.n * p.fertility * water * .03 * c.tech.agri * eff * p.weather * fert * motor + p.fish * p.pops.koylu.n * .002, timber = p.pops.koylu.n * p.timber * .006 * eff;
+    const grain = p.pops.peasants.n * p.fertility * water * .03 * c.tech.agri * eff * p.weather * fert * engine + p.fish * p.pops.peasants.n * .002, timber = p.pops.peasants.n * p.timber * .006 * eff;
     raw.grain += grain * pace.grain; raw.timber += timber * pace.timber;
     c._idleV += grain * (1 - pace.grain) * BASE_PRICE.grain + timber * (1 - pace.timber) * BASE_PRICE.timber;
     const deposits = Object.entries(p.deposits).filter(([, d]) => d.known && d.mine > 0 && d.amount > 0);
     const mineLoad = sum(deposits, ([, d]) => d.mine), plantLoad = sum(Object.values(p.plants)) + .3;
     const mineShare = mineLoad / (mineLoad + plantLoad);
     for (const [k, d] of deposits) {
-      const full = p.pops.isci.n * mineShare * (d.mine / mineLoad) * d.rich * ({ coal: .3, iron: .22, oil: .12 }[k] ?? .06) * c.tech.ind * eff * strikes, f = k === 'gold' ? 1 : pace[k] ?? 1, q = full * f;
+      const full = p.pops.workers.n * mineShare * (d.mine / mineLoad) * d.rich * ({ coal: .3, iron: .22, oil: .12 }[k] ?? .06) * c.tech.ind * eff * strikes, f = k === 'gold' ? 1 : pace[k] ?? 1, q = full * f;
       if (f < 1) c._idleV += (full - q) * BASE_PRICE[k];
       d.amount = Math.max(0, d.amount - q * .08);
       const con = p.concessions?.[k];
@@ -112,11 +112,11 @@ function extract(w, c) {
       const kept = con && w.countries[con.holder]?.alive ? q * (1 - con.share) : q;
       if (con && w.countries[con.holder]?.alive) { const shipped = q - kept; w.countries[con.holder].stock[k] = (w.countries[con.holder].stock[k] || 0) + shipped; }
       raw[k] += kept; c._rent += kept * BASE_PRICE[k] * (k === 'oil' ? 1.4 : 1);
-      if (d.amount <= 0) news(w, `${c.name}: ${p.name} ${GOOD_TR[k]} yatağı tükendi.`, { kind: 'ekonomi', countries: [c.id] });
+      if (d.amount <= 0) news(w, `${c.name}: the ${p.name} ${GOOD_LABEL[k]} deposit is exhausted.`, { kind: 'economy', countries: [c.id] });
     }
-    const labor = p.pops.isci.n * (1 - mineShare), level = sum(Object.values(p.plants));
+    const labor = p.pops.workers.n * (1 - mineShare), level = sum(Object.values(p.plants));
     if (level > 0) for (const pl of Object.keys(PLANTS)) if (p.plants[pl] > 0) c._cap[pl] += labor * (p.plants[pl] / level) * clamp(.7 + p.plants[pl] * .35, .7, 3) * .05 * 25 / BASE_PRICE[pl] * c.tech.ind * eff * strikes * bank * (1 - c.ownership * .15);
-    services += (p.pops.orta.n + p.pops.elit.n * 1.5) * eff;
+    services += (p.pops.middle.n + p.pops.elite.n * 1.5) * eff;
     const pop = provincePop(p); popAll += pop; dev += p.devastation * pop;
   }
   c._pop = popAll; c._dev = popAll ? dev / popAll : 0; c._raw = raw; c._services = services;
@@ -128,12 +128,12 @@ function needs(w, c) {
   const need = {}; for (const g of GOODS) need[g] = 0;
   for (const [pl, rec] of Object.entries(RECIPE)) for (const [g, q] of Object.entries(rec)) need[g] += c._cap[pl] * q;
   const men = sum(Object.values(w.units).filter(u => u.country === c.id), u => u.men);
-  const motor = sum(Object.values(w.units).filter(u => u.country === c.id && ['zirhli', 'hava'].includes(u.kind)), u => u.men);
+  const engine = sum(Object.values(w.units).filter(u => u.country === c.id && ['armor', 'air'].includes(u.kind)), u => u.men);
   const ships = sum(Object.values(w.fleets).filter(f => f.country === c.id), f => f.ships);
-  need.grain += c._pop * .01; need.goods += c._pop * .004; need.coal += c._pop * .001 + (hasTech(c, 'petrol_motoru') ? 0 : ships * .08);
-  need.arms += men * .01; need.fuel += motor * .05 + (hasTech(c, 'petrol_motoru') ? ships * .08 + c._pop * .0006 : 0); need.machines += c._pop * .00008;
-  if (hasTech(c, 'kimyasal_gubre')) need.fertilizer += c._pop * .002;
-  if (hasTech(c, 'nadir_metal')) need.rare += sum(Object.values(w.units).filter(u => u.country === c.id && ['zirhli', 'hava'].includes(u.kind)), u => u.men) * .004 + c._cap.machines * .05;
+  need.grain += c._pop * .01; need.goods += c._pop * .004; need.coal += c._pop * .001 + (hasTech(c, 'combustion_engine') ? 0 : ships * .08);
+  need.arms += men * .01; need.fuel += engine * .05 + (hasTech(c, 'combustion_engine') ? ships * .08 + c._pop * .0006 : 0); need.machines += c._pop * .00008;
+  if (hasTech(c, 'chemical_fertilizer')) need.fertilizer += c._pop * .002;
+  if (hasTech(c, 'rare_alloys')) need.rare += sum(Object.values(w.units).filter(u => u.country === c.id && ['armor', 'air'].includes(u.kind)), u => u.men) * .004 + c._cap.machines * .05;
   c._need = need; c._lastFuelNeed = need.fuel;
   c._reserve = Object.fromEntries(GOODS.map(g => [g, need[g] * .4]));
   localPrices(w, c);
@@ -150,14 +150,14 @@ function trade(w, cs) {
     for (let pass = 0; pass < 2; pass++) for (const b of buyers) {
       if (b.d <= 0) continue;
       const acc = sellers.map(x => ({ x, r: w.routes[key(b.c.id, x.c.id)] })).filter(a => a.x.s > 0 && a.x.c.id !== b.c.id && a.r);
-      const wgt = a => a.x.s / a.r.cost * (hasTreaty(w, b.c.id, a.x.c.id, 'ticaret') ? 1.5 : 1) * exportEdge(a.x.c), tot = sum(acc, wgt);
+      const wgt = a => a.x.s / a.r.cost * (hasTreaty(w, b.c.id, a.x.c.id, 'trade') ? 1.5 : 1) * exportEdge(a.x.c), tot = sum(acc, wgt);
       if (!tot) continue;
       for (const a of acc) {
         const landed = price * a.r.cost * (1 + (b.c.tariffDeals?.[a.x.c.id] ?? b.c.tariff) * .3);
         const q = Math.min(a.x.s, b.d * wgt(a) / tot, Math.max(0, b.c.reserves) / landed);
         if (q <= 0) continue;
         const v = q * price; a.x.s -= q; b.d -= q; moved += q; a.x.c.lastSold[g] = (a.x.c.lastSold[g] || 0) + q;
-        // Navlun ihracatçıya gider, gümrük alıcının kendi hazinesine yazılır: altın dünyadan kaybolmaz.
+        // Freight goes to the exporter, customs to the buyer's own treasury: gold does not vanish from the world.
         const gold = v * a.r.cost; a.x.c.stock[g] -= q; b.c.stock[g] += q; a.x.c.reserves += gold; b.c.reserves -= gold;
         a.x.c._exports = (a.x.c._exports || 0) + v; b.c._imports = (b.c._imports || 0) + v;
         a.x.c._rawExp = (a.x.c._rawExp || 0) + (RAW.includes(g) && g !== 'grain' ? v : 0);
@@ -169,7 +169,7 @@ function trade(w, cs) {
     const before = w.globalPrice[g], D = sum(cs, c => c._need[g]) + 1, S = sum(cs, c => c.stock[g]) + moved * .2 + 1;
     const target = BASE_PRICE[g] * clamp(Math.pow(D / S * 1.6, .8), .4, 5) * (1 + unmet * .9);
     w.globalPrice[g] = clamp(before + (target - before) * .4, BASE_PRICE[g] * .3, BASE_PRICE[g] * 9);
-    if (w.globalPrice[g] > before * 1.5 && before > BASE_PRICE[g]) news(w, `Dünya ${GOOD_TR[g]} fiyatı sert yükseldi.`, { kind: 'ekonomi' });
+    if (w.globalPrice[g] > before * 1.5 && before > BASE_PRICE[g]) news(w, `World ${GOOD_LABEL[g]} price rose sharply.`, { kind: 'economy' });
   }
 }
 
@@ -179,7 +179,7 @@ function factories(w, c) {
   for (const pl of ORDER) {
     const pace = glutFactor(c, pl), cap = c._cap[pl] * (pl === 'arms' ? armsPriority : 1) * pace, rec = RECIPE[pl];
     c._cap[pl] *= pace; if (pace < 1) c._idleV += cap / pace * (1 - pace) * BASE_PRICE[pl] * .45;
-    if (pl === 'fuel' && !hasTech(c, 'petrol_arama') && !c.stock.oil) { made[pl] = 0; continue; }
+    if (pl === 'fuel' && !hasTech(c, 'oil_prospecting') && !c.stock.oil) { made[pl] = 0; continue; }
     let r = cap;
     for (const [g, q] of Object.entries(rec)) r = Math.min(r, (c.stock[g] || 0) / q);
     r = Math.max(0, r);
@@ -214,27 +214,27 @@ function consume(w, c, prev) {
   const consumer = clamp(c.stock.goods / Math.max(c._pop * .004, 1), 0, 1.2);
   c.stock.goods = Math.max(0, c.stock.goods - c._pop * .004) * .96;
   c.stock.coal = Math.max(0, c.stock.coal - c._pop * .001);
-  if (hasTech(c, 'petrol_motoru')) { c.fuelRatio = clamp(c.stock.fuel / Math.max(n.fuel, .1), 0, 1.2); c.stock.fuel = Math.max(0, c.stock.fuel - c._pop * .0006); } else c.fuelRatio = 1;
+  if (hasTech(c, 'combustion_engine')) { c.fuelRatio = clamp(c.stock.fuel / Math.max(n.fuel, .1), 0, 1.2); c.stock.fuel = Math.max(0, c.stock.fuel - c._pop * .0006); } else c.fuelRatio = 1;
   const rawV = sum(RAW, g => c._raw[g] * BASE_PRICE[g]), madeV = sum(Object.keys(RECIPE), g => (c._made[g] || 0) * BASE_PRICE[g] * .45);
   const real = rawV + madeV + c._services, g = prev > 0 ? real / prev - 1 : 0;
   c.realGdp = real; c.growth = g;
   const prevM = c._lastMoney ?? c.money, mg = prevM > 0 ? c.money / prevM - 1 : 0; c._lastMoney = c.money;
-  const shortage = Math.max(0, 1 - Math.min(c.foodRatio, 1)) * .55 + Math.max(0, 1 - Math.min(consumer, 1)) * .25 + (hasTech(c, 'petrol_motoru') ? Math.max(0, 1 - Math.min(c.fuelRatio, 1)) * .18 : 0);
-  // Kıtlık fiyatı bir kez yükseltir; sürekli enflasyon için kıtlığın kötüleşmesi veya para artışı gerekir.
+  const shortage = Math.max(0, 1 - Math.min(c.foodRatio, 1)) * .55 + Math.max(0, 1 - Math.min(consumer, 1)) * .25 + (hasTech(c, 'combustion_engine') ? Math.max(0, 1 - Math.min(c.fuelRatio, 1)) * .18 : 0);
+  // Scarcity raises prices once; sustained inflation needs worsening scarcity or money growth.
   const shock = shortage - (c._lastShortage ?? shortage); c._lastShortage = shortage;
   c.inflation = clamp(.35 * c.inflation + .85 * (mg - g * .6) + shock * .4 + (c._fxPass || 0) + (c.reserves < 0 ? .03 : 0) + (c.bankHealth < 30 ? .02 : 0) + .004, -.04, 4);
   c.priceLevel *= 1 + c.inflation; c.wageIndex += (c.priceLevel - c.wageIndex) * .35;
   c.gdp = real * c.priceLevel; c.money *= 1 + g * .6 + .002;
   c.idleShare = clamp(c._idleV / Math.max(real + c._idleV, 1), 0, 1);
   c.unemployment += (clamp(.06 + (1 - c.inputRatio) * .3 + c._dev * .3 + Math.max(0, -g) * .9 + c.idleShare * .25, .02, .6) - c.unemployment) * .4;
-  // Kaynak gelirine bağımlılık: kolay para yolsuzluğu ve oligarkları besler, sanayiyi zayıflatır.
+  // Resource-rent dependence: easy money feeds corruption and oligarchs and weakens industry.
   c.rentShare = clamp((c._rent || 0) / Math.max(real, 1), 0, 1);
   if (c.rentShare > .22) { c.corruption = clamp(c.corruption + (c.rentShare - .22) * 2.2, 2, 95); const o = w.characters[c.oligarch]; if (o?.alive) { o.wealth += c.rentShare * 5; o.power = clamp(o.power + c.rentShare * .3, 0, 95); } for (const p of countryProvinces(w, c.id)) if (p.eth !== c.majorityEth && Object.values(p.deposits).some(d => d.known && d.mine > 0)) p.unrest = clamp(p.unrest + 2.2, 0, 100); }
   c.bankHealth = clamp(c.bankHealth + (c.inflation > .15 ? -6 : 1.2) + (c.reserves < 0 ? -4 : 0) + (g < -.08 ? -4 : 0), 0, 100);
-  if (c.bankHealth < 30 && !c.bankCrisis) { c.bankCrisis = true; news(w, `${c.name}: bankalara hücum başladı, kredi kuruyor.`, { kind: 'ekonomi', countries: [c.id] }); } if (c.bankHealth > 45) c.bankCrisis = false;
-  const klass = sum(countryProvinces(w, c.id), p => p.pops.isci.sat * p.pops.isci.n) / Math.max(sum(countryProvinces(w, c.id), p => p.pops.isci.n), 1);
+  if (c.bankHealth < 30 && !c.bankCrisis) { c.bankCrisis = true; news(w, `${c.name}: a run on the banks has begun, credit is drying up.`, { kind: 'economy', countries: [c.id] }); } if (c.bankHealth > 45) c.bankCrisis = false;
+  const klass = sum(countryProvinces(w, c.id), p => p.pops.workers.sat * p.pops.workers.n) / Math.max(sum(countryProvinces(w, c.id), p => p.pops.workers.n), 1);
   const was = c.strike; c.strike = c.unions && klass < 32 && rand(w) < .6;
-  if (c.strike && !was) news(w, `${c.name}: genel grev sanayiyi durdurdu.`, { kind: 'siyaset', countries: [c.id] });
+  if (c.strike && !was) news(w, `${c.name}: a general strike has brought industry to a halt.`, { kind: 'politics', countries: [c.id] });
 }
 
 function fiscal(w, c) {
@@ -244,13 +244,13 @@ function fiscal(w, c) {
   const b = c.budget, programs = (b.military + b.welfare + b.infrastructure + b.education + b.police + b.administration) * c.gdp;
   c.interestRate = clamp(.012 + Math.max(0, c.debt / Math.max(c.gdp * 4, 1) - .5) * .05 + c.inflation * .6 + (c.defaulted ? .04 : 0) + (c.bankHealth < 30 ? .02 : 0), .005, .35);
   let interest = c.debt * c.interestRate;
-  // Dış borç altın cinsindendir: para değer kaybedince aynı faiz bütçeye daha pahalıya gelir.
+  // External debt is in gold: when the currency falls, the same interest costs the budget more.
   const external = sum(Object.values(c.creditors), x => x), extRate = foreignRate(c, external); let extDue = 0, extPaid = 0;
   for (const [cid, amt] of Object.entries(c.creditors)) if (w.countries[cid]?.alive) { const due = amt * extRate, pay = Math.min(Math.max(c.reserves, 0), due); c.reserves -= pay; w.countries[cid].reserves += pay; extDue += due; extPaid += pay; }
   interest += extPaid * (c.rate || 1);
   c.foreignRate = extRate;
   c.extArrears = extDue > 0 && extPaid < extDue * .5 ? (c.extArrears || 0) + 1 : Math.max(0, (c.extArrears || 0) - 1);
-  if (c.extArrears >= 4) declareDefault(w, c, 'dış borcunu ödeyemeyeceğini açıkladı');
+  if (c.extArrears >= 4) declareDefault(w, c, 'declared it cannot pay its external debt');
   const need = programs + interest; let cash = c.treasury + revenue, paid = 1;
   if (cash >= need) cash -= need;
   else {
@@ -258,7 +258,7 @@ function fiscal(w, c) {
     c.debt += borrow; cash += borrow;
     if (cash < need) {
       paid = need > 0 ? clamp(cash / need, 0, 1) : 1; cash = 0; c.arrears = clamp(c.arrears + (1 - paid), 0, 6);
-      if (paid < .55 && !c.defaulted && c.debt > c.gdp * 4 * .9) declareDefault(w, c, 'borçlarını ödeyemeyeceğini açıkladı');
+      if (paid < .55 && !c.defaulted && c.debt > c.gdp * 4 * .9) declareDefault(w, c, 'declared it cannot pay its debts');
     } else { cash -= need; c.arrears = Math.max(0, c.arrears - .5); }
   }
   c.treasury = cash; if (paid === 1) c.arrears = Math.max(0, c.arrears - .5);
@@ -273,16 +273,16 @@ function demography(w, c) {
   const provs = countryProvinces(w, c.id), gap = Math.max(0, 1 - c.foodRatio); let starved = 0, fled = 0;
   for (const p of provs) {
     const welfare = 1 + c.budget.welfare;
-    for (const k of CLASSES) { const pop = p.pops[k], sev = k === 'elit' ? .1 : k === 'orta' ? .5 : 1, lost = pop.n * gap * .09 * sev / welfare; starved += lost; pop.n = Math.max(1, pop.n * (1 + .0035 * (c.foodRatio >= 1 ? 1 : .4)) - lost); }
-    // Şehirleşme okuryazarlık ve sanayiyle gelir.
-    const mv = p.pops.koylu.n * clamp((sum(Object.values(p.plants)) - .3) * .002 + c.literacy * .00002, 0, .01); p.pops.koylu.n -= mv; p.pops.isci.n += mv * .8; p.pops.orta.n += mv * .2;
+    for (const k of CLASSES) { const pop = p.pops[k], sev = k === 'elite' ? .1 : k === 'middle' ? .5 : 1, lost = pop.n * gap * .09 * sev / welfare; starved += lost; pop.n = Math.max(1, pop.n * (1 + .0035 * (c.foodRatio >= 1 ? 1 : .4)) - lost); }
+    // Urbanization comes with literacy and industry.
+    const mv = p.pops.peasants.n * clamp((sum(Object.values(p.plants)) - .3) * .002 + c.literacy * .00002, 0, .01); p.pops.peasants.n -= mv; p.pops.workers.n += mv * .8; p.pops.middle.n += mv * .2;
     if (gap > .12 || p.devastation > .45) {
       const outs = p.neighbors.map(n => w.provinces[n]).filter(n => (n.controller !== p.controller && !atWar(w, n.controller, p.controller)) || (n.controller === p.controller && n.devastation < p.devastation - .1));
-      if (outs.length) { const rate = clamp(gap * .12 + p.devastation * .04, 0, .1); for (const k of ['koylu', 'isci']) { const m = p.pops[k].n * rate; p.pops[k].n -= m; fled += m; const to = outs[Math.floor(rand(w) * outs.length)]; to.pops[k].n += m; migrate(p, to, rate); to.unrest = clamp(to.unrest + m / Math.max(provincePop(to), 1) * 120, 0, 100); } }
+      if (outs.length) { const rate = clamp(gap * .12 + p.devastation * .04, 0, .1); for (const k of ['peasants', 'workers']) { const m = p.pops[k].n * rate; p.pops[k].n -= m; fled += m; const to = outs[Math.floor(rand(w) * outs.length)]; to.pops[k].n += m; migrate(p, to, rate); to.unrest = clamp(to.unrest + m / Math.max(provincePop(to), 1) * 120, 0, 100); } }
     }
     p.devastation = Math.max(0, p.devastation - .02 - c.budget.infrastructure * .4);
   }
-  if (starved > 8) news(w, `${c.name}: kıtlık yaklaşık ${Math.round(starved)} bin can aldı.${fled > 5 ? ` ${Math.round(fled)} bin kişi yerinden oldu.` : ''}`, { kind: 'felaket', countries: [c.id] });
+  if (starved > 8) news(w, `${c.name}: famine claimed about ${Math.round(starved)}k lives.${fled > 5 ? ` ${Math.round(fled)}k people were displaced.` : ''}`, { kind: 'disaster', countries: [c.id] });
   c.starved = starved; c.fled = fled;
 }
 
@@ -294,10 +294,10 @@ function investment(w, c) {
     const grow = 1 + (b.infrastructure * paid - .015) * .35 * machines * bank;
     for (const pl of Object.keys(PLANTS)) p.plants[pl] = clamp(p.plants[pl] * grow, 0, 8);
   }
-  // Yeni teknoloji gelince özel sektör ilk tesisleri kendi kurar; büyütmek devlete veya sermayeye kalır.
+  // When a new technology arrives, the private sector builds the first plants itself; expansion is left to the state or capital.
   const cap = w.provinces[c.capital];
-  if (cap && hasTech(c, 'petrol_arama') && !sum(countryProvinces(w, c.id), p => p.plants.fuel)) cap.plants.fuel = .4;
-  if (cap && hasTech(c, 'kimyasal_gubre') && !sum(countryProvinces(w, c.id), p => p.plants.fertilizer)) cap.plants.fertilizer = .4;
+  if (cap && hasTech(c, 'oil_prospecting') && !sum(countryProvinces(w, c.id), p => p.plants.fuel)) cap.plants.fuel = .4;
+  if (cap && hasTech(c, 'chemical_fertilizer') && !sum(countryProvinces(w, c.id), p => p.plants.fertilizer)) cap.plants.fertilizer = .4;
   const edu = (b.education * paid - .015) * .12 * (.5 + c.literacy / 100);
   c.tech.ind = clamp(c.tech.ind * (1 + edu + .001 * (.5 + machines)), .5, 10);
   c.tech.agri = clamp(c.tech.agri * (1 + edu * .7 + .0008), .5, 10);
@@ -309,27 +309,27 @@ function research(w, c) {
   let t = c.research.target;
   if (!t || c.techs[t]) t = Object.keys(TECHS).find(k => !c.techs[k] && TECHS[k].req.every(r => c.techs[r])) || null;
   c.research.target = t; if (!t) return;
-  // Komşular buluşu duydukça maliyet düşer.
+  // Cost falls as neighbors hear of the invention.
   const known = aliveCountries(w).filter(o => o.techs[t]).length;
   c.research.progress += points * (1 + known * .15);
   if (c.research.progress >= TECHS[t].cost) {
     c.techs[t] = w.turn; c.research = { target: null, progress: 0 };
-    news(w, `${c.name}: ${TECHS[t].name} başarıyla uygulamaya geçti.`, { kind: 'ekonomi', countries: [c.id] });
-    if (t === 'petrol_arama') for (const p of countryProvinces(w, c.id)) if (p.deposits.oil && rand(w) < .35) p.deposits.oil.known = true;
+    news(w, `${c.name}: ${TECHS[t].name} has been put into practice.`, { kind: 'economy', countries: [c.id] });
+    if (t === 'oil_prospecting') for (const p of countryProvinces(w, c.id)) if (p.deposits.oil && rand(w) < .35) p.deposits.oil.known = true;
   }
 }
 
 function epidemicStep(w) {
   if (rand(w) < .05 + sum(aliveCountries(w), c => c.starved > 30 ? .03 : 0)) {
     const ps = Object.values(w.provinces), start = ps[Math.floor(rand(w) * ps.length)];
-    w.epidemics.push({ name: 'Salgın', active: true, start: w.turn, provinces: { [start.id]: .5 } });
-    news(w, `${start.name} kentinde bulaşıcı salgın başladı.`, { kind: 'felaket', countries: [start.controller] });
+    w.epidemics.push({ name: 'Epidemic', active: true, start: w.turn, provinces: { [start.id]: .5 } });
+    news(w, `A contagious epidemic broke out in ${start.name}.`, { kind: 'disaster', countries: [start.controller] });
   }
   for (const e of w.epidemics.filter(x => x.active)) {
     const next = {};
     for (const [id, v] of Object.entries(e.provinces)) {
       const p = w.provinces[id], c = w.countries[p.controller]; if (!c?.alive) continue;
-      const med = hasTech(c, 'antibiyotik') ? .4 : 1, care = 1 - clamp(c.budget.welfare * 3, 0, .4);
+      const med = hasTech(c, 'antibiotics') ? .4 : 1, care = 1 - clamp(c.budget.welfare * 3, 0, .4);
       for (const k of CLASSES) p.pops[k].n *= 1 - v * .025 * med * care;
       p.unrest = clamp(p.unrest + v * 2, 0, 100);
       const decay = v - .12;

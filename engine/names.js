@@ -28,6 +28,6 @@ export function hashOf(key) { let h = 2166136261; for (const ch of String(key)) 
 const at = (list, n) => list[n % list.length];
 
 // Place and country names do not consume the world's random stream, so renaming never changes the simulation.
-export function placeName(eth, key) { const c = cultureOf(eth), h = hashOf(key); return `${at(c.root, h)}${at(c.end, h >>> 8)}${at(['', '', 'a', 'on', 'ir'], h >>> 16)}`; }
+export function placeName(eth, key) { const c = cultureOf(eth), h = hashOf(key), base = `${at(c.root, h)}${at(c.end, h >>> 8)}`, tail = at(['', '', 'a', 'on', 'ir'], h >>> 16); return /[aeiou]$/.test(base) && /^[aeiou]/.test(tail) ? base : `${base}${tail}`; }
 export function countryRoot(eth, key) { const c = cultureOf(eth), h = hashOf(key); return `${at(c.root, h)}${at(c.end, h >>> 8)}`; }
 export function personName(eth, rel, key) { const h = hashOf(key); return `${at(givenNames(eth, rel), h)} ${at(familyNames(eth), h >>> 11)}`; }

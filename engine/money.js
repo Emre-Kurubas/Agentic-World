@@ -1,13 +1,13 @@
-// Para birimleri ve döviz. Rezervler altın cinsindendir; kur, bir altının yerel para karşılığıdır.
-// Karar ajanındır (rejim, devalüasyon, borç), kur ve krizler bu hesaplardan çıkar.
+// Currencies and exchange. Reserves are in gold; the rate is the local-currency price of one gold unit.
+// The decision belongs to the agent (regime, devaluation, debt); rates and crises come out of these calculations.
 import { clamp, news, sum } from './util.js';
 import { aliveCountries, BASE_PRICE, GOODS } from './world.js';
 
 const UNITS = ['crown', 'thaler', 'mark', 'florin', 'ducat', 'shilling', 'dirham', 'guilder'];
-export const FX_REGIMES = ['serbest', 'altin', 'bagli'];
+export const FX_REGIMES = ['floating', 'gold', 'pegged'];
 const OUTPUT_SHIELD = .03, CRISIS_TURNS = 2, GLUT_TURNS = 10;
 
-export function issueCurrency(c, regime = 'altin') {
+export function issueCurrency(c, regime = 'gold') {
   let h = 7; for (const ch of c.id) h = (h * 31 + ch.codePointAt(0)) >>> 0;
   const root = (c.rootName || c.name || c.id).split(' ')[0];
   c.currency = { name: `${root} ${UNITS[h % UNITS.length]}` };
@@ -15,20 +15,20 @@ export function issueCurrency(c, regime = 'altin') {
 }
 
 export function updateRer(w) {
-  // Geometrik ortalama: tek bir aşırı enflasyonlu ülke herkesin reel kurunu bozmasın.
+  // Geometric mean: one hyperinflating country should not distort everyone's real exchange rate.
   const cs = aliveCountries(w), weight = sum(cs, c => Math.max(c.realGdp, 1)) || 1;
   const avg = Math.exp(sum(cs, c => Math.log(Math.max(c.priceLevel / (c.rate || 1), 1e-9)) * Math.max(c.realGdp, 1)) / weight) || 1;
   for (const c of cs) c.rer = clamp((c.priceLevel / (c.rate || 1)) / avg, .2, 5);
 }
 
-// Depolar doluyken üretici yavaşlar: stok, iç talep ve geçen turun satışının kaç tur karşılığıysa ona bakılır.
+// With full warehouses producers slow down: looks at how many turns of domestic demand and last turn's sales the stock covers.
 export function glutFactor(c, g) {
   if (!c._need) return 1;
   const demand = Math.max((c._need?.[g] || 0) + (c.lastSold?.[g] || 0), .001), cover = (c.stock[g] || 0) / demand;
   return cover > GLUT_TURNS ? GLUT_TURNS / cover : 1;
 }
 
-// İç piyasa: malın ülkedeki fiyatı dünya fiyatı, kurun değeri ve yerel kıtlıktan çıkar.
+// Domestic market: a good's local price comes from the world price, the currency's value and local scarcity.
 export function localPrices(w, c) {
   c.prices ||= {};
   for (const g of GOODS) {
@@ -37,7 +37,7 @@ export function localPrices(w, c) {
   }
 }
 
-// Kur fazla değerliyse ithal mal yerli malı piyasadan iter; fazla veren ülkenin dövizi böyle dolaşıma döner.
+// An overvalued currency lets imports push local goods out of the market; that is how a surplus country's foreign exchange recirculates.
 export const displacedDemand = (c, g) => clamp(((c.rer ?? 1) - 1) * 2, 0, .5) * (c._need?.[g] || 0);
 export const exportEdge = c => 1 / Math.max(c.rer ?? 1, .2) ** 2;
 
@@ -50,33 +50,33 @@ export function declareDefault(w, c, why) {
   if (c.defaulted) return;
   c.defaulted = true; c.debt *= .55; c.reserves *= .7; c.bankHealth = clamp(c.bankHealth - 30, 0, 100);
   for (const [cid, amt] of Object.entries(c.creditors)) { const o = w.countries[cid]; if (o?.alive) { o.relations[c.id] = clamp((o.relations[c.id] ?? 0) - 40, -100, 100); o.bankHealth = clamp(o.bankHealth - 12, 0, 100); o.reserves -= amt * .15; } c.creditors[cid] = amt * .55; }
-  news(w, `${c.name} ${why}; alacaklı ülkeler öfkeli.`, { kind: 'ekonomi', countries: [c.id] });
+  news(w, `${c.name} ${why}; creditor countries are furious.`, { kind: 'economy', countries: [c.id] });
 }
 
 function currencyCrisis(w, c) {
   const old = c.rate;
-  c.rate *= 1.35; c.fxRegime = 'serbest'; c.pegTo = null;
+  c.rate *= 1.35; c.fxRegime = 'floating'; c.pegTo = null;
   c.legitimacy = clamp(c.legitimacy - 6, 0, 100); c.bankHealth = clamp(c.bankHealth - 15, 0, 100);
-  news(w, `${c.name}: rezervler bitti, ${c.currency.name} sabit kurdan koptu; değeri bir anda düştü.`, { kind: 'ekonomi', countries: [c.id] });
+  news(w, `${c.name}: reserves ran out, ${c.currency.name} broke from its peg and its value collapsed at once.`, { kind: 'economy', countries: [c.id] });
   return old;
 }
 
 export function currencyStep(w, c) {
   const real = Math.max(c.realGdp, 1), target = real * .3, R = c.reserves, bop = R - (c._lastReserves ?? R), prev = c.rate;
   c._lastReserves = R;
-  if (c.fxRegime === 'serbest') {
-    // Serbest kur ödemeler dengesine ve fiyat farkına tepki verir; rezervin az olması tek başına parayı düşürmez.
+  if (c.fxRegime === 'floating') {
+    // A floating rate reacts to the balance of payments and price gaps; low reserves alone do not sink the currency.
     const drift = .4 * Math.log(c.rer ?? 1) + clamp(-bop / real, -OUTPUT_SHIELD, OUTPUT_SHIELD);
     c.rate = clamp(c.rate * Math.exp(drift), 1e-3, 1e12);
   } else {
-    if (c.fxRegime === 'bagli') {
+    if (c.fxRegime === 'pegged') {
       const anchor = w.countries[c.pegTo];
-      if (anchor?.alive) c.rate = anchor.rate * c.pegRate; else { c.fxRegime = 'serbest'; c.pegTo = null; }
+      if (anchor?.alive) c.rate = anchor.rate * c.pegRate; else { c.fxRegime = 'floating'; c.pegTo = null; }
     }
-    // Altın akarsa para da akar: sabit kurda dengeyi kuran fiyatlardır.
+    // When gold flows, money flows too: under a fixed rate prices restore the balance.
     c.money *= 1 + clamp(bop / real, -OUTPUT_SHIELD, OUTPUT_SHIELD) * .6;
     c._fxStress = R <= real * OUTPUT_SHIELD ? (c._fxStress || 0) + 1 : 0;
-    if (c.fxRegime !== 'serbest' && c._fxStress >= CRISIS_TURNS) { currencyCrisis(w, c); c._fxStress = 0; }
+    if (c.fxRegime !== 'floating' && c._fxStress >= CRISIS_TURNS) { currencyCrisis(w, c); c._fxStress = 0; }
   }
   c._fxPass = clamp(Math.log(c.rate / prev) * clamp((c._imports || 0) / real, 0, .5) * .6, -.05, .3);
   c.fx = +(100 / c.rate).toFixed(2);

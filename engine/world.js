@@ -5,31 +5,29 @@ import { writeLife } from './chronicle.js';
 import { ETHNICITIES, FAITHS, givenNames, familyNames, placeName, hashOf } from './names.js';
 
 const SYL = ['ar','ven','tor','mi','sa','lor','ka','zen','ol','ri','dan','ve','gar','su','thal','ne','bor','ha','lin','es','mar','ku','ra','dor','iv','al','pe','ten'];
-export const FIRST = ['Aren','Besra','Cemre','Davor','Elif','Faren','Giray','Hale','Ilgaz','Jale','Kerem','Lale','Mirza','Nehir','Orhun','Pelin','Rüzgar','Selin','Tarkan','Umay','Vedat','Yelda','Zafer','Alara','Bora','Defne','Emre','Feride','Göktan','Hazal'];
-export const LAST = ['Tarhan','Vedris','Korhal','Sunay','Melik','Ardıç','Dorsan','Kaya','Ilgın','Marven','Toral','Yeltan','Ozan','Belis','Karan','Sevin','Aydar','Numan','Rasil','Erkin'];
 const ETH = ETHNICITIES, REL = FAITHS;
 
 export const ROLES = ['leader', 'general', 'opposition', 'oligarch'];
-export const CLASSES = ['koylu', 'isci', 'orta', 'elit'];
+export const CLASSES = ['peasants', 'workers', 'middle', 'elite'];
 export const RAW = ['grain', 'timber', 'coal', 'iron', 'copper', 'oil', 'phosphate', 'rare'];
 export const MADE = ['steel', 'fuel', 'fertilizer', 'machines', 'goods', 'arms'];
 export const GOODS = [...RAW, ...MADE];
 export const DEPOSITS = ['coal', 'iron', 'copper', 'oil', 'phosphate', 'rare', 'gold'];
-export const PLANTS = { steel: 'Çelik fabrikası', fuel: 'Rafineri', fertilizer: 'Kimya tesisi', machines: 'Makine fabrikası', goods: 'Tüketim sanayii', arms: 'Silah fabrikası' };
+export const PLANTS = { steel: 'Steel mill', fuel: 'Refinery', fertilizer: 'Chemical plant', machines: 'Machinery plant', goods: 'Consumer industry', arms: 'Arms factory' };
 export const BASE_PRICE = { grain: 10, timber: 6, coal: 5, iron: 7, copper: 14, oil: 9, phosphate: 8, rare: 40, steel: 22, fuel: 18, fertilizer: 16, machines: 60, goods: 25, arms: 45 };
-export const GOOD_TR = { grain: 'tahıl', timber: 'kereste', coal: 'kömür', iron: 'demir', copper: 'bakır', oil: 'petrol', phosphate: 'fosfat', rare: 'nadir metal', gold: 'altın', steel: 'çelik', fuel: 'yakıt', fertilizer: 'gübre', machines: 'makine', goods: 'tüketim malı', arms: 'silah' };
+export const GOOD_LABEL = { grain: 'grain', timber: 'timber', coal: 'coal', iron: 'iron', copper: 'copper', oil: 'oil', phosphate: 'phosphate', rare: 'rare metal', gold: 'gold', steel: 'steel', fuel: 'fuel', fertilizer: 'fertilizer', machines: 'machinery', goods: 'consumer goods', arms: 'arms' };
 export const TECHS = {
-  demiryolu: { name: 'Demiryolu ağları', cost: 40, req: [] },
-  elektrik: { name: 'Elektrifikasyon', cost: 90, req: [] },
-  otomatik_silah: { name: 'Otomatik silahlar', cost: 70, req: [] },
-  kimyasal_gubre: { name: 'Kimyasal gübre', cost: 100, req: ['elektrik'] },
-  petrol_arama: { name: 'Jeolojik petrol araması', cost: 60, req: [] },
-  petrol_motoru: { name: 'İçten yanmalı motor', cost: 130, req: ['petrol_arama'] },
-  radyo: { name: 'Radyo yayıncılığı', cost: 90, req: ['elektrik'] },
-  zirhli: { name: 'Zırhlı araçlar', cost: 150, req: ['petrol_motoru', 'otomatik_silah'] },
-  ucak: { name: 'Havacılık', cost: 170, req: ['petrol_motoru'] },
-  antibiyotik: { name: 'Modern tıp', cost: 140, req: ['kimyasal_gubre'] },
-  nadir_metal: { name: 'Nadir metal alaşımları', cost: 220, req: ['elektrik', 'zirhli'] }
+  railway: { name: 'Railway networks', cost: 40, req: [] },
+  electricity: { name: 'Electrification', cost: 90, req: [] },
+  automatic_weapons: { name: 'Automatic weapons', cost: 70, req: [] },
+  chemical_fertilizer: { name: 'Chemical fertilizer', cost: 100, req: ['electricity'] },
+  oil_prospecting: { name: 'Geological oil prospecting', cost: 60, req: [] },
+  combustion_engine: { name: 'Internal combustion engine', cost: 130, req: ['oil_prospecting'] },
+  radio: { name: 'Radio broadcasting', cost: 90, req: ['electricity'] },
+  armor: { name: 'Armored vehicles', cost: 150, req: ['combustion_engine', 'automatic_weapons'] },
+  aviation: { name: 'Aviation', cost: 170, req: ['combustion_engine'] },
+  antibiotics: { name: 'Modern medicine', cost: 140, req: ['chemical_fertilizer'] },
+  rare_alloys: { name: 'Rare metal alloys', cost: 220, req: ['electricity', 'armor'] }
 };
 
 export const word = w => { let s = ''; const n = 2 + Math.floor(rand(w) * 2); for (let i = 0; i < n; i++) s += pick(w, SYL); return s[0].toUpperCase() + s.slice(1); };
@@ -60,7 +58,7 @@ function makeNoise(w, cells = 7) {
 }
 function fbm(w, base) { const a = makeNoise(w, base), b = makeNoise(w, base * 2), c = makeNoise(w, base * 4); return (x, y) => (a(x, y) * .6 + b(x, y) * .28 + c(x, y) * .12); }
 
-// Levhalar, yükseklik, iklim ve nehirler birbirinden türetilir; kaynaklar da bu jeolojiye bağlıdır.
+// Plates, elevation, climate and rivers are derived from one another; resources depend on this geology too.
 function buildMap(w, target) {
   const W = 1400, H = 900, total = Math.round(target * 2.3);
   const cols = Math.round(Math.sqrt(total * W / H)), rows = Math.round(total / cols);
@@ -89,7 +87,7 @@ function buildMap(w, target) {
   }
   for (let k = 0; k < 8; k++) for (const s of sites) if (s.land) for (const j of s.n) s.dist = Math.min(s.dist, sites[j].dist + 1);
   for (const s of sites) if (s.land) s.m = clamp(nMoist(s.x / W, s.y / H) * 1.05 + (3 - Math.min(s.dist, 5)) * .07 - s.h * .05, 0, 1);
-  // Nehirler yüksekten alçağa akar.
+  // Rivers flow from high ground to low.
   const lands = sites.filter(s => s.land).sort((a, b) => b.h - a.h);
   for (const s of lands) s.flow = s.m;
   for (const s of lands) {
@@ -100,7 +98,7 @@ function buildMap(w, target) {
   return { W, H, sites, lands, nBasin };
 }
 
-// Komşu hücrelerin paylaştığı kenarı aynı şekilde kırar; kıyılar ve sınırlar doğal görünür.
+// Breaks the edge shared by neighboring cells the same way, so coasts and borders look natural.
 function roughen(poly) {
   const hash = (a, b) => { const k = [a[0], a[1], b[0], b[1]].map(x => Math.round(x)); const key = (k[0] + k[1] * 3 < k[2] + k[3] * 3) ? k : [k[2], k[3], k[0], k[1]]; const x = Math.sin(key[0] * 12.9898 + key[1] * 78.233 + key[2] * 37.719 + key[3] * 11.13) * 43758.5453; return x - Math.floor(x); };
   let pts = poly.map(p => [p[0], p[1]]);
@@ -119,8 +117,8 @@ function roughen(poly) {
 }
 
 function terrainOf(s) {
-  if (s.h > .72) return 'dag'; if (s.t < .2) return 'tundra'; if (s.h > .48) return 'tepe';
-  if (s.m < .36) return 'col'; if (s.m > .68 && s.h < .14) return 'bataklik'; if (s.m > .58) return 'orman'; return 'ova';
+  if (s.h > .72) return 'mountain'; if (s.t < .2) return 'tundra'; if (s.h > .48) return 'hills';
+  if (s.m < .36) return 'desert'; if (s.m > .68 && s.h < .14) return 'marsh'; if (s.m > .58) return 'forest'; return 'plains';
 }
 
 function depositsFor(w, s, basin) {
@@ -137,13 +135,13 @@ function depositsFor(w, s, basin) {
   return d;
 }
 
-// Geçmiş yalnızca olaydır; karakterin bundan ne çıkaracağı kendine kalır. Dünya rastgeleliğini tüketmez.
-const LIFE_COMMON = ['Bir kıtlıkta iki kardeşini kaybetti, köyünden kente yürüyerek geldi.', 'Küçükken ailesi borç yüzünden toprağını kaybetti.', 'Gençliğini sürgünde geçirdi, yabancı bir ülkede matbaada çalıştı.', 'Babası bir maden kazasında öldü, on iki yaşında ocağa girdi.', 'Bir salgında bütün ailesini yitirdi, bir tapınakta büyüdü.', 'Yoksul bir kâtibin çocuğu olarak burslu okudu.', 'Büyük bir toprak sahibinin tek mirasçısı olarak büyüdü.', 'Ailesi azınlık olduğu için bir kıyımdan kaçtı.', 'Bir liman kentinde yabancı tüccarların çevirmenliğini yaptı.', 'Çocukluğu bir kuraklıkla göç eden çoban obasında geçti.'];
+// A background is only an event; what the character makes of it is their own affair. Does not consume world randomness.
+const LIFE_COMMON = ['Lost two siblings in a famine and walked from the village to the city.', 'As a child, saw the family lose its land to debt.', 'Spent their youth in exile, working at a printing press in a foreign country.', 'Their father died in a mine accident; went down the pit at twelve.', 'Lost the whole family to an epidemic and grew up in a temple.', 'Studied on a scholarship as the child of a poor clerk.', 'Grew up as the sole heir of a great landowner.', 'The family fled a massacre because it belonged to a minority.', 'Worked as an interpreter for foreign merchants in a port city.', 'Spent childhood with a shepherd clan driven from its pastures by drought.'];
 const LIFE_ROLE = {
-  leader: ['Bir eyalet valisinin yardımcısıydı, valinin devrildiği gece yönetimi devraldı.', 'Hukukçu olarak tanındı, bir anayasa komisyonunda görev aldı.', 'Kalabalık bir ailenin en küçüğüydü, kardeşleri arasındaki miras davası yıllarca sürdü.', 'Genç yaşta bir ayaklanmaya katıldı, iki yıl hapis yattı.'],
-  general: ['Bir sınır savaşında alayının çoğu öldü, kendisi şarapnel yarasıyla döndü.', 'Harp okulunu birincilikle bitirdi, ilk görevinde bir köy ayaklanmasını bastırdı.', 'On beş yıl uzak bir garnizonda komutanlık yaptı.', 'Savaşta esir düştü, iki yıl düşman kampında kaldı.', 'Köylü bir ailenin çocuğu olarak erden generalliğe yükseldi.'],
-  opposition: ['Bir grevde vurulan arkadaşlarının cenazesini taşıdığı için hapis yattı.', 'Yedi yıl sürgünde yaşadı, dönüşünde bir gazete kurdu.', 'Üniversiteden atıldı, yıllarca gizli broşür bastı.', 'Öğretmenlikten siyasi nedenle kovuldu.'],
-  oligarch: ['Liman hamalıyken gemi kiraladı, bir savaş sırasında tahıl satarak zengin oldu.', 'Bir maden imtiyazını kumarda kazandı.', 'Aile bankasını iflastan kurtarmak için ortağını mahkemeye verdi.', 'Yabancı bir şirketin temsilcisiyken kendi işini kurdu.']
+  leader: ['Served as deputy to a provincial governor and took over the night the governor was overthrown.', 'Spent years abroad as an envoy before coming home to a divided court.', 'Youngest of a large family; the inheritance dispute among the siblings dragged on for years.', 'Joined an uprising when young and served two years in prison.'],
+  general: ['Most of the regiment died in a border war; came home with a shrapnel wound.', 'Graduated first from the war college and put down a village uprising on the first posting.', 'Commanded a remote garrison for fifteen years.', 'Captured in war and held two years in an enemy camp.', 'Rose from the ranks to general as the child of a peasant family.'],
+  opposition: ['Was jailed for carrying the coffins of friends shot during a strike.', 'Lived seven years in exile and founded a newspaper on returning.', 'Was expelled from university and printed clandestine pamphlets for years.', 'Was dismissed from teaching for political reasons.'],
+  oligarch: ['Chartered a ship while working as a dock porter and got rich selling grain during a war.', 'Won a mining concession at cards.', 'Took a business partner to court to save the family bank from bankruptcy.', 'Started a business while acting as the agent of a foreign company.']
 };
 function lifeOf(w, id, name, role) {
   const pool = [...(LIFE_ROLE[role] || []), ...LIFE_COMMON];
@@ -158,7 +156,7 @@ function spawnCharacter(w, cid, role, axes) {
   const id = nextId(w, 'K');
   const t = () => Math.round(between(w, 15, 90));
   w.characters[id] = {
-    id, country: cid, role, name: `${pick(w, givenNames(w.countries[cid]?.majorityEth, w.countries[cid]?.majorityRel))} ${pick(w, familyNames(w.countries[cid]?.majorityEth))}`, skill: .75 + (hashOf(id) % 61) / 100, alive: true, status: 'serbest',
+    id, country: cid, role, name: `${pick(w, givenNames(w.countries[cid]?.majorityEth, w.countries[cid]?.majorityRel))} ${pick(w, familyNames(w.countries[cid]?.majorityEth))}`, skill: .75 + (hashOf(id) % 61) / 100, alive: true, status: 'free',
     age: Math.round(between(w, 34, 68)), persona: '', diary: [], outcomes: [], ties: {}, dossiers: {}, ambition: t(), loyalty: role === 'leader' ? 100 : t(), ruthless: t(), greed: t(),
     power: role === 'leader' ? 70 : Math.round(between(w, 30, 65)),
     wealth: Math.round(between(w, 10, role === 'oligarch' ? 300 : 40)),
@@ -173,32 +171,32 @@ export { spawnCharacter, bfsSea };
 
 export function makeCountry(w, id, patch = {}) {
   return {
-    id, alive: true, name: `Bölge ${id}`, adj: '', ideology: 'Belirsiz', regime: 'Geçici yönetim', motto: '', colors: ['#888888', '#cccccc'],
+    id, alive: true, name: `Region ${id}`, adj: '', ideology: 'Undefined', regime: 'Provisional government', motto: '', colors: ['#888888', '#cccccc'],
     axes: { econ: 0, auth: 0, nation: 0, faith: 0 },
-    elections: false, nextElection: 12, pressFreedom: 50, rigging: 0, rate: 1, pegRate: 1, pegTo: null, fxRegime: 'altin', capitalClosed: false, rer: 1, prices: {}, lastSold: {},
+    elections: false, nextElection: 12, pressFreedom: 50, rigging: 0, rate: 1, pegRate: 1, pegTo: null, fxRegime: 'gold', capitalClosed: false, rer: 1, prices: {}, lastSold: {},
     treasury: 0, debt: 0, reserves: 0, money: 0, priceLevel: 1, wageIndex: 1, inflation: .01, realGdp: 0, gdp: 0, unemployment: .08, foodRatio: 1, oreRatio: 1,
     tax: { income: .15, land: .12, business: .18 }, tariff: .08,
     budget: { military: .035, welfare: .03, infrastructure: .02, education: .02, police: .012, administration: .02 },
     armShare: .1, stock: {}, tech: { mil: 1, ind: 1, agri: 1 },
     bureaucracy: 55, corruption: 25, police: 45, intelligence: 40, legitimacy: 55, warExhaustion: 0, arrears: 0, ownership: 0,
-    blocs: { ordu: { sat: 55, power: 30 }, sermaye: { sat: 55, power: 25 }, isciler: { sat: 50, power: 15 }, koyluler: { sat: 50, power: 15 }, din: { sat: 55, power: 10 }, burokrasi: { sat: 55, power: 15 } },
+    blocs: { army: { sat: 55, power: 30 }, capital: { sat: 55, power: 25 }, workers: { sat: 50, power: 15 }, peasants: { sat: 50, power: 15 }, clergy: { sat: 55, power: 10 }, bureaucracy: { sat: 55, power: 15 } },
     relations: {}, intel: {}, embargo: [], institutions: [], techs: {}, research: { target: null, progress: 0 }, parties: [], rulingParty: null, literacy: 35, courts: 45, unions: true, bankHealth: 70, creditors: {}, rentShare: 0, mods: [], repress: 0, parent: null, history: [], ...patch
   };
 }
 
 export function createWorld(cfg) {
-  const w = { rng: cfg.seed | 0, seq: 0, turn: 0, status: 'kuruluyor', provinces: {}, seas: {}, countries: {}, characters: {}, units: {}, fleets: {}, wars: [], treaties: [], plots: [], epidemics: [], strategic: [], canals: [], routes: {}, tradeFlows: {}, globalPrice: { ...BASE_PRICE }, priceHistory: [], newsThisTurn: [], newsLog: [], debts: [], firms: {}, projects: [], contracts: [], seaRaids: {}, map: null };
+  const w = { rng: cfg.seed | 0, seq: 0, turn: 0, status: 'founding', provinces: {}, seas: {}, countries: {}, characters: {}, units: {}, fleets: {}, wars: [], treaties: [], plots: [], epidemics: [], strategic: [], canals: [], routes: {}, tradeFlows: {}, globalPrice: { ...BASE_PRICE }, priceHistory: [], newsThisTurn: [], newsLog: [], debts: [], firms: {}, projects: [], contracts: [], seaRaids: {}, map: null };
   const { W, H, sites, lands, nBasin } = buildMap(w, cfg.provinces);
   const pid = s => `P${s.i}`, sid = s => `D${s.i}`;
   for (const s of sites) {
     if (!s.land) { w.seas[sid(s)] = { id: sid(s), name: '', cx: Math.round(s.x), cy: Math.round(s.y), neighbors: [...s.n].filter(j => !sites[j].land).map(j => `D${j}`), coast: [...s.n].filter(j => sites[j].land).map(j => `P${j}`) }; continue; }
     const terrain = terrainOf(s), river = clamp((s.flow - 1.1) / 4.5, 0, 1.5);
-    const fert = ({ ova: 1.15, orman: .75, tepe: .7, dag: .28, col: .22, bataklik: .55, tundra: .25 })[terrain] * between(w, .85, 1.15) + river * .5;
+    const fert = ({ plains: 1.15, forest: .75, hills: .7, mountain: .28, desert: .22, marsh: .55, tundra: .25 })[terrain] * between(w, .85, 1.15) + river * .5;
     w.provinces[pid(s)] = {
       id: pid(s), name: word(w), cx: Math.round(s.x), cy: Math.round(s.y), elevation: Math.round(s.h * 100) / 100, moisture: Math.round(s.m * 100) / 100, terrain,
       neighbors: [...s.n].filter(j => sites[j].land).map(j => `P${j}`), seas: [...s.n].filter(j => !sites[j].land).map(j => `D${j}`), coast: [...s.n].some(j => !sites[j].land),
       river: Math.round(river * 100) / 100, downstream: s.down !== null && sites[s.down].land ? `P${s.down}` : null, dam: false,
-      fertility: fert, timber: terrain === 'orman' ? between(w, .8, 1.4) : terrain === 'tepe' ? .3 : .05, fish: 0, water: clamp(.55 + s.m * .4 + river * .35, .3, 1.3), deposits: depositsFor(w, s, nBasin),
+      fertility: fert, timber: terrain === 'forest' ? between(w, .8, 1.4) : terrain === 'hills' ? .3 : .05, fish: 0, water: clamp(.55 + s.m * .4 + river * .35, .3, 1.3), deposits: depositsFor(w, s, nBasin),
       plants: { steel: 0, fuel: 0, fertilizer: 0, machines: 0, goods: 0, arms: 0 }, rail: 0, port: 0, infra: between(w, .4, .75), devastation: 0, unrest: 15, owner: null, controller: null, eth: null, rel: null, pops: {}
     };
     const p = w.provinces[pid(s)]; if (p.coast) { p.fish = between(w, .3, 1); p.port = rand(w) < .5 ? 1 : 0; }
@@ -206,7 +204,7 @@ export function createWorld(cfg) {
   w.map = { W, H, polys: Object.fromEntries(lands.map(s => [pid(s), roughen(s.poly)])),
     rivers: lands.filter(s => s.flow > 1.15 && s.down !== null).map(s => [Math.round(s.x), Math.round(s.y), Math.round(sites[s.down].x), Math.round(sites[s.down].y), Math.round(Math.min(s.flow, 14) * 10) / 10]) };
 
-  // En büyük kara kütlesi ülkelere bölünür, adalar en yakın ülkenin sömürgesi olur.
+  // The largest landmass is divided among the countries; islands become colonies of the nearest one.
   const ids = Object.keys(w.provinces), seen = new Set(); let main = [];
   for (const id of ids) { if (seen.has(id)) continue; const comp = [], q = [id]; seen.add(id); while (q.length) { const x = q.pop(); comp.push(x); for (const n of w.provinces[x].neighbors) if (!seen.has(n)) { seen.add(n); q.push(n); } } if (comp.length > main.length) main = comp; }
   const dist = (a, b) => Math.hypot(w.provinces[a].cx - w.provinces[b].cx, w.provinces[a].cy - w.provinces[b].cy);
@@ -227,7 +225,7 @@ export function createWorld(cfg) {
       const border = p.neighbors.some(n => w.provinces[n].owner !== id);
       p.eth = (border && rand(w) < .4) || !main.includes(p.id) ? minor : eth; p.rel = rand(w) < .2 ? minorRel : rel;
       const n = between(w, 300, 900) * (.45 + p.fertility * .8 + (p.port ? .25 : 0)) * (k === 0 ? 2 : 1);
-      p.pops = { koylu: { n: n * .56, sat: 52 }, isci: { n: n * .27, sat: 48 }, orta: { n: n * .14, sat: 55 }, elit: { n: n * .03, sat: 60 } };
+      p.pops = { peasants: { n: n * .56, sat: 52 }, workers: { n: n * .27, sat: 48 }, middle: { n: n * .14, sat: 55 }, elite: { n: n * .03, sat: 60 } };
       const urban = k === 0 ? 1 : k < mine.length / 3 ? .55 : .2;
       p.plants.goods = urban * between(w, .5, 1); p.plants.steel = (p.deposits.iron || p.deposits.coal) ? urban * between(w, .2, .8) : urban * .1; p.plants.machines = urban * between(w, .1, .4); p.plants.arms = urban * between(w, .1, .4);
       p.rail = rand(w) < urban ? 1 : 0;
@@ -268,19 +266,19 @@ function findStrategic(w) {
   for (let i = 0; i < 90 && seas.length > 1; i++) { const p = bfsSea(w, pick(w, seas).id, pick(w, seas).id); (p || []).slice(1, -1).forEach(x => usage[x] = (usage[x] || 0) + 1); }
   for (let i = 0; i < 90; i++) { const p = bfsLand(w, pick(w, provs).id, pick(w, provs).id); (p || []).slice(1, -1).forEach(x => landUse[x] = (landUse[x] || 0) + 1); }
   const add = (type, ref, name, extra = {}) => w.strategic.push({ id: nextId(w, 'N'), type, ref, name, controller: null, toll: 0, closed: false, ...extra });
-  seas.filter(s => s.coast.length >= 3 && s.neighbors.length <= 4).sort((a, b) => (usage[b.id] || 0) - (usage[a.id] || 0)).slice(0, 5).forEach(s => { s.name = `${word(w)} Boğazı`; add('bogaz', s.id, s.name); });
-  provs.filter(p => ['dag', 'tepe'].includes(p.terrain)).sort((a, b) => (landUse[b.id] || 0) - (landUse[a.id] || 0)).slice(0, 6).forEach(p => add('gecit', p.id, `${p.name} Geçidi`));
-  provs.filter(p => p.river > .35).sort((a, b) => (landUse[b.id] || 0) - (landUse[a.id] || 0)).slice(0, 4).forEach(p => add('kopru', p.id, `${p.name} Köprüsü`));
-  provs.filter(p => p.coast).sort((a, b) => (b.river + b.seas.length * -.05 + b.fertility * .2) - (a.river + a.seas.length * -.05 + a.fertility * .2)).slice(0, 6).forEach(p => { p.port = Math.max(p.port, 3); add('liman', p.id, `${p.name} Limanı`); });
-  provs.filter(p => p.seas.length >= 2).map(p => { let best = 0; for (let i = 0; i < p.seas.length; i++) for (let j = i + 1; j < p.seas.length; j++) { const r = bfsSea(w, p.seas[i], p.seas[j]); best = Math.max(best, r ? r.length : 80); } return [p, best]; }).filter(x => x[1] > 14).sort((a, b) => b[1] - a[1]).slice(0, 3).forEach(([p]) => add('kanal_adayi', p.id, `${p.name} Kanal Güzergâhı`));
+  seas.filter(s => s.coast.length >= 3 && s.neighbors.length <= 4).sort((a, b) => (usage[b.id] || 0) - (usage[a.id] || 0)).slice(0, 5).forEach(s => { s.name = `${word(w)} Strait`; add('strait', s.id, s.name); });
+  provs.filter(p => ['mountain', 'hills'].includes(p.terrain)).sort((a, b) => (landUse[b.id] || 0) - (landUse[a.id] || 0)).slice(0, 6).forEach(p => add('pass', p.id, `${p.name} Pass`));
+  provs.filter(p => p.river > .35).sort((a, b) => (landUse[b.id] || 0) - (landUse[a.id] || 0)).slice(0, 4).forEach(p => add('bridge', p.id, `${p.name} Bridge`));
+  provs.filter(p => p.coast).sort((a, b) => (b.river + b.seas.length * -.05 + b.fertility * .2) - (a.river + a.seas.length * -.05 + a.fertility * .2)).slice(0, 6).forEach(p => { p.port = Math.max(p.port, 3); add('port', p.id, `${p.name} Harbor`); });
+  provs.filter(p => p.seas.length >= 2).map(p => { let best = 0; for (let i = 0; i < p.seas.length; i++) for (let j = i + 1; j < p.seas.length; j++) { const r = bfsSea(w, p.seas[i], p.seas[j]); best = Math.max(best, r ? r.length : 80); } return [p, best]; }).filter(x => x[1] > 14).sort((a, b) => b[1] - a[1]).slice(0, 3).forEach(([p]) => add('canal_site', p.id, `${p.name} Canal Route`));
 }
 
 function makeParties(w, c) {
-  const P = [['İşçi Hareketi', { econ: -55, auth: -10, nation: 5, faith: -20 }, 'isci'], ['Toprak Partisi', { econ: -10, auth: 15, nation: 20, faith: 35 }, 'koylu'], ['Hürriyet Birliği', { econ: 30, auth: -40, nation: -5, faith: -15 }, 'orta'], ['Düzen ve Mülk', { econ: 65, auth: 35, nation: 25, faith: 15 }, 'elit']];
+  const P = [['Workers\' Movement', { econ: -55, auth: -10, nation: 5, faith: -20 }, 'workers'], ['Land Party', { econ: -10, auth: 15, nation: 20, faith: 35 }, 'peasants'], ['Liberty Union', { econ: 30, auth: -40, nation: -5, faith: -15 }, 'middle'], ['Order and Property', { econ: 65, auth: 35, nation: 25, faith: 15 }, 'elite']];
   return P.map(([name, axes, base]) => ({ id: nextId(w, 'F'), name, axes, base, support: 25, banned: false }));
 }
 
-export function makeUnit(w, country, province, men, quality = 1, loyalty = 70, kind = 'piyade') {
+export function makeUnit(w, country, province, men, quality = 1, loyalty = 70, kind = 'infantry') {
   const id = nextId(w, 'B');
   w.units[id] = { id, country, province, men, quality, kind, morale: 65, equip: .8, loyalty, target: null };
   return w.units[id];
@@ -295,7 +293,7 @@ export function makeFleet(w, country, sea, ships) {
 function bootEconomy(w, c) {
   const provs = Object.values(w.provinces).filter(p => p.controller === c.id);
   const pop = sum(provs, p => CLASSES.reduce((a, k) => a + p.pops[k].n, 0));
-  const gdp = sum(provs, p => p.pops.koylu.n * p.fertility * .02 * 10 + p.pops.isci.n * .5 + p.pops.orta.n);
+  const gdp = sum(provs, p => p.pops.peasants.n * p.fertility * .02 * 10 + p.pops.workers.n * .5 + p.pops.middle.n);
   c.gdp = gdp; c.realGdp = gdp; c.money = gdp * 2; c.debt = gdp * between(w, 1, 1.8); c.treasury = gdp * .1; c.reserves = gdp * between(w, .3, .6);
   c.stock = Object.fromEntries(GOODS.map(g => [g, 0]));
   Object.assign(c.stock, { grain: pop * .012, timber: pop * .002, coal: pop * .004, iron: pop * .002, steel: pop * .002, goods: pop * .004, machines: pop * .0006, arms: pop * .002 });

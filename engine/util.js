@@ -12,6 +12,6 @@ export const between = (w, a, b) => a + rand(w) * (b - a);
 export const pick = (w, xs) => xs[Math.floor(rand(w) * xs.length)];
 export const nextId = (w, p) => `${p}${++w.seq}`;
 export function news(w, text, opts = {}) {
-  w.newsThisTurn.push({ turn: w.turn, text, kind: opts.kind || 'genel', countries: opts.countries || [], secret: !!opts.secret });
+  w.newsThisTurn.push({ turn: w.turn, text, kind: opts.kind || 'general', countries: opts.countries || [], secret: !!opts.secret });
 }
-export const quarterLabel = t => `${1900 + Math.floor(t / 4)} Ç${(t % 4) + 1}`;
+export const quarterLabel = t => `Q${(t % 4) + 1} ${1900 + Math.floor(t / 4)}`;

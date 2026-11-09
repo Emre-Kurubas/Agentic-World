@@ -1,26 +1,26 @@
-// Şirketler: fabrika ve madenlerin gerçek sahipleri. Kâr, iç piyasa fiyatlarından çıkar; sahibi ne yapacağına kendi karar verir.
+// Companies: the real owners of factories and mines. Profit comes from domestic market prices; the owner decides what to do with it.
 import { clamp, news, nextId, rand } from './util.js';
-import { PLANTS, BASE_PRICE, GOOD_TR, DEPOSITS, aliveCountries, countryProvinces } from './world.js';
+import { PLANTS, BASE_PRICE, GOOD_LABEL, DEPOSITS, aliveCountries, countryProvinces } from './world.js';
 import { RECIPE } from './economy.js';
 
 const SCALE = .05, MAX_PER_COUNTRY = 14, BANKRUPT_TURNS = 6;
-export const STATE = 'devlet';
-export const isOpen = f => f.status === 'acik';
-const sectorName = f => f.sector === 'maden' ? `${GOOD_TR[f.resource]} madeni` : PLANTS[f.sector];
-export const ownerName = (w, f) => f.owner === STATE ? 'devlet' : w.characters[f.owner]?.name ?? 'halka açık';
+export const STATE = 'state';
+export const isOpen = f => f.status === 'open';
+const sectorName = f => f.sector === 'mine' ? `${GOOD_LABEL[f.resource]} mine` : PLANTS[f.sector];
+export const ownerName = (w, f) => f.owner === STATE ? 'state' : w.characters[f.owner]?.name ?? 'publicly held';
 
-function capacity(w, f) { const p = w.provinces[f.province]; return f.sector === 'maden' ? p.deposits[f.resource]?.mine ?? 0 : p.plants[f.sector] ?? 0; }
+function capacity(w, f) { const p = w.provinces[f.province]; return f.sector === 'mine' ? p.deposits[f.resource]?.mine ?? 0 : p.plants[f.sector] ?? 0; }
 export const firmValue = (w, f) => Math.max(f.cash, 0) + f.stake * capacity(w, f) * 40;
 
 function setCapacity(w, f, next) {
   const p = w.provinces[f.province], old = capacity(w, f), add = next - old;
-  if (f.sector === 'maden') p.deposits[f.resource].mine = next; else p.plants[f.sector] = next;
+  if (f.sector === 'mine') p.deposits[f.resource].mine = next; else p.plants[f.sector] = next;
   for (const o of Object.values(w.firms)) if (o !== f && isOpen(o) && o.province === f.province && o.sector === f.sector && o.resource === f.resource) o.stake = next > 0 ? o.stake * old / next : 0;
   f.stake = next > 0 ? (f.stake * old + add) / next : 0;
 }
 
 function makeFirm(w, c, p, sector, resource, owner, stake, name) {
-  const f = { id: nextId(w, 'SR'), name, country: c.id, province: p.id, sector, resource: resource ?? null, stake, owner, cash: 0, lastProfit: 0, founded: w.turn, status: 'acik', bad: 0, offer: null };
+  const f = { id: nextId(w, 'SR'), name, country: c.id, province: p.id, sector, resource: resource ?? null, stake, owner, cash: 0, lastProfit: 0, founded: w.turn, status: 'open', bad: 0, offer: null };
   w.firms[f.id] = f;
   return f;
 }
@@ -31,7 +31,7 @@ export function initFirms(w) {
     const spots = [];
     for (const p of countryProvinces(w, c.id)) {
       for (const k of Object.keys(PLANTS)) if (p.plants[k] > .05) spots.push({ p, sector: k, size: p.plants[k] * BASE_PRICE[k] });
-      for (const [k, d] of Object.entries(p.deposits)) if (d.known && d.mine > 0 && k !== 'gold') spots.push({ p, sector: 'maden', resource: k, size: d.mine * d.rich * BASE_PRICE[k] * 2 });
+      for (const [k, d] of Object.entries(p.deposits)) if (d.known && d.mine > 0 && k !== 'gold') spots.push({ p, sector: 'mine', resource: k, size: d.mine * d.rich * BASE_PRICE[k] * 2 });
     }
     spots.sort((a, b) => b.size - a.size);
     spots.slice(0, 7).forEach((s, i) => {
@@ -46,15 +46,15 @@ export function initFirms(w) {
 function resolveOwner(w, f, c) {
   if (f.owner === STATE || f.owner == null) return;
   const ch = w.characters[f.owner];
-  if (ch?.alive && ch.status === 'serbest') return;
+  if (ch?.alive && ch.status === 'free') return;
   const heir = w.characters[c.oligarch];
   f.owner = heir?.alive && heir.id !== f.owner ? heir.id : null;
   f.offer = null;
 }
 
 function unitProfit(c, f, p) {
-  const price = c.prices?.[f.sector === 'maden' ? f.resource : f.sector] ?? 0;
-  if (f.sector === 'maden') {
+  const price = c.prices?.[f.sector === 'mine' ? f.resource : f.sector] ?? 0;
+  if (f.sector === 'mine') {
     const all = Object.values(c._mineLevel?.[f.resource] ? { x: c._mineLevel[f.resource] } : {}), total = all[0] || p.deposits[f.resource]?.mine || 1;
     return { units: (c._raw?.[f.resource] || 0) * (p.deposits[f.resource]?.mine || 0) / total, margin: price * .5 };
   }
@@ -94,9 +94,9 @@ export function firmStep(w) {
 
 function bankrupt(w, f, c, p) {
   const cap = capacity(w, f); setCapacity(w, f, cap * (1 - .35 * f.stake));
-  f.status = 'iflas'; f.closedAt = w.turn; f.stake = 0; f.offer = null;
-  w.characters[f.owner]?.inbox.push({ turn: w.turn, from: 'Mahkeme', text: `${f.name} iflas etti.` });
-  news(w, `${c.name}: ${f.name} iflas etti, ${p.name} eyaletinde işçiler çıkarıldı.`, { kind: 'ekonomi', countries: [c.id] });
+  f.status = 'bankrupt'; f.closedAt = w.turn; f.stake = 0; f.offer = null;
+  w.characters[f.owner]?.inbox.push({ turn: w.turn, from: 'Court', text: `${f.name} went bankrupt.` });
+  news(w, `${c.name}: ${f.name} went bankrupt, workers were laid off in ${p.name}.`, { kind: 'economy', countries: [c.id] });
   p.unrest = clamp(p.unrest + 4, 0, 100);
 }
 
@@ -110,66 +110,66 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
   const firm = w.firms?.[op.id], isHead = actor.id === c.leader;
   switch (op.op) {
     case 'found_company': {
-      const p = w.provinces[op.province]; if (!p) return fail('Eyalet yok.');
-      const host = w.countries[p.controller], sector = op.sector, mine = sector === 'maden';
-      if (!host?.alive) return fail('Burada şirket kurulamaz.');
-      if (host.id !== c.id && host.capitalClosed) return fail('Bu ülke yabancı sermayeye kapalı.');
-      if (!mine && !PLANTS[sector]) return fail('Sektör yok.');
-      if (mine && (!DEPOSITS.includes(op.resource) || op.resource === 'gold' || !p.deposits[op.resource]?.known)) return fail('Bilinen yatak yok.');
-      if (openCount(w, host.id) >= MAX_PER_COUNTRY) return fail('Bu ülkede kayıt yeri kalmadı.');
+      const p = w.provinces[op.province]; if (!p) return fail('No such province.');
+      const host = w.countries[p.controller], sector = op.sector, mine = sector === 'mine';
+      if (!host?.alive) return fail('A company cannot be founded here.');
+      if (host.id !== c.id && host.capitalClosed) return fail('This country is closed to foreign capital.');
+      if (!mine && !PLANTS[sector]) return fail('No such sector.');
+      if (mine && (!DEPOSITS.includes(op.resource) || op.resource === 'gold' || !p.deposits[op.resource]?.known)) return fail('No known deposit.');
+      if (openCount(w, host.id) >= MAX_PER_COUNTRY) return fail('No registry room left in this country.');
       const state = isHead && op.state === true, amount = num(op.amount, 1, state ? Math.max(c.treasury, 0) : actor.wealth, 0);
-      if (amount < 1) return fail('Sermaye yetersiz.');
+      if (amount < 1) return fail('Not enough capital.');
       if (state) c.treasury -= amount; else actor.wealth -= amount;
-      const f = makeFirm(w, host, p, sector, mine ? op.resource : null, state ? STATE : actor.id, 0, String(op.name || '').slice(0, 60) || `${p.name} Şirketi`);
+      const f = makeFirm(w, host, p, sector, mine ? op.resource : null, state ? STATE : actor.id, 0, String(op.name || '').slice(0, 60) || `${p.name} Company`);
       setCapacity(w, f, capacity(w, f) + amount * (mine ? .002 : .004));
       f.cash = amount * .25;
-      news(w, `${host.name}: ${f.name} kuruldu.`, { kind: 'ekonomi', countries: [host.id] });
-      return { ok: true, msg: `Şirket kuruldu: ${f.id}`, firm: f.id };
+      news(w, `${host.name}: ${f.name} was founded.`, { kind: 'economy', countries: [host.id] });
+      return { ok: true, msg: `Company founded: ${f.id}`, firm: f.id };
     }
     case 'invest_company': {
-      if (!firm || !isOpen(firm)) return fail('Şirket yok.');
+      if (!firm || !isOpen(firm)) return fail('No such company.');
       const state = firm.owner === STATE && isHead;
-      if (firm.owner !== actor.id && !state) return fail('Bu şirket senin değil.');
-      const amount = num(op.amount, 0, state ? Math.max(c.treasury, 0) : actor.wealth, 0); if (amount <= 0) return fail('Para yok.');
+      if (firm.owner !== actor.id && !state) return fail('This company is not yours.');
+      const amount = num(op.amount, 0, state ? Math.max(c.treasury, 0) : actor.wealth, 0); if (amount <= 0) return fail('No money.');
       if (state) c.treasury -= amount; else actor.wealth -= amount;
-      firm.cash += amount * .25; setCapacity(w, firm, capacity(w, firm) + amount * (firm.sector === 'maden' ? .002 : .004));
+      firm.cash += amount * .25; setCapacity(w, firm, capacity(w, firm) + amount * (firm.sector === 'mine' ? .002 : .004));
       return ok();
     }
     case 'sell_company': {
-      if (!firm || !isOpen(firm) || firm.owner !== actor.id) return fail('Bu şirket senin değil.');
-      const buyer = w.characters[op.buyer]; if (!buyer?.alive) return fail('Alıcı yok.');
+      if (!firm || !isOpen(firm) || firm.owner !== actor.id) return fail('This company is not yours.');
+      const buyer = w.characters[op.buyer]; if (!buyer?.alive) return fail('No such buyer.');
       firm.offer = { buyer: buyer.id, price: num(op.price, 0, 1e9, firmValue(w, firm)) };
-      tell(w, buyer, actor.name, `${firm.name} (${firm.id}) şirketini ${Math.round(firm.offer.price)} karşılığında sana satmayı teklif ediyor.`);
+      tell(w, buyer, actor.name, `offers to sell you ${firm.name} (${firm.id}) for ${Math.round(firm.offer.price)}.`);
       return ok();
     }
     case 'buy_company': {
-      if (!firm || !isOpen(firm)) return fail('Şirket yok.');
+      if (!firm || !isOpen(firm)) return fail('No such company.');
       const agreed = firm.offer?.buyer === actor.id, open = firm.owner == null;
-      if (!agreed && !open) return fail('Satış teklifi yok.');
+      if (!agreed && !open) return fail('No sale offer.');
       const price = agreed ? firm.offer.price : firmValue(w, firm);
-      if (actor.wealth < price) return fail('Servet yetmiyor.');
-      const seller = w.characters[firm.owner]; actor.wealth -= price; if (seller) { seller.wealth += price; tell(w, seller, actor.name, `${firm.name} satıldı, ${Math.round(price)} aldın.`); }
-      firm.owner = actor.id; firm.offer = null; leaveTrace(w, actor, `${firm.name} şirketini satın aldı.`);
+      if (actor.wealth < price) return fail('Not enough wealth.');
+      const seller = w.characters[firm.owner]; actor.wealth -= price; if (seller) { seller.wealth += price; tell(w, seller, actor.name, `${firm.name} was sold; you received ${Math.round(price)}.`); }
+      firm.owner = actor.id; firm.offer = null; leaveTrace(w, actor, `Bought ${firm.name}.`);
       return ok();
     }
     case 'nationalize_company': {
-      if (!isHead) return fail('Yalnızca lider el koyabilir.');
-      if (!firm || !isOpen(firm) || firm.country !== c.id || firm.owner === STATE) return fail('El konacak şirket yok.');
+      if (!isHead) return fail('Only the leader can seize a company.');
+      if (!firm || !isOpen(firm) || firm.country !== c.id || firm.owner === STATE) return fail('No company to seize.');
       const owner = w.characters[firm.owner];
-      if (owner) { tell(w, owner, c.name, `${firm.name} şirketine devlet el koydu.`); if (owner.country !== c.id && w.countries[owner.country]) w.countries[owner.country].relations[c.id] = clamp((w.countries[owner.country].relations[c.id] ?? 0) - 25, -100, 100); }
-      firm.owner = STATE; firm.offer = null; c.ownership = clamp(c.ownership + .02, 0, 1); c.blocs.sermaye.sat = clamp(c.blocs.sermaye.sat - 5, 0, 100);
-      news(w, `${c.name}: ${firm.name} devletleştirildi.`, { kind: 'ekonomi', countries: [c.id] });
+      if (owner) { tell(w, owner, c.name, `The state seized ${firm.name}.`); if (owner.country !== c.id && w.countries[owner.country]) w.countries[owner.country].relations[c.id] = clamp((w.countries[owner.country].relations[c.id] ?? 0) - 25, -100, 100); }
+      firm.owner = STATE; firm.offer = null; c.ownership = clamp(c.ownership + .02, 0, 1); c.blocs.capital.sat = clamp(c.blocs.capital.sat - 5, 0, 100);
+      news(w, `${c.name}: ${firm.name} was nationalized.`, { kind: 'economy', countries: [c.id] });
       return ok();
     }
     case 'privatize_company': {
-      if (!isHead) return fail('Yalnızca lider satabilir.');
-      if (!firm || !isOpen(firm) || firm.owner !== STATE || firm.country !== c.id) return fail('Devlet şirketi yok.');
-      const buyer = w.characters[op.buyer]; if (!buyer?.alive) return fail('Alıcı yok.');
-      const price = num(op.price, 0, 1e9, firmValue(w, firm)); if (buyer.wealth < price) return fail('Alıcının parası yetmiyor.');
+      if (!isHead) return fail('Only the leader can sell.');
+      if (!firm || !isOpen(firm) || firm.owner !== STATE || firm.country !== c.id) return fail('No such state company.');
+      const buyer = w.characters[op.buyer]; if (!buyer?.alive) return fail('No such buyer.');
+      const price = num(op.price, 0, 1e9, firmValue(w, firm)); if (buyer.wealth < price) return fail('The buyer cannot afford it.');
       buyer.wealth -= price; c.treasury += price * (c.rate || 1); firm.owner = buyer.id; c.ownership = clamp(c.ownership - .02, 0, 1);
-      leaveTrace(w, actor, `${firm.name} şirketini ${buyer.name} kişisine ${Math.round(price)} karşılığı sattı.`); tell(w, buyer, c.name, `${firm.name} artık senin.`);
+      leaveTrace(w, actor, `Sold ${firm.name} to ${buyer.name} for ${Math.round(price)}.`); tell(w, buyer, c.name, `${firm.name} is now yours.`);
       return ok();
     }
-    default: return fail('Bilinmeyen şirket işlemi.');
+    default: return fail('Unknown company operation.');
   }
 }

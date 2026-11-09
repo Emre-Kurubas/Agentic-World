@@ -1,12 +1,12 @@
-// Kurumlar, meclis ve antlaşma maddeleri. Ajan ne kuracağını serbestçe yazar, hakem buradaki kurallara çevirir, sonucu kod belirler.
+// Institutions, parliament and treaty clauses. The agent writes freely what to found, the referee translates it to these rules, the code decides the outcome.
 import { clamp, sum, news, rand, nextId } from './util.js';
-import { GOODS, GOOD_TR, aliveCountries } from './world.js';
+import { GOODS, GOOD_LABEL, aliveCountries } from './world.js';
 import { distance } from './politics.js';
 
 export const num = (v, a, b, d = a) => clamp(Number.isFinite(Number(v)) ? Number(v) : d, a, b);
 
-export const STATE_POWERS = ['denetim', 'yargi', 'guvenlik', 'istihbarat', 'burokrasi', 'banka', 'ordu'];
-export const CIVIL_POWERS = ['egitim', 'refah', 'propaganda', 'din', 'sermaye', 'tarim', 'sanayi', 'arastirma'];
+export const STATE_POWERS = ['audit', 'judiciary', 'security', 'intelligence', 'bureaucracy', 'bank', 'army'];
+export const CIVIL_POWERS = ['education', 'welfare', 'propaganda', 'clergy', 'capital', 'farming', 'industry', 'research'];
 export const DELEGABLE = new Set(['appoint_governor', 'appoint_commander', 'set_culture_policy', 'set_fx_regime', 'devalue', 'borrow_foreign', 'repay_foreign', 'set_capital_controls', 'ship_goods', 'set_tax', 'set_budget', 'set_tariff', 'set_arms_share', 'print_money', 'borrow', 'embargo', 'build', 'survey', 'set_research', 'move', 'move_army', 'recruit', 'repress', 'concession', 'purge', 'ban_party', 'set_institutions', 'propose_treaty', 'accept_treaty', 'spy', 'steal_tech', 'gather_dossier']);
 export const GATED = new Set(['set_culture_policy', 'nationalize_company', 'set_tax', 'set_budget', 'set_tariff', 'borrow', 'declare_war', 'ban_party', 'land_reform', 'nationalize', 'privatize']);
 const MAX_OPEN_BILLS = 6;
@@ -18,7 +18,7 @@ export function delegated(c, actor, opName) {
   return activeInstitutions(c).some(i => memberOf(i, actor.id) && (i.authority || []).includes(opName) && (i.strength ?? 0) >= .2);
 }
 
-// Veto eden kurumun gücü ve mahkeme bağımsızlığı arttıkça lider geçemez.
+// As the vetoing institution's strength and court independence grow, the leader cannot get past it.
 export function vetoedBy(w, c, actor, opName) {
   return activeInstitutions(c).find(i => (i.veto || []).includes(opName) && !memberOf(i, actor.id) && rand(w) < clamp((i.strength ?? 0) * (.35 + c.courts / 150), 0, .95));
 }
@@ -26,7 +26,7 @@ export function vetoedBy(w, c, actor, opName) {
 export function makeInstitution(w, c, actor, op) {
   const isState = actor.id === c.leader, allowed = isState ? [...STATE_POWERS, ...CIVIL_POWERS] : CIVIL_POWERS;
   const inst = {
-    id: nextId(w, 'KR'), name: String(op.name || 'Adsız kurum').slice(0, 70), description: String(op.description || '').slice(0, 280), founder: actor.name, turn: w.turn,
+    id: nextId(w, 'KR'), name: String(op.name || 'Unnamed institution').slice(0, 70), description: String(op.description || '').slice(0, 280), founder: actor.name, turn: w.turn,
     powers: (Array.isArray(op.powers) ? op.powers : []).filter(p => allowed.includes(p)).slice(0, 4),
     authority: isState ? (Array.isArray(op.authority) ? op.authority : []).filter(x => DELEGABLE.has(x)).slice(0, 8) : [],
     veto: isState ? (Array.isArray(op.veto) ? op.veto : []).filter(x => GATED.has(x) || DELEGABLE.has(x)).slice(0, 6) : [],
@@ -47,29 +47,29 @@ const addMod = (c, key, delta, label) => c.mods.push({ key, delta, turns: 1, lab
 function applyPower(w, c, inst, power, s) {
   const add = (stat, d, lo = 0, hi = 100) => { c[stat] = clamp((c[stat] ?? 0) + d, lo, hi); };
   switch (power) {
-    case 'denetim': {
+    case 'audit': {
       add('corruption', -.7 * s, 2, 95);
       const head = w.characters[inst.head];
       if (head?.alive && rand(w) < .12 * s) {
         const suspects = Object.values(w.characters).filter(x => x.alive && x.country === c.id && x.id !== head.id && x.secrets?.length && !head.dossiers[x.id]);
-        if (suspects.length) { const t = suspects[Math.floor(rand(w) * suspects.length)], facts = t.secrets.slice(-5).map(x => x.text); head.dossiers[t.id] = { turn: w.turn, about: t.name, facts }; head.inbox.push({ turn: w.turn, from: inst.name, text: `Denetim bulgusu, ${t.name}: ${facts.join(' ')}` }); }
+        if (suspects.length) { const t = suspects[Math.floor(rand(w) * suspects.length)], facts = t.secrets.slice(-5).map(x => x.text); head.dossiers[t.id] = { turn: w.turn, about: t.name, facts }; head.inbox.push({ turn: w.turn, from: inst.name, text: `Audit finding, ${t.name}: ${facts.join(' ')}` }); }
       }
       break;
     }
-    case 'yargi': add('courts', .6 * s); break;
-    case 'guvenlik': add('police', .6 * s, 5, 95); break;
-    case 'istihbarat': add('intelligence', .6 * s); break;
-    case 'burokrasi': add('bureaucracy', .5 * s, 10, 95); break;
-    case 'banka': add('bankHealth', .8 * s); break;
-    case 'ordu': addMod(c, 'sat.ordu', 4 * s, inst.name); break;
-    case 'egitim': add('literacy', .15 * s, 5, 99); break;
-    case 'refah': addMod(c, 'sat.koylu', 3 * s, inst.name); addMod(c, 'sat.isci', 3 * s, inst.name); break;
+    case 'judiciary': add('courts', .6 * s); break;
+    case 'security': add('police', .6 * s, 5, 95); break;
+    case 'intelligence': add('intelligence', .6 * s); break;
+    case 'bureaucracy': add('bureaucracy', .5 * s, 10, 95); break;
+    case 'bank': add('bankHealth', .8 * s); break;
+    case 'army': addMod(c, 'sat.army', 4 * s, inst.name); break;
+    case 'education': add('literacy', .15 * s, 5, 99); break;
+    case 'welfare': addMod(c, 'sat.peasants', 3 * s, inst.name); addMod(c, 'sat.workers', 3 * s, inst.name); break;
     case 'propaganda': addMod(c, 'sat.all', 2 * s, inst.name); break;
-    case 'din': addMod(c, 'sat.din', 4 * s, inst.name); break;
-    case 'sermaye': addMod(c, 'sat.sermaye', 4 * s, inst.name); break;
-    case 'tarim': c.tech.agri = clamp(c.tech.agri * (1 + .002 * s), .5, 10); break;
-    case 'sanayi': c.tech.ind = clamp(c.tech.ind * (1 + .002 * s), .5, 10); break;
-    case 'arastirma': if (c.research) c.research.progress += 2.5 * s; break;
+    case 'clergy': addMod(c, 'sat.clergy', 4 * s, inst.name); break;
+    case 'capital': addMod(c, 'sat.capital', 4 * s, inst.name); break;
+    case 'farming': c.tech.agri = clamp(c.tech.agri * (1 + .002 * s), .5, 10); break;
+    case 'industry': c.tech.ind = clamp(c.tech.ind * (1 + .002 * s), .5, 10); break;
+    case 'research': if (c.research) c.research.progress += 2.5 * s; break;
   }
 }
 
@@ -104,7 +104,7 @@ export function allocateSeats(c) {
 }
 
 export function makeParliament(c, name, legislative = true) {
-  c.parliament = { name: String(name || 'Meclis').slice(0, 60), legislative, seats: allocateSeats(c), suspendedUntil: 0 };
+  c.parliament = { name: String(name || 'Parliament').slice(0, 60), legislative, seats: allocateSeats(c), suspendedUntil: 0 };
   c.bills ||= []; c.laws ||= [];
   return c.parliament;
 }
@@ -118,16 +118,16 @@ export function leadsParties(w, c, ch) {
 }
 
 export function createBill(w, c, actor, { title, text, ops, axes }) {
-  if ((c.bills || []).filter(b => b.status === 'bekliyor').length >= MAX_OPEN_BILLS) return null;
+  if ((c.bills || []).filter(b => b.status === 'pending').length >= MAX_OPEN_BILLS) return null;
   const led = leadsParties(w, c, actor)[0];
-  const bill = { id: nextId(w, 'Y'), title: String(title || 'Adsız yasa').slice(0, 100), text: String(text || '').slice(0, 500), ops: (Array.isArray(ops) ? ops : []).slice(0, 4), axes: axes && typeof axes === 'object' ? { econ: num(axes.econ, -100, 100, 0), auth: num(axes.auth, -100, 100, 0), nation: num(axes.nation, -100, 100, 0), faith: num(axes.faith, -100, 100, 0) } : { ...(actor.id === c.leader ? c.axes : actor.axes) }, proposer: actor.id, proposerName: actor.name, party: led?.id ?? null, byGov: actor.id === c.leader, turn: w.turn, voteAt: w.turn + 1, votes: {}, lobby: {}, status: 'bekliyor' };
+  const bill = { id: nextId(w, 'Y'), title: String(title || 'Unnamed law').slice(0, 100), text: String(text || '').slice(0, 500), ops: (Array.isArray(ops) ? ops : []).slice(0, 4), axes: axes && typeof axes === 'object' ? { econ: num(axes.econ, -100, 100, 0), auth: num(axes.auth, -100, 100, 0), nation: num(axes.nation, -100, 100, 0), faith: num(axes.faith, -100, 100, 0) } : { ...(actor.id === c.leader ? c.axes : actor.axes) }, proposer: actor.id, proposerName: actor.name, party: led?.id ?? null, byGov: actor.id === c.leader, turn: w.turn, voteAt: w.turn + 1, votes: {}, lobby: {}, status: 'pending' };
   (c.bills ||= []).push(bill);
-  for (const p of c.parties) { for (const id of [p.founder, p.id === c.rulingParty ? c.leader : null, c.opposition]) { const ch = w.characters[id]; if (ch?.alive && ch.id !== actor.id && ch.aiControlled && ch.country === c.id && leadsParties(w, c, ch).includes(p)) ch.inbox.push({ turn: w.turn, from: c.parliament?.name ?? 'Meclis', text: `Yasa teklifi ${bill.id} (${bill.proposerName}): ${bill.title}. ${bill.text} Gelecek çeyrekte oylanacak.` }); } }
+  for (const p of c.parties) { for (const id of [p.founder, p.id === c.rulingParty ? c.leader : null, c.opposition]) { const ch = w.characters[id]; if (ch?.alive && ch.id !== actor.id && ch.aiControlled && ch.country === c.id && leadsParties(w, c, ch).includes(p)) ch.inbox.push({ turn: w.turn, from: c.parliament?.name ?? 'Parliament', text: `Bill ${bill.id} (${bill.proposerName}): ${bill.title}. ${bill.text} It will be voted on next quarter.` }); } }
   return bill;
 }
 
 function partyVotes(w, c, b, p) {
-  if (b.votes[p.id]) return b.votes[p.id] === 'evet';
+  if (b.votes[p.id]) return b.votes[p.id] === 'yes';
   let s = 30 - distance(p.axes, b.axes) * .5 + (b.lobby[p.id] || 0) * .4 + rand(w) * 16 - 8;
   if (b.party === p.id) s += 35;
   if (b.byGov) s += p.id === c.rulingParty ? 30 : -10;
@@ -144,35 +144,35 @@ export function enactLaw(w, c, bill, apply, via) {
 export function billStep(w, apply) {
   for (const c of aliveCountries(w)) {
     for (const b of c.bills || []) {
-      if (b.status !== 'bekliyor' || w.turn < b.voteAt) continue;
-      if (!parliamentOpen(w, c)) { b.status = 'dustu'; b.closedAt = w.turn; continue; }
+      if (b.status !== 'pending' || w.turn < b.voteAt) continue;
+      if (!parliamentOpen(w, c)) { b.status = 'lapsed'; b.closedAt = w.turn; continue; }
       let yes = 0, no = 0; const seats = c.parliament.seats;
       for (const p of c.parties) { const n = seats[p.id] || 0; if (!n || p.banned) continue; if (partyVotes(w, c, b, p)) yes += n; else no += n; }
       b.tally = { yes, no }; b.closedAt = w.turn;
       if (yes > no) {
-        b.status = 'kabul'; enactLaw(w, c, b, apply, 'meclis');
-        news(w, `${c.name} meclisi "${b.title}" yasasını kabul etti (${yes} evet, ${no} hayır).`, { kind: 'siyaset', countries: [c.id] });
+        b.status = 'passed'; enactLaw(w, c, b, apply, 'parliament');
+        news(w, `${c.name} parliament passed the "${b.title}" act (${yes} yes, ${no} no).`, { kind: 'politics', countries: [c.id] });
         if (b.byGov) c.legitimacy = clamp(c.legitimacy + .5, 0, 100);
       } else {
-        b.status = 'ret';
-        news(w, `${c.name} meclisi "${b.title}" teklifini reddetti (${yes} evet, ${no} hayır).`, { kind: 'siyaset', countries: [c.id] });
+        b.status = 'rejected';
+        news(w, `${c.name} parliament rejected the "${b.title}" bill (${yes} yes, ${no} no).`, { kind: 'politics', countries: [c.id] });
         if (b.byGov) c.legitimacy = clamp(c.legitimacy - 1.5, 0, 100);
       }
     }
-    if (c.bills) c.bills = c.bills.filter(b => b.status === 'bekliyor' || w.turn - b.closedAt <= 8);
+    if (c.bills) c.bills = c.bills.filter(b => b.status === 'pending' || w.turn - b.closedAt <= 8);
   }
 }
 
-// Antlaşma maddeleri. Hakem serbest metni bu türlere çevirir; ödenebilen kod tarafından ödenir, tutulmayan ihlal olarak kayda geçer.
+// Treaty clauses. The referee turns free text into these types; what can be paid is paid by code, what is not kept is recorded as a breach.
 export function normalizeClauses(w, raw, parties) {
   const out = [], isParty = x => parties.includes(x), turns = v => Math.round(num(v, 1, 80, 12));
   for (const c of Array.isArray(raw) ? raw.slice(0, 8) : []) {
-    if (c?.type === 'harac' && isParty(c.payer)) out.push({ type: 'harac', payer: c.payer, pct_gdp: num(c.pct_gdp, 0, .2, .02), turns: turns(c.turns) });
-    else if (c?.type === 'teslimat' && isParty(c.from) && GOODS.includes(c.good)) out.push({ type: 'teslimat', from: c.from, good: c.good, amount: num(c.amount, 0, 1e5, 0), turns: turns(c.turns) });
-    else if (c?.type === 'gumruk') out.push({ type: 'gumruk', rate: num(c.rate, 0, 1, 0) });
-    else if (c?.type === 'silahsiz_bolge' && Array.isArray(c.provinces)) out.push({ type: 'silahsiz_bolge', country: isParty(c.country) ? c.country : null, provinces: c.provinces.filter(p => w.provinces[p]).slice(0, 12) });
-    else if (c?.type === 'asker_limit' && isParty(c.country)) out.push({ type: 'asker_limit', country: c.country, men: num(c.men, 0, 1e6, 0) });
-    else if (c?.type === 'yardim') out.push({ type: 'yardim', called: {} });
+    if (c?.type === 'tribute' && isParty(c.payer)) out.push({ type: 'tribute', payer: c.payer, pct_gdp: num(c.pct_gdp, 0, .2, .02), turns: turns(c.turns) });
+    else if (c?.type === 'delivery' && isParty(c.from) && GOODS.includes(c.good)) out.push({ type: 'delivery', from: c.from, good: c.good, amount: num(c.amount, 0, 1e5, 0), turns: turns(c.turns) });
+    else if (c?.type === 'tariff') out.push({ type: 'tariff', rate: num(c.rate, 0, 1, 0) });
+    else if (c?.type === 'demilitarized_zone' && Array.isArray(c.provinces)) out.push({ type: 'demilitarized_zone', country: isParty(c.country) ? c.country : null, provinces: c.provinces.filter(p => w.provinces[p]).slice(0, 12) });
+    else if (c?.type === 'troop_limit' && isParty(c.country)) out.push({ type: 'troop_limit', country: c.country, men: num(c.men, 0, 1e6, 0) });
+    else if (c?.type === 'mutual_defense') out.push({ type: 'mutual_defense', called: {} });
   }
   return out;
 }
@@ -180,12 +180,12 @@ export function normalizeClauses(w, raw, parties) {
 export function clauseText(w, cl) {
   const n = id => w.countries[id]?.name ?? id;
   switch (cl.type) {
-    case 'harac': return `${n(cl.payer)} her tur GSYH'nin %${Math.round(cl.pct_gdp * 1000) / 10} kadarını öder${cl.until != null ? `, tur ${cl.until} sonuna dek` : ''}`;
-    case 'teslimat': return `${n(cl.from)} her tur ${Math.round(cl.amount)} ${GOOD_TR[cl.good]} teslim eder${cl.until != null ? `, tur ${cl.until} sonuna dek` : ''}`;
-    case 'gumruk': return `Karşılıklı gümrük %${Math.round(cl.rate * 100)}`;
-    case 'silahsiz_bolge': return `${cl.country ? n(cl.country) : 'Taraflar'} şu eyaletlerde asker bulundurmaz: ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}`;
-    case 'asker_limit': return `${n(cl.country)} en çok ${Math.round(cl.men)} bin asker tutar`;
-    case 'yardim': return 'Saldırıya uğrayan tarafın yanında savaşa girilir';
+    case 'tribute': return `${n(cl.payer)} pays ${Math.round(cl.pct_gdp * 1000) / 10}% of GDP each turn${cl.until != null ? `, until the end of turn ${cl.until}` : ''}`;
+    case 'delivery': return `${n(cl.from)} delivers ${Math.round(cl.amount)} ${GOOD_LABEL[cl.good]} each turn${cl.until != null ? `, until the end of turn ${cl.until}` : ''}`;
+    case 'tariff': return `Mutual tariff of ${Math.round(cl.rate * 100)}%`;
+    case 'demilitarized_zone': return `${cl.country ? n(cl.country) : 'The parties'} shall station no troops in: ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}`;
+    case 'troop_limit': return `${n(cl.country)} keeps at most ${Math.round(cl.men)}k troops`;
+    case 'mutual_defense': return 'Each party enters the war on the side of the party attacked';
     default: return cl.type;
   }
 }
@@ -199,8 +199,8 @@ function breach(w, t, cl, party, text) {
   cl.lastBreach = w.turn;
   (t.breaches ||= []).push({ turn: w.turn, party, text });
   t.breaches = t.breaches.slice(-12);
-  for (const id of t.parties) { const leader = w.characters[w.countries[id]?.leader]; if (leader?.alive) leader.inbox.push({ turn: w.turn, from: 'Dışişleri', text: `Antlaşma ${t.id} ihlal edildi: ${text}` }); }
-  news(w, `Antlaşma ihlali: ${text}`, { kind: 'diplomasi', countries: t.parties });
+  for (const id of t.parties) { const leader = w.characters[w.countries[id]?.leader]; if (leader?.alive) leader.inbox.push({ turn: w.turn, from: 'Foreign Ministry', text: `Treaty ${t.id} breached: ${text}` }); }
+  news(w, `Treaty breach: ${text}`, { kind: 'diplomacy', countries: t.parties });
 }
 
 const routeOpen = (w, a, b) => !!w.routes[a < b ? `${a}|${b}` : `${b}|${a}`];
@@ -209,35 +209,35 @@ export function treatyStep(w) {
   for (const c of aliveCountries(w)) c.tariffDeals = {};
   for (const t of w.treaties) {
     if (!t.active) continue;
-    if (t.expires != null && w.turn >= t.expires) { t.active = false; news(w, `${t.parties.map(x => w.countries[x]?.name).join(' ile ')} arasındaki ${t.kind} antlaşmasının süresi doldu.`, { kind: 'diplomasi', countries: t.parties }); continue; }
+    if (t.expires != null && w.turn >= t.expires) { t.active = false; news(w, `The ${t.kind.replace('_', ' ')} treaty between ${t.parties.map(x => w.countries[x]?.name).join(' and ')} has expired.`, { kind: 'diplomacy', countries: t.parties }); continue; }
     for (const cl of t.clauses || []) {
       if (cl.until != null && w.turn >= cl.until) continue;
-      if (cl.type === 'harac') {
+      if (cl.type === 'tribute') {
         const payer = w.countries[cl.payer], other = w.countries[t.parties.find(x => x !== cl.payer)];
         if (!payer?.alive || !other?.alive) continue;
         const due = Math.max(payer.gdp, 1) * cl.pct_gdp, paid = Math.min(Math.max(payer.reserves, 0), due);
         payer.reserves -= paid; other.reserves += paid;
-        if (paid < due * .95) breach(w, t, cl, cl.payer, `${payer.name} haracını tam ödeyemedi.`);
-      } else if (cl.type === 'teslimat') {
+        if (paid < due * .95) breach(w, t, cl, cl.payer, `${payer.name} could not pay its tribute in full.`);
+      } else if (cl.type === 'delivery') {
         const from = w.countries[cl.from], to = w.countries[t.parties.find(x => x !== cl.from)];
         if (!from?.alive || !to?.alive || !routeOpen(w, from.id, to.id)) continue;
         const moved = Math.min(from.stock[cl.good] || 0, cl.amount);
         from.stock[cl.good] = (from.stock[cl.good] || 0) - moved; to.stock[cl.good] = (to.stock[cl.good] || 0) + moved;
-        if (moved < cl.amount * .95) breach(w, t, cl, cl.from, `${from.name} ${GOOD_TR[cl.good]} teslimatını tamamlayamadı.`);
-      } else if (cl.type === 'gumruk') {
+        if (moved < cl.amount * .95) breach(w, t, cl, cl.from, `${from.name} could not complete its ${GOOD_LABEL[cl.good]} delivery.`);
+      } else if (cl.type === 'tariff') {
         const [a, b] = t.parties.map(x => w.countries[x]);
         if (a?.alive && b?.alive) { a.tariffDeals[b.id] = Math.min(a.tariffDeals[b.id] ?? 1, cl.rate); b.tariffDeals[a.id] = Math.min(b.tariffDeals[a.id] ?? 1, cl.rate); }
-      } else if (cl.type === 'silahsiz_bolge') {
-        for (const u of Object.values(w.units)) if (cl.provinces.includes(u.province) && (cl.country ? u.country === cl.country : t.parties.includes(u.country))) { breach(w, t, cl, u.country, `${w.countries[u.country]?.name} silahsız bölgeye asker soktu: ${w.provinces[u.province]?.name}.`); break; }
-      } else if (cl.type === 'asker_limit') {
+      } else if (cl.type === 'demilitarized_zone') {
+        for (const u of Object.values(w.units)) if (cl.provinces.includes(u.province) && (cl.country ? u.country === cl.country : t.parties.includes(u.country))) { breach(w, t, cl, u.country, `${w.countries[u.country]?.name} moved troops into the demilitarized zone: ${w.provinces[u.province]?.name}.`); break; }
+      } else if (cl.type === 'troop_limit') {
         const men = sum(Object.values(w.units).filter(u => u.country === cl.country), u => u.men);
-        if (men > cl.men) breach(w, t, cl, cl.country, `${w.countries[cl.country]?.name} asker sınırını aştı (${Math.round(men)} bin).`);
-      } else if (cl.type === 'yardim') {
+        if (men > cl.men) breach(w, t, cl, cl.country, `${w.countries[cl.country]?.name} exceeded its troop limit (${Math.round(men)}k).`);
+      } else if (cl.type === 'mutual_defense') {
         for (const x of t.parties) for (const war of w.wars) {
           const ally = t.parties.find(y => y !== x);
           if (!war.active || war.civil || !war.b.includes(x) || war.a.includes(ally) || war.b.includes(ally) || cl.called[war.id] || w.turn - war.start < 2 || war.start < (t.turn ?? 0)) continue;
           cl.called[war.id] = true;
-          breach(w, t, cl, ally, `${w.countries[ally]?.name}, saldırıya uğrayan ${w.countries[x]?.name} yanında savaşa girmedi (${war.name}).`);
+          breach(w, t, cl, ally, `${w.countries[ally]?.name} did not enter the war on the side of ${w.countries[x]?.name}, which was attacked (${war.name}).`);
         }
       }
     }
