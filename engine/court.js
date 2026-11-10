@@ -5,6 +5,7 @@ import { clamp, rand, news, nextId, quarterLabel } from './util.js';
 import { ROLES, aliveCountries, spawnCharacter } from './world.js';
 import { sideline } from './politics.js';
 import { treasuryPays, creditLeft } from './money.js';
+import { MILITARY, kindWord } from './diplomacy.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 const trace = (w, ch, text) => { if (!ch) return; (ch.secrets ||= []).push({ turn: w.turn, text }); ch.secrets = ch.secrets.slice(-12); };
@@ -262,6 +263,15 @@ function inform(w, c, ch) {
   else if (ch.post === 'police' || ch.clerkOf === 'police') { const known = w.plots.filter(p => p.active && p.country === c.id && p.exposed), held = Object.values(w.characters).filter(x => x.alive && x.country === c.id && x.status === 'imprisoned'); text = `the police know of ${known.length ? known.map(p => `a ${p.kind} plot around ${w.characters[p.leader]?.name}`).join(' and ') : 'no plot'}; ${held.length ? `${held.map(x => x.name).join(', ')} ${held.length > 1 ? 'are' : 'is'} in prison` : 'the prisons hold no one of note'}; about ${Math.round(watch(c) * 100)} letters in a hundred are opened in the post.`; }
   else if (ch.post === 'house' || ch.clerkOf === 'house') { const house = ch.post === 'house' ? ch : minorsOf(w, c).find(x => x.post === 'house'), took = (w.offers || []).filter(o => o.from === house?.id && ['running', 'taken', 'finished', 'ended'].includes(o.status)); text = took.length ? `the house has paid ${took.map(o => `${w.characters[o.to]?.name ?? 'someone'} ${o.amount} (${o.kind === 'lease' ? 'for the customs lease' : o.kind === 'supply' ? 'for the army contracts' : 'for goodwill'}, ${quarterLabel(o.turn)})`).join('; ')}.` : 'the house has paid no one in office so far.'; }
   else { const p = Object.values(w.provinces).find(x => x.governor === ch.id); text = p ? `in ${p.name} unrest stands at ${Math.round(p.unrest)} of 100 and the state's hold on the province at ${Math.round((p.admin ?? .5) * 100)} of 100.` : 'nothing of weight passed under his hands this quarter.'; }
+  // A paper kept secret passes under some hands: a treaty that concerns the army under those of its officers and staff clerks, one about trade
+  // or money under those of the treasury and the banking house. A bought man in the right place sees it, and then his paymaster holds it.
+  const sees = t => (u || ch.role === 'officer' || ch.clerkOf === 'army') ? MILITARY.includes(t.kind) : (ch.post === 'treasury' || ch.clerkOf === 'treasury' || ch.post === 'house' || ch.clerkOf === 'house') ? t.kind === 'trade' || t.reparations > 0 || (t.clauses || []).some(x => ['tribute', 'delivery', 'tariff'].includes(x.type)) : false;
+  for (const t of w.treaties) {
+    if (!t.active || !t.secret || !t.parties.includes(c.id) || (ch.told ||= []).includes(t.id) || !sees(t)) continue;
+    ch.told.push(t.id); (handler.papers ||= []).includes(t.id) || handler.papers.push(t.id);
+    const hc = w.countries[handler.country]; if (abroad && hc?.alive && [hc.leader, hc.general].includes(handler.id) && !t.parties.includes(hc.id) && !(t.known ||= []).includes(hc.id)) t.known.push(hc.id);
+    text += ` He has also seen a paper that is kept secret: ${c.name} is bound by ${kindWord(t)} (${t.id}) with ${t.parties.filter(id => id !== c.id).map(id => w.countries[id]?.name).join(', ')}${t.terms ? `: "${t.terms}"` : ''}. You hold it now, and can make it public (publish_treaty).`;
+  }
   say(w, handler, `${ch.name} (your informant)`, `Word from ${ch.name} in ${c.name}: ${text}`);
   if (abroad) { const hc = w.countries[handler.country]; if (hc?.alive) hc.intel[c.id] = clamp((hc.intel[c.id] ?? 0) + 6, 0, 100); }
 }

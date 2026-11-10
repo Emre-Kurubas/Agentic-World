@@ -1,5 +1,6 @@
 import { rand, pick, sum } from '../engine/util.js';
-import { atWar, countryProvinces, aliveCountries } from '../engine/world.js';
+import { atWar, countryProvinces, aliveCountries, hasTreaty } from '../engine/world.js';
+import { stanceOf } from '../engine/diplomacy.js';
 
 const enemies = (w, c) => aliveCountries(w).filter(o => o.id !== c.id && atWar(w, c.id, o.id));
 const might = (w, id) => sum(Object.values(w.units).filter(u => u.country === id), u => u.men);
@@ -11,6 +12,7 @@ export function npcDecide(w, ch) {
   const dueDebt = (w.debts || []).find(d => d.debtor === ch.id && d.status === 'overdue' && ch.wealth >= d.owed * 1.5);
   if (dueDebt) return [{ op: 'repay_debt', debt: dueDebt.id }];
   if (ch.role === 'leader') return npcLeader(w, ch, c);
+  if (ch.role === 'general' && c.general === ch.id) ops.push(...npcStaff(w, c));
   const myPlot = w.plots.find(p => p.active && p.leader === ch.id);
   const joined = w.plots.find(p => p.active && p.members.includes(ch.id));
   const disloyal = ch.ambition * .6 + (100 - ch.loyalty) * .4 + (100 - c.legitimacy) * .35 + c.unrest * .25;
@@ -23,6 +25,25 @@ export function npcDecide(w, ch) {
   if (!joined && disloyal > 100 && rand(w) < .14) { ops.push({ op: 'start_plot', kind: ch.role === 'general' ? 'coup' : (c.unrest > 40 ? 'uprising' : 'coup'), secrecy: .6 }); return ops; }
   if (ch.role === 'opposition' && rand(w) < .5) ops.push({ op: 'propaganda', strength: .6 });
   if (ch.role === 'oligarch' && c.blocs.capital.sat < 32 && rand(w) < .4) ops.push({ op: 'capital_flight', share: .08 });
+  return ops;
+}
+
+// A chief of staff by the book. At war, the weaker side stands on the defensive and a frontier unit that is hopelessly outnumbered where it
+// stands is told to fall back if pressed; the stronger side keeps its hands free. At peace, troops facing a much stronger neighbour hold their fire.
+function npcStaff(w, c) {
+  const ops = [], mine = Object.values(w.units).filter(u => u.country === c.id), foes = enemies(w, c), menAt = (id, pid) => sum(Object.values(w.units).filter(u => u.country === id && u.province === pid), u => u.men);
+  if (!mine.length) return ops;
+  if (foes.length) {
+    const theirs = sum(foes, f => might(w, f.id)), weaker = might(w, c.id) < theirs * .75;
+    for (const u of mine) {
+      const near = sum(w.provinces[u.province].neighbors, n => sum(foes, f => menAt(f.id, n))), here = menAt(c.id, u.province), want = near > here * 4 ? 'fall_back' : weaker ? 'defensive' : 'ordinary';
+      if (want === 'ordinary' ? ['defensive', 'fall_back'].includes(u.posture) : u.posture !== want && u.posture !== 'no_retreat') ops.push(want === 'ordinary' ? { op: 'set_posture', unit: u.id, posture: u.posture, on: false } : { op: 'set_posture', unit: u.id, posture: want });
+    }
+    return ops;
+  }
+  for (const u of mine) if (['defensive', 'fall_back'].includes(u.posture)) ops.push({ op: 'set_posture', unit: u.id, posture: u.posture, on: false });
+  const nbrs = [...new Set(countryProvinces(w, c.id).flatMap(p => p.neighbors.map(n => w.provinces[n].controller)))].filter(x => x !== c.id && w.countries[x]?.alive);
+  for (const id of nbrs) { const strong = might(w, id) > might(w, c.id) * 1.5; if (strong && !c.holdFire?.[id]) ops.push({ op: 'set_posture', facing: id, posture: 'hold_fire' }); else if (!strong && c.holdFire?.[id]) ops.push({ op: 'set_posture', facing: id, posture: 'hold_fire', on: false }); }
   return ops;
 }
 
@@ -45,7 +66,20 @@ function npcLeader(w, ch, c) {
     const match = /(K-\d+)/.exec(m.text);
     if (match && /plot|leaked|inform/i.test(m.text)) { const pl = w.plots.find(p => p.id === match[1] && p.active); if (pl) ops.push({ op: 'purge', character: pl.leader, fate: 'imprisoned' }); }
   }
-  for (const t of w.treaties.filter(t => t.pending && t.parties.includes(c.id) && t.proposer !== c.id)) if ((c.relations[t.proposer] ?? 0) > -55 || t.kind === 'peace') ops.push({ op: 'accept_treaty', id: t.id });
+  // A proposal is signed if nobody in it is hated and it costs no land; a peace is signed even at the price of land once the country is tired of the war.
+  for (const t of w.treaties.filter(t => (t.pending && t.parties.includes(c.id) && t.proposer !== c.id && !(t.signed || []).includes(c.id)) || (t.multi && t.active && (t.open || []).includes(c.id)))) {
+    const others = (t.multi ? t.invited || t.parties : [t.proposer]).filter(id => id !== c.id), worst = Math.min(...others.map(id => c.relations[id] ?? 0), 0), land = (t.grants || []).some(g => w.provinces[g.province]?.owner === c.id) || (t.cede || []).some(pid => w.provinces[pid]?.owner === c.id);
+    if (['peace', 'armistice'].includes(t.kind) ? !land || c.warExhaustion > 25 : worst > -55 && !land) ops.push({ op: 'accept_treaty', id: t.id });
+  }
+  // An invitation to a table is taken up unless the host is an enemy in all but name.
+  for (const x of w.conferences || []) if (x.open && x.invited.includes(c.id) && !x.came.includes(c.id) && !x.declined.includes(c.id)) ops.push({ op: 'attend_conference', id: x.id, attend: (c.relations[x.host] ?? 0) > -40 });
+  // A new state is recognised by those who have no love for its mother country, and by the rest once it has held its ground for two years.
+  for (const o of aliveCountries(w)) if (o.recognition && o.bornOf !== c.id && !o.recognition.includes(c.id) && !atWar(w, c.id, o.id) && rand(w) < .3 && ((c.relations[o.bornOf] ?? 0) < -20 || (w.turn - ((o.noSplitUntil ?? w.turn + 16) - 16) >= 8 && countryProvinces(w, o.id).length >= 2))) ops.push({ op: 'recognise', target: o.id });
+  // A wrong the country holds against a neighbour is answered by steps short of war before anything else: the envoy comes home, then their goods pay for it; when the anger has faded the envoy goes back.
+  for (const [id, g] of Object.entries(c.grudges || {})) { const o = w.countries[id]; if (!o?.alive || atWar(w, c.id, id)) continue; const hot = g.incident >= 8, mine = stanceOf(c, id);
+    if (hot && mine === 'normal' && !hasTreaty(w, c.id, id, 'alliance')) ops.push({ op: 'set_relations', target: id, level: 'recalled' });
+    else if (hot && g.incident >= 20 && c.aimed?.[id] == null && !hasTreaty(w, c.id, id, 'trade')) ops.push({ op: 'set_tariff', target: id, rate: Math.min(1, +(c.tariff + .25).toFixed(2)) });
+    else if (!hot && g.incident < 3) { if (mine === 'recalled') ops.push({ op: 'set_relations', target: id, level: 'normal' }); if (c.aimed?.[id] != null) ops.push({ op: 'set_tariff', target: id, clear: true }); } }
   const foes = enemies(w, c);
   if (foes.length) {
     c.armShare = Math.max(c.armShare, .25);

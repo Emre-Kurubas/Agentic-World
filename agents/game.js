@@ -184,7 +184,7 @@ export class Game {
         }
         catch (e) { if (e instanceof LimitError) throw e; this.report(ch, `No answer received, fell back to rules: ${e.message}`); r = { fallback: true }; }
       }
-      this.pending.actors[ch.id] = sanitize(r, cfg);
+      this.pending.actors[ch.id] = sanitize(r, cfg); if (this.pending.actors[ch.id].messages) this.pending.actors[ch.id].messages = toTable(w, ch, this.pending.actors[ch.id].messages);
       this.store.savePending(this.pending);
       this.setStatus('agents thinking', `${++done}/${actors.length} decisions received`);
     }));
@@ -222,7 +222,7 @@ export class Game {
         try { r = await this.askAs(ch, build, modelFor(cfg, ch)); }
         catch (e) { if (e instanceof LimitError) throw e; this.report(ch, `No negotiation reply received: ${e.message}`); talk.skip[id] = true; this.store.savePending(this.pending); return; }
         for (const i of waiting) i.m.read = true;
-        const clean = sanitize(r, cfg), sentNow = clean.messages.map(m => ({ ...m, round }));
+        const clean = sanitize(r, cfg), sentNow = toTable(w, ch, clean.messages).map(m => ({ ...m, round }));
         if (joined) { this.pending.actors[id] = { ...clean, messages: sentNow }; actors.push(ch); }
         else {
           const cur = this.pending.actors[id];
@@ -386,6 +386,16 @@ export class Game {
 }
 
 // A letter may be addressed by id, by country or by name.
+// A message addressed to a conference that is sitting goes to every government at the table: the host and whoever was invited and has not
+// declined. Only a government with a seat there can speak to it; from anyone else it is a letter to nobody.
+export function toTable(w, ch, messages) {
+  return (messages || []).flatMap(m => {
+    const cf = (w.conferences || []).find(x => x.open && x.id === String(m.to).trim()); if (!cf) return [m];
+    const seats = [cf.host, ...cf.invited.filter(id => !cf.declined.includes(id))];
+    if (!seats.includes(ch.country) || w.countries[ch.country]?.leader !== ch.id) return [m];
+    return seats.filter(id => id !== ch.country && w.countries[id]?.alive).map(id => ({ ...m, to: id, text: `[To the conference ${cf.id} on "${cf.question}"] ${m.text}` }));
+  });
+}
 function recipient(w, to) {
   const key = String(to ?? '').trim(), direct = w.characters[key] ?? w.characters[w.countries[key]?.leader];
   if (direct) return direct;

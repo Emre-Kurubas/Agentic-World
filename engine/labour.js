@@ -136,8 +136,9 @@ export function labourOp(w, actor, c, op, { fail, num, governs, tell, allowance 
     case 'break_strike': {
       if (!governs || home.id !== c.id) return fail('Only whoever governs can send men against strikers.');
       if (!f.strike) return fail('There is no strike at that company.');
-      const troops = Object.values(w.units).filter(u => u.country === c.id && u.province === p.id), loyal = troops.length ? sum(troops, u => u.loyalty * u.men) / Math.max(sum(troops, u => u.men), 1e-9) : 100;
-      if (c.police < 25 && !troops.length) return fail(`There are neither police enough nor troops in ${p.name} to do it.`);
+      // Troops confined to barracks by standing order are not sent: then it is the police alone, or nobody.
+      const there = Object.values(w.units).filter(u => u.country === c.id && u.province === p.id), troops = there.filter(u => !u.barracks), loyal = troops.length ? sum(troops, u => u.loyalty * u.men) / Math.max(sum(troops, u => u.men), 1e-9) : 100;
+      if (c.police < 25 && !troops.length) return fail(`There are neither police enough nor troops in ${p.name} to do it${there.length ? ': the troops there are confined to barracks by standing order (set_posture)' : ''}.`);
       // Soldiers do not always fire on their own people.
       if (c.police < 40 && troops.length && loyal < 45 && rand(w) < .5) { for (const u of troops) u.loyalty = clamp(u.loyalty - 5, 0, 100); f.stir = (f.stir || 0) + 12; news(w, `${c.name}: troops sent against the strikers of ${f.name} refused to move.`, { kind: 'politics', countries: [c.id], province: p.id }); return fail('The troops would not march against the strikers.'); }
       const dead = Math.round((3 + rand(w) * 40) * clamp(f.stake + .3, .3, 1.3) * (1.3 - c.police / 200));

@@ -1,6 +1,7 @@
 import { clamp, sum, news, between, rand } from './util.js';
 import { hungerOf } from './politics.js';
 import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_LABEL, PLANTS, TECHS, countryProvinces, provincePop, aliveCountries, atWar, hasTreaty } from './world.js';
+import { dealsWith, tieOf } from './diplomacy.js';
 import { migrate } from './culture.js';
 import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding, USUAL_COVER } from './money.js';
 
@@ -61,22 +62,24 @@ export function updateRoutes(w) {
   const cs = aliveCountries(w); w.routes = {};
   for (let i = 0; i < cs.length; i++) for (let j = i + 1; j < cs.length; j++) {
     const a = cs[i], b = cs[j], k = routeKey(a.id, b.id);
-    if (a.embargo.includes(b.id) || b.embargo.includes(a.id) || atWar(w, a.id, b.id)) continue;
-    if (landBorder(w, a, b)) { w.routes[k] = { mode: 'land', cost: 1.04, path: [], tolls: [] }; continue; }
+    // No merchants go where their government sees no state; and where relations are broken off they go without consuls, at their own risk.
+    if (a.embargo.includes(b.id) || b.embargo.includes(a.id) || atWar(w, a.id, b.id) || !dealsWith(w, a.id, b.id)) continue;
+    const risk = tieOf(w, a.id, b.id) === 'broken' ? .08 : 0;
+    if (landBorder(w, a, b)) { w.routes[k] = { mode: 'land', cost: 1.04 + risk, path: [], tolls: [] }; continue; }
     const path = seaRoute(w, a, b);
     if (path) {
       const tolls = path.map(s => straitAt(w, s)).filter(s => s && s.toll && s.controller && ![a.id, b.id].includes(s.controller));
       const raided = path.filter(s => (w.seaRaids?.[s] || []).some(x => atWar(w, x, a.id) || atWar(w, x, b.id))).length;
       // A deep harbour with quays and cranes turns ships round faster than an open roadstead: each step of harbour at either end takes a little off the freight.
       const quay = (o, sea) => Math.max(1, ...countryProvinces(w, o.id).filter(p => p.port > 0 && p.controller === o.id && p.seas.includes(sea)).map(p => p.port));
-      w.routes[k] = { mode: 'sea', cost: 1.05 + path.length * .008 - (quay(a, path[0]) + quay(b, path.at(-1)) - 2) * .012 + sum(tolls, t => t.toll) + raided * .15, path, tolls: tolls.map(t => t.id) };
+      w.routes[k] = { mode: 'sea', cost: 1.05 + risk + path.length * .008 - (quay(a, path[0]) + quay(b, path.at(-1)) - 2) * .012 + sum(tolls, t => t.toll) + raided * .15, path, tolls: tolls.map(t => t.id) };
     }
   }
   // Two countries with no road or water of their own between them still trade through a third that deals with both: the goods pay both freights and the middleman's handling.
   const direct = { ...w.routes }, open = (x, y) => direct[routeKey(x.id, y.id)];
   for (let i = 0; i < cs.length; i++) for (let j = i + 1; j < cs.length; j++) {
     const a = cs[i], b = cs[j], k = routeKey(a.id, b.id);
-    if (direct[k] || a.embargo.includes(b.id) || b.embargo.includes(a.id) || atWar(w, a.id, b.id)) continue;
+    if (direct[k] || a.embargo.includes(b.id) || b.embargo.includes(a.id) || atWar(w, a.id, b.id) || !dealsWith(w, a.id, b.id)) continue;
     const via = cs.filter(m => m !== a && m !== b && open(a, m) && open(m, b)).map(m => ({ m, cost: open(a, m).cost * open(m, b).cost * 1.03 })).sort((x, y) => x.cost - y.cost)[0];
     if (via) w.routes[k] = { mode: 'transit', via: via.m.id, cost: via.cost, path: [], tolls: [...new Set([...open(a, via.m).tolls, ...open(via.m, b).tolls])] };
   }
@@ -167,8 +170,14 @@ export const usualOrder = () => ['grain', ...GOODS.filter(g => g !== 'grain' && 
 export const importOrder = c => { const set = (c.imports?.order || []).filter(g => GOODS.includes(g)); return [...set, ...usualOrder().filter(g => !set.includes(g))]; };
 // A rule at the frontier holds as far as the customs service does. What a thin or venal service cannot stop comes in or goes out by other roads, and pays no duty.
 export const sealOf = (w, c) => w.friction ? clamp(.3 + c.bureaucracy / 100, .35, 1) * (1 - c.corruption / 200) : 1;
-// The duty one good pays coming in: what a treaty fixed with that seller, else the government's own rule for the good, else the general tariff.
-const dutyOn = (c, g, from) => c.tariffDeals?.[from] ?? c.imports?.rules?.[g]?.tariff ?? c.tariff;
+// The duty one good pays coming in: what a treaty fixed with that seller, else a duty the government has aimed at that country's goods, else
+// its own rule for the good, else the general tariff.
+const usualDuty = (c, g) => c.imports?.rules?.[g]?.tariff ?? c.tariff;
+const dutyOn = (c, g, from) => c.tariffDeals?.[from] ?? c.aimed?.[from] ?? usualDuty(c, g);
+// A duty aimed at one seller sends merchants to the others and, the dearer it is, keeps the goods out: of what would have come from there, this much still does.
+const aimedTrade = (c, g, from) => c.tariffDeals?.[from] != null || c.aimed?.[from] == null ? 1 : clamp(1 - Math.max(0, c.aimed[from] - usualDuty(c, g)) * 1.2, .1, 1);
+// Goods a government has forbidden its merchants to sell to one country, or to buy from it. The ban holds as far as the customs service reaches.
+const banned = (w, buyer, seller, g) => { const out = seller.bans?.[buyer.id]?.sell.includes(g) ? sealOf(w, seller) : 0, inn = buyer.bans?.[seller.id]?.buy.includes(g) ? sealOf(w, buyer) : 0; return 1 - (1 - out) * (1 - inn); };
 
 function trade(w, cs) {
   w.tradeFlows = {};
@@ -199,13 +208,15 @@ function trade(w, cs) {
     for (let pass = 0; pass < 2; pass++) for (const b of buyers) {
       if (b.d <= 0) continue;
       const acc = sellers.map(x => ({ x, r: w.routes[key(b.c.id, x.c.id)] })).filter(a => a.x.s > 0 && a.x.c.id !== b.c.id && a.r);
-      const wgt = a => a.x.s / a.r.cost * (hasTreaty(w, b.c.id, a.x.c.id, 'trade') ? 1.5 : 1) * exportEdge(a.x.c), tot = sum(acc, wgt);
+      // How much of the trade between a buyer and one seller the law leaves standing: all of it, unless a duty is aimed at that seller or goods are banned between the two.
+      const open = a => aimedTrade(b.c, g, a.x.c.id) * (1 - banned(w, b.c, a.x.c, g));
+      const wgt = a => a.x.s / a.r.cost * (hasTreaty(w, b.c.id, a.x.c.id, 'trade') ? 1.5 : 1) * exportEdge(a.x.c) * open(a), tot = sum(acc, wgt);
       if (!tot) continue;
       for (const a of acc) {
         const duty = dutyOn(b.c, g, a.x.c.id), landed = price * a.r.cost * (1 + duty * .3);
         // Gold owed to foreign creditors this quarter is not spent on imports: the debt is served first, and imports shrink instead.
         // And a good draws only on its own share of the quarter's gold and on what no other good has claimed.
-        const q = Math.min(a.x.s, b.d * wgt(a) / tot, Math.max(0, b.c.reserves - (b.c._debtService || 0)) / landed, ((b.c._alloc?.[g] ?? Infinity) + (b.c._spare ?? 0)) / (price * a.r.cost));
+        const q = Math.min(a.x.s * open(a), b.d * wgt(a) / tot, Math.max(0, b.c.reserves - (b.c._debtService || 0)) / landed, ((b.c._alloc?.[g] ?? Infinity) + (b.c._spare ?? 0)) / (price * a.r.cost));
         if (q <= 0) continue;
         const v = q * price; a.x.s -= q; b.d -= q; moved += q; a.x.c.lastSold[g] = (a.x.c.lastSold[g] || 0) + q;
         // Freight goes to the exporter, customs to the buyer's own treasury: gold does not vanish from the world.

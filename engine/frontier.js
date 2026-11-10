@@ -5,9 +5,14 @@
 import { clamp, rand, news, sum } from './util.js';
 import { aliveCountries, countryProvinces, atWar, hasTreaty, provincePop, makeUnit } from './world.js';
 import { groupsOf } from './culture.js';
+import { fighting } from './military.js';
+import { answered, tieOf } from './diplomacy.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 const menAt = (w, cid, pid) => sum(Object.values(w.units).filter(u => u.country === cid && u.province === pid), u => u.men);
+// Troops told to hold their fire, by an order to the unit or by a standing order for everything that faces that neighbour.
+export const holdsFire = (c, u, toward) => !!(u.holdFire || c.holdFire?.[toward]);
+const heldAt = (w, c, pid, toward) => sum(Object.values(w.units).filter(u => u.country === c.id && u.province === pid && holdsFire(c, u, toward)), u => u.men);
 const grudge = (c, id) => (c.grudges ||= {})[id] ||= { incident: 0, kin: 0 };
 export const grudgeWord = v => v >= 30 ? 'a fury' : v >= 15 ? 'strong' : v >= 6 ? 'felt' : 'faint';
 
@@ -21,19 +26,26 @@ export function frontierStep(w) {
   const facing = {};
   for (const c of cs) for (const p of countryProvinces(w, c.id)) {
     const here = menAt(w, c.id, p.id); if (here < .5) continue;
-    for (const n of p.neighbors) { const q = w.provinces[n], o = w.countries[q.controller]; if (!o?.alive || o.id === c.id || atWar(w, c.id, o.id)) continue; const there = menAt(w, o.id, q.id); if (there < .5) continue;
-      const key = c.id < o.id ? `${c.id}|${o.id}` : `${o.id}|${c.id}`, f = facing[key] ||= { a: c.id < o.id ? c : o, b: c.id < o.id ? o : c, men: {}, at: [p, q] }; f.men[c.id] = Math.max(f.men[c.id] || 0, here); f.men[o.id] = Math.max(f.men[o.id] || 0, there); }
+    // Armies that are fighting each other meet in battle, not in incidents; armies that face each other across an armistice line still do.
+    for (const n of p.neighbors) { const q = w.provinces[n], o = w.countries[q.controller]; if (!o?.alive || o.id === c.id || fighting(w, c.id, o.id)) continue; const there = menAt(w, o.id, q.id); if (there < .5) continue;
+      const key = c.id < o.id ? `${c.id}|${o.id}` : `${o.id}|${c.id}`, f = facing[key] ||= { a: c.id < o.id ? c : o, b: c.id < o.id ? o : c, men: {}, at: [p, q], all: {}, quiet: {} }; f.men[c.id] = Math.max(f.men[c.id] || 0, here); f.men[o.id] = Math.max(f.men[o.id] || 0, there);
+      f.all[c.id] = (f.all[c.id] || 0) + here; f.quiet[c.id] = (f.quiet[c.id] || 0) + heldAt(w, c, p.id, o.id); }
   }
   for (const f of Object.values(facing)) {
     const { a, b } = f, force = Math.min(1, Math.sqrt(f.men[a.id] * f.men[b.id]) / 60), bad = Math.min(a.relations[b.id] ?? 0, b.relations[a.id] ?? 0);
-    const pact = hasTreaty(w, a.id, b.id, 'alliance') ? .05 : hasTreaty(w, a.id, b.id, 'nonaggression') ? .3 : 1, heat = grudge(a, b.id).incident + grudge(b, a.id).incident + grudge(a, b.id).kin + grudge(b, a.id).kin;
-    if (rand(w) >= clamp(.012 * (.3 + force) * (bad < -30 ? 2 : bad < 0 ? 1.3 : 1) * pact * (1 + heat / 60), 0, .25)) continue;
+    const pact = (hasTreaty(w, a.id, b.id, 'alliance') ? .05 : hasTreaty(w, a.id, b.id, 'nonaggression') ? .3 : 1) * (tieOf(w, a.id, b.id) === 'broken' ? 1.3 : 1), heat = grudge(a, b.id).incident + grudge(b, a.id).incident + grudge(a, b.id).kin + grudge(b, a.id).kin;
+    // Someone has to fire first. Each side's patrols are half the danger; a side whose men are under orders not to fire first is all but out of
+    // it (not quite: orders are not always obeyed, and a patrol fired on shoots back). Across an armistice line both sides are wary.
+    const still = id => (f.quiet[id] || 0) / Math.max(f.all[id] || 0, 1e-9), calm = .5 * (1 - .85 * still(a.id)) + .5 * (1 - .85 * still(b.id)), truce = atWar(w, a.id, b.id);
+    if (rand(w) >= clamp(.012 * (.3 + force) * (bad < -30 ? 2 : bad < 0 ? 1.3 : 1) * pact * (1 + heat / 60) * calm * (truce ? .5 : 1), 0, .25)) continue;
     const [p, q] = f.at, pa = p.controller === a.id ? p : q, pb = pa === p ? q : p, deadA = Math.round(2 + rand(w) * 30), deadB = Math.round(2 + rand(w) * 30);
     for (const [c, d, prov] of [[a, deadA, pa], [b, deadB, pb]]) { const u = Object.values(w.units).find(x => x.country === c.id && x.province === prov.id); if (u) u.men = Math.max(.05, u.men - d / 1000); }
     grudge(a, b.id).incident += 10 + deadA * .3; grudge(b, a.id).incident += 10 + deadB * .3;
     a.relations[b.id] = clamp((a.relations[b.id] ?? 0) - 8, -100, 100); b.relations[a.id] = clamp((b.relations[a.id] ?? 0) - 8, -100, 100);
-    news(w, `Shots on the frontier between ${a.name} and ${b.name}: patrols clashed between ${pa.name} and ${pb.name}. ${deadA} of ${a.name}'s soldiers and ${deadB} of ${b.name}'s were killed. Each side says the other fired first.`, { kind: 'war', countries: [a.id, b.id], province: pa.id });
-    for (const [c, o, mine, theirs, prov] of [[a, b, deadA, deadB, pa], [b, a, deadB, deadA, pb]]) for (const ch of [w.characters[c.leader], w.characters[c.general]]) if (ch?.alive) say(w, ch, 'General Staff', `A patrol clash on the frontier with ${o.name} near ${prov.name}: ${mine} of ours dead, about ${theirs} of theirs. Our officers say theirs fired first; theirs say the same of ours. The country has heard of it and expects an answer. Troops kept in the border provinces keep meeting theirs; troops held a province back do not.`);
+    // Men who were shot at while forbidden to shoot first take it hard.
+    for (const [c, prov] of [[a, pa], [b, pb]]) if (still(c.id) > .5) for (const u of Object.values(w.units)) if (u.country === c.id && u.province === prov.id) u.morale = clamp(u.morale - 3, 0, 100);
+    news(w, `Shots ${truce ? 'across the armistice line' : 'on the frontier'} between ${a.name} and ${b.name}: patrols clashed between ${pa.name} and ${pb.name}. ${deadA} of ${a.name}'s soldiers and ${deadB} of ${b.name}'s were killed. Each side says the other fired first.`, { kind: 'war', countries: [a.id, b.id], province: pa.id });
+    for (const [c, o, mine, theirs, prov] of [[a, b, deadA, deadB, pa], [b, a, deadB, deadA, pb]]) for (const ch of [w.characters[c.leader], w.characters[c.general]]) if (ch?.alive) say(w, ch, 'General Staff', `A patrol clash on the frontier with ${o.name} near ${prov.name}: ${mine} of ours dead, about ${theirs} of theirs. Our officers say theirs fired first; theirs say the same of ours. The country has heard of it and expects an answer. ${still(c.id) > .5 ? 'Our men there were under orders not to fire first, which makes such meetings rare, not impossible.' : 'Troops kept in the border provinces keep meeting theirs; troops held a province back do not, and troops ordered to hold their fire (set_posture) seldom do.'}`);
   }
   // A people watches how its kin fare across the border, and how hard the state they live under bears on them.
   for (const c of cs) {
@@ -43,7 +55,8 @@ export function frontierStep(w) {
     // What weighs on the government: wrongs that have not been answered. A war against the offender answers them.
     const nat = clamp(.6 + (c.axes?.nation ?? 0) / 100, .3, 1.4);
     // What a country inherited it is used to: only what has grown worse since weighs on the government of the day.
-    const felt = sum(Object.entries(c.grudges), ([id, g]) => !w.countries[id]?.alive || atWar(w, c.id, id) ? 0 : g.incident * .12 + g.kin * .25 * nat), old = sum(Object.entries(c.grudges), ([id, g]) => !w.countries[id]?.alive || atWar(w, c.id, id) ? 0 : (g.kinBase ?? 0) * .25 * nat);
+    // What the government has done about it short of war (an envoy recalled, relations broken, a duty or a ban aimed at them, an ultimatum) answers part of it.
+    const felt = sum(Object.entries(c.grudges), ([id, g]) => !w.countries[id]?.alive || atWar(w, c.id, id) ? 0 : (g.incident * .12 + g.kin * .25 * nat) * (1 - answered(w, c, id))), old = sum(Object.entries(c.grudges), ([id, g]) => !w.countries[id]?.alive || atWar(w, c.id, id) ? 0 : (g.kinBase ?? 0) * .25 * nat);
     c.grief = clamp(felt - old, 0, 12);
     // A reserve of trained men: each year some of the standing army goes home with its training, and the oldest reservists pass out of reach.
     const army = sum(Object.values(w.units).filter(u => u.country === c.id && !u.called), u => u.men);

@@ -6,6 +6,9 @@ import { executePlot } from '../engine/politics.js';
 import { makeParliament, treatyStep } from '../engine/polity.js';
 import { currencyStep, displacedDemand, exportEdge, localPrices } from '../engine/money.js';
 import { firmStep, STATE } from '../engine/firms.js';
+import { atWar as atWarOf, hasTreaty as treatyOf } from '../engine/world.js';
+import { satisfactionStep as moodOf } from '../engine/politics.js';
+import { toTable } from '../agents/game.js';
 import { GOODS, BASE_PRICE } from '../engine/world.js';
 import { glutFactor, USUAL_COVER } from '../engine/money.js';
 import { firmValue } from '../engine/firms.js';
@@ -1868,7 +1871,8 @@ chain('A war costs more than a peace and men abroad cost double; an army crosses
   const summer = () => { const y = fresh(); while (seasonOf(y) !== 'summer') y.turn++; for (const u of Object.values(y.units)) delete y.units[u.id]; return y; };
   const y = summer(), k = y.countries.U1, hops = (from, to) => { let n = 0, cur = from; while (cur !== to && n < 40) { cur = routeStep(y, cur, to, 'U1'); n++; if (!cur) return 99; } return n; };
   const far = countryProvinces(y, 'U1').find(p => hops(k.capital, p.id) === 3); assert.ok(far, 'a province three marches from the capital');
-  const col = makeUnit(y, 'U1', k.capital, 20); col.target = far.id; militaryStep(y); assert.equal(col.province, far.id, 'three provinces of friendly country in one quarter');
+  for (const p of countryProvinces(y, 'U1')) { p.terrain = 'plains'; p.infra = 1.2; }
+  const col = makeUnit(y, 'U1', k.capital, 20); col.target = far.id; militaryStep(y); assert.equal(col.province, far.id, 'three provinces of open, friendly country with good roads in one quarter');
   const border = countryProvinces(y, 'U1').find(p => p.neighbors.some(n => y.provinces[n].controller === 'U2')), first = y.provinces[border.neighbors.find(n => y.provinces[n].controller === 'U2')], deep = first.neighbors.map(n => y.provinces[n]).find(p => p.controller === 'U2' && !border.neighbors.includes(p.id));
   y.wars.push({ id: 'S-y', a: ['U1'], b: ['U2'], civil: false, active: true, start: y.turn, name: 'y' }); const van = makeUnit(y, 'U1', border.id, 40); van.target = (deep ?? first).id; militaryStep(y); assert.equal(van.province, first.id, 'into the enemy\'s country, one province in the quarter');
   const z = summer(), g = z.countries.U1; makeUnit(z, 'U1', g.capital, 100); const heads = () => countryProvinces(z, 'U1').reduce((s, p) => s + provincePopOf(p), 0) + Object.values(z.units).filter(u => u.country === 'U1').reduce((s, u) => s + u.men, 0);
@@ -1938,5 +1942,162 @@ chain('What a country buys abroad follows a usual order that its ruler can chang
   const granary = ban => { const w = fresh(), c = w.countries.U1, l = ld(w, c); c.stock.grain = 6000; for (const o of aliveCountries(w)) if (o.id !== 'U1') { o.stock.grain = 0; o.reserves = Math.max(o.reserves, 5000); for (const p of countryProvinces(w, o.id)) p.fertility = .05; } if (ban) assert.ok(applyOp(w, l, { op: 'set_export', good: 'grain', ban: true, _law: true }).ok); run(w, 1); return [w, c]; };
   const [, sells] = granary(false), [, keeps] = granary(true);
   assert.ok(sells.lastSold.grain > 100, `left alone the surplus is sold: ${sells.lastSold.grain}`); assert.ok(!(keeps.lastSold.grain > .01) && keeps.stock.grain > sells.stock.grain + 100, `forbidden, it stays in the granaries: sold ${keeps.lastSold.grain}`);
+});
+chain('Standing orders are kept: the same attack meets troops with ordinary orders, on the defensive, told to fall back, and told not to give a step, and each ends as the order promised; troops told to hold their fire seldom start a frontier clash; troops in barracks are not used against strikers or in the streets', () => {
+  // One province of U2 on the frontier, forty thousand men in it, two hundred and twenty thousand coming at them; only the standing order differs.
+  const clash = (posture, quarters = 1) => { const w = fresh(); while (seasonOf(w) !== 'summer') w.turn++; for (const u of Object.values(w.units)) delete w.units[u.id];
+    const a = w.countries.U1, d = w.countries.U2, edge = countryProvinces(w, 'U1').find(p => p.neighbors.some(n => w.provinces[n].controller === 'U2' && n !== d.capital && w.provinces[n].neighbors.some(m => m !== p.id && w.provinces[m].controller === 'U2'))), over = w.provinces[edge.neighbors.find(n => w.provinces[n].controller === 'U2' && n !== d.capital && w.provinces[n].neighbors.some(m => m !== edge.id && w.provinces[m].controller === 'U2'))];
+    over.terrain = 'plains'; over.fort = 0; over.trench = 0; a.budget.military = d.budget.military = .3; const host = makeUnit(w, 'U1', edge.id, 220), def = makeUnit(w, 'U2', over.id, 40), gen = w.characters[d.general];
+    if (posture !== 'ordinary') { const r = applyOp(w, gen, { op: 'set_posture', unit: def.id, posture }); assert.ok(r.ok, r.msg); }
+    // Two quiet quarters first: time to dig.
+    for (let i = 0; i < 2; i++) { militaryStep(w); w.turn += 4; }
+    w.wars.push({ id: 'S-p', a: ['U1'], b: ['U2'], civil: false, active: true, start: w.turn, name: 'p' }); const before = def.men; let fights = 0, lostA = 0;
+    for (let i = 0; i < quarters; i++) { host.target = host.province === over.id ? null : over.id; w.battles = []; w.newsThisTurn = []; const hm = host.men; militaryStep(w); fights += w.battles.length; lostA += hm - host.men; w.turn += 4; }
+    return { w, over, def, host, fights, lostA, lostD: before - (w.units[def.id]?.men ?? 0), stayed: w.units[def.id]?.province === over.id, holder: over.controller, dug: def.dug }; };
+  const plain = clash('ordinary'), dug = clash('defensive'), back = clash('fall_back'), firm = clash('no_retreat'); if (process.env.DEBUG) for (const [k, r] of Object.entries({ plain, dug, back, firm })) console.log(k, JSON.stringify({ fights: r.fights, lostA: r.lostA, lostD: r.lostD, stayed: r.stayed, holder: r.holder, dug: r.dug, morale: r.w.units[r.def.id]?.morale, at: r.w.units[r.def.id]?.province, news: r.w.newsThisTurn.map(n => n.text.slice(0, 120)) }));
+  assert.ok(plain.fights === 1 && !plain.stayed && plain.holder === 'U1', 'with ordinary orders the beaten defenders leave the province and it falls');
+  assert.ok(dug.dug > plain.dug && dug.lostA > plain.lostA * 1.1 && dug.lostD < plain.lostD, `troops on the defensive dig deeper and sell the ground dearer: attacker lost ${dug.lostA} against ${plain.lostA}, defender ${dug.lostD} against ${plain.lostD}`);
+  assert.ok(back.fights === 0 && !back.stayed && back.holder === 'U1' && back.lostD < plain.lostD * .6 && back.lostD > 0, `troops told to fall back give up the province without a battle and keep the army: lost ${back.lostD} against ${plain.lostD}`);
+  assert.ok(firm.fights === 1 && firm.stayed && firm.holder === 'U2' && firm.lostD > plain.lostD * 1.2, `troops told not to give a step are still on the field, and the province still theirs, at a higher price: lost ${firm.lostD} against ${plain.lostD}`);
+  assert.ok(firm.w.units[firm.def.id].morale < plain.w.units[plain.def.id].morale, 'and their temper is the worse for it');
+  // The posture and a march order: a general order leaves troops on the defensive where they are; an order by name moves them and says the standing order is lifted.
+  { const w = fresh(), c = w.countries.U1, gen = w.characters[c.general], us = Object.values(w.units).filter(u => u.country === 'U1'), far = countryProvinces(w, 'U1').find(p => !us.some(u => u.province === p.id));
+    assert.ok(applyOp(w, gen, { op: 'set_posture', unit: us[0].id, posture: 'defensive' }).ok); const all = applyOp(w, gen, { op: 'move_army', to: far.id, share: 1 }); assert.ok(!us[0].target && /stand/.test(all.msg) && all.msg.includes(us[0].id), all.msg);
+    const one = applyOp(w, gen, { op: 'move', unit: us[0].id, to: far.id }); assert.ok(one.ok && us[0].target === far.id && !us[0].posture && /lifts/.test(one.msg), one.msg);
+    assert.ok(applyOp(w, gen, { op: 'set_posture', all: true, posture: 'no_retreat' }).ok); assert.ok(/not one step back/.test(answer(w, gen, 'army')), 'the commander sees the standing orders where he looks'); assert.equal(applyOp(w, w.characters[c.opposition], { op: 'set_posture', all: true, posture: 'ordinary' }).ok, false, 'they are the staff\'s and the ruler\'s to give'); }
+  // Hold fire: two armies face each other for a long time; how often patrols clash depends on whether they were told not to fire first.
+  const shots = hold => { const w = fresh(); for (const u of Object.values(w.units)) delete w.units[u.id]; const a = w.countries.U1, b = w.countries.U2, pa = countryProvinces(w, 'U1').find(p => p.neighbors.some(n => w.provinces[n].controller === 'U2')), pb = w.provinces[pa.neighbors.find(n => w.provinces[n].controller === 'U2')];
+    makeUnit(w, 'U1', pa.id, 80); makeUnit(w, 'U2', pb.id, 80); a.relations.U2 = b.relations.U1 = -60;
+    if (hold > 0) assert.ok(applyOp(w, w.characters[a.general], { op: 'set_posture', facing: 'U2', posture: 'hold_fire' }).ok); if (hold > 1) assert.ok(applyOp(w, ld(w, b), { op: 'set_posture', facing: 'U1', posture: 'hold_fire' }).ok);
+    let n = 0; for (let i = 0; i < 600; i++) { w.newsThisTurn = []; a.grudges = {}; b.grudges = {}; a.relations.U2 = b.relations.U1 = -60; frontierOf(w); n += w.newsThisTurn.filter(e => /Shots on the frontier/.test(e.text)).length; w.turn++; } return n; };
+  const loose = shots(0), oneSide = shots(1), both = shots(2); assert.ok(loose > 12 && oneSide < loose * .8 && both < loose * .4 && both > 0, `orders not to fire first make clashes rare, not impossible: ${loose} with none, ${oneSide} with one side holding, ${both} with both`);
+  // Barracks: the same strike, the same weak police; troops kept in barracks are not sent, and do not hold the streets.
+  { const w = fresh(), c = w.countries.U1, boss = ld(w, c), f = Object.values(w.firms || {}).find(x => x.status === 'open' && x.country === 'U1');
+    if (f) { const p = w.provinces[f.province], u = makeUnit(w, 'U1', p.id, 30, 1, 90); c.police = 10; f.strike = { since: w.turn, demand: f.wage + .2 }; assert.ok(applyOp(w, w.characters[c.general], { op: 'set_posture', unit: u.id, posture: 'barracks' }).ok); for (const x of Object.values(w.units)) if (x.country === 'U1' && x.province === p.id) x.barracks = true;
+      const no = applyOp(w, boss, { op: 'break_strike', id: f.id }); assert.ok(!no.ok && /barracks/.test(no.msg), no.msg); assert.ok(f.strike, 'the strike stands'); assert.ok(applyOp(w, boss, { op: 'set_posture', province: p.id, posture: 'barracks', on: false }).ok); assert.ok(applyOp(w, boss, { op: 'break_strike', id: f.id }).ok, 'the ruler can lift the order and send them'); }
+    const x = fresh(), k = x.countries.U1, q = countryProvinces(x, 'U1').find(pp => pp.id !== k.capital); for (const u of Object.values(x.units)) if (u.province === q.id) delete x.units[u.id]; const g = makeUnit(x, 'U1', q.id, provincePopOf(q) * .03, 1, 90), y = structuredClone(x); y.units[g.id].barracks = true;
+    for (let i = 0; i < 6; i++) { moodOf(x); moodOf(y); } assert.ok(y.provinces[q.id].unrest > x.provinces[q.id].unrest + 2, `a garrison in barracks does not hold the streets: unrest ${y.provinces[q.id].unrest} against ${x.provinces[q.id].unrest}`); }
+  // A chief of staff played by rule uses them: the weaker side at war stands on the defensive.
+  { const w = fresh(), weak = w.countries.U1, strong = w.countries.U2; for (const u of Object.values(w.units)) if (u.country === 'U2') u.men *= 4; w.wars.push({ id: 'S-n', a: ['U2'], b: ['U1'], civil: false, active: true, start: w.turn, name: 'n' });
+    const gen = w.characters[weak.general]; for (const op of npcDecide(w, gen)) applyOp(w, gen, op); assert.ok(Object.values(w.units).filter(u => u.country === 'U1').every(u => ['defensive', 'fall_back'].includes(u.posture)), 'the outnumbered army stands on the defensive or falls back'); }
+});
+chain('An army\'s march depends on the ground and the roads: open country with good roads is crossed in a quarter, mountains and bad roads take longer, a railway halves it, and whoever gave the order sees how far the unit got and what held it', () => {
+  const y = fresh(); while (seasonOf(y) !== 'summer') y.turn++; for (const u of Object.values(y.units)) delete y.units[u.id]; const k = y.countries.U1, gen = y.characters[k.general];
+  const hops = (from, to) => { let n = 0, cur = from; while (cur !== to && n < 40) { cur = routeStep(y, cur, to, 'U1'); n++; if (!cur) return 99; } return n; };
+  const far = countryProvinces(y, 'U1').find(p => hops(k.capital, p.id) === 3), path = [k.capital]; while (path.at(-1) !== far.id) path.push(routeStep(y, path.at(-1), far.id, 'U1'));
+  const march = (terrain, infra, rail) => { for (const id of path) Object.assign(y.provinces[id], { terrain, infra, rail }); const u = makeUnit(y, 'U1', k.capital, 20), r = applyOp(y, gen, { op: 'move', unit: u.id, to: far.id }); assert.ok(r.ok, r.msg);
+    militaryStep(y); y.turn++; const out = { went: u.march.provinces, held: u.march.held, said: r.msg, seen: answer(y, gen, 'army') }; y.turn--; delete y.units[u.id]; return out; };
+  const open = march('plains', 1.2, 0), high = march('mountain', .4, 0), railed = march('mountain', .4, 2), muddy = march('plains', .3, 0);
+  assert.equal(open.went, 3, 'three provinces of open country with good roads in a quarter'); assert.ok(!open.held, 'and it arrived');
+  assert.equal(high.went, 1, 'one province of mountain with poor roads'); assert.ok(/mountains/.test(high.held) && /poor roads/.test(high.held), high.held);
+  assert.equal(railed.went, 2, 'the railway halves it'); assert.equal(muddy.went, 2, 'bad roads cost a march even on a plain'); assert.ok(/poor roads/.test(muddy.held), muddy.held);
+  assert.ok(/about 1 quarter/.test(open.said) && /about 3 quarters/.test(high.said), `the order says how long it will take: ${high.said}`);
+  assert.ok(/marched 1 province/.test(high.seen) && /held by the mountains/.test(high.seen), 'the army report shows how far it got and what held it');
+});
+chain('Between doing nothing and war: a duty aimed at one country turns trade away from it, a ban on named goods stops those goods and leaves the rest, envoys recalled and relations broken change what can be signed, seen and traded, and each step answers part of what the country holds against its neighbour', () => {
+  // One buyer short of grain, two sellers with full granaries: where does the buyer's grain come from?
+  const market = act => { const w = fresh(), buyer = w.countries.U1; updateRoutes(w); const [s1, s2] = aliveCountries(w).filter(o => o.id !== 'U1' && w.routes[`U1|${o.id}`]); assert.ok(s1 && s2, 'two sellers within reach');
+    for (const o of aliveCountries(w)) o.stock.grain = o === buyer ? 0 : o === s1 || o === s2 ? 9000 : (o._need?.grain ?? 0) * 2; buyer.reserves = 9000; w.treaties = w.treaties.filter(t => t.kind !== 'trade'); if (act) act(w, buyer, s1, s2);
+    run(w, 1); const flow = o => w.tradeFlows[`U1|${o.id}`]?.grain ?? 0; return { w, buyer, s1, s2, a: flow(s1), b: flow(s2), all: w.tradeFlows[`U1|${s1.id}`] ?? {} }; };
+  const free = market(), aimed = market((w, buyer, s1) => { const r = applyOp(w, ld(w, buyer), { op: 'set_tariff', target: s1.id, rate: .7, _law: true }); assert.ok(r.ok && /aimed|duty|customs/.test(r.msg), r.msg); assert.equal(buyer.aimed[s1.id], .7); });
+  assert.ok(free.a > 0 && free.b > 0, 'left alone, both sell'); assert.ok(aimed.a < free.a * .5 && aimed.b > free.b, `a duty aimed at one seller sends the trade to the other: ${aimed.a} against ${free.a}, and ${aimed.b} against ${free.b}`);
+  assert.ok(Math.abs(aimed.buyer.tariff - free.buyer.tariff) < .02, 'the general tariff is not what was changed');
+  const cut = market((w, buyer, s1) => { const r = applyOp(w, ld(w, s1), { op: 'embargo', target: 'U1', goods: ['grain'], direction: 'sell' }); assert.ok(r.ok, r.msg); assert.ok(!s1.embargo.includes('U1'), 'it is not the full embargo'); });
+  assert.ok(cut.a < free.a * .05 && cut.w.routes[`U1|${cut.s1.id}`], `the banned good stops and the road stays open: ${cut.a}`);
+  // Envoys.
+  const w = fresh(), a = w.countries.U1, b = w.countries.U2, la = ld(w, a); w.treaties = w.treaties.filter(t => !(t.parties.includes('U1') && t.parties.includes('U2'))); a.intel.U2 = 80;
+  const rc = applyOp(w, la, { op: 'set_relations', target: 'U2', level: 'recalled' }); assert.ok(rc.ok, rc.msg); assert.equal(applyOp(w, la, { op: 'propose_treaty', target: 'U2', kind: 'alliance' }).ok, false, 'with the envoy recalled no alliance is signed');
+  assert.ok(applyOp(w, la, { op: 'propose_treaty', target: 'U2', kind: 'nonaggression' }).ok, 'a non-aggression pact still can be'); w.turn++; diplomacyOf(w); assert.ok(a.intel.U2 < 80, 'and less is seen of the other capital');
+  w.treaties.push({ id: 'AT', kind: 'trade', parties: ['U1', 'U2'], active: true, pending: false, proposer: 'U1', clauses: [], breaches: [], turn: w.turn }); updateRoutes(w); const road = w.routes['U1|U2']?.cost;
+  const br = applyOp(w, la, { op: 'set_relations', target: 'U2', level: 'broken' }); assert.ok(br.ok, br.msg); assert.ok(!treatyOf(w, 'U1', 'U2', 'trade'), 'breaking off relations ends the trade treaty'); assert.equal(applyOp(w, la, { op: 'propose_treaty', target: 'U2', kind: 'nonaggression' }).ok, false, 'and nothing can be signed');
+  updateRoutes(w); if (road) assert.ok(w.routes['U1|U2'].cost > road, 'trade without consuls costs more'); for (let i = 0; i < 8; i++) { w.turn++; diplomacyOf(w); } assert.ok(a.intel.U2 <= 12, `each is nearly blind in the other's capital: ${a.intel.U2}`);
+  assert.ok(applyOp(w, la, { op: 'set_relations', target: 'U2', level: 'normal' }).ok); assert.ok(applyOp(w, la, { op: 'propose_treaty', target: 'U2', kind: 'alliance' }).ok, 'restored, everything can be signed again');
+  // What the country holds against a neighbour, and what answers it (with no patrols on the line, so that no fresh killing is added to the old one).
+  const grief = steps => { const x = fresh(), c = x.countries.U1; c.grudges = { U2: { incident: 60, kin: 0, kinBase: 0, seeded: true } }; for (const op of steps) assert.ok(applyOp(x, ld(x, c), { ...op, _law: true }).ok); x.units = {}; frontierOf(x); return c.grief; };
+  const none = grief([]), envoy = grief([{ op: 'set_relations', target: 'U2', level: 'recalled' }]), more = grief([{ op: 'set_relations', target: 'U2', level: 'broken' }, { op: 'embargo', target: 'U2', goods: ['grain'], direction: 'sell' }]);
+  assert.ok(none > 3 && envoy < none * .9 && more < envoy * .8 && more > none * .3, `steps short of war answer part of a wrong and never all of it: ${none}, ${envoy}, ${more}`);
+});
+chain('A treaty among several comes into force when enough have signed, a state named in it comes in later, one leaves without ending it for the rest, a peace among several says who gets what, and a treaty between two works as it did', () => {
+  const w = fresh(), L = id => ld(w, w.countries[id]);
+  const r = applyOp(w, L('U1'), { op: 'propose_treaty', kind: 'alliance', parties: ['U2', 'U3', 'U4'], need: 3, terms: 'Each comes to the help of the others.' }); assert.ok(r.ok, r.msg); const t = w.treaties.find(x => x.id === r.treaty);
+  assert.ok(applyOp(w, L('U2'), { op: 'accept_treaty', id: t.id }).ok); assert.ok(!t.active && !treatyOf(w, 'U1', 'U2', 'alliance'), 'two signatures of the three it needs bind nobody yet');
+  assert.ok(applyOp(w, L('U3'), { op: 'accept_treaty', id: t.id }).ok); assert.ok(t.active && treatyOf(w, 'U2', 'U3', 'alliance') && !treatyOf(w, 'U1', 'U4', 'alliance'), 'with the third it is in force for those three');
+  assert.ok(applyOp(w, L('U4'), { op: 'accept_treaty', id: t.id }).ok); assert.ok(treatyOf(w, 'U3', 'U4', 'alliance'), 'the fourth accedes later');
+  assert.equal(applyOp(w, L('U5'), { op: 'accept_treaty', id: t.id }).ok, false, 'a state that was not named cannot sign'); assert.ok(applyOp(w, L('U1'), { op: 'invite_treaty', id: t.id, target: 'U5' }).ok); assert.ok(applyOp(w, L('U5'), { op: 'accept_treaty', id: t.id }).ok && treatyOf(w, 'U5', 'U2', 'alliance'), 'until a party invites it');
+  const name = honourIn(w.countries.U2); assert.ok(applyOp(w, L('U2'), { op: 'break_treaty', id: t.id }).ok); assert.ok(t.active && treatyOf(w, 'U1', 'U3', 'alliance') && !treatyOf(w, 'U1', 'U2', 'alliance') && honourIn(w.countries.U2) < name, 'one leaves, at the cost of its name, and the rest stay bound');
+  // A war of one against two, ended by one peace that names the land and the money.
+  const x = fresh(), X = id => ld(x, x.countries[id]), u1 = x.countries.U1; x.wars.push({ id: 'S-m', a: ['U1'], b: ['U2', 'U3'], civil: false, active: true, start: x.turn, name: 'm' });
+  const p = countryProvinces(x, 'U1').find(q => q.id !== u1.capital), was = u1.legitimacy;
+  assert.equal(applyOp(x, X('U2'), { op: 'propose_treaty', kind: 'peace', parties: ['U1', 'U3'], cede: [p.id] }).ok, false, 'land in a treaty among several has to be named with who receives it');
+  const pr = applyOp(x, X('U2'), { op: 'propose_treaty', kind: 'peace', parties: ['U1', 'U3'], cede: [{ province: p.id, to: 'U3' }], reparations: .1, reparations_from: 'U1', reparations_to: 'U2' }); assert.ok(pr.ok, pr.msg);
+  assert.ok(applyOp(x, X('U1'), { op: 'accept_treaty', id: pr.treaty }).ok); assert.ok(atWarOf(x, 'U1', 'U2'), 'not yet: it needs all three'); const gold = x.countries.U2.reserves, owed = x.countries.U1.creditors.U2 || 0; assert.ok(applyOp(x, X('U3'), { op: 'accept_treaty', id: pr.treaty }).ok);
+  assert.ok(!atWarOf(x, 'U1', 'U2') && !atWarOf(x, 'U1', 'U3'), 'one peace ends the war with both'); assert.equal(p.owner, 'U3', 'the province goes to the party named'); assert.ok(x.countries.U2.reserves > gold || (x.countries.U1.creditors.U2 || 0) > owed, 'and the indemnity to the other');
+  assert.ok(u1.legitimacy < was, 'the government that signed the land away pays for it at home');
+  const y = fresh(), two = applyOp(y, ld(y, y.countries.U1), { op: 'propose_treaty', target: 'U2', kind: 'nonaggression', terms: 'x' }); assert.ok(two.ok && applyOp(y, ld(y, y.countries.U2), { op: 'accept_treaty', id: two.treaty }).ok && treatyOf(y, 'U1', 'U2', 'nonaggression'), 'a treaty between two is proposed and signed as before');
+});
+chain('A conference is called and the world learns who came; what one government says to the table all of it reads; a treaty laid before it is signed there even by states that have broken off relations; and a third state brings two at war to terms, to its own credit', () => {
+  const w = fresh(), L = id => ld(w, w.countries[id]), host = w.countries.U1; w.treaties = [];
+  const call = applyOp(w, L('U1'), { op: 'call_conference', invite: ['U2', 'U3', 'U4'], question: 'The frontier between U2 and U3' }); assert.ok(call.ok, call.msg); const cf = w.conferences.at(-1);
+  assert.equal(applyOp(w, L('U1'), { op: 'call_conference', invite: ['U2', 'U3'], question: 'Again' }).ok, false, 'one table at a time'); assert.ok(L('U2').inbox.some(m => m.text.includes(cf.id)), 'those invited are told');
+  assert.ok(applyOp(w, L('U2'), { op: 'attend_conference', id: cf.id }).ok && applyOp(w, L('U3'), { op: 'attend_conference', id: cf.id }).ok); assert.ok(applyOp(w, L('U4'), { op: 'attend_conference', id: cf.id, attend: false }).ok);
+  const said = toTable(w, L('U2'), [{ to: cf.id, text: 'We will draw our pickets back if they do.' }, { to: 'U5', text: 'A private word.' }]);
+  assert.deepEqual(said.map(m => m.to).sort(), ['U1', 'U3', 'U5'], 'a message to the conference goes to everyone at the table, and other letters go where they were sent'); assert.ok(said.find(m => m.to === 'U3').text.includes('The frontier between'), 'marked as said to the table');
+  assert.ok(applyOp(w, L('U2'), { op: 'set_relations', target: 'U3', level: 'broken' }).ok); assert.equal(applyOp(w, L('U2'), { op: 'propose_treaty', target: 'U3', kind: 'nonaggression' }).ok, false, 'between the two of them nothing can be signed');
+  assert.equal(applyOp(w, L('U2'), { op: 'propose_treaty', conference: cf.id, parties: ['U3', 'U4'], kind: 'nonaggression' }).ok, false, 'a state that stayed away is not at the table');
+  const word = honourIn(host), pr = applyOp(w, L('U2'), { op: 'propose_treaty', conference: cf.id, parties: ['U3', 'U1'], kind: 'nonaggression', terms: 'No patrols within a day\'s march of the line.' }); assert.ok(pr.ok, pr.msg);
+  assert.ok(applyOp(w, L('U3'), { op: 'accept_treaty', id: pr.treaty }).ok && applyOp(w, L('U1'), { op: 'accept_treaty', id: pr.treaty }).ok); assert.ok(treatyOf(w, 'U2', 'U3', 'nonaggression'), 'the conference carries it between them'); assert.ok(honourIn(host) > word, 'and the host is credited with it');
+  w.newsThisTurn = []; w.turn++; diplomacyOf(w); const line = w.newsThisTurn.find(n => /has risen/.test(n.text))?.text ?? ''; assert.ok(/At the table/.test(line) && line.includes(w.countries.U3.name) && /Stayed away/.test(line) && line.split('Stayed away')[1].includes(w.countries.U4.name) && /A treaty came out of it/.test(line), line);
+  { const z = fresh(), h = z.countries.U1, n0 = honourIn(h); assert.ok(applyOp(z, ld(z, h), { op: 'call_conference', invite: ['U2', 'U3'], question: 'Anything' }).ok); z.turn++; diplomacyOf(z); assert.ok(honourIn(h) < n0, 'a table at which nobody sat down is seen too'); }
+  // Mediation.
+  const x = fresh(), X = id => ld(x, x.countries[id]), third = x.countries.U3; x.wars.push({ id: 'S-w', a: ['U1'], b: ['U2'], civil: false, active: true, start: x.turn, name: 'w' });
+  assert.equal(applyOp(x, X('U1'), { op: 'mediate', between: ['U1', 'U2'], terms: 'x' }).ok, false, 'a belligerent does not mediate its own war');
+  const before = honourIn(third), md = applyOp(x, X('U3'), { op: 'mediate', between: ['U1', 'U2'], terms: 'Peace on the old frontier.' }); assert.ok(md.ok, md.msg);
+  assert.ok(applyOp(x, X('U1'), { op: 'accept_treaty', id: md.treaty }).ok); assert.ok(atWarOf(x, 'U1', 'U2') && honourIn(third) === before, 'one signature is not a peace'); x.newsThisTurn = [];
+  assert.ok(applyOp(x, X('U2'), { op: 'accept_treaty', id: md.treaty }).ok); assert.ok(!atWarOf(x, 'U1', 'U2') && honourIn(third) > before, 'when both have signed it stands, and the mediator\'s name gains'); assert.ok(x.newsThisTurn.some(n => n.text.includes(`brought about by ${third.name}`)), 'and the world knows whose work it was');
+});
+chain('A secret treaty binds like any other and is known to those who govern the states that signed and, where it concerns the army, to their chiefs of staff, and to nobody else; a service with good eyes or a bought officer comes by it; made public, it costs those who signed with those who were left out', () => {
+  const w = inherited(), L = id => ld(w, w.countries[id]), a = w.countries.U1, b = w.countries.U2; w.treaties = []; w.newsThisTurn = [];
+  const pr = applyOp(w, L('U1'), { op: 'propose_treaty', target: 'U2', kind: 'alliance', secret: true, terms: 'Against the third.' }); assert.ok(pr.ok, pr.msg); assert.ok(applyOp(w, L('U2'), { op: 'accept_treaty', id: pr.treaty }).ok); const t = w.treaties.find(x => x.id === pr.treaty);
+  assert.ok(treatyOf(w, 'U1', 'U2', 'alliance'), 'it is in force'); assert.ok(w.newsThisTurn.filter(n => /alliance|Treaty/.test(n.text)).every(n => n.secret), 'and not in the news');
+  const sees = ch => answer(w, ch, 'treaties').includes(t.id);
+  assert.ok(sees(L('U1')) && sees(w.characters[a.general]) && !sees(w.characters[a.opposition]) && !sees(w.characters[a.oligarch]), 'at home the ruler and the chief of staff know of it, the other seats do not'); assert.ok(!sees(L('U3')), 'abroad nobody does');
+  // A service that sees well into one of the two capitals comes by it.
+  w.countries.U3.intel.U1 = 70; w.turn++; diplomacyOf(w); assert.ok(sees(L('U3')) && L('U3').inbox.some(m => /kept secret|keep secret/.test(m.text) && m.text.includes(t.id)), 'good intelligence finds the paper'); assert.ok(!sees(L('U4')), 'and only for the state that has it');
+  // An officer of one of the signatories who is in a foreign ruler's pay sees it pass.
+  const spy = L('U4'); let told = false; for (const off of Object.values(w.characters).filter(x => x.alive && x.country === 'U1' && x.role === 'officer' && Object.values(w.units).some(u => u.commander === x.id))) { if (told) break; off.handler = spy.id; a.intelligence = 0; courtOf(w, applyOp); told = (spy.papers || []).includes(t.id); }
+  assert.ok(told && sees(spy) && spy.inbox.some(m => /kept secret/.test(m.text)), 'a bought officer reports it to his paymaster');
+  // Published.
+  const before = w.countries.U5.relations.U1 ?? 0; w.newsThisTurn = []; const pub = applyOp(w, spy, { op: 'publish_treaty', id: t.id }); assert.ok(pub.ok, pub.msg);
+  assert.ok(!t.secret && w.newsThisTurn.some(n => /come to light/.test(n.text) && !n.secret) && sees(L('U5')) === false, 'it is public now (though a treaty is still looked up by those it binds)'); assert.ok((w.countries.U5.relations.U1 ?? 0) < before, 'and those who were left out take it as aimed at them');
+  assert.ok(answer(w, w.characters[a.opposition], 'treaties').includes(t.id), 'the opposition can read it like everyone else');
+  // The obligation is as real as an open one's: the ally is attacked, nothing is done, and it comes out through the ally that was left alone.
+  const x = fresh(), X = id => ld(x, x.countries[id]); x.treaties = []; const s = applyOp(x, X('U1'), { op: 'propose_treaty', target: 'U2', kind: 'alliance', secret: true }); assert.ok(applyOp(x, X('U2'), { op: 'accept_treaty', id: s.treaty }).ok);
+  assert.ok(applyOp(x, X('U3'), { op: 'declare_war', target: 'U2', _law: true }).ok); const name = honourIn(x.countries.U1); for (let i = 0; i < 4; i++) { x.turn++; diplomacyOf(x); }
+  assert.ok(honourIn(x.countries.U1) < name - 5 && !x.treaties.find(q => q.id === s.treaty).secret, 'a secret alliance that is not kept is a broken word, and the secret is out');
+  { const z = fresh(), Z = id => ld(z, z.countries[id]); z.treaties = []; const q = applyOp(z, Z('U1'), { op: 'propose_treaty', target: 'U2', kind: 'alliance', secret: true }); assert.ok(applyOp(z, Z('U2'), { op: 'accept_treaty', id: q.treaty }).ok); const n1 = honourIn(z.countries.U1); assert.ok(applyOp(z, Z('U1'), { op: 'publish_treaty', id: q.treaty }).ok); assert.ok(honourIn(z.countries.U1) < n1, 'a signatory that publishes what it promised to keep is known for that'); }
+});
+chain('A war can be declared for something: a peace that brings it is taken at home as a war won, one that gives it up as a war lost, going on once it is in hand wearies the country faster, bystanders fear a war with no stated end more, and a war for nothing stated is still a war', () => {
+  const stage = aims => { const w = fresh(), a = w.countries.U1, b = w.countries.U2, p = countryProvinces(w, 'U2').find(q => q.id !== b.capital && q.neighbors.some(n => w.provinces[n].controller === 'U1')), seen = w.countries.U3.relations.U1 ?? 0;
+    const r = applyOp(w, ld(w, a), { op: 'declare_war', target: 'U2', ...(aims ? { aims: { provinces: [p.id] } } : {}), _law: true }); assert.ok(r.ok, r.msg); return { w, a, b, p, said: r.msg, alarm: seen - (w.countries.U3.relations.U1 ?? 0) }; };
+  const peace = (s, cede) => { const was = s.a.legitimacy, pr = applyOp(s.w, ld(s.w, s.a), { op: 'propose_treaty', target: 'U2', kind: 'peace', ...(cede ? { cede: [s.p.id] } : {}) }), ac = applyOp(s.w, ld(s.w, s.b), { op: 'accept_treaty', id: pr.treaty }); assert.ok(ac.ok, ac.msg); return s.a.legitimacy - was; };
+  const named = stage(true), blank = stage(false); assert.ok(named.w.wars.at(-1).aims?.U1.provinces.includes(named.p.id) && !blank.w.wars.at(-1).aims, 'the aim is on record, or there is none'); assert.ok(/for:/.test(named.said) && /no aims/.test(blank.said), 'and whoever declared it is told what that means');
+  assert.ok(blank.alarm > named.alarm, `a war nobody can see the end of alarms bystanders more: ${blank.alarm} against ${named.alarm}`);
+  const won = peace(stage(true), true), wonBlank = peace(stage(false), true), lost = peace(stage(true), false), lostBlank = peace(stage(false), false);
+  assert.ok(won > wonBlank + 2, `a peace that brings what the war was declared for is a war won: ${won} against ${wonBlank}`); assert.ok(lost < lostBlank - 1.5 && Math.abs(lostBlank) < .5, `one that gives it up is a war lost: ${lost} against ${lostBlank}`);
+  // The province is in hand and the war goes on.
+  const tired = aims => { const s = stage(aims); s.p.controller = 'U1'; const was = s.a.warExhaustion; s.w.turn++; diplomacyOf(s.w); return { more: s.a.warExhaustion - was, told: ld(s.w, s.a).inbox.some(m => /is in our hands/.test(m.text)) }; };
+  const on = tired(true), off = tired(false); assert.ok(on.more > off.more + 1 && on.told && !off.told, `going on after the aim is in hand wearies the country faster, and the ruler is told: ${on.more} against ${off.more}`);
+});
+chain('A state born of a rising is a state only to those who recognise it: until then no treaty and no trade with it; recognition opens both, steadies it at home and is held against the recogniser by the mother country, which itself recognises it by making peace', () => {
+  const w = fresh(), mother = w.countries.U1, opp = w.characters[mother.opposition], edge = countryProvinces(w, 'U1').filter(p => p.id !== mother.capital && p.neighbors.some(n => w.provinces[n].controller === 'U2')).slice(0, 2); assert.ok(edge.length, 'ground on the frontier with U2');
+  for (const p of countryProvinces(w, 'U1')) p.unrest = edge.includes(p) ? 85 : 10; const s = applyOp(w, opp, { op: 'start_plot', kind: 'uprising' }); w.plots.at(-1).progress = 100; assert.ok(applyOp(w, opp, { op: 'execute_plot', plot: s.plot }).ok);
+  const born = Object.values(w.countries).find(x => x.parent === 'U1'), L = id => ld(w, w.countries[id]); assert.ok(born && Array.isArray(born.recognition) && !born.recognition.length, 'nobody recognises it on the day it is born'); assert.ok(!w.countries.U2.recognition, 'the old states need no recognition');
+  updateRoutes(w); assert.ok(!Object.keys(w.routes).some(k => k.split('|').includes(born.id)), 'no merchants go there'); assert.equal(applyOp(w, L('U2'), { op: 'propose_treaty', target: born.id, kind: 'nonaggression' }).ok, false, 'and nothing is signed with it');
+  w.turn++; diplomacyOf(w); assert.ok(born.mods.some(m => m.key === 'legitimacy' && m.delta < 0), 'unrecognised, it stands the weaker at home');
+  assert.equal(applyOp(w, L('U1'), { op: 'recognise', target: born.id }).ok, false, 'the mother country does not recognise it by a word');
+  const feel = mother.relations.U2 ?? 0, rec = applyOp(w, L('U2'), { op: 'recognise', target: born.id }); assert.ok(rec.ok, rec.msg); assert.equal(applyOp(w, L('U2'), { op: 'recognise', target: born.id }).ok, false, 'once is enough');
+  assert.ok((mother.relations.U2 ?? 0) < feel - 20 && mother.grudges.U2.incident > 0, 'the mother country holds it against the recogniser'); updateRoutes(w); assert.ok(w.routes[[born.id, 'U2'].sort().join('|')] || w.routes[`U2|${born.id}`], 'trade with the recogniser is open');
+  assert.ok(applyOp(w, L('U2'), { op: 'propose_treaty', target: born.id, kind: 'nonaggression' }).ok, 'and treaties can be signed'); born.mods = []; w.turn++; diplomacyOf(w); assert.ok(born.mods.some(m => m.key === 'legitimacy' && m.delta > 0), 'recognised, it stands the firmer');
+  const pax = applyOp(w, L('U1'), { op: 'propose_treaty', target: born.id, kind: 'peace', annex: true }); assert.ok(pax.ok, pax.msg); assert.ok(applyOp(w, ld(w, born), { op: 'accept_treaty', id: pax.treaty }).ok); assert.ok(born.recognition.includes('U1'), 'peace with the mother country is its recognition');
 });
 console.log('All checks passed.');

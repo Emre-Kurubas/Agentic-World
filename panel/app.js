@@ -120,7 +120,7 @@ const views = {
   treatiesHtml(c, w) {
     const list = w.treaties.filter(t => t.active && t.parties.includes(c.id));
     if (!list.length) return '';
-    return `<h3>Treaties</h3>${list.map(t => `<div class="entry"><span class="who2">${esc(t.kind)}</span> <span class="muted">${esc(country(t.parties.find(x => x !== c.id))?.name)}</span>${t.terms ? `<div class="small">${esc(t.terms)}</div>` : ''}${t.clauses?.length ? `<ul>${t.clauses.map(x => `<li>${esc(x.text ?? x.type)}</li>`).join('')}</ul>` : ''}${t.breaches?.length ? t.breaches.slice(-3).map(b => `<div class="news war small">${quarter(b.turn)}: ${esc(b.text)}</div>`).join('') : ''}</div>`).join('')}`;
+    return `<h3>Treaties</h3>${list.map(t => `<div class="entry"><span class="who2">${esc(t.kind)}${t.secret ? ' (secret)' : ''}</span> <span class="muted">${esc(t.parties.filter(x => x !== c.id).map(x => country(x)?.name).filter(Boolean).join(', '))}</span>${t.terms ? `<div class="small">${esc(t.terms)}</div>` : ''}${t.clauses?.length ? `<ul>${t.clauses.map(x => `<li>${esc(x.text ?? x.type)}</li>`).join('')}</ul>` : ''}${t.breaches?.length ? t.breaches.slice(-3).map(b => `<div class="news war small">${quarter(b.turn)}: ${esc(b.text)}</div>`).join('') : ''}</div>`).join('')}`;
   },
   world() {
     const w = S.data.world, cs = Object.values(w.countries).filter(c => c.alive).sort((a, b) => b.realGdp - a.realGdp), wars = w.wars.filter(x => x.active);

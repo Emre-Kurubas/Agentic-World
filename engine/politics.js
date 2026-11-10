@@ -57,7 +57,8 @@ export const garrisonHold = (men, pop) => Math.min(15, men / Math.max(pop, 1) * 
 
 export function satisfactionStep(w) {
   const garrison = {};
-  for (const u of Object.values(w.units)) if (w.provinces[u.province]?.controller === u.country) garrison[u.province] = (garrison[u.province] || 0) + u.men;
+  // Troops confined to barracks by standing order are in the province and not in its streets.
+  for (const u of Object.values(w.units)) if (w.provinces[u.province]?.controller === u.country && !u.barracks) garrison[u.province] = (garrison[u.province] || 0) + u.men;
   for (const c of aliveCountries(w)) {
     const inWar = w.wars.some(x => x.active && (x.a.includes(c.id) || x.b.includes(c.id)));
     const realWage = c.wageIndex / c.priceLevel;
@@ -265,7 +266,8 @@ export function startCivilWar(w, c, leaderCh, label, seedProvinces = [], { only 
     techs: { ...c.techs }, literacy: c.literacy, parties: c.parties.map(p => ({ ...p })), rulingParty: null,
     relations: { ...c.relations, [c.id]: -100 }, bureaucracy: c.bureaucracy * .6, police: c.police * .5, legitimacy: 45, capital: null
   });
-  f.rate = c.rate; issueCurrency(f, 'floating'); w.countries[id] = f; c.relations[id] = -100;
+  // A state born of a rising is not at once a state to anyone: it has to be recognised, one government at a time.
+  f.rate = c.rate; issueCurrency(f, 'floating'); f.recognition = []; f.bornOf = c.id; w.countries[id] = f; c.relations[id] = -100;
   for (const o of aliveCountries(w)) if (o.id !== id && o.id !== c.id) o.relations[id] = o.relations[c.id] ?? 0;
   // Only land the government itself owns and holds can go over to the rebels, and never the capital. A regiment that rises abroad or in the capital marches out to join them.
   const provs = countryProvinces(w, c.id), open = new Set(provs.filter(p => p.owner === c.id && p.id !== c.capital).map(p => p.id));
@@ -450,7 +452,7 @@ export function uprisingStep(w) {
     for (const p of hot) if (rand(w) < .3) {
       // Under occupation, a rising throws the occupier out of a province he holds with no garrison, or with a handful of men among a whole people.
       const owner = w.countries[p.owner];
-      if (p.controller !== p.owner && owner?.alive && garrisonHold(sum(Object.values(w.units).filter(u => u.province === p.id && u.country === c.id), u => u.men), provincePop(p)) < 1) {
+      if (p.controller !== p.owner && owner?.alive && garrisonHold(sum(Object.values(w.units).filter(u => u.province === p.id && u.country === c.id && !u.barracks), u => u.men), provincePop(p)) < 1) {
         p.controller = p.owner; p.unrest = clamp(p.unrest - 25, 0, 100);
         news(w, `${p.name} rose against ${c.name} and went back to ${owner.name}.`, { kind: 'war', countries: [c.id, owner.id], province: p.id });
         continue;
@@ -460,7 +462,7 @@ export function uprisingStep(w) {
       // A rising that has been fought out leaves the province spent for a while, whatever it still feels. For how long depends on what was done
       // there: put down by troops quartered in the province it does not rise again for years, and the dead are remembered by those who take
       // up arms in secret; left to burn itself out, it is back sooner.
-      const hold = garrisonHold(sum(Object.values(w.units).filter(u => u.province === p.id && u.country === c.id), u => u.men), provincePop(p));
+      const hold = garrisonHold(sum(Object.values(w.units).filter(u => u.province === p.id && u.country === c.id && !u.barracks), u => u.men), provincePop(p));
       p.unrest = clamp(p.unrest - 14, 0, 100); p.quelled = { turn: w.turn, weight: 8 + hold }; c.blood = (c.blood || 0) + hold * .05;
       news(w, `${p.name}: mass uprising, fighting in the streets.`, { kind: 'disaster', countries: [c.id], hush: true, province: p.id });
       // A rising in a remote valley shakes the government less than one in a great city.
@@ -616,7 +618,7 @@ export function collapseStep(w) {
     for (const p of Object.values(w.provinces)) if (p.owner === c.id) p.owner = p.controller;
     for (const o of aliveCountries(w)) delete o.creditors[c.id];
     // A rising that wins the whole country is no longer a rising: it governs under the country's own name.
-    if (winner?.parent === c.id) { winner.name = c.name; winner.rootName = c.rootName ?? winner.rootName; winner.parent = null; if (w.provinces[c.capital]?.controller === winner.id) winner.capital = c.capital; news(w, `The victors of the civil war now govern as ${winner.name}.`, { kind: 'politics', countries: [winner.id] }); }
+    if (winner?.parent === c.id) { winner.recognition = null; winner.name = c.name; winner.rootName = c.rootName ?? winner.rootName; winner.parent = null; if (w.provinces[c.capital]?.controller === winner.id) winner.capital = c.capital; news(w, `The victors of the civil war now govern as ${winner.name}.`, { kind: 'politics', countries: [winner.id] }); }
   }
   for (const war of w.wars) if (war.active) {
     war.a = war.a.filter(x => w.countries[x]?.alive); war.b = war.b.filter(x => w.countries[x]?.alive);

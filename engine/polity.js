@@ -262,8 +262,8 @@ export function billStep(w, apply) {
 export function normalizeClauses(w, raw, parties) {
   const out = [], isParty = x => parties.includes(x), turns = v => Math.round(num(v, 1, 80, 12));
   for (const c of Array.isArray(raw) ? raw.slice(0, 8) : []) {
-    if (c?.type === 'tribute' && isParty(c.payer)) out.push({ type: 'tribute', payer: c.payer, pct_gdp: num(c.pct_gdp, 0, .2, .02), turns: turns(c.turns) });
-    else if (c?.type === 'delivery' && isParty(c.from) && GOODS.includes(c.good)) out.push({ type: 'delivery', from: c.from, good: c.good, amount: num(c.amount, 0, 1e5, 0), turns: turns(c.turns) });
+    if (c?.type === 'tribute' && isParty(c.payer)) out.push({ type: 'tribute', payer: c.payer, ...(isParty(c.to) && c.to !== c.payer ? { to: c.to } : {}), pct_gdp: num(c.pct_gdp, 0, .2, .02), turns: turns(c.turns) });
+    else if (c?.type === 'delivery' && isParty(c.from) && GOODS.includes(c.good)) out.push({ type: 'delivery', from: c.from, ...(isParty(c.to) && c.to !== c.from ? { to: c.to } : {}), good: c.good, amount: num(c.amount, 0, 1e5, 0), turns: turns(c.turns) });
     else if (c?.type === 'tariff') out.push({ type: 'tariff', rate: num(c.rate, 0, 1, 0) });
     else if (c?.type === 'demilitarized_zone' && Array.isArray(c.provinces)) out.push({ type: 'demilitarized_zone', country: isParty(c.country) ? c.country : null, provinces: c.provinces.filter(p => w.provinces[p]).slice(0, 12) });
     else if (c?.type === 'troop_limit' && isParty(c.country)) out.push({ type: 'troop_limit', country: c.country, men: num(c.men, 0, 1e6, 0) });
@@ -275,8 +275,8 @@ export function normalizeClauses(w, raw, parties) {
 export function clauseText(w, cl) {
   const n = id => w.countries[id]?.name ?? id;
   switch (cl.type) {
-    case 'tribute': return `${n(cl.payer)} pays ${Math.round(cl.pct_gdp * 1000) / 10}% of GDP each turn${cl.until != null ? `, until the end of turn ${cl.until}` : ''}`;
-    case 'delivery': return `${n(cl.from)} delivers ${Math.round(cl.amount)} ${GOOD_LABEL[cl.good]} each turn${cl.until != null ? `, until the end of turn ${cl.until}` : ''}`;
+    case 'tribute': return `${n(cl.payer)} pays ${cl.to ? `${n(cl.to)} ` : ''}${Math.round(cl.pct_gdp * 1000) / 10}% of GDP each turn${cl.until != null ? `, until the end of turn ${cl.until}` : ''}`;
+    case 'delivery': return `${n(cl.from)} delivers ${cl.to ? `to ${n(cl.to)} ` : ''}${Math.round(cl.amount)} ${GOOD_LABEL[cl.good]} each turn${cl.until != null ? `, until the end of turn ${cl.until}` : ''}`;
     case 'tariff': return `Mutual tariff of ${Math.round(cl.rate * 100)}%`;
     case 'demilitarized_zone': return `${cl.country ? n(cl.country) : 'The parties'} shall station no troops in: ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}`;
     case 'troop_limit': return `${n(cl.country)} keeps at most ${Math.round(cl.men)}k troops`;
@@ -306,35 +306,37 @@ export function treatyStep(w) {
   for (const c of aliveCountries(w)) c.tariffDeals = {};
   for (const t of w.treaties) {
     if (!t.active) continue;
-    if (t.expires != null && w.turn >= t.expires) { t.active = false; news(w, `The ${t.kind.replace('_', ' ')} treaty between ${t.parties.map(x => w.countries[x]?.name).join(' and ')} has expired.`, { kind: 'diplomacy', countries: t.parties }); continue; }
+    if (t.expires != null && w.turn >= t.expires) { t.active = false; w.guarantees = (w.guarantees || []).filter(x => x.treaty !== t.id); news(w, `The ${t.kind.replace('_', ' ')} treaty between ${t.parties.map(x => w.countries[x]?.name).join(' and ')} has expired.`, { kind: 'diplomacy', countries: t.parties, secret: !!t.secret }); continue; }
     for (const cl of t.clauses || []) {
       if (cl.until != null && w.turn >= cl.until) continue;
       if (cl.type === 'tribute') {
-        const payer = w.countries[cl.payer], other = w.countries[t.parties.find(x => x !== cl.payer)];
-        if (!payer?.alive || !other?.alive) continue;
+        const payer = w.countries[cl.payer], other = w.countries[cl.to ?? t.parties.find(x => x !== cl.payer)];
+        if (!payer?.alive || !other?.alive || !t.parties.includes(payer.id) || !t.parties.includes(other.id)) continue;
         // Tribute is owed in gold, so it is measured against what the country really produces, not against its paper prices.
         const due = Math.max(payer.realGdp, 1) * cl.pct_gdp, paid = Math.min(Math.max(payer.reserves, 0), due);
         payer.reserves -= paid; other.reserves += paid;
         if (paid < due * .95) breach(w, t, cl, cl.payer, `${payer.name} could not pay its tribute in full.`);
       } else if (cl.type === 'delivery') {
-        const from = w.countries[cl.from], to = w.countries[t.parties.find(x => x !== cl.from)];
-        if (!from?.alive || !to?.alive || !routeOpen(w, from.id, to.id)) continue;
+        const from = w.countries[cl.from], to = w.countries[cl.to ?? t.parties.find(x => x !== cl.from)];
+        if (!from?.alive || !to?.alive || !t.parties.includes(from.id) || !t.parties.includes(to.id) || !routeOpen(w, from.id, to.id)) continue;
         const moved = Math.min(from.stock[cl.good] || 0, cl.amount);
         from.stock[cl.good] = (from.stock[cl.good] || 0) - moved; to.stock[cl.good] = (to.stock[cl.good] || 0) + moved;
         if (moved < cl.amount * .95) breach(w, t, cl, cl.from, `${from.name} could not complete its ${GOOD_LABEL[cl.good]} delivery.`);
       } else if (cl.type === 'tariff') {
-        const [a, b] = t.parties.map(x => w.countries[x]);
-        if (a?.alive && b?.alive) { a.tariffDeals[b.id] = Math.min(a.tariffDeals[b.id] ?? 1, cl.rate); b.tariffDeals[a.id] = Math.min(b.tariffDeals[a.id] ?? 1, cl.rate); }
+        // The agreed rate holds between every two of those who signed.
+        const ps = t.parties.map(x => w.countries[x]).filter(o => o?.alive);
+        for (const a of ps) for (const b of ps) if (a !== b) a.tariffDeals[b.id] = Math.min(a.tariffDeals[b.id] ?? 1, cl.rate);
       } else if (cl.type === 'demilitarized_zone') {
         for (const u of Object.values(w.units)) if (cl.provinces.includes(u.province) && (cl.country ? u.country === cl.country : t.parties.includes(u.country))) { breach(w, t, cl, u.country, `${w.countries[u.country]?.name} moved troops into the demilitarized zone: ${w.provinces[u.province]?.name}.`); break; }
       } else if (cl.type === 'troop_limit') {
         const men = sum(Object.values(w.units).filter(u => u.country === cl.country), u => u.men);
         if (men > cl.men) breach(w, t, cl, cl.country, `${w.countries[cl.country]?.name} exceeded its troop limit (${Math.round(men)}k).`);
       } else if (cl.type === 'mutual_defense') {
-        for (const x of t.parties) for (const war of w.wars) {
-          const ally = t.parties.find(y => y !== x);
-          if (!war.active || war.civil || !war.b.includes(x) || war.a.includes(ally) || war.b.includes(ally) || cl.called[war.id] || w.turn - war.start < 2 || war.start < (t.turn ?? 0)) continue;
-          cl.called[war.id] = true;
+        // Every other signatory owes its help to the one attacked.
+        for (const x of t.parties) for (const ally of t.parties) for (const war of w.wars) {
+          const key = t.multi ? `${war.id}:${ally}` : war.id;
+          if (ally === x || !war.active || war.civil || !war.b.includes(x) || war.a.includes(ally) || war.b.includes(ally) || cl.called[key] || w.turn - war.start < 2 || war.start < (t.turn ?? 0)) continue;
+          cl.called[key] = true;
           breach(w, t, cl, ally, `${w.countries[ally]?.name} did not enter the war on the side of ${w.countries[x]?.name}, which was attacked (${war.name}).`);
         }
       }

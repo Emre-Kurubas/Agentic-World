@@ -63,6 +63,20 @@ export function canEnter(w, country, pid) {
 // Troops may stay where the war has brought them while an armistice lasts, though they may not go further.
 const mayStand = (w, country, pid) => canEnter(w, country, pid) || atWar(w, country, w.provinces[pid].controller);
 
+// Standing orders. A unit fights what it meets and marches where it is sent unless it has been told otherwise, and what it has been told
+// holds until it is changed. Three ways of meeting the enemy: on the defensive (it holds its province, digs deeper than troops who expect to
+// move, fights from its works wherever it is attacked, and takes no ground); falling back if pressed (it declines a fight against clearly
+// stronger numbers and gives up the province to keep itself in being); and not one step back (beaten, it does not leave the field: it holds
+// the ground another quarter at a heavier price in men, until it breaks). Besides these, troops can be told to hold their fire on a frontier
+// (frontier.js) and to stay in barracks when the state turns on its own people (labour.js, politics.js, ops.js).
+export const POSTURES = ['ordinary', 'hold_fire', 'defensive', 'fall_back', 'no_retreat', 'barracks'];
+export const postureWords = u => [u.posture === 'defensive' ? 'standing on the defensive' : u.posture === 'fall_back' ? 'to fall back if pressed' : u.posture === 'no_retreat' ? 'not one step back' : '', u.holdFire ? 'holding fire on the frontier' : '', u.barracks ? 'kept in barracks' : ''].filter(Boolean).join(', ');
+// Where a unit goes when it gives up a province: toward its own country, the nearest of its own provinces to the capital, else an ally's.
+function wayBack(w, u, pid) {
+  const cap = w.provinces[w.countries[u.country]?.capital], near = n => cap ? Math.hypot(w.provinces[n].cx - cap.cx, w.provinces[n].cy - cap.cy) : 0, ns = w.provinces[pid].neighbors;
+  return ns.filter(n => w.provinces[n].controller === u.country).sort((a, b) => near(a) - near(b))[0] ?? ns.find(n => hasTreaty(w, u.country, w.provinces[n].controller, 'alliance')) ?? null;
+}
+
 const force = (w, u, def) => {
   const c = w.countries[u.country];
   const p = w.provinces[u.province];
@@ -71,7 +85,8 @@ const force = (w, u, def) => {
   const auto = hasTech(c, 'automatic_weapons') && u.kind === 'infantry' ? 1.2 : 1;
   const motorized = ['armor', 'air'].includes(u.kind), fuel = motorized ? (c.fuelRatio ?? 1) >= .6 ? 1 : .35 : 1;
   const terrainApplies = u.kind === 'air' ? 1 : (u.kind === 'armor' && ['mountain', 'marsh', 'forest'].includes(p.terrain) ? .55 : 1);
-  const dug = def > 1 ? 1 + (u.dug || 0) * .1 : 1, skill = commanderOf(w, u)?.skill ?? 1;
+  // Works count for whoever defends the ground, and for troops ordered to stand on the defensive wherever they are attacked.
+  const dug = def > 1 || u.posture === 'defensive' ? 1 + (u.dug || 0) * .1 : 1, skill = commanderOf(w, u)?.skill ?? 1;
   return u.men * u.equip * u.quality * c.tech.mil * (u.morale / 70) * supply * def * (KIND[u.kind] || 1) * auto * fuel * terrainApplies * dug * skill;
 };
 
@@ -81,31 +96,55 @@ const WINTER = { mountain: 1, tundra: 1 }, MUD = { marsh: 1 };
 export const season = w => ['winter', 'spring', 'summer', 'autumn'][w.turn % 4];
 export const closedNow = (w, p) => !p.rail && ((season(w) === 'winter' && WINTER[p.terrain]) || (['spring', 'autumn'].includes(season(w)) && MUD[p.terrain]));
 
+// What it costs an army to enter a province of friendly country, out of the three marches a quarter gives it (four with engines and fuel):
+// the ground first (a plain is the measure, mountains cost double, marsh, tundra, forest, hills and desert between), then the roads (good
+// ones take a quarter off, bad ones add as much), and a railway that runs through from where it stands halves what is left.
+const GROUND = { plains: 1, desert: 1.2, hills: 1.3, forest: 1.3, tundra: 1.5, marsh: 1.6, mountain: 2 };
+export const roadFactor = p => clamp(1.3 - Math.min(p.infra ?? .5, 1.5) * .4, .7, 1.3);
+export const marchCost = (from, to) => (GROUND[to.terrain] ?? 1.2) * roadFactor(to) * (from.rail && to.rail ? .5 : 1);
+const slowWord = (from, to) => [to.terrain !== 'plains' ? `the ${to.terrain === 'hills' ? 'hills' : to.terrain === 'mountain' ? 'mountains' : to.terrain} of ${to.name}` : '', roadFactor(to) > 1.05 ? `the poor roads of ${to.name}` : '', !(from.rail && to.rail) ? 'no railway through' : ''].filter(Boolean).join(', ') || `the distance to ${to.name}`;
+// About how many quarters a march will take as the roads and the seasons stand, for whoever gives the order. Enemy ground is one province a quarter.
+export function marchQuarters(w, u, to) {
+  const c = w.countries[u.country], motor = ['armor', 'air'].includes(u.kind) && (c?.fuelRatio ?? 1) >= .6, per = motor ? 4 : 3; let cur = u.province, left = per, q = 1, n = 0;
+  while (cur !== to && n++ < 80) { const step = pathStep(w, cur, to, u.country); if (!step) return null; const from = w.provinces[cur], nx = w.provinces[step], hostile = fighting(w, u.country, nx.controller), cost = hostile ? (motor ? 2 : 3) : marchCost(from, nx);
+    if (hostile ? left <= 1e-9 : left < cost - 1e-9) { q++; left = per; } left = Math.max(0, left - cost); cur = step; }
+  return cur === to ? q : null;
+}
+
 export function militaryStep(w) {
   supplied = Object.fromEntries(aliveCountries(w).map(c => [c.id, supplyNetwork(w, c)]));
   if (season(w) === 'winter') for (const u of Object.values(w.units)) { const p = w.provinces[u.province]; if (!p) continue; const hard = WINTER[p.terrain] ? .05 : p.controller !== u.country && !p.rail ? .03 : 0; if (hard) { u.men = Math.max(.05, u.men * (1 - hard)); u.morale = clamp(u.morale - (hard > .04 ? 6 : 4), 5, 100); } }
   for (const u of Object.values(w.units)) {
-    if (!u.target) { u.dug = Math.min(3, (u.dug || 0) + 1); continue; }
+    // Troops on the defensive do not march: they dig, and deeper than troops who expect to be moved on.
+    if (u.posture === 'defensive') u.target = null;
+    if (!u.target) { u.dug = Math.min(u.posture === 'defensive' ? 5 : 3, (u.dug || 0) + (u.posture === 'defensive' ? 2 : 1)); continue; }
+    // What became of the quarter's march is kept on the unit, so that whoever ordered it can see how far it got and what held it.
+    const went = u.march = { turn: w.turn, from: u.province, to: u.target, provinces: 0, held: '' };
     // Troops just put ashore do not march the same quarter. A unit with the enemy in its own province is engaged and cannot walk away:
     // that is also what stops two armies ordered at each other from passing on the road.
-    if (u.shipped === w.turn || Object.values(w.units).some(x => x.province === u.province && fighting(w, x.country, u.country))) continue;
+    if (u.shipped === w.turn) { went.held = 'it was put ashore this quarter'; continue; }
+    if (Object.values(w.units).some(x => x.province === u.province && fighting(w, x.country, u.country))) { went.held = 'the enemy stands in its province and it cannot break away'; continue; }
     u.dug = 0;
-    // A quarter is a long time on roads one holds: an army crosses three provinces of friendly country in it, and twice that where the railway
-    // runs from one to the next. Into ground the enemy holds it advances one province and no more that quarter (two with engines and fuel).
+    // A quarter is a long time on roads one holds: an army crosses about three provinces of open, friendly country in it, fewer over hills,
+    // forest, marsh or mountain or on bad roads, and twice as many where the railway runs from one to the next. Into ground the enemy holds
+    // it advances one province and no more that quarter (two with engines and fuel).
     const c = w.countries[u.country], motor = ['armor', 'air'].includes(u.kind) && (c.fuelRatio ?? 1) >= .6;
     let left = motor ? 4 : 3;
     while (u.target && left > 1e-9) {
       const step = pathStep(w, u.province, u.target, u.country);
-      if (!step || !canEnter(w, u.country, step)) { u.target = null; break; }
+      if (!step || !canEnter(w, u.country, step)) { went.held = step ? `${w.provinces[step].name} is closed to it: no war, alliance or right of passage opens that road` : 'no road leads there'; u.target = null; break; }
       // Snow in the passes or mud in the marsh: the unit waits where it is and marches when the season turns.
-      const from = w.provinces[u.province], to = w.provinces[step]; if (closedNow(w, to)) break;
-      const hostile = fighting(w, u.country, to.controller), cost = hostile ? (motor ? 2 : 3) : from.rail && to.rail && !fighting(w, u.country, from.controller) ? .5 : 1;
-      if (!hostile && left < cost - 1e-9) break;
-      left = Math.max(0, left - cost); u.province = step;
-      if (u.province === u.target) u.target = null;
+      const from = w.provinces[u.province], to = w.provinces[step]; if (closedNow(w, to)) { went.held = `${season(w) === 'winter' ? 'snow' : 'mud'} closes ${to.name} this season`; break; }
+      const hostile = fighting(w, u.country, to.controller), cost = hostile ? (motor ? 2 : 3) : marchCost(from, to);
+      if (!hostile && left < cost - 1e-9) { went.held = slowWord(from, to); break; }
+      left = Math.max(0, left - cost); u.province = step; went.provinces++;
+      if (u.province === u.target) { u.target = null; went.held = ''; break; }
       // Armies halt on contact: moving next to the enemy ends the march, so fronts form.
-      if (Object.values(w.units).some(x => fighting(w, x.country, u.country) && (x.province === step || w.provinces[step].neighbors.includes(x.province)))) break;
+      if (Object.values(w.units).some(x => fighting(w, x.country, u.country) && (x.province === step || w.provinces[step].neighbors.includes(x.province)))) { went.held = 'the enemy is at hand: it halted on contact'; break; }
+      if (hostile && left <= 1e-9) went.held = 'on ground the enemy holds an army advances a province a quarter';
     }
+    if (u.target && !went.held) went.held = slowWord(w.provinces[went.from], w.provinces[u.province]);
+    went.reached = u.province;
   }
   navalStep(w);
   for (const c of aliveCountries(w)) upkeep(w, c);
@@ -256,6 +295,15 @@ function resolve(w, pid, us) {
   const D = us.filter(u => defSide.includes(u.country)), A = us.filter(u => atkSide.includes(u.country));
   const point = w.strategic.find(s => s.ref === pid && s.type === 'pass') ? 1.5 : w.strategic.find(s => s.ref === pid && s.type === 'bridge') ? 1.25 : 1;
   const terrain = TERRAIN_DEF[p.terrain] * (1 + p.infra * .08) * point * (holds ? 1 + (p.fort || 0) * .3 + (p.trench || 0) * .15 : 1);
+  // Troops told to fall back if pressed do not wait to be beaten by clearly stronger numbers: they give up the province and go back one toward
+  // their own country, leaving stragglers and gear on the road. Whoever of their side was told nothing of the kind stays and fights without them.
+  const weigh = (xs, def) => sum(xs, u => force(w, u, def)) * crowding(sum(xs, u => u.men), p.terrain);
+  for (const [mine, theirs, mineDef] of [[D, A, true], [A, D, false]]) {
+    if (!mine.some(u => u.posture === 'fall_back') || weigh(theirs, mineDef ? 1 : terrain) < weigh(mine, mineDef ? terrain : 1) * 1.6) continue;
+    const gone = mine.filter(u => u.posture === 'fall_back').filter(u => { const back = wayBack(w, u, pid); if (!back) return false; u.province = back; u.target = null; u.dug = 0; u.men *= .95; u.equip = clamp(u.equip - .04, .2, 1.4); u.morale = clamp(u.morale - 3, 0, 100); u.march = { turn: w.turn, from: pid, to: back, provinces: 1, held: '', reached: back, fellBack: true }; return true; });
+    if (gone.length) { news(w, `${[...new Set(gone.map(u => w.countries[u.country].name))].join(' and ')} forces fell back from ${p.name} before stronger numbers, without giving battle.`, { kind: 'war', countries: [...atkSide, ...defSide], province: pid }); for (const u of gone) mine.splice(mine.indexOf(u), 1); }
+  }
+  if (!D.length || !A.length) return;
   const fD = sum(D, u => force(w, u, terrain)) * crowding(sum(D, u => u.men), p.terrain) * between(w, .85, 1.15);
   const fA = sum(A, u => force(w, u, 1)) * crowding(sum(A, u => u.men), p.terrain) * between(w, .85, 1.15);
   // Men are killed by the men who face them. What a side loses is set by the strength the other side brings to bear, and more of it the more
@@ -263,9 +311,11 @@ function resolve(w, pid, us) {
   const menD = sum(D, u => u.men), menA = sum(A, u => u.men);
   const lossD = Math.min(.42, .09 * fA * Math.pow(fA / Math.max(fD, 1e-9), .35) / Math.max(menD, 1e-9));
   const lossA = Math.min(.42, .09 * fD * Math.pow(fD / Math.max(fA, 1e-9), .35) / Math.max(menA, 1e-9));
+  // Troops under orders not to give a step stay under fire when others would have broken off: beaten, they lose more men for it, and a unit
+  // that is bled that way remembers who gave the order.
   const apply = (xs, loss, won) => xs.map(u => {
-    const dead = u.men * loss; u.men -= dead;
-    u.morale = clamp(u.morale + (won ? 3 : -8 - loss * 45), 0, 100);
+    const stood = !won && u.posture === 'no_retreat', dead = u.men * Math.min(.55, loss * (stood ? 1.4 : 1)); u.men -= dead;
+    u.morale = clamp(u.morale + (won ? 3 : -8 - loss * 45 - (stood ? loss * 30 : 0)), 0, 100); if (stood && loss > .1) u.loyalty = clamp(u.loyalty - 3, 0, 100);
     // The dead are felt against the size of the people who must bury them.
     w.countries[u.country].warExhaustion = clamp(w.countries[u.country].warExhaustion + dead / Math.max(w.countries[u.country]._pop || 10000, 1) * 5000, 0, 100);
     return dead;
@@ -282,13 +332,16 @@ function resolve(w, pid, us) {
   // A beaten force that was badly outmatched leaves men in the victor's hands as it goes; one with no road home leaves far more. Prisoners
   // are held by the victor until a peace sends them home.
   let taken = 0;
+  let stood = 0;
   for (const u of loser) {
-    const back = w.provinces[pid].neighbors.find(n => w.provinces[n].controller === u.country) ?? w.provinces[pid].neighbors.find(n => hasTreaty(w, u.country, w.provinces[n].controller, 'alliance'));
+    // Not one step back: beaten but not broken, the unit is still on the field next quarter, and the ground with it. It breaks when its spirit does.
+    if (u.posture === 'no_retreat' && u.morale > 15 && u.men >= .2) { stood += u.men; continue; }
+    const back = wayBack(w, u, pid);
     const caught = u.men * (back ? clamp((odds - 2) * .1, 0, .3) : .4);
     if (back) { u.province = back; u.target = null; } else u.morale *= .4;
     if (caught > 0) { u.men -= caught; taken += caught; const held = victor.captives ||= {}; held[u.country] = (held[u.country] || 0) + caught; const home = w.countries[u.country]; home.warExhaustion = clamp(home.warExhaustion + caught / Math.max(home._pop || 10000, 1) * 2500, 0, 100); }
   }
-  news(w, `Battle of ${p.name}: ${atkWins ? w.countries[atkSide[0]].name : w.countries[defCountry].name} prevailed. Losses: attacker ${Math.round(da)}k, defender ${Math.round(dd)}k.${taken >= .5 ? ` About ${Math.round(taken)} thousand of the beaten side were taken prisoner.` : ''}`, { kind: 'war', countries: [...atkSide, ...defSide] });
+  news(w, `Battle of ${p.name}: ${atkWins ? w.countries[atkSide[0]].name : w.countries[defCountry].name} prevailed. Losses: attacker ${Math.round(da)}k, defender ${Math.round(dd)}k.${taken >= .5 ? ` About ${Math.round(taken)} thousand of the beaten side were taken prisoner.` : ''}${stood >= .5 ? ` About ${Math.round(stood)} thousand of the beaten side did not leave the field.` : ''}`, { kind: 'war', countries: [...atkSide, ...defSide] });
   w.battles.push({ province: pid, attacker: atkSide[0], defender: defCountry, attackerWon: atkWins, lossA: Math.round(da), lossD: Math.round(dd), prisoners: Math.round(taken) });
 }
 
