@@ -108,7 +108,7 @@ function extract(w, c) {
     const mineLoad = sum(deposits, ([, d]) => d.mine), plantLoad = sum(Object.values(p.plants)) + .3;
     const mineShare = mineLoad / (mineLoad + plantLoad);
     for (const [k, d] of deposits) {
-      const full = p.pops.workers.n * mineShare * (d.mine / mineLoad) * d.rich * ({ coal: .3, iron: .22, oil: .12 }[k] ?? .06) * c.tech.ind * eff * strikes, f = k === 'gold' ? 1 : pace[k] ?? 1, q = full * f;
+      const full = p.pops.workers.n * mineShare * (d.mine / mineLoad) * d.rich * ({ coal: .3, iron: .22, oil: .12 }[k] ?? .06) * c.tech.ind * eff * strikes * (1 - (p.halt?.[k] ?? 0)), f = k === 'gold' ? 1 : pace[k] ?? 1, q = full * f;
       if (f < 1) c._idleV += (full - q) * BASE_PRICE[k];
       d.amount = Math.max(0, d.amount - q * .08);
       const con = p.concessions?.[k];
@@ -120,7 +120,7 @@ function extract(w, c) {
       if (d.amount <= 0) news(w, `${c.name}: the ${p.name} ${GOOD_LABEL[k]} deposit is exhausted.`, { kind: 'economy', countries: [c.id] });
     }
     const labor = p.pops.workers.n * (1 - mineShare), level = sum(Object.values(p.plants));
-    if (level > 0) for (const pl of Object.keys(PLANTS)) if (p.plants[pl] > 0) c._cap[pl] += labor * (p.plants[pl] / level) * clamp(.7 + p.plants[pl] * .35, .7, 3) * .05 * 25 / BASE_PRICE[pl] * c.tech.ind * eff * strikes * bank * (1 - c.ownership * .15);
+    if (level > 0) for (const pl of Object.keys(PLANTS)) if (p.plants[pl] > 0) c._cap[pl] += labor * (p.plants[pl] / level) * clamp(.7 + p.plants[pl] * .35, .7, 3) * .05 * 25 / BASE_PRICE[pl] * c.tech.ind * eff * strikes * bank * (1 - c.ownership * .15) * (1 - (p.halt?.[pl] ?? 0));
     services += (p.pops.middle.n + p.pops.elite.n * 1.5) * eff;
     const pop = provincePop(p); popAll += pop; dev += p.devastation * pop;
   }

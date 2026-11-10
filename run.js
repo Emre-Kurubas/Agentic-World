@@ -45,7 +45,9 @@ else { world = createWorld(cfg); store.saveMap(world); console.log('New world cr
 
 const clients = new Set();
 const send = msg => { const line = `data: ${JSON.stringify(msg)}\n\n`; for (const r of clients) r.write(line); };
-const game = new Game({ world, cfg, backend: makeBackend(cfg, sessionDir), store, onUpdate: send });
+// Every change of state is also written to the console with the time, so that a stalled game can be seen to have stalled, and where.
+const stamp = msg => { console.log(`${new Date().toLocaleTimeString('en-GB')} ${msg.type}${msg.turn != null ? ` t${msg.turn}` : ''}${msg.status ? ` ${msg.status}` : ''}${msg.progress ? `: ${msg.progress}` : ''}`); send(msg); };
+const game = new Game({ world, cfg, backend: makeBackend(cfg, sessionDir), store, onUpdate: stamp });
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.ico': 'image/x-icon' };
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1)(:\d+)?$/i, panelDir = path.join(root, 'panel');

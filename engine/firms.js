@@ -81,10 +81,11 @@ function unitProfit(c, f, p) {
   const price = c.prices?.[f.sector === 'mine' ? f.resource : f.sector] ?? 0;
   if (f.sector === 'mine') {
     const all = Object.values(c._mineLevel?.[f.resource] ? { x: c._mineLevel[f.resource] } : {}), total = all[0] || p.deposits[f.resource]?.mine || 1;
-    return { units: (c._raw?.[f.resource] || 0) * (p.deposits[f.resource]?.mine || 0) / total, margin: price * .5 };
+    // A pit that pays above the going wage or spends on its timbering keeps less of what the ore fetches.
+    return { units: (c._raw?.[f.resource] || 0) * (p.deposits[f.resource]?.mine || 0) / total, margin: price * (.5 - .25 * ((f.wage ?? 1) - 1) - .06 * ((f.safety ?? .3) - .3)) };
   }
   const total = c._plantLevel?.[f.sector] || p.plants[f.sector] || 1, input = Object.entries(RECIPE[f.sector]).reduce((a, [g, q]) => a + (c.prices?.[g] ?? 0) * q, 0);
-  return { units: (c._made?.[f.sector] || 0) * p.plants[f.sector] / total, margin: price - input - BASE_PRICE[f.sector] * .25 * (c.wageIndex / c.priceLevel) };
+  return { units: (c._made?.[f.sector] || 0) * p.plants[f.sector] / total, margin: price - input - BASE_PRICE[f.sector] * .25 * (c.wageIndex / c.priceLevel) * (f.wage ?? 1) - BASE_PRICE[f.sector] * .04 * ((f.safety ?? .3) - .3) };
 }
 
 export function firmStep(w) {
@@ -100,7 +101,8 @@ export function firmStep(w) {
     const c = w.countries[f.country];
     if (!c?.alive) continue;
     resolveOwner(w, f, c);
-    const { units, margin } = unitProfit(c, f, p), gross = units * f.stake * margin * SCALE, profit = gross > 0 ? gross * (1 - clamp(c.tax.business, 0, .7)) : gross;
+    // A works that stands still earns next to nothing, whoever else in the trade is busy.
+    const idle = f.strike || f.lockout || f.halted > 0 ? .1 : 1, { units: full, margin } = unitProfit(c, f, p), units = full * idle, gross = units * f.stake * margin * SCALE, profit = gross > 0 ? gross * (1 - clamp(c.tax.business, 0, .7)) : gross;
     f.lastProfit = +profit.toFixed(2); f.lastUnits = units * f.stake;
     f.bad = profit < 0 ? f.bad + 1 : 0;
     if (profit > 0) {

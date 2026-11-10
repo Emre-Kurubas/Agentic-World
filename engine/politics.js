@@ -23,6 +23,7 @@ export function moodParts(c, p, k, realWage = c.wageIndex / c.priceLevel) {
     [k === 'peasants' ? 'the land tax' : k === 'elite' ? 'the tax on business' : 'the income tax', -(k === 'elite' ? 1.5 : 1) * Math.max(0, tax - .12) * 70],
     ['what wages buy', (realWage - 1) * (k === 'elite' ? 15 : 55)],
     ['unemployment', town ? -c.unemployment * 75 : 0],
+    ['pay, safety and stoppages at the works', k === 'workers' ? (p.labour ?? 0) : 0],
     [k === 'elite' ? 'what relief for the poor costs them' : 'relief and welfare', k === 'elite' ? -relief * .3 : relief],
     ['the division of the estates', k === 'peasants' ? (c.landShare ?? 0) * 8 : k === 'elite' ? -(c.landShare ?? 0) * 12 : 0],
     ['how the economy is doing', (c.growth || 0) * 60],

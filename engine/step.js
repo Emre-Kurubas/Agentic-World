@@ -9,6 +9,8 @@ import { adminStep } from './admin.js';
 import { contractStep } from './contracts.js';
 import { applyOp } from './ops.js';
 import { courtStep } from './court.js';
+import { labourStep, labourEnd } from './labour.js';
+import { undergroundStep } from './underground.js';
 import { countryProvinces, aliveCountries, provincePop } from './world.js';
 import { sum, quarterLabel } from './util.js';
 import { openCredit } from './money.js';
@@ -19,6 +21,7 @@ export function stepWorld(w) {
   projectStep(w);
   adminStep(w);
   treatyStep(w);
+  labourStep(w);
   economyStep(w);
   firmStep(w);
   contractStep(w);
@@ -29,6 +32,7 @@ export function stepWorld(w) {
   partyStep(w);
   plotStep(w);
   courtStep(w, applyOp);
+  undergroundStep(w);
   uprisingStep(w);
   electionStep(w);
   billStep(w, applyOp);
@@ -37,6 +41,7 @@ export function stepWorld(w) {
   collapseStep(w);
   relationDrift(w);
   pruneStep(w);
+  labourEnd(w);
   for (const c of aliveCountries(w)) {
     const provs = countryProvinces(w, c.id);
     c.history.push({
