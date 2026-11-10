@@ -2142,4 +2142,18 @@ chain('In a war already declared the chief of staff orders the landings, and a g
   assert.equal(applyOp(w, l, { op: 'declare_war', target: 'U2', aims: { regime: true }, _law: true }).ok, false, 'once a quarter'); w.turn++; const rel = w.countries.U3.relations.U1 ?? 0;
   assert.ok(applyOp(w, l, { op: 'declare_war', target: 'U2', aims: { regime: true }, _law: true }).ok); assert.ok((w.countries.U3.relations.U1 ?? 0) < rel, 'aims changed in mid-war make the others uneasy');
 });
+chain('A peace says in so many words what it does to the land: the provinces it names change hands, everything else an army holds goes back, and whoever offers it, is offered it, signs it or translates it is shown this by name before it is signed', () => {
+  const w = fresh(), a = w.countries.U1, b = w.countries.U2, la = ld(w, a), lb = ld(w, b); assert.ok(applyOp(w, la, { op: 'declare_war', target: 'U2', _law: true }).ok);
+  // U1 has taken two provinces of U2; the peace that is written names a third, which nobody holds.
+  const [won1, won2, other] = countryProvinces(w, 'U2').filter(p => p.id !== b.capital); won1.controller = 'U1'; won2.controller = 'U1';
+  const ref = refereePrompt(w, a, [{ actor: la, decisions: ['Make peace.'] }]); assert.ok(ref.includes(`${won1.id}=${won1.name} (belongs to ${b.name})`) && ref.includes('goes into cede by its id'), 'the referee sees by id what each side holds of the other\'s');
+  lb.inbox = []; const offer = applyOp(w, la, { op: 'propose_treaty', target: 'U2', kind: 'peace', cede: [other.id], terms: 'The two provinces we hold stay ours.' }); assert.ok(offer.ok, offer.msg);
+  for (const text of [offer.msg, lb.inbox.map(m => m.text).join(' '), frontPage(w, lb)]) { assert.ok(text.includes(`${other.name} (${other.id}) from ${b.name} to ${a.name}`), 'what changes hands is named: ' + text.slice(0, 200)); assert.ok(text.includes(`${won1.name} (${won1.id}), now held by ${a.name}, back to ${b.name}`) && text.includes(won2.name), 'and so is what goes back, whatever the wording says'); }
+  const signed = applyOp(w, lb, { op: 'accept_treaty', id: offer.treaty }); assert.ok(signed.ok && signed.msg.includes(won1.name) && signed.msg.includes(other.name), signed.msg);
+  assert.equal(won1.controller, 'U2'); assert.equal(won2.controller, 'U2'); assert.equal(other.owner, 'U1'); assert.ok(w.newsThisTurn.some(n => n.text.includes(won1.name) && /went back to its owner/.test(n.text)), 'and the world reads which land went back');
+  assert.ok(la.inbox.some(m => m.text.includes('has signed') && m.text.includes(won2.name)), 'the one who offered it is told what the signature did');
+  // A peace in which each keeps what it holds says that instead.
+  const x = fresh(), xa = x.countries.U1, xb = x.countries.U2; applyOp(x, ld(x, xa), { op: 'declare_war', target: 'U2', _law: true }); const taken = countryProvinces(x, 'U2').find(p => p.id !== xb.capital); taken.controller = 'U1';
+  const keep = applyOp(x, ld(x, xa), { op: 'propose_treaty', target: 'U2', kind: 'peace', annex: true }); assert.ok(keep.msg.includes(`${taken.name} (${taken.id}) stays with ${xa.name}`), keep.msg);
+});
 console.log('All checks passed.');

@@ -171,6 +171,20 @@ function endWar(w, a, b, annex) {
 
 // ---- Foreign affairs: what several states sign together, what is done short of war, what a war is for ----
 const cname = (w, id) => w.countries[id]?.name ?? id;
+// What a treaty does to the land the day it is signed, in the engine's own terms: the provinces it names change hands, and in a peace every other
+// province one party holds of another's goes back to its owner (or stays where it is, if the treaty says each keeps what it holds). The words of a
+// treaty are the parties' own; this is what will actually happen, and whoever offers, receives or signs it is told so by name.
+export function settlementText(w, t) {
+  if (!t) return ''; const name = pid => `${w.provinces[pid]?.name} (${pid})`, out = [];
+  const cede = (t.cede || []).map(x => x && typeof x === 'object' ? x : { province: x }).filter(x => w.provinces[x.province]);
+  if (cede.length) out.push(`On signing these provinces change hands: ${cede.map(x => { const p = w.provinces[x.province], to = x.to ?? t.parties.find(id => id !== p.owner); return `${name(x.province)} from ${cname(w, p.owner)} to ${cname(w, to)}`; }).join('; ')}.`);
+  if (t.kind === 'peace') {
+    const held = Object.values(w.provinces).filter(p => t.parties.includes(p.owner) && t.parties.includes(p.controller) && p.owner !== p.controller && !cede.some(x => x.province === p.id));
+    if (held.length) out.push(t.annex ? `Each side keeps the land it now holds: ${held.map(p => `${name(p.id)} stays with ${cname(w, p.controller)}`).join('; ')}.` : `Every other province held by one of them and belonging to the other goes back to its owner the day the peace is signed: ${held.map(p => `${name(p.id)}, now held by ${cname(w, p.controller)}, back to ${cname(w, p.owner)}`).join('; ')}.`);
+    else if (!cede.length) out.push('No land changes hands.');
+  }
+  return out.join(' ');
+}
 const recognisesText = (w, c, o) => o.recognition && !o.recognition.includes(c.id) ? `${o.name} is not recognised by this state: nothing is signed with it until it is (recognise).` : `${o.name} does not recognise this state.`;
 const ownedPeople = (w, id) => sum(Object.values(w.provinces).filter(p => p.owner === id), provincePop);
 const warsBetween = (w, a, b) => w.wars.filter(x => x.active && ((x.a.includes(a) && x.b.includes(b)) || (x.b.includes(a) && x.a.includes(b))));
@@ -807,7 +821,8 @@ export function applyOp(w, actor, op) {
       const cede = [...new Set((Array.isArray(op.cede) ? op.cede : []).map(x => x && typeof x === 'object' ? x.province : x))].filter(pid => [c.id, target.id].includes(w.provinces[pid]?.owner)).slice(0, 24), reparations = num(op.reparations, 0, .3), payer = op.reparations_from === 'me' ? c.id : target.id, secret = !!op.secret && !['peace', 'armistice'].includes(op.kind);
       w.treaties.push({ id, kind: op.kind, ...(op.kind === 'protection' ? { protector: op.protector === 'them' ? target.id : c.id } : {}), parties: [c.id, target.id], active: false, pending: true, proposer: c.id, terms: String(op.terms || '').slice(0, 240), clauses, breaches: [], expires: null, durationTurns: op.turns ? Math.round(num(op.turns, 1, 200, 40)) : null, annex: !!op.annex, cede, reparations, payer, turn: w.turn, secret });
       tell(w, w.characters[target.leader], c.name, `Treaty proposal ${id}${secret ? ' (to be kept secret: known to those who govern and, where it concerns the army, to their chiefs of staff)' : ''}: ${op.kind.replace('_', ' ')}. ${String(op.terms || '').slice(0, 240)}${clauses.length ? ` Clauses: ${clauses.map(x => clauseText(w, x)).join('; ')}.` : ''}${cede.length ? ` Provinces to change hands: ${cede.map(pid => `${w.provinces[pid].name} (${pid}) to ${other(pid).name}`).join(', ')}.` : ''}${op.annex ? ' Each side keeps the land it now holds.' : ''}${reparations ? ` ${w.countries[payer].name} pays ${Math.round(reparations * 100)}% of a quarter's output in gold.` : ''} Issue an accept_treaty decision to accept.`);
-      return { ok: true, msg: `Proposal ${id} was sent.`, treaty: id };
+      { const land = settlementText(w, w.treaties.at(-1)); if (land && op.kind === 'peace') tell(w, w.characters[target.leader], c.name, `What proposal ${id} does to the land, whatever its wording: ${land}`);
+        return { ok: true, msg: `Proposal ${id} was sent.${land ? ` ${land}${op.kind === 'peace' ? ' If the wording of the treaty means something else, the provinces have to be named in it (cede), or it has to say that each side keeps what it holds (annex).' : ''}` : ''}`, treaty: id }; }
     }
     // A demand with a date on it. If it is accepted its terms take effect like a treaty's; if it runs out, war is expected of the one who made it.
     case 'ultimatum': {
@@ -859,8 +874,9 @@ export function applyOp(w, actor, op) {
       t.pending = false; t.active = true; activateClauses(w, t); const lasts = t.durationTurns ?? (t.kind === 'peace' ? 20 : t.kind === 'armistice' ? 4 : null); if (lasts) t.expires = w.turn + lasts;
       // Giving way to a demand with a date on it is seen at home for what it is, and remembered against the one who made it.
       if (t.ultimatum) { c.legitimacy = clamp(c.legitimacy - 4, 0, 100); other.legitimacy = clamp(other.legitimacy + 2, 0, 100); const g = (c.grudges ||= {})[other.id] ||= { incident: 0, kin: 0 }; g.incident += 15; news(w, `${c.name} has accepted the ultimatum of ${other.name}.`, { kind: 'diplomacy', countries: [c.id, other.id] }); }
-      const fought = warsBetween(w, c.id, other.id); t.since = w.turn;
+      const fought = warsBetween(w, c.id, other.id), land = settlementText(w, t); t.since = w.turn;
       if (t.kind === 'peace') { endWar(w, c.id, other.id, t.annex); peaceRecognises(w, c, other); }
+      if (land && (t.kind === 'peace' || t.cede?.length)) { news(w, `${c.name} and ${other.name}: ${land.replace('On signing these provinces change hands', 'by the treaty these provinces changed hands').replace('goes back to its owner the day the peace is signed', 'went back to its owner')}`, { kind: 'diplomacy', countries: [c.id, other.id], secret: !!t.secret }); tell(w, w.characters[other.leader], c.name, `${c.name} has signed ${t.id}. ${land}`); }
       for (const pid of t.cede || []) {
         const p = w.provinces[pid], giver = w.countries[p.owner], taker = p.owner === c.id ? other : p.owner === other.id ? c : null; if (!taker) continue;
         p.owner = taker.id; p.controller = taker.id; p.admin = Math.min(p.admin ?? .5, .3); p.governor = null; delete p.siege; handOver(w, p, giver.id, taker.id, t.kind === 'peace' || !!t.ultimatum);
@@ -887,7 +903,7 @@ export function applyOp(w, actor, op) {
       news(w, t.kind === 'peace' ? `${c.name} and ${other.name} signed a peace.` : t.kind === 'armistice' ? `${c.name} and ${other.name} signed an armistice: the fighting stops where the lines stand${t.expires != null ? `, for ${t.expires - w.turn} quarters` : ''}.` : `Treaty signed between ${c.name} and ${other.name}: ${t.kind.replace('_', ' ')}.`, { kind: 'diplomacy', countries: [c.id, other.id], secret: !!t.secret });
       const harsh = t.annex || t.reparations > 0 || t.cede?.length, warmth = t.kind === 'armistice' ? 5 : t.kind === 'peace' && harsh ? 4 : 18;
       c.relations[other.id] = clampRel((c.relations[other.id] ?? 0) + warmth); other.relations[c.id] = clampRel((other.relations[c.id] ?? 0) + warmth);
-      return t.kind === 'armistice' ? { ok: true, msg: `The armistice is in force${t.expires != null ? ` for ${t.expires - w.turn} quarters` : ''}. Nobody attacks, advances or presses a siege while it lasts; the war, the occupied land and any blockade stay as they are until a peace is signed or it runs out.` } : signed ? { ok: true, msg: `Signed.${signed}` } : ok();
+      return t.kind === 'armistice' ? { ok: true, msg: `The armistice is in force${t.expires != null ? ` for ${t.expires - w.turn} quarters` : ''}. Nobody attacks, advances or presses a siege while it lasts; the war, the occupied land and any blockade stay as they are until a peace is signed or it runs out.` } : signed || land ? { ok: true, msg: `Signed.${land ? ` ${land}` : ''}${signed}` } : ok();
     }
     case 'break_treaty': { const t = w.treaties.find(x => x.id === op.id && x.active && x.parties.includes(c.id)); if (!t) return fail('No such treaty.'); if (t.multi && t.parties.length > 2) return withdraw(w, c, t); t.active = false; w.guarantees = (w.guarantees || []).filter(x => x.treaty !== t.id); const o = t.parties.find(x => x !== c.id), justified = t.breaches?.at(-1)?.party === o; shame(w, c, justified ? -2 : t.kind === 'peace' ? -15 : -8, `it broke its ${t.kind.replace('_', ' ')} treaty with ${w.countries[o]?.name ?? 'another state'}`); if (w.countries[o]) w.countries[o].relations[c.id] = clampRel((w.countries[o].relations[c.id] ?? 0) - (justified ? 10 : 35)); if (!justified) for (const a of aliveCountries(w)) if (a.id !== c.id) a.relations[c.id] = clampRel((a.relations[c.id] ?? 0) - 5); news(w, `${c.name} unilaterally broke its treaty.`, { kind: 'diplomacy', countries: [c.id, o], secret: !!t.secret }); return ok(); }
     case 'send_aid': { if (!target) return fail('No such target.'); const val = Math.min(Math.max(c.reserves, 0), Math.max(c.realGdp, 1) * num(op.pct_gdp, 0, .25)); const arms = Math.min(c.stock.arms, num(op.arms, 0, 1e9)); if (val <= 0 && arms <= 0) return fail('There is nothing to send.'); c.reserves -= val; target.reserves += val; c.stock.arms -= arms; target.stock.arms += arms; target.relations[c.id] = clampRel((target.relations[c.id] ?? 0) + 12); tell(w, w.characters[target.leader], c.name, `Aid has arrived: ${Math.round(val)} in gold${arms > 0 ? ` and ${Math.round(arms)} of arms` : ''}.`); news(w, `${c.name} sent aid to ${target.name}.`, { kind: 'diplomacy', countries: [c.id, target.id], secret: !!op.secret }); return { ok: true, msg: `${Math.round(val)} gold${arms > 0 ? ` and ${Math.round(arms)} arms` : ''} sent.` }; }
