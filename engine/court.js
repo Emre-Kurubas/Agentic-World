@@ -94,7 +94,7 @@ function officer(w, c, ch, applyOp) {
     }
     return;
   }
-  if (ch.loyalty < 22 && ch.ambition > 70 && c.legitimacy < 42 && ch.soundedAt != null && w.turn - ch.soundedAt >= 3 && !w.plots.some(p => p.active && p.country === c.id && p.kind === 'coup')) applyOp(w, ch, { op: 'start_plot', kind: 'coup', secrecy: .6 });
+  if (ch.loyalty < 20 && ch.ambition > 75 && c.legitimacy < 35 && ch.soundedAt != null && w.turn - ch.soundedAt >= 3 && !w.plots.some(p => p.active && p.country === c.id && p.kind === 'coup')) applyOp(w, ch, { op: 'start_plot', kind: 'coup', secrecy: .6 });
 }
 
 // ---- Governors ----
@@ -163,6 +163,8 @@ function duns(w, c) {
   const banker = minorsOf(w, c).find(x => x.post === 'house' && x.status === 'free'); if (!banker) return;
   for (const d of (w.debts || []).filter(x => x.creditor === banker.id && x.status === 'overdue')) {
     const who = w.characters[d.debtor]; if (!who?.alive) continue;
+    // Someone nobody plays pays what he owes when he has it.
+    if (!who.aiControlled && who.wealth >= d.owed) { who.wealth -= d.owed; banker.wealth += d.owed; d.status = 'paid'; d.closedAt = w.turn; continue; }
     if (d.dunned == null) {
       d.dunned = w.turn; const kind = c.leader === who.id ? 'lease' : c.general === who.id ? 'supply' : null;
       if (kind && who.status === 'free' && !(w.offers ||= []).some(o => o.status === 'open' && o.to === who.id)) {

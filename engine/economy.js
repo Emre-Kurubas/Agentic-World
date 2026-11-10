@@ -1,4 +1,5 @@
 import { clamp, sum, news, between, rand } from './util.js';
+import { hungerOf } from './politics.js';
 import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_LABEL, PLANTS, TECHS, countryProvinces, provincePop, aliveCountries, atWar, hasTreaty } from './world.js';
 import { migrate } from './culture.js';
 import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding, USUAL_COVER } from './money.js';
@@ -325,7 +326,7 @@ function demography(w, c) {
     const welfare = 1 + c.budget.welfare * (c.paidRatio ?? 1);
     // A lean year is hunger, not yet famine: people begin to die in numbers once a twentieth of the bread is missing.
     // A province that is cut off or besieged gets less of the country's bread than the rest.
-    const here = Math.max(0, 1 - c.foodRatio * (p.access ?? 1));
+    const here = hungerOf(c, p);
     for (const k of CLASSES) { const pop = p.pops[k], sev = k === 'elite' ? .1 : k === 'middle' ? .5 : 1, lost = pop.n * Math.max(0, Math.max(gap, here) - .05) * .12 * sev / welfare; starved += lost; pop.n = Math.max(1, pop.n * (1 + .0035 * (c.foodRatio >= 1 ? 1 : .4)) - lost); }
     // Urbanization comes with literacy and industry.
     // People leave the land for the towns while there is bread there; when bread fails they go back to it.

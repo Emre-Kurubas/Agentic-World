@@ -33,7 +33,7 @@ export function diplomacyStep(w) {
   for (const war of w.wars.filter(x => x.active && !x.civil)) {
     for (const victim of war.b.map(id => w.countries[id]).filter(o => o?.alive)) for (const g of cs) {
       if (g.id === victim.id || sideOf(war, g.id) === 'a') continue;
-      const bound = (w.guarantees || []).some(x => x.by === g.id && x.of === victim.id) ? 'guarantee' : hasTreaty(w, g.id, victim.id, 'alliance') ? 'alliance' : null; if (!bound) continue;
+      const bound = (w.guarantees || []).some(x => x.by === g.id && x.of === victim.id) ? 'guarantee' : hasTreaty(w, g.id, victim.id, 'alliance') ? 'alliance' : w.treaties.some(t => t.active && t.kind === 'protection' && t.protector === g.id && t.parties.includes(victim.id)) ? 'protection' : null; if (!bound) continue;
       const key = `${g.id}>${victim.id}`, seen = war.called ||= {};
       if (sideOf(war, g.id) === 'b') { if (seen[key] !== 'kept') { seen[key] = 'kept'; shame(w, g, 5, `it stood by ${victim.name} when ${victim.name} was attacked`); } continue; }
       if (!seen[key]) { seen[key] = w.turn; say(w, w.characters[g.leader], 'Foreign Ministry', `${victim.name}, to which we are bound by ${bound === 'guarantee' ? 'our guarantee' : 'alliance'}, is at war: ${war.name}. Our word is at stake. If we have not come in on its side within half a year, the world will know what our word is worth.`); }
@@ -52,7 +52,7 @@ export function diplomacyStep(w) {
   for (const c of cs) { const rival = rivalWeight(w, c); if (rival > 0) c.mods.push({ key: 'legitimacy', delta: -rival, turns: 1, label: 'A rival government recognised abroad' }); }
 }
 
-export const guaranteesOf = (w, id) => (w.guarantees || []).filter(x => x.of === id).map(x => w.countries[x.by]?.name).filter(Boolean);
+export const guaranteesOf = (w, id) => [...(w.guarantees || []).filter(x => x.of === id).map(x => w.countries[x.by]?.name), ...w.treaties.filter(t => t.active && t.kind === 'protection' && t.parties.includes(id) && t.protector !== id).map(t => `${w.countries[t.protector]?.name} (as its protector)`)].filter(Boolean);
 export const recognisedBy = (w, ch) => (ch.recognisedBy || []).map(id => w.countries[id]).filter(o => o?.alive);
 // How much standing a rival government recognised abroad takes from the one at home.
 export const rivalWeight = (w, c) => clamp(sum(Object.values(w.characters).filter(ch => ch.alive && ch.country === c.id && ch.status === 'exiled'), ch => recognisedBy(w, ch).length * 1.5), 0, 6);

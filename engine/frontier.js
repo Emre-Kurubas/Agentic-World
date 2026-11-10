@@ -39,10 +39,12 @@ export function frontierStep(w) {
   for (const c of cs) {
     for (const o of cs) { if (o.id === c.id) continue; const g = grudge(c, o.id); let v = 0;
       for (const p of countryProvinces(w, o.id)) { const share = sum(groupsOf(p).filter(x => x.eth === c.majorityEth), x => x.share); if (o.majorityEth === c.majorityEth || share < .2) continue; v += share * (yoke(o) * (.5 + p.unrest / 100) + (p.scar?.by === o.id ? p.scar.weight * 3 * Math.max(0, 1 - (w.turn - p.scar.turn) / 40) : 0)); }
-      g.kin += (clamp(v * 10, 0, 40) - g.kin) * .25; }
+      g.kinBase ??= clamp(v * 10, 0, 40); if (g.kin === 0 && g.kinBase > 0 && !g.seeded) { g.kin = g.kinBase; g.seeded = true; } g.kin += (clamp(v * 10, 0, 40) - g.kin) * .25; }
     // What weighs on the government: wrongs that have not been answered. A war against the offender answers them.
     const nat = clamp(.6 + (c.axes?.nation ?? 0) / 100, .3, 1.4);
-    c.grief = clamp(sum(Object.entries(c.grudges), ([id, g]) => !w.countries[id]?.alive || atWar(w, c.id, id) ? 0 : g.incident * .12 + g.kin * .25 * nat), 0, 12);
+    // What a country inherited it is used to: only what has grown worse since weighs on the government of the day.
+    const felt = sum(Object.entries(c.grudges), ([id, g]) => !w.countries[id]?.alive || atWar(w, c.id, id) ? 0 : g.incident * .12 + g.kin * .25 * nat), old = sum(Object.entries(c.grudges), ([id, g]) => !w.countries[id]?.alive || atWar(w, c.id, id) ? 0 : (g.kinBase ?? 0) * .25 * nat);
+    c.grief = clamp(felt - old, 0, 12);
     // A reserve of trained men: each year some of the standing army goes home with its training, and the oldest reservists pass out of reach.
     const army = sum(Object.values(w.units).filter(u => u.country === c.id && !u.called), u => u.men);
     c.reserve = Math.max(0, (c.reserve ?? army * .6) * .97 + army * .012);

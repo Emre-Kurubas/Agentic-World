@@ -1089,7 +1089,8 @@ chain('A coup is decided first by the army; a rising takes only the government\'
   assert.equal(magnate.alive && magnate.status === 'free' && magnate.country === rebels.id, true, 'the rest live on under new masters'); assert.equal(rebels.name, c.name, 'the victors govern under the old name');
 });
 chain('A famine burns out instead of feeding on itself, and tolls move gold without making it', () => {
-  const w = fresh(); for (const o of aliveCountries(w)) if (o.id !== 'U1') o.embargo.push('U1'); for (const p of countryProvinces(w, 'U1')) p.fertility *= .55;
+  // The test is about bread, so the country is kept whole: a hungry state that splits in two would lose people for another reason.
+  const w = fresh(); w.countries.U1.noSplitUntil = 1e9; for (const o of aliveCountries(w)) if (o.id !== 'U1') o.embargo.push('U1'); for (const p of countryProvinces(w, 'U1')) p.fertility *= .55;
   const pops = () => countryProvinces(w, 'U1').reduce((s, p) => s + popOf(p), 0), start = pops(); run(w, 60); const low = pops(); run(w, 60);
   assert.ok(low > start * .45, `the people are not wiped out: ${start} -> ${low}`); assert.ok(pops() > low * .95 && w.countries.U1.foodRatio > .88, `and the country finds its level: ${low} -> ${pops()}, food ${w.countries.U1.foodRatio}`);
   const x = fresh(); for (const p of Object.values(x.provinces)) if (p.deposits.gold) p.deposits.gold.mine = 0; for (const s of x.strategic) if (s.type === 'strait') { const o = x.countries[s.controller]; if (o) (o.straitPolicy ||= {})[s.id] = { closed: false, toll: .6 }; }
@@ -1372,6 +1373,10 @@ chain('A state\'s word has a price: an ultimatum accepted is a humiliation and i
   const g = fresh(), ga = g.countries.U1, gl = ld(g, ga); assert.ok(applyOp(g, gl, { op: 'guarantee', target: 'U3' }).ok); assert.ok(lookUp(g, ld(g, g.countries.U2), 'country:U3').includes('guaranteed by'), 'everyone can see it');
   assert.ok(applyOp(g, ld(g, g.countries.U2), { op: 'declare_war', target: 'U3' }).ok); const before = honourIn(ga); diplomacyOf(g); g.turn += 2; diplomacyOf(g); assert.ok(honourIn(ga) < before - 5, `a guarantee not kept is remembered: ${before} -> ${honourIn(ga)}`);
   const k = fresh(), ka = k.countries.U1, kl = ld(k, ka); applyOp(k, kl, { op: 'guarantee', target: 'U3' }); applyOp(k, ld(k, k.countries.U2), { op: 'declare_war', target: 'U3' }); const war = k.wars.at(-1); assert.ok(applyOp(k, kl, { op: 'join_war', war: war.id, side: 'b' }).ok); const kept = honourIn(ka); diplomacyOf(k); assert.ok(honourIn(ka) > kept, 'one that is kept adds to it');
+  // A state under protection.
+  const v = fresh(), va = v.countries.U1, vb = v.countries.U2; assert.ok(applyOp(v, ld(v, va), { op: 'propose_treaty', target: 'U2', kind: 'protection', protector: 'me', terms: 'U1 protects U2' }).ok); assert.ok(applyOp(v, ld(v, vb), { op: 'accept_treaty', target: 'U1' }).ok);
+  assert.equal(applyOp(v, ld(v, vb), { op: 'declare_war', target: 'U3' }).ok, false, 'a protected state does not make war on its own'); assert.equal(applyOp(v, ld(v, vb), { op: 'propose_treaty', target: 'U3', kind: 'alliance', terms: 'x' }).ok, false, 'nor alliances'); assert.ok(lookUp(v, ld(v, v.countries.U3), 'country:U2').includes('as its protector'), 'and everyone can see who answers for it');
+  assert.ok(applyOp(v, ld(v, v.countries.U3), { op: 'declare_war', target: 'U2' }).ok); const word = honourIn(va); diplomacyOf(v); v.turn += 2; diplomacyOf(v); assert.ok(honourIn(va) < word - 5, 'a protector who does not come loses his name');
   // A broken treaty and what lenders make of it.
   const t = fresh(), ta = t.countries.U1, tl = ld(t, ta); applyOp(t, tl, { op: 'propose_treaty', target: 'U2', kind: 'nonaggression', terms: 'x' }); applyOp(t, ld(t, t.countries.U2), { op: 'accept_treaty', target: 'U1' }); const pact = t.treaties.at(-1); assert.ok(pact.active);
   ta.honour = 60; const rate = sovereignRate(ta); assert.ok(applyOp(t, tl, { op: 'break_treaty', id: pact.id }).ok); assert.ok(honourIn(ta) < 60, 'breaking a treaty costs honour'); ta.honour = 10; assert.ok(sovereignRate(ta) > rate, 'and a state whose word is worth nothing pays more for money');

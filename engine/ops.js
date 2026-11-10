@@ -52,7 +52,9 @@ function eased(now, want, what, notes) {
   return now + 15;
 }
 const BUDGET = ['military', 'welfare', 'infrastructure', 'education', 'police', 'administration'];
-const TREATY = ['alliance', 'nonaggression', 'trade', 'military_access', 'peace'];
+const TREATY = ['alliance', 'nonaggression', 'trade', 'military_access', 'peace', 'protection'];
+// A state under another's protection has signed away its own wars and alliances for as long as the treaty stands.
+const protectorOf = (w, c) => { const t = w.treaties.find(x => x.active && x.kind === 'protection' && x.parties.includes(c.id) && x.protector !== c.id); return t ? w.countries[t.protector] : null; };
 const LAW_TITLE = { nationalize_company: 'Company nationalization', set_tax: 'Tax regulation', set_budget: 'Budget amendment', set_tariff: 'Customs tariff', borrow: 'Borrowing authority', declare_war: 'Declaration of war', ban_party: 'Party ban', land_reform: 'Land reform', nationalize: 'Nationalization', privatize: 'Privatization' };
 
 const num = (v, a, b, d = a) => clamp(Number.isFinite(Number(v)) ? Number(v) : d, a, b);
@@ -435,6 +437,7 @@ export function applyOp(w, actor, op) {
     case 'move_army': { if (!w.provinces[op.to]) return fail('No such target province.'); let n = 0; const us = Object.values(w.units).filter(u => u.country === c.id).sort((a, b) => b.men - a.men); const share = Math.ceil(us.length * num(op.share, .1, 1, .6)); for (const u of us.slice(0, share)) if (applyOrder(w, c, u, op.to).ok) n++; return n ? ok() : fail('Your units have no route to this target.'); }
     case 'declare_war': {
       if (!target || atWar(w, c.id, target.id)) return fail('War cannot be declared.');
+      { const lord = protectorOf(w, c); if (lord?.alive && lord.id !== target.id) return fail(`Under the treaty of protection with ${lord.name} this state does not make war on its own. The treaty would have to be broken first.`); }
       // Whatever was signed with them is torn up. Breaking a peace that is still fresh costs most, at home and with everyone who watches.
       for (const t of w.treaties.filter(x => x.active && x.parties.includes(c.id) && x.parties.includes(target.id))) { t.active = false; if (['peace', 'nonaggression', 'alliance'].includes(t.kind)) { t.brokenBy = c.id; t.brokenAt = w.turn; } c.legitimacy = clamp(c.legitimacy - (t.kind === 'peace' ? 8 : 3), 0, 100); if (t.kind === 'peace') for (const o of aliveCountries(w)) if (o.id !== c.id) o.relations[c.id] = clampRel((o.relations[c.id] ?? 0) - 6); }
       w.wars.push({ id: nextId(w, 'S'), a: [c.id], b: [target.id], civil: false, active: true, start: w.turn, name: `${c.name} - ${target.name} War` }); c.embargo = c.embargo.filter(x => x !== target.id); c.relations[target.id] = -90; target.relations[c.id] = -90;
@@ -460,10 +463,11 @@ export function applyOp(w, actor, op) {
     case 'propose_treaty': {
       if (!target || !TREATY.includes(op.kind)) return fail('Invalid proposal.');
       if (op.kind === 'peace' && !atWar(w, c.id, target.id)) return fail('There is no war between you to end.');
+      if (op.kind === 'alliance') { const lord = protectorOf(w, c); if (lord?.alive && lord.id !== target.id) return fail(`Under the treaty of protection with ${lord.name} this state makes no alliances of its own.`); }
       const id = nextId(w, 'A'), clauses = normalizeClauses(w, op.clauses, [c.id, target.id]), other = pid => w.provinces[pid].owner === c.id ? target : c;
       // Provinces named in a treaty change hands when it is signed: each goes from whichever of the two owns it to the other.
       const cede = [...new Set(Array.isArray(op.cede) ? op.cede : [])].filter(pid => [c.id, target.id].includes(w.provinces[pid]?.owner)).slice(0, 24), reparations = num(op.reparations, 0, .3), payer = op.reparations_from === 'me' ? c.id : target.id;
-      w.treaties.push({ id, kind: op.kind, parties: [c.id, target.id], active: false, pending: true, proposer: c.id, terms: String(op.terms || '').slice(0, 240), clauses, breaches: [], expires: null, durationTurns: op.turns ? Math.round(num(op.turns, 1, 200, 40)) : null, annex: !!op.annex, cede, reparations, payer, turn: w.turn });
+      w.treaties.push({ id, kind: op.kind, ...(op.kind === 'protection' ? { protector: op.protector === 'them' ? target.id : c.id } : {}), parties: [c.id, target.id], active: false, pending: true, proposer: c.id, terms: String(op.terms || '').slice(0, 240), clauses, breaches: [], expires: null, durationTurns: op.turns ? Math.round(num(op.turns, 1, 200, 40)) : null, annex: !!op.annex, cede, reparations, payer, turn: w.turn });
       tell(w, w.characters[target.leader], c.name, `Treaty proposal ${id}: ${op.kind.replace('_', ' ')}. ${String(op.terms || '').slice(0, 240)}${clauses.length ? ` Clauses: ${clauses.map(x => clauseText(w, x)).join('; ')}.` : ''}${cede.length ? ` Provinces to change hands: ${cede.map(pid => `${w.provinces[pid].name} (${pid}) to ${other(pid).name}`).join(', ')}.` : ''}${op.annex ? ' Each side keeps the land it now holds.' : ''}${reparations ? ` ${w.countries[payer].name} pays ${Math.round(reparations * 100)}% of a quarter's output in gold.` : ''} Issue an accept_treaty decision to accept.`);
       return { ok: true, msg: `Proposal ${id} was sent.`, treaty: id };
     }

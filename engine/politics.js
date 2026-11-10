@@ -14,12 +14,15 @@ export const distance = (a, b) => (Math.abs(a.econ - b.econ) * 1.2 + Math.abs(a.
 export function modValue(c, key) { return sum(c.mods.filter(m => m.key === key), m => m.delta); }
 
 // What weighs on a class of people in a province and what they credit, each with its weight. The step that moves satisfaction and the report a ruler can ask for both read this one list.
+// How short of bread a province is. A country's shortage falls harder on a province that is cut off from the rest, and a besieged one
+// starves whatever the harvest was elsewhere; a province that is merely remote lives on what it grows.
+export const hungerOf = (c, p) => clamp(Math.max(0, 1 - c.foodRatio) * (1 + (1 - (p.access ?? 1)) * 2) + (p.siege ? .25 : 0), 0, 1);
 export function moodParts(c, p, k, realWage = c.wageIndex / c.priceLevel) {
   const tax = k === 'peasants' ? c.tax.land : k === 'elite' ? c.tax.business : c.tax.income, town = k === 'workers' || k === 'middle';
   // Relief counts as far as it is actually paid out, and past a point more of it buys little.
   const relief = clamp((c.budget.welfare * (c.paidRatio ?? 1) - .03) * 200, -6, 25);
   return [
-    ['hunger', -Math.max(0, 1 - c.foodRatio * (p.access ?? 1)) * (k === 'elite' ? 12 : 95)],
+    ['hunger', -hungerOf(c, p) * (k === 'elite' ? 12 : 95)],
     ['rising prices', -Math.min(60, Math.max(0, c.inflation - .02) * 160)],
     [k === 'peasants' ? 'the land tax' : k === 'elite' ? 'the tax on business' : 'the income tax', -(k === 'elite' ? 1.5 : 1) * Math.max(0, tax - .12) * 70],
     ['what wages buy', (realWage - 1) * (k === 'elite' ? 15 : 55)],
@@ -376,7 +379,9 @@ export function executePlot(w, pl) {
     c.legitimacy = clamp(c.legitimacy - 14, 0, 100); c.legitBase = Math.min(c.legitBase ?? 0, 0);
     return 'The coup succeeded.';
   }
-  if (r > .92 && canSplit(w, c)) {
+  // A colonel whose stroke stalls takes the army with him only if a good part of it is his own; otherwise he is simply put down.
+  const own = lead.role === 'officer' ? sum(Object.values(w.units).filter(u => u.country === c.id && u.commander === lead.id), u => u.men) / Math.max(sum(Object.values(w.units).filter(u => u.country === c.id), u => u.men), 1e-9) : 1;
+  if (r > .92 && canSplit(w, c) && own >= .25) {
     startCivilWar(w, c, lead, 'Coup Forces');
     return 'The coup stalled and the army split.';
   }
