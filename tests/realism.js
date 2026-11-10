@@ -1344,4 +1344,20 @@ chain('The people around the seats answer: a contract put to an officer is taken
   assert.notEqual(no.status, 'proposed', 'an offer to someone nobody plays does not hang unanswered');
   const text = courtAsk(w, c, [{ from: w.characters[c.general], to: col, text: 'Have you any tie to the banking house?' }]); for (const part of [col.name, 'takes private pay', 'Have you any tie', '"replies"']) assert.ok(text.includes(part), `whoever speaks for them is told: ${part}`);
 });
+chain('An order is carried out as far as the state has the offices and the loyal servants to do it: a thin state takes quarters to collect a new tax, works cost more where graft and distance are large, a faithless commander delays, a faithless police chief gives warning, and a faithless treasurer keeps some back', () => {
+  const state = bureau => { const w = inherited(), c = w.countries.U1; c.bureaucracy = bureau; return [w, c, ld(w, c)]; };
+  const [w, c, boss] = state(20), was = c.tax.income, r = applyOp(w, boss, { op: 'set_tax', kind: 'income', rate: was + .1 }); assert.ok(r.ok, r.msg);
+  assert.ok(c.tax.income > was + .02 && c.tax.income < was + .08, `a thin state has part of the new rate in force at once: ${was} -> ${c.tax.income}`); const first = c.tax.income; c.bureaucracy = 20; adminStep(w); assert.ok(c.tax.income > first, 'and more of it each quarter');
+  for (let i = 0; i < 12; i++) { c.bureaucracy = 20; adminStep(w); } assert.ok(Math.abs(c.tax.income - (was + .1)) < 1e-9 && !Object.keys(c.taxTarget || {}).length, 'until it is all collected');
+  const [w2, c2, boss2] = state(90), was2 = c2.tax.income; applyOp(w2, boss2, { op: 'set_tax', kind: 'income', rate: was2 + .1 }); assert.ok(Math.abs(c2.tax.income - was2 - .1) < 1e-9, 'a capable state has it in force at once');
+  // The same work, in an honest state near the capital and in a corrupt one far from it.
+  const price = (corruption, admin) => { const [x, k, b] = state(60), p = x.provinces[k.capital]; k.corruption = corruption; p.admin = admin; k.treasury = 1e6; k.stock.machines = 1e4; k.stock.steel = 1e4; const t = k.treasury; const o = applyOp(x, b, { op: 'build', province: p.id, kind: 'infrastructure', pct_gdp: .02 }); assert.ok(o.ok, o.msg); return (t - k.treasury) / k.gdp; };
+  const clean = price(5, .9), dirty = price(80, .1); assert.ok(dirty > clean * 1.25, `graft and distance make the same work dearer: ${clean} against ${dirty}`);
+  // A commander who has lost faith.
+  const [x, k, b] = state(60), u = Object.values(x.units).filter(v => v.country === 'U1' && x.characters[v.commander]?.alive)[0], col = x.characters[u.commander], to = x.provinces[u.province].neighbors.find(n => x.provinces[n].controller === 'U1');
+  if (to) { col.loyalty = 5; let delays = 0; for (let i = 0; i < 40; i++) { u.target = null; if (!applyOp(x, b, { op: 'move', unit: u.id, to }).ok) delays++; } assert.ok(delays > 6 && delays < 30, `he obeys when it suits him: ${delays} of 40 orders delayed`); col.loyalty = 90; u.target = null; assert.ok(applyOp(x, b, { op: 'move', unit: u.id, to }).ok, 'a loyal one marches'); }
+  const chief = Object.values(x.characters).find(v => v.country === 'U1' && v.post === 'police'), opp = x.characters[k.opposition]; chief.loyalty = 5; k.courts = 0; opp.inbox = []; let warned = 0; for (let i = 0; i < 40; i++) { opp.status = 'free'; const o = applyOp(x, b, { op: 'purge', character: opp.id, fate: 'imprisoned' }); if (/gave warning/.test(o.msg)) warned++; }
+  assert.ok(warned >= 4 && warned < 36 && opp.inbox.some(m => /warned in time/.test(m.text)), 'a faithless police chief lets the quarry know');
+  const clerk = Object.values(x.characters).find(v => v.country === 'U1' && v.post === 'treasury'); clerk.loyalty = 5; clerk.greed = 90; k.treasury = 5000; k.lastRevenue = 1000; const had = clerk.wealth; courtOf(x, applyOp); assert.ok(k.treasury < 5000 && clerk.wealth > had && clerk.secrets.some(s => /Kept back money/.test(s.text)), 'a faithless treasurer keeps some back, and that can be found');
+});
 console.log('All checks passed.');

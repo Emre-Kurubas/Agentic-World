@@ -19,6 +19,10 @@ export function adminStep(w) {
       if (p.governor && (!w.characters[p.governor]?.alive || w.characters[p.governor].country !== c.id)) p.governor = null;
       p.admin = (p.admin ?? .5) + (targetAdmin(w, c, p, d[p.id]) - (p.admin ?? .5)) * .06;
     }
+    // Rates that were ordered and are not yet fully collected come into force as the offices get round to it.
+    const pace = clamp(.3 + c.bureaucracy / 100, .35, 1);
+    for (const [k, to] of Object.entries(c.taxTarget || {})) { c.tax[k] += (to - c.tax[k]) * pace; if (Math.abs(to - c.tax[k]) < .003) { c.tax[k] = to; delete c.taxTarget[k]; } }
+    if (c.tariffTarget != null) { c.tariff += (c.tariffTarget - c.tariff) * pace; if (Math.abs(c.tariffTarget - c.tariff) < .003) { c.tariff = c.tariffTarget; c.tariffTarget = null; } }
     const pop = sum(provs, provincePop) || 1, reach = sum(provs, p => (p.admin ?? .5) * provincePop(p)) / pop, base = Math.max(c.bureaucracy / 100, .1);
     c._adminFactor = clamp(reach / (base * .92), .65, 1.1);
   }

@@ -135,5 +135,5 @@ export function inheritStates(w) {
     else if (a.advisory) makeParliament(c, a.advisory, false);
   }
   // The people around the seats are there from the first day, and those in the seats do not arrive with clean hands and empty pockets.
-  w.burdens = true; seatCourt(w); burdenAll(w);
+  w.burdens = true; w.friction = true; seatCourt(w); burdenAll(w);
 }

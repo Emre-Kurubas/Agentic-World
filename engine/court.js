@@ -248,6 +248,8 @@ export function courtStep(w, applyOp) {
     for (const ch of minorsOf(w, c)) {
       if (ch.status !== 'free') continue;
       settle(w, c, ch);
+      // Whoever keeps the treasury and has lost both faith and scruple keeps some of it.
+      if (w.friction && ch.post === 'treasury' && ch.loyalty < 30 && ch.greed > 50) { const take = Math.min(Math.max(c.treasury, 0), (c.lastRevenue || 0) * .012); c.treasury -= take; ch.wealth += take * .2; c.corruption = clamp(c.corruption + .3, 2, 95); if (take > 0 && !(ch.secrets || []).some(s => /Kept back money/.test(s.text) && w.turn - s.turn < 8)) trace(w, ch, `Kept back money from the treasury he keeps, about ${Math.round(take)} a quarter.`); }
       if (ch.handler) inform(w, c, ch);
       if (ch.status !== 'free') continue;
       if (ch.role === 'officer' || commandOf(w, ch)) officer(w, c, ch, applyOp);

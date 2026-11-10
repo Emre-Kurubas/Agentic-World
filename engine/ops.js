@@ -53,6 +53,9 @@ const TREATY = ['alliance', 'nonaggression', 'trade', 'military_access', 'peace'
 const LAW_TITLE = { nationalize_company: 'Company nationalization', set_tax: 'Tax regulation', set_budget: 'Budget amendment', set_tariff: 'Customs tariff', borrow: 'Borrowing authority', declare_war: 'Declaration of war', ban_party: 'Party ban', land_reform: 'Land reform', nationalize: 'Nationalization', privatize: 'Privatization' };
 
 const num = (v, a, b, d = a) => clamp(Number.isFinite(Number(v)) ? Number(v) : d, a, b);
+// How much of an order the state's offices carry out at once. A bare test world has none of this friction.
+const reach = (w, c) => w.friction ? clamp(.3 + c.bureaucracy / 100, .35, 1) : 1;
+const pc = v => `${Math.round(v * 1000) / 10}%`;
 const menText = men => men < 1 ? `${Math.round(men * 1000)} men` : `${Math.round(men * 10) / 10} thousand men`;
 const alive = (w, id) => { const c = w.countries[id]; return c?.alive ? c : null; };
 // A character's real traces that can be found: dossiers are made of these.
@@ -151,9 +154,11 @@ export function applyOp(w, actor, op) {
   if (FIRM_OPS.has(op.op)) return firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num);
   if (LABOUR_OPS.has(op.op)) return labourOp(w, actor, c, op, { fail, num, governs: governs(w, c, actor), tell, allowance });
   switch (op.op) {
-    case 'set_tax': if (!has(c.tax, op.kind)) return fail('No such tax type.'); c.tax[op.kind] = num(op.rate, 0, .7); return ok();
+    // A rate is ordered in a day and collected by offices: a capable state has the new rate in force at once, a thin one takes several quarters to get there.
+    case 'set_tax': { if (!has(c.tax, op.kind)) return fail('No such tax type.'); const to = num(op.rate, 0, .7), was = c.tax[op.kind], r = reach(w, c); c.tax[op.kind] = was + (to - was) * r; if (r < 1 && Math.abs(to - c.tax[op.kind]) > .003) (c.taxTarget ||= {})[op.kind] = to; else if (c.taxTarget) delete c.taxTarget[op.kind];
+      return r < 1 && Math.abs(to - was) > .003 ? { ok: true, msg: `The ${op.kind} tax is ordered to ${pc(to)}. With the offices the state has, it stands at ${pc(c.tax[op.kind])} this quarter and reaches the new rate over the next few.` } : ok(); }
     case 'set_budget': if (!BUDGET.includes(op.category)) return fail('No such budget category.'); c.budget[op.category] = num(op.share, 0, .45); return ok();
-    case 'set_tariff': c.tariff = num(op.rate, 0, 1); return ok();
+    case 'set_tariff': { const to = num(op.rate, 0, 1), was = c.tariff, r = reach(w, c); c.tariff = was + (to - was) * r; c.tariffTarget = r < 1 && Math.abs(to - c.tariff) > .003 ? to : null; return r < 1 && Math.abs(to - was) > .003 ? { ok: true, msg: `The tariff is ordered to ${pc(to)}; the customs houses apply ${pc(c.tariff)} this quarter and the rest follows.` } : ok(); }
     case 'set_arms_share': c.armShare = num(op.share, 0, .75); return ok();
     case 'print_money': { const pct = allowance(w, c, 'print', .5, num(op.pct_gdp, 0, .8)); if (pct <= 0) return fail('The presses have already run as hard as they can this quarter.'); const x = gdp * pct; c.money += x; c.treasury += x; news(w, `${c.name} central bank put a large amount of money into circulation.`, { kind: 'economy', countries: [c.id] }); return { ok: true, msg: `${Math.round(x)} in new money entered the treasury.` }; }
     case 'borrow': { const x = gdp * num(op.pct_gdp, 0, .6), room = creditLeft(c); if (x > room) return fail(`Lenders would put up at most ${Math.round(room)} more this quarter.`); c.debt += x; c.treasury += x; c._loans = (c._loans || 0) + x; c._taken = (c._taken || 0) + x; return { ok: true, msg: `Borrowed ${Math.round(x)}.` }; }
@@ -480,6 +485,8 @@ export function applyOp(w, actor, op) {
       if (ch.status === fate) return fail(`${ch.name} is already ${fate}.`);
       if (ch.status === 'exiled') return fail(`${ch.name} is abroad, beyond the reach of the police.`);
       if (rand(w) < c.courts / 220) { c.legitimacy = clamp(c.legitimacy - 2, 0, 100); news(w, `${c.name} court halted the order against ${ch.name}.`, { kind: 'politics', countries: [c.id] }); return fail('The court blocked it.'); }
+      // An order of arrest passes through the police. A chief of police who has lost faith in the ruler lets it be known in time.
+      { const chief = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'police' && x.status === 'free'); if (w.friction && chief && chief.id !== ch.id && chief.loyalty < 30 && !inCustody && rand(w) < .4) { tell(w, ch, 'A friend in the police', `An order for your arrest has been signed by ${actor.name}. You were warned in time; they will come again.`); leaveTrace(w, chief, `Warned ${ch.name} of the order of arrest.`); return fail(`${ch.name} could not be found when the police came: someone gave warning.`); } }
       const seated = c[ch.role] === ch.id, risk = seated && ch.role === 'general' ? c.blocs.army.power / 100 : .15;
       if (!inCustody && rand(w) < risk * .45) { news(w, `${ch.name} resisted arrest in ${c.name}.`, { kind: 'plot', countries: [c.id] }); ch.loyalty = 0; return fail('The arrest met resistance.'); }
       if (seated && ch.role === 'general') Object.values(w.units).filter(u => u.country === c.id).forEach(u => u.loyalty = clamp(u.loyalty - 8, 0, 100));
@@ -629,7 +636,9 @@ function persecute(w, c, actor, op) {
 
 function build(w, c, op) {
   const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('That province is not under your control.');
-  const gdp = Math.max(c.gdp, 1), share = num(op.pct_gdp, .01, .25, .03), cost = gdp * share, kind = op.kind;
+  // What a work costs the state is more than what it is worth, by what sticks to hands on the way and by how far the capital's eye reaches.
+  const waste = w.friction ? 1 + c.corruption / 300 + Math.max(0, .5 - (p.admin ?? .5)) * .6 : 1;
+  const gdp = Math.max(c.gdp, 1), share = num(op.pct_gdp, .01, .25, .03), cost = gdp * share * waste, kind = op.kind;
   const needsMachines = has(PLANTS, kind) || kind === 'mine' || kind === 'dam';
   const m = share * 18; if (needsMachines && c.stock.machines < m) return fail('Not enough machinery; import or produce it.');
   const steel = share * 40; if ((kind === 'railway' || kind === 'port' || kind === 'dam') && c.stock.steel < steel) return fail('Not enough steel.');
@@ -644,8 +653,13 @@ function build(w, c, op) {
   const note = pay(c, cost); if (note === null) return fail(NO_FUNDS);
   if (needsMachines) c.stock.machines -= m; if (['railway', 'port', 'dam'].includes(kind)) c.stock.steel -= steel; c.stock.steel -= works;
   queueProject(w, c, { kind, province: p.id, resource: op.resource, share });
-  return { ok: true, msg: `Started, ready in ${durationOf(kind)} quarters.${note}` };
+  return { ok: true, msg: `Started, ready in ${durationOf(kind)} quarters.${waste > 1.08 ? ` It costs about ${Math.round((waste - 1) * 100)}% more than the work is worth: graft, and the distance of ${p.name} from the capital's eye.` : ''}${note}` };
 }
 const ok = () => ({ ok: true, msg: 'Applied.' });
 const fail = msg => ({ ok: false, msg });
-function applyOrder(w, c, u, to) { if (u.province === to) return fail('Already there.'); if (!pathStep(w, u.province, to, c.id)) return fail('No route.'); u.target = to; return ok(); }
+function applyOrder(w, c, u, to) {
+  if (u.province === to) return fail('Already there.'); if (!pathStep(w, u.province, to, c.id)) return fail('No route.');
+  // A commander who has lost faith in the government obeys when it suits him.
+  const chief = w.characters[u.commander]; if (w.friction && chief?.alive && isMinor(chief) && chief.loyalty < 25 && rand(w) < .4) return fail(`${u.id} did not march: ${chief.name}, who commands it, finds reasons for delay.`);
+  u.target = to; return ok();
+}
