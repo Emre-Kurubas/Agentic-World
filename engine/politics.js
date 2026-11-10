@@ -257,13 +257,15 @@ export function plotStep(w) {
   }
 }
 
-function armySides(w, c, pl) {
+export function armySides(w, c, pl) {
   const inPlot = new Set([pl.leader, ...pl.members]);
   const generalIn = inPlot.has(c.general);
   let pro = 0, anti = 0;
   for (const u of Object.values(w.units)) {
     if (u.country !== c.id) continue;
-    const lean = (100 - u.loyalty) + (generalIn ? 22 : 0) - 40;
+    // Men follow the officer who commands them: a commander in the plot brings most of his unit with him, and one who stands by the government holds his together.
+    const chief = w.characters[u.commander], led = chief?.alive && chief.status === 'free' && chief.country === c.id;
+    const lean = (100 - u.loyalty) + (generalIn ? 22 : 0) + (led ? (inPlot.has(chief.id) ? 45 : chief.id !== c.general && (chief.loyalty ?? 50) >= 55 ? -15 : 0) : 0) - 40;
     if (lean > 0) pro += u.men * lean / 50; else anti += u.men * (-lean) / 50;
   }
   return { pro, anti };
@@ -322,7 +324,7 @@ export function executePlot(w, pl) {
   if (r > 1.12) {
     news(w, `Coup in ${c.name}: ${target.name} was overthrown and ${lead.name} took power.`, { kind: 'plot', countries: [c.id] });
     sideline(w, target, 'exiled');
-    const military = lead.role === 'general';
+    const military = ['general', 'officer'].includes(lead.role);
     installLeader(w, c, lead, military ? { regime: 'Military junta', elections: false, succession: 'army', pressFreedom: Math.min(c.pressFreedom, 25) } : { succession: c.elections ? c.succession : 'open' });
     // Soldiers who take the palace send the deputies home; the chamber sits again only when the junta recalls it.
     if (military && c.parliament) c.parliament.suspendedUntil = w.turn + 400;

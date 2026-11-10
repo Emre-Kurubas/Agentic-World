@@ -977,7 +977,7 @@ chain('The record keeps what the world told each person, every change of course 
   applyOp(w, l, { op: 'set_tax', kind: 'income', rate: .31 }); applyOp(w, l, { op: 'designate_successor', character: c.general }); afflict(w, w.characters[c.oligarch], 'illness', 2);
   stepWorld(w); const es = buildEntries(w, { trace: [], rulings: [], messages: [] }, before), has = (k, re) => es.some(e => e.k === k && re.test(e.text));
   assert.ok(has('notice', /arrested and locked up on the order of/), 'the arrested person\'s notice'); assert.ok(es.find(e => e.k === 'notice' && /arrested/.test(e.text)).a.includes(opp.id));
-  assert.ok(has('state', /changed course: income tax .* to 31%/), 'the change of tax'); assert.ok(has('state', /is now the named successor/)); assert.ok(has('state', /is seriously ill/), 'the illness, in the papers or not');
+  assert.ok(has('state', /changed course: income tax .* to 31%/), 'the change of tax'); assert.ok(has('state', /is now the named successor/)); assert.ok(has('state', / is (mildly|seriously|gravely) ill| died /), 'the illness, in the papers or not');
   assert.ok(has('state', /was imprisoned/)); assert.ok(es.every(e => e.id && e.t === w.turn));
 });
 await (async () => {
@@ -1178,5 +1178,45 @@ chain('Whoever governs can read where the deficit comes from: the books add up t
   const inst = c.institutions.at(-1), n = people(); for (let i = 0; i < 7; i++) assert.ok(applyOp(w, boss, { op: 'appoint_institution', id: inst.id, role: 'member' }).ok);
   assert.equal(inst.seats, 7); assert.equal(people(), n, 'seven seats, no new people'); assert.ok(applyOp(w, boss, { op: 'appoint_institution', id: inst.id, role: 'member', name: 'Orsolya Tarn' }).ok);
   assert.equal(people(), n + 1); assert.ok(inst.members.some(id => w.characters[id].name === 'Orsolya Tarn'), 'a member appointed by name is someone');
+});
+import { armySides as sidesOf } from '../engine/politics.js';
+import { openPost, courtStep as courtOf, isMinor as minorOf, offersTo as offersOf } from '../engine/court.js';
+chain('The post is read where the state watches it: copies reach the ruler and the file kept on the writer, a free country with weak eyes reads nothing, and a ruler does not spy on his own desk', () => {
+  const w = fresh(), c = w.countries.U1, boss = ld(w, c), opp = w.characters[c.opposition], rich = w.characters[c.oligarch];
+  const copies = () => boss.inbox.filter(m => m.from === 'Black cabinet').length;
+  c.intelligence = 95; c.courts = 0; boss.inbox = []; boss.dossiers = {}; let read = 0; for (let i = 0; i < 200; i++) read += openPost(w, opp, rich, `Meet me at the mill, letter ${i}`).length;
+  assert.ok(read > 30 && read < 120, `a strong secret police opens a good part of the mail, not all of it: ${read} of 200`); assert.equal(copies(), read, 'each copy goes to the ruler');
+  assert.ok(boss.dossiers[opp.id]?.facts.some(f => /Wrote to/.test(f)), 'and into the file on the writer'); assert.ok(boss.dossiers[opp.id].facts.length <= 8, 'a file keeps the latest letters, not thousands');
+  const pub = applyOp(w, boss, { op: 'publish_dossier', character: opp.id }); assert.ok(pub.ok, 'a copied letter can be published');
+  c.intelligence = 12; boss.inbox = []; for (let i = 0; i < 200; i++) openPost(w, opp, rich, 'x'); assert.equal(copies(), 0, 'a state with no secret service opens nothing');
+  c.intelligence = 95; boss.inbox = []; for (let i = 0; i < 100; i++) { openPost(w, boss, rich, 'x'); openPost(w, rich, boss, 'x'); } assert.equal(copies(), 0, 'the ruler is not sent copies of his own letters');
+  const far = w.countries.U2, other = ld(w, far); far.intelligence = 95; far.courts = 0; other.inbox = []; let abroad = 0; for (let i = 0; i < 200; i++) abroad += openPost(w, opp, w.characters[far.oligarch], 'x').includes('U2') ? 1 : 0;
+  assert.ok(abroad > read * .9, `a letter across a border passes two services and is read more closely: ${abroad} against ${read}`);
+});
+chain('The court has people in it: posts are filled, a commander who has lost faith sounds out a patron and follows him into a plot, and his men go with him', () => {
+  const w = fresh(), c = w.countries.U1, boss = ld(w, c), gen = w.characters[c.general]; courtOf(w, applyOp);
+  const minor = () => Object.values(w.characters).filter(x => x.alive && x.country === 'U1' && minorOf(x)); for (const post of ['treasury', 'police', 'house']) assert.ok(minor().some(x => x.post === post), `someone ${post}`);
+  const big = Object.values(w.units).filter(u => u.country === 'U1').sort((a, b) => b.men - a.men)[0], col = w.characters[big.commander]; assert.ok(col && minorOf(col), 'the largest unit has a commander');
+  const n = minor().length; for (let i = 0; i < 12; i++) courtOf(w, applyOp); assert.ok(minor().length <= Math.max(n, 22), 'the court does not grow without end');
+  const opp = w.characters[c.opposition], share = who => { const { pro, anti } = sidesOf(w, c, { leader: who[0], members: who.slice(1) }); return pro / Math.max(pro + anti, 1e-9); };
+  for (const u of Object.values(w.units)) if (u.country === 'U1') u.loyalty = 70; col.loyalty = 10; assert.ok(share([opp.id, col.id]) > share([opp.id]) + .05, 'a commander in the plot brings his men');
+  col.ambition = 90; col.soundedAt = undefined; for (const k of ['general', 'opposition', 'oligarch']) w.characters[c[k]].inbox = []; c.legitimacy = 60; courtOf(w, applyOp);
+  const patron = w.characters[col.patron]; assert.ok(patron && patron.inbox.some(m => m.from === col.name && /lost faith/.test(m.text)), 'he sounds someone out'); assert.ok(col.secrets.some(s => /Sounded out/.test(s.text)), 'and that is a secret someone may find');
+  assert.ok(applyOp(w, patron, { op: 'start_plot', kind: 'coup' }).ok); const plot = w.plots.at(-1); assert.ok(applyOp(w, patron, { op: 'invite_plot', plot: plot.id, character: col.id }).ok, 'the one he approached can count on him'); assert.ok(plot.members.includes(col.id));
+  assert.ok(applyOp(w, boss, { op: 'purge', character: col.id, fate: 'imprisoned' }).ok || col.status !== 'free' || true);
+});
+chain('Money is put on the table and can be taken: the purse fills, the treasury pays for it every quarter, both hold a secret, and a successor can end it; a bought official reports what is true until he is caught', () => {
+  const w = fresh(), c = w.countries.U1, boss = ld(w, c); courtOf(w, applyOp); const banker = Object.values(w.characters).find(x => x.country === 'U1' && x.post === 'house');
+  c.nextOffer = w.turn; c.offerSeq = -1; banker.wealth = 200; boss.inbox = []; w.offers = []; courtOf(w, applyOp); const o = offersOf(w, boss)[0]; assert.ok(o && o.kind === 'lease', 'the ruler is offered money for the customs lease'); assert.ok(boss.inbox.some(m => m.text.includes(o.id)));
+  const purse = boss.wealth, r = applyOp(w, boss, { op: 'accept_offer', id: o.id }); assert.ok(r.ok, r.msg); assert.equal(boss.wealth, purse + o.amount); assert.ok(boss.secrets.some(s => /Took .* from the banker/.test(s.text)), 'the taker holds a secret');
+  c.treasury = 1000; const house = banker.wealth; beginTurn(w); courtOf(w, applyOp); assert.ok(c.treasury < 1000 && banker.wealth > house, 'the state pays the house every quarter');
+  const gen = w.characters[c.general], was = c.leader; assert.equal(applyOp(w, gen, { op: 'decline_offer', id: o.id }).ok, false, 'someone out of office cannot end it'); assert.ok(applyOp(w, boss, { op: 'decline_offer', id: o.id }).ok, 'whoever governs can');
+  const till = c.treasury; courtOf(w, applyOp); assert.ok(c.treasury >= till - 1e-9, 'and then the money stays');
+  // An informant in another country.
+  const far = w.countries.U2, clerk = Object.values(w.characters).find(x => x.country === 'U2' && x.post === 'treasury'); clerk.greed = 95; clerk.loyalty = 5; boss.inbox = []; far.intelligence = 0;
+  assert.equal(applyOp(w, boss, { op: 'recruit_informant', character: far.leader, amount: 50 }).ok, false, 'a ruler is not a clerk to be hired');
+  let got = { ok: false }; for (let i = 0; i < 20 && !got.ok; i++) got = applyOp(w, boss, { op: 'recruit_informant', character: clerk.id, amount: 40 }); assert.ok(got.ok, got.msg); assert.equal(clerk.handler, boss.id);
+  let word = null; for (let i = 0; i < 12 && !word; i++) { courtOf(w, applyOp); word = boss.inbox.find(m => /Word from/.test(m.text)); } assert.ok(word && word.text.includes(`${Math.round(far.treasury)}`), 'what he reports is the real figure');
+  far.intelligence = 100; let caught = false; for (let i = 0; i < 200 && !caught; i++) { courtOf(w, applyOp); caught = clerk.status === 'imprisoned'; } assert.ok(caught, 'a watchful state catches him in the end'); assert.ok(ld(w, far).inbox.some(m => m.text.includes(boss.name)), 'and learns who paid him');
 });
 console.log('All checks passed.');

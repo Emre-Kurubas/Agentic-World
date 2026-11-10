@@ -6,6 +6,7 @@ import { SUCCESSION, SUCCESSION_TEXT, successionRule } from '../engine/politics.
 import { groupsOf } from '../engine/culture.js';
 import { creditLeft } from '../engine/money.js';
 import { offersFor } from '../engine/contracts.js';
+import { offersTo, postOf } from '../engine/court.js';
 import { healthText, incapacitated } from '../engine/health.js';
 import { upkeepCost } from '../engine/military.js';
 
@@ -33,6 +34,7 @@ const seenText = answers => `WHAT YOU LOOKED UP:\n${answers.map(a => `[${a.q}]\n
 // Offers stay on the desk until they are answered or lapse; a message read once is not the only trace of them.
 function waiting(w, ch) {
   const c = w.countries[ch.country], out = offersFor(w, ch).map(k => `- Contract ${k.id} from ${w.characters[k.a]?.name ?? k.a}: ${k.terms}${k.pay ? ` Payment ${Math.round(k.pay)} per quarter${k.payer === ch.id ? ', paid by you' : k.payer ? ', paid to you' : ''}.` : ''}${k.good ? ` ${Math.round(k.amount)} ${k.good} per quarter.` : ''} Runs ${k.turns} quarters.`);
+  for (const o of offersTo(w, ch)) out.push(`- Offer ${o.id} from ${w.characters[o.from]?.name}: ${o.text}.`);
   if (c.leader === ch.id) for (const t of w.treaties) if (t.pending && t.parties.includes(c.id) && t.proposer !== c.id) out.push(`- Treaty ${t.id} from ${w.countries[t.proposer]?.name}: ${t.kind.replace('_', ' ')}. ${t.terms}${t.clauses?.length ? ` [${t.clauses.map(x => x.text ?? x.type).join('; ')}]` : ''}`);
   return out;
 }
@@ -50,7 +52,7 @@ Outcomes of your decisions since you last woke:
 ${(ch.newOutcomes ?? []).map(d => `- ${d}`).join('\n') || '- (none)'}
 
 Urgent matters: ${alarms(w, ch).join(' ') || 'No urgent matters reported.'}
-Secret messages to you:
+Secret messages to you (the post is not safe: a state that keeps watch opens some letters, more of those that cross a border):
 ${inbox}${offers.length ? `\nOffers waiting for your answer:\n${offers.join('\n')}` : ''}
 News headlines:
 ${news}
@@ -97,6 +99,7 @@ Rule at home: set_regime{regime,ideology,elections,press_freedom,axes,succession
 Force against persons and peoples: purge{character,fate:imprisoned|exiled|dead} (arrest, banishment or execution of someone in the actor's own country; fate dead on a prisoner is an execution) release{character} persecute{province,group?,method:kill|expel,share,secret} (violence against the population of a province the actor's country controls, its own or occupied: group is a people or faith living there, left out it means everyone; share is the part of them to be killed or driven out, 0.01 to 0.6; it needs troops or police on the spot, and soldiers may refuse)
 Law and institutions: propose_law{title,text,ops:[operations],axes} vote_bill{bill,vote:yes|no} lobby_bill{bill,party,amount,side:yes|no} create_parliament{name,legislative} suspend_parliament{turns} create_institution{name,description,budget_pct_gdp,amount,powers:[],authority:[],veto:[],head,members:[]} fund_institution{id,budget_pct_gdp} appoint_institution{id,character?,name?,role:head|member,remove} (a member given neither character nor name is an ordinary unnamed seat; give a name only when the decision names the person or the person matters as an individual) dissolve_institution{id}
 Private dealings: propose_contract{to,terms,pay_per_turn,payer:me|them|none,good?,amount?,seller:me|them,turns,state?} accept_contract{id,state?} (or {from} when the id is not known; with state:true it also moves the actor's own earlier offer or contract onto the state's account; state:true when the one who governs signs for the state and not for themselves: the treasury then pays and is paid instead of their own purse, and the state's own works deliver. Army supply, public works and anything else the state buys or sells belongs on the state's account) pay_person{character,amount,reason} (whoever governs has the treasury pay a person: salary, grant, reward, reimbursement, compensation; done in the open) pay_state{amount,reason} (a person pays their own money into the treasury of their country) give{to,amount,reason} (a gift of the actor's own money to a person or to an institution by id, at home or abroad; unlike bribe it is no secret and leaves no mark) cancel_contract{id} (ends a contract in force, declines an offer made to the actor, or withdraws the actor's own offer) lend_private{character,amount,interest,due_turns,terms} repay_debt{debt,amount} forgive_debt{debt} bribe{character,amount,direction:up|down} invest{amount} capital_flight{share} embezzle{pct_gdp}
+The court: recruit_informant{character,amount} (pays an officer, official, governor or banker, at home or abroad, to report each quarter what passes through his post; he may refuse and tell, and may be caught later) accept_offer{id} decline_offer{id} (money offered to the actor by a banking house, listed below; decline_offer by whoever governs also ends such an arrangement already running at the state's cost)
 Secrets and plots: gather_dossier{character} blackmail{character,demand} publish_dossier{character} start_plot{kind:coup|assassination|uprising,secrecy,character?} (for an assassination, character is the person to be killed, anyone in any country; left out it means the actor's own ruler) invite_plot{plot,character} join_plot{plot} betray_plot{plot} fund_plot{plot,amount} execute_plot{plot}
 Anything else: custom{label,effects?:[{stat,delta,turns}]} where stat is one of sat.peasants sat.workers sat.middle sat.elite sat.all sat.army sat.capital sat.clergy sat.bureaucracy unrest legitimacy. These are passing moods only, and small. noop{}
 Institutions: powers are ${[...STATE_POWERS, ...CIVIL_POWERS].join(',')} (only the ruler can found institutions with state powers; one founded by a private person lives on that person's own wealth through amount). A state institution's budget_pct_gdp is at most ${MAX_AGENCY_BUDGET} and is paid from the budget every quarter. authority: operations its members may carry out (${[...DELEGABLE].join(',')}). veto: operations it can block. Do not leave a new institution, organization or council as text: give it the powers, budget, head and, where needed, authority or veto that match its purpose.
@@ -114,9 +117,11 @@ Authority: the ruler may order anything. The chief of staff may move units and f
 export function refereePrompt(w, c, entries) {
   const nm = id => w.countries[id]?.name ?? id, P = id => `${id}=${w.provinces[id]?.name}`, cut = (s, n) => String(s ?? '').replace(/\s+/g, ' ').slice(0, n);
   const seat = x => `${c[x.role] === x.id ? x.role : 'no office'}${x.status !== 'free' ? `/${x.status}` : ''}${incapacitated(x) ? '/gravely ill' : ''}`;
-  const refs = Object.values(w.characters).filter(x => x.country === c.id && x.alive).map(x => `${x.id}=${x.name}/${seat(x)}`).join(', ');
+  const refs = Object.values(w.characters).filter(x => x.country === c.id && x.alive).map(x => `${x.id}=${x.name}/${seat(x)}${postOf(w, x) ? ` (${postOf(w, x)})` : ''}`).join(', ');
+
   const abroad = aliveCountries(w).filter(o => o.id !== c.id).flatMap(o => ['leader', 'general', 'opposition', 'oligarch'].map(r => w.characters[o[r]]).filter(Boolean).map(x => `${x.id}=${x.name}/${x.role}/${o.id}`)).join(', ');
   const provs = countryProvinces(w, c.id), other = t => t.parties.find(x => x !== c.id), ids = new Set(entries.map(e => e.actor.id));
+  const tabled = (w.offers || []).filter(o => o.status === 'open' && ids.has(o.to)).map(o => `${o.id} to ${o.to}: ${o.text}`), running = (w.offers || []).filter(o => o.status === 'running' && o.country === c.id).map(o => `${o.id} (${o.kind}, taken by ${o.to}, ${Math.round(o.drain)} a quarter to the house of ${w.characters[o.from]?.name})`);
   const mine = provs.map(p => `${P(p.id)}${p.id === c.capital ? ' (capital)' : ''}${p.coast ? ' coast' : ''}${p.controller !== p.owner ? ` (occupied, belongs to ${nm(p.owner)})` : ''}`).join(', ');
   const across = {};
   for (const p of provs) for (const n of p.neighbors) { const q = w.provinces[n]; if (q.controller !== c.id) (across[q.controller] ||= new Set()).add(n); }
@@ -150,6 +155,7 @@ Units: ${list(Object.values(w.units).filter(u => u.country === c.id).map(u => `$
 Fleets: ${list(Object.values(w.fleets).filter(f => f.country === c.id).map(f => `${f.id} ${Math.round(f.ships)} ${f.kind ?? 'cruiser'} in ${f.sea}`))}. Seas off its own ports: ${seas(c)}.${foes.length ? ` Seas off enemy ports: ${foes.map(o => `${o.name} ${seas(o)}`).join('; ')}.` : ''}
 Wars: ${list(w.wars.filter(x => x.active).map(x => `${x.id} ${x.name} (a: ${x.a.map(nm).join(', ')}; b: ${x.b.map(nm).join(', ')})`))}.
 Treaties in force: ${list(w.treaties.filter(t => t.active && t.parties.includes(c.id)).map(t => `${t.id} ${t.kind} with ${nm(other(t))}`))}. Proposals waiting: ${list(w.treaties.filter(t => t.pending && t.parties.includes(c.id)).map(t => `${t.id} ${t.kind} ${t.proposer === c.id ? `offered to ${nm(other(t))}` : `offered by ${nm(t.proposer)}`}: ${cut(t.terms, 400)}`))}.
+Money offered by the banking house: ${tabled.length ? tabled.join('; ') : 'none'}. Arrangements of that kind now running at the state's cost: ${running.length ? running.join('; ') : 'none'}.
 Contracts of those deciding: ${list((w.contracts || []).filter(k => ['proposed', 'active'].includes(k.status) && (ids.has(k.a) || ids.has(k.b))).map(k => `${k.id} ${k.status === 'proposed' ? `offered by ${k.a} to ${k.b}, unanswered` : `in force between ${k.a} and ${k.b}`}${k.pay && k.payer ? `, ${Math.round(k.pay)} a quarter paid by ${k.purse?.[k.payer] ? `the treasury of ${k.purse[k.payer]}` : `${k.payer} personally`}` : ''}: ${cut(k.terms, 400)}`))}.
 Private debts: ${list((w.debts || []).filter(d => ['open', 'overdue'].includes(d.status) && (ids.has(d.debtor) || ids.has(d.creditor))).map(d => `${d.id} ${d.debtor} owes ${d.creditor} ${Math.round(d.owed)}`))}.
 Plots: ${list(w.plots.filter(p => p.active && p.country === c.id).map(p => `${p.id} ${p.kind}${p.target ? ` against ${p.target}` : ''}, led by ${p.leader}, progress ${Math.round(p.progress)}`))}.

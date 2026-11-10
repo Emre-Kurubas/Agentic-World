@@ -8,6 +8,7 @@ import { cultureStep } from './culture.js';
 import { adminStep } from './admin.js';
 import { contractStep } from './contracts.js';
 import { applyOp } from './ops.js';
+import { courtStep } from './court.js';
 import { countryProvinces, aliveCountries, provincePop } from './world.js';
 import { sum, quarterLabel } from './util.js';
 import { openCredit } from './money.js';
@@ -27,6 +28,7 @@ export function stepWorld(w) {
   satisfactionStep(w);
   partyStep(w);
   plotStep(w);
+  courtStep(w, applyOp);
   uprisingStep(w);
   electionStep(w);
   billStep(w, applyOp);
