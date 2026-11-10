@@ -62,11 +62,17 @@ const num = (v, a, b, d = a) => clamp(Number.isFinite(Number(v)) ? Number(v) : d
 const reach = (w, c) => w.friction ? clamp(.3 + c.bureaucracy / 100, .35, 1) : 1;
 const pc = v => `${Math.round(v * 1000) / 10}%`;
 // Land that changes hands is remembered by the state that lost it. Winning back what was lost is the kind of success a people does not forget either.
-function handOver(w, p, from, to) {
+// Only land taken by force is a wound: a province sold or exchanged by agreement leaves no claim behind. And a recovery counts for what the loss
+// had come to mean, a point of standing for each year the land was gone, up to five, so that handing a province to and fro earns nothing.
+function handOver(w, p, from, to, forced) {
   if (from === to) return;
   const year = 1900 + Math.floor(w.turn / 4), taker = w.countries[to];
-  if (p.lostBy === to) { delete p.lostBy; delete p.lostIn; if (taker?.alive) { taker.legitimacy = clamp(taker.legitimacy + 5, 0, 100); news(w, `${taker.name} has recovered ${p.name}.`, { kind: 'diplomacy', countries: [to, from], province: p.id }); } return; }
-  p.lostBy = from; p.lostIn = year;
+  if (p.lostBy === to) {
+    const gone = year - (p.lostIn ?? year), gain = clamp(gone, 0, 5); delete p.lostBy; delete p.lostIn;
+    if (taker?.alive && gain >= 1) { taker.legitimacy = clamp(taker.legitimacy + gain, 0, 100); news(w, `${taker.name} has recovered ${p.name}, lost ${gone} years ago.`, { kind: 'diplomacy', countries: [to, from], province: p.id }); }
+    return;
+  }
+  if (forced) { p.lostBy = from; p.lostIn = year; } else if (p.lostBy === from) { delete p.lostBy; delete p.lostIn; }
 }
 export const claimsOf = (w, id) => Object.values(w.provinces).filter(p => p.lostBy === id && p.owner !== id);
 const menText = men => men < 1 ? `${Math.round(men * 1000)} men` : `${Math.round(men * 10) / 10} thousand men`;
@@ -140,7 +146,7 @@ function endWar(w, a, b, annex) {
   }
   for (const p of Object.values(w.provinces)) {
     if (![a, b].includes(p.owner) || ![a, b].includes(p.controller) || p.owner === p.controller) continue;
-    if (annex) { const from = p.owner; p.owner = p.controller; p.admin = Math.min(p.admin ?? .5, .3); handOver(w, p, from, p.owner); } else p.controller = p.owner;
+    if (annex) { const from = p.owner; p.owner = p.controller; p.admin = Math.min(p.admin ?? .5, .3); handOver(w, p, from, p.owner, true); } else p.controller = p.owner;
     delete p.siege;
   }
   settleOccupations(w);
@@ -540,7 +546,7 @@ export function applyOp(w, actor, op) {
       if (t.kind === 'peace') endWar(w, c.id, other.id, t.annex);
       for (const pid of t.cede || []) {
         const p = w.provinces[pid], giver = w.countries[p.owner], taker = p.owner === c.id ? other : p.owner === other.id ? c : null; if (!taker) continue;
-        p.owner = taker.id; p.controller = taker.id; p.admin = Math.min(p.admin ?? .5, .3); p.governor = null; delete p.siege; handOver(w, p, giver.id, taker.id);
+        p.owner = taker.id; p.controller = taker.id; p.admin = Math.min(p.admin ?? .5, .3); p.governor = null; delete p.siege; handOver(w, p, giver.id, taker.id, t.kind === 'peace' || !!t.ultimatum);
         if (giver.capital === pid) { const next = [...countryProvinces(w, giver.id)].sort((a, b) => provincePop(b) - provincePop(a))[0]; if (next) giver.capital = next.id; }
         news(w, `${p.name} passed from ${giver.name} to ${taker.name} by treaty.`, { kind: 'diplomacy', countries: [giver.id, taker.id], province: pid });
       }
