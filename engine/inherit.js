@@ -13,6 +13,7 @@ import { initFirms } from './firms.js';
 import { seatCourt } from './court.js';
 import { burdenAll } from './burdens.js';
 import { beginTurn, stepWorld } from './step.js';
+import { upkeepCost } from './military.js';
 import { seatGovernment, allocateSeats } from './polity.js';
 import { settleUnderground } from './underground.js';
 import { distance } from './politics.js';
@@ -116,15 +117,18 @@ function balance(w, cs) {
   // as there is. Three years are run on a copy and the stores, the market and the labour market are taken from it, so that the first year anyone
   // governs is an ordinary year and not the year the stores fill up.
   { const trial = structuredClone(w); trial.status = 'playing'; for (let i = 0; i < 12; i++) { beginTurn(trial); stepWorld(trial); }
-    for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive) continue; for (const g of Object.keys(c.stock)) if (g !== 'grain') c.stock[g] = t.stock[g]; c.unemployment = t.unemployment; c.lastSold = { ...t.lastSold }; c._need = { ...t._need }; }
+    for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive) continue; for (const g of Object.keys(c.stock)) if (g !== 'grain') c.stock[g] = t.stock[g]; c.unemployment = t.unemployment; c.lastSold = { ...t.lastSold }; c._need = { ...t._need };
+      // The army a state has kept for years is an army it has been paying: its military budget is what those men cost, measured against the output the country settles at.
+      if (t.realGdp > 0) c.budget.military = clamp(upkeepCost(w, c) / Math.max(c.priceLevel, .01) / t.realGdp * 1.03, .002, .2); }
     w.globalPrice = { ...trial.globalPrice }; }
   // The books are read after a year and a half, when the first quarters' adjustments are over: that is the level the state lives at.
-  for (let pass = 0; pass < 1; pass++) {
+  // Twice over: the first reading sets the rates, the second corrects for what those rates themselves changed.
+  for (let pass = 0; pass < 2; pass++) {
     const trial = structuredClone(w); trial.status = 'playing';
     for (let i = 0; i < 6; i++) { beginTurn(trial); stepWorld(trial); }
     for (const c of cs) {
       const t = trial.countries[c.id]; if (!t?.alive || !(t.lastRevenue > 0)) continue;
-      const want = (BOOKS[c.archetype] ?? 0) * t.gdp, factor = clamp((t.lastRevenue + want - t.lastBalance) / t.lastRevenue, .6, 1.6);
+      const want = (BOOKS[c.archetype] ?? 0) * t.gdp, factor = clamp((t.lastRevenue + want - t.lastBalance) / t.lastRevenue, .5, 1.8);
       for (const k of Object.keys(c.tax)) c.tax[k] = clamp(c.tax[k] * factor, .02, .6); c.tariff = clamp(c.tariff * factor, 0, .6);
     }
   }

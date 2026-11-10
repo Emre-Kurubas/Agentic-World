@@ -2100,4 +2100,23 @@ chain('A state born of a rising is a state only to those who recognise it: until
   assert.ok(applyOp(w, L('U2'), { op: 'propose_treaty', target: born.id, kind: 'nonaggression' }).ok, 'and treaties can be signed'); born.mods = []; w.turn++; diplomacyOf(w); assert.ok(born.mods.some(m => m.key === 'legitimacy' && m.delta > 0), 'recognised, it stands the firmer');
   const pax = applyOp(w, L('U1'), { op: 'propose_treaty', target: born.id, kind: 'peace', annex: true }); assert.ok(pax.ok, pax.msg); assert.ok(applyOp(w, ld(w, born), { op: 'accept_treaty', id: pax.treaty }).ok); assert.ok(born.recognition.includes('U1'), 'peace with the mother country is its recognition');
 });
+chain('A new world is handed over at rest: every army is an army that has been paid, no country begins in a general strike it did not earn, output does not lurch in the first two years, and each state\'s books stand where its kind of state keeps them', () => {
+  const design = { merchant: .010, republic: .003, federation: .001, monarchy: -.002, theocracy: -.003, revolutionary: -.007, agrarian: -.009, junta: -.016 };
+  for (const seed of [1848, 7]) {
+    const w = inherited(seed), cs = aliveCountries(w); w.status = 'playing'; const out = Object.fromEntries(cs.map(c => [c.id, []]));
+    for (let t = 1; t <= 8; t++) {
+      run(w, 1);
+      for (const c of cs) {
+        if (!c.alive) continue; out[c.id].push(c.realGdp);
+        if (t === 1) assert.ok((c.militaryFunding ?? 1) >= .9, `${seed} ${c.archetype}: the army it inherits is paid (${Math.round((c.militaryFunding ?? 1) * 100)}% of its cost)`);
+        assert.ok(!c.strike, `${seed} ${c.archetype}: no general strike in quarter ${t} of a country nobody has yet governed`);
+        if (t === 6) assert.ok(Math.abs(c.lastBalance / c.gdp - (design[c.archetype] ?? 0)) < .008, `${seed} ${c.archetype}: the books stand at ${(c.lastBalance / c.gdp * 100).toFixed(1)}% of output, where ${((design[c.archetype] ?? 0) * 100).toFixed(1)}% is that kind of state's habit`);
+      }
+    }
+    for (const c of cs) { const g = out[c.id]; if (g.length < 8) continue; const worst = Math.max(...g.slice(1).map((v, i) => Math.abs(v / g[i] - 1))); assert.ok(worst < .13 && Math.abs(g[7] / g[0] - 1) < .12, `${seed} ${c.archetype}: output moves with the harvests and no more while nobody governs: ${g.map(Math.round).join(' ')}`); }
+    // And working people who have long lived at this level do not walk out for it; they would if it grew worse.
+    const hard = cs.filter(c => c.alive && c.unions).sort((a, b) => a.workBase - b.workBase)[0];
+    if (hard) { for (const p of countryProvinces(w, hard.id)) p.pops.workers.sat = Math.min(26, hard.workBase - 6); delete hard.strikeRest; run(w, 1); assert.ok(hard.strike, `${seed} ${hard.archetype}: a lot much worse than the one they knew brings them out`); }
+  }
+});
 console.log('All checks passed.');

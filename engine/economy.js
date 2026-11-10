@@ -331,13 +331,15 @@ function consume(w, c, prev) {
   c.bankHealth = clamp(c.bankHealth + (c.inflation > .15 ? -6 : 1.2) + (c.reserves < 0 ? -4 : 0) + (g < -.08 ? -4 : 0), 0, 100);
   if (c.bankHealth < 30 && !c.bankCrisis) { c.bankCrisis = true; news(w, `${c.name}: a run on the banks has begun, credit is drying up.`, { kind: 'economy', countries: [c.id] }); } if (c.bankHealth > 45) c.bankCrisis = false;
   const klass = sum(countryProvinces(w, c.id), p => p.pops.workers.sat * p.pops.workers.n) / Math.max(sum(countryProvinces(w, c.id), p => p.pops.workers.n), 1);
+  // Working people strike when their lot has grown worse than the one they have lived with, not because it is as bad as it always was: the temper
+  // a country was handed over with (c.workBase) is its ordinary state, and a people long used to little walks out when it gets less.
   // A general strike is not a coin tossed every quarter. It breaks out when working people are bitter beyond bearing and free to organise, and it holds
   // until their lot is mended or their strike funds and bread give out, which comes sooner where there is no relief and no other work. After it the
   // unions need two years before they can call out the whole country again.
   if (c.strike) {
     const held = w.turn - (c.strikeSince ?? w.turn), lasts = 2 + (c.budget.welfare * (c.paidRatio ?? 1) > .03 ? 1 : 0) - (c.unemployment > .15 ? 1 : 0);
     if (!c.unions || klass >= 34 || held >= lasts) { c.strike = false; c.strikeRest = w.turn + 8; news(w, `${c.name}: the general strike is over${klass >= 34 ? '; the men went back with something to show for it' : !c.unions ? '; the unions were broken' : '; the strike funds ran out and the men went back with nothing'}.`, { kind: 'politics', countries: [c.id] }); }
-  } else if (c.unions && klass < 28 && w.turn >= (c.strikeRest ?? 0)) { c.strike = true; c.strikeSince = w.turn; news(w, `${c.name}: a general strike has brought industry to a halt.`, { kind: 'politics', countries: [c.id] }); }
+  } else if (c.unions && klass < Math.min(28, (c.workBase ??= klass) - 2) && w.turn >= (c.strikeRest ?? 0)) { c.strike = true; c.strikeSince = w.turn; news(w, `${c.name}: a general strike has brought industry to a halt.`, { kind: 'politics', countries: [c.id] }); }
 }
 
 function fiscal(w, c) {
@@ -410,6 +412,7 @@ function fiscal(w, c) {
 export function settleBases(w) {
   for (const c of aliveCountries(w)) {
     c.graftBase ??= c.corruption + c.pressFreedom * .3 + c.courts * .35; c.intelBase ??= c.intelligence - c.police * .5; c.roadShare ??= c.budget.infrastructure;
+    { const ps = countryProvinces(w, c.id), n = sum(ps, p => p.pops.workers.n); if (n > 0) c.workBase ??= sum(ps, p => p.pops.workers.sat * p.pops.workers.n) / n; }
     for (const p of countryProvinces(w, c.id)) p.infraBase ??= p.infra;
   }
 }
