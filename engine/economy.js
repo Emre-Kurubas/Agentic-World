@@ -4,7 +4,7 @@ import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_LABEL, PLANTS, TECHS, countryProv
 import { dealsWith, tieOf } from './diplomacy.js';
 import { migrate } from './culture.js';
 import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding, USUAL_COVER, treasuryPays } from './money.js';
-import { enemyHolds } from './navy.js';
+import { blockadeOf, merchantStep } from './navy.js';
 
 export const RECIPE = {
   steel: { iron: 1, coal: .8 }, fuel: { oil: 1.25 }, fertilizer: { phosphate: 1, coal: .2 },
@@ -14,7 +14,10 @@ const ORDER = ['steel', 'fuel', 'fertilizer', 'machines', 'arms', 'goods'];
 export const hasTech = (c, t) => !!c.techs?.[t];
 
 // Rule: goods move only if a route exists. War, a closed strait and an enemy fleet cut the route.
-function seaLocked(w, sea, a, b) { return enemyHolds(w, sea, a) || enemyHolds(w, sea, b); }
+// A sea is closed to two countries' trade when an enemy of either holds it in strength; held thinly, runners still get through, at a price.
+const SEALED = .8;
+const closure = (w, sea, a, b) => Math.max(blockadeOf(w, sea, a), blockadeOf(w, sea, b));
+function seaLocked(w, sea, a, b) { return closure(w, sea, a, b) >= SEALED; }
 function straitAt(w, sea) { return w.strategic.find(x => x.type === 'strait' && x.ref === sea); }
 function canalAdj(w, sea) { return w.canals.filter(k => k.a === sea || k.b === sea).map(k => k.a === sea ? k.b : k.a); }
 
@@ -57,7 +60,7 @@ export function updateStrategic(w) {
 }
 
 export function updateRoutes(w) {
-  const cs = aliveCountries(w); w.routes = {};
+  const cs = aliveCountries(w), before = w.routes || {}; w.routes = {};
   for (let i = 0; i < cs.length; i++) for (let j = i + 1; j < cs.length; j++) {
     const a = cs[i], b = cs[j], k = routeKey(a.id, b.id);
     // No merchants go where their government sees no state; and where relations are broken off they go without consuls, at their own risk.
@@ -69,12 +72,17 @@ export function updateRoutes(w) {
       const tolls = path.map(s => straitAt(w, s)).filter(s => s && s.toll && s.controller && ![a.id, b.id].includes(s.controller));
       const raided = path.filter(s => (w.seaRaids?.[s] || []).some(x => atWar(w, x, a.id) || atWar(w, x, b.id))).length;
       // Mines laid by an enemy of either make every passage through that water a risk; laid by anyone else they are a lesser one.
+      const runners = sum(path, s => closure(w, s, a.id, b.id));
       const mined = sum(path, s => { const m = w.mines?.[s]; return !m ? 0 : atWar(w, m.by, a.id) || atWar(w, m.by, b.id) ? .1 * m.level : [a.id, b.id].includes(m.by) ? 0 : .02 * m.level; });
       // A deep harbour with quays and cranes turns ships round faster than an open roadstead: each step of harbour at either end takes a little off the freight.
       const quay = (o, sea) => Math.max(1, ...countryProvinces(w, o.id).filter(p => p.port > 0 && p.controller === o.id && p.seas.includes(sea)).map(p => p.port));
-      w.routes[k] = { mode: 'sea', cost: 1.05 + risk + path.length * .008 - (quay(a, path[0]) + quay(b, path.at(-1)) - 2) * .012 + sum(tolls, t => t.toll) + raided * .15 + mined, path, tolls: tolls.map(t => t.id) };
+      w.routes[k] = { mode: 'sea', cost: 1.05 + risk + path.length * .008 - (quay(a, path[0]) + quay(b, path.at(-1)) - 2) * .012 + sum(tolls, t => t.toll) + raided * .15 + mined + runners * .35 + (w.freight || 0), path, tolls: tolls.map(t => t.id) };
     }
   }
+  // A state at war with nobody whose ships are turned back from a blockaded coast protests to whoever turned them back.
+  for (const [k, r] of Object.entries(before)) { if (r.mode !== 'sea' || w.routes[k]?.mode === 'sea') continue; const [x, y] = k.split('|').map(id => w.countries[id]); if (!x?.alive || !y?.alive || atWar(w, x.id, y.id)) continue;
+    for (const [n, v] of [[x, y], [y, x]]) for (const b of cs) { if (b === n || b === v || !atWar(w, b.id, v.id) || atWar(w, b.id, n.id)) continue; if (!countryProvinces(w, v.id).some(p => p.port > 0 && p.seas.some(s => (w.seaPower?.[s]?.[b.id] || 0) > 0 && blockadeOf(w, s, v.id) >= SEALED))) continue;
+      n.relations[b.id] = clamp((n.relations[b.id] ?? 0) - 5, -100, 100); const ch = w.characters[n.leader]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'Foreign Ministry', text: `${b.name}'s squadrons have closed the harbours of ${v.name}: our ships are turned back and our trade with ${v.name} by sea has stopped. Our merchants want to know what the government will say to ${b.name}.` }); } }
   // Two countries with no road or water of their own between them still trade through a third that deals with both: the goods pay both freights and the middleman's handling.
   const direct = { ...w.routes }, open = (x, y) => direct[routeKey(x.id, y.id)];
   for (let i = 0; i < cs.length; i++) for (let j = i + 1; j < cs.length; j++) {
@@ -180,7 +188,7 @@ const aimedTrade = (c, g, from) => c.tariffDeals?.[from] != null || c.aimed?.[fr
 const banned = (w, buyer, seller, g) => { const out = seller.bans?.[buyer.id]?.sell.includes(g) ? sealOf(w, seller) : 0, inn = buyer.bans?.[seller.id]?.buy.includes(g) ? sealOf(w, buyer) : 0; return 1 - (1 - out) * (1 - inn); };
 
 function trade(w, cs) {
-  w.tradeFlows = {};
+  w.tradeFlows = {}; const carried = [];
   const key = routeKey;
   for (const c of cs) { c.lastSold = {}; c.lastBought = {}; c.lastOrders = []; }
   // What merchants would bring in of a good, and how much of that the law lets through: a prohibition or a quota cuts it, and the part the customs cannot hold back is smuggled.
@@ -223,6 +231,7 @@ function trade(w, cs) {
         const v = q * price; a.x.s -= q; b.d -= q; moved += q; a.x.c.lastSold[g] = (a.x.c.lastSold[g] || 0) + q;
         // Freight goes to the exporter, customs to the buyer's own treasury: gold does not vanish from the world.
         const gold = v * a.r.cost; a.x.c.stock[g] -= q; b.c.stock[g] += q; a.x.c.reserves += gold; b.c.reserves -= gold;
+        if (a.r.mode === 'sea') carried.push([a.x.c.id, b.c.id, q, v * (a.r.cost - 1)]);
         if (b.c._alloc) { const own = Math.min(b.c._alloc[g] ?? 0, gold); b.c._alloc[g] = (b.c._alloc[g] ?? 0) - own; b.c._spare = Math.max(0, (b.c._spare ?? 0) - (gold - own)); }
         // Duty is paid on what came through the customs house, at the rate that good pays; smuggled goods pay none.
         a.x.c._exportGold = (a.x.c._exportGold || 0) + gold; b.c._duty = (b.c._duty || 0) + v * duty * b.taxed;
@@ -256,6 +265,7 @@ function trade(w, cs) {
     if (w.globalPrice[g] > before * 1.5 && before > BASE_PRICE[g]) news(w, `World ${GOOD_LABEL[g]} price rose sharply.`, { kind: 'economy' });
   }
   for (const c of cs) { c.lastExportGold = c._exportGold || 0; delete c._alloc; delete c._spare; delete c._exportGold; }
+  merchantStep(w, cs, carried);
 }
 
 function factories(w, c) {

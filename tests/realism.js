@@ -2394,4 +2394,66 @@ chain('A navy is handed over as a navy of its time and its staff knows how it wo
   for (const op of npcDecide(t.w, t.gen)) applyOp(t.w, t.gen, op); assert.ok(strong.target && strong.orders === 'blockade', 'the stronger navy goes to lie off the enemy\'s harbour');
   for (const op of npcDecide(t.w, t.gb)) applyOp(t.w, t.gb, op); assert.ok(weak.orders === 'port' && weak.target, 'the weaker makes for harbour');
 });
+import { merchantStep as shipowners, blockadeOf as closedBy, liftOf as liftFor } from '../engine/navy.js';
+chain('Cargo crosses the sea in somebody\'s ships: a country carries its own traffic as far as its tonnage goes and pays foreign owners the freight on the rest, gold changing hands and none of it lost; when the world is short of ships every freight rises; raiders sink a belligerent\'s tonnage; the state can lay merchant ships down; and troops cross the sea in them, as many as they can carry', () => {
+  const w = inherited(); run(w, 3); const cs = aliveCountries(w), sea = cs.filter(c => countryProvinces(w, c.id).some(p => p.port > 0)), ports = c => countryProvinces(w, c.id).reduce((a, p) => a + (p.port || 0), 0);
+  assert.ok(sea.every(c => c.shipping > 1), cs.map(c => `${c.archetype} ${c.shipping}`).join(', '));
+  const keen = [...sea].sort((a, b) => b.shipping / ports(b) - a.shipping / ports(a)); assert.ok(['merchant', 'republic', 'federation'].includes(keen[0].archetype) && !['merchant', 'republic', 'federation'].includes(keen.at(-1).archetype), `harbour for harbour a trading state keeps more ships than a state of soldiers or landowners: ${keen.map(c => `${c.archetype} ${(c.shipping / ports(c)).toFixed(2)}`).join(', ')}`);
+  assert.ok(/Merchant marine: \d+ of tonnage/.test(lookUp(w, w.characters[cs[0].leader], 'trade')) && /can put about \d+ thousand men across the sea/.test(lookUp(w, w.characters[cs[0].general], 'fleet')), 'trade and fleet reports speak of it');
+  // The freight on a cargo goes to whoever carried it.
+  const [a, b, c] = sea, gold = () => cs.reduce((s, x) => s + x.reserves, 0), set = (x, n) => { x.shipping = n; x._seaVol = 0; x.shipBuilt = 0; x._lifted = 0; };
+  for (const x of cs) set(x, 0); set(c, 5000); const before = gold(), had = c.reserves; shipowners(w, cs, [[a.id, b.id, 10, 6]]);
+  assert.ok(Math.abs(gold() - before) < 1e-6 && Math.abs(c.reserves - had - 6) < 1e-6 && Math.abs(a._freightOut - 6) < 1e-6 && c._freightIn > 5.9, `with no ships of their own the two pay the whole freight to the third: ${c.reserves - had}`);
+  for (const x of cs) set(x, 0); set(b, 5000); const hadB = b.reserves, hadC = c.reserves; shipowners(w, cs, [[a.id, b.id, 10, 6]]); assert.ok(b.reserves - hadB > 5.9 && Math.abs(c.reserves - hadC) < 1e-6, 'a buyer with ships of his own carries his own imports and keeps the freight');
+  // A world short of ships.
+  for (const x of cs) set(x, 0); w.freight = 0; for (let i = 0; i < 6; i++) { for (const x of cs) x.shipping = 0; shipowners(w, cs, [[a.id, b.id, 10, 6]]); } assert.ok(w.freight > .15, `with no ships anywhere freights rise: ${w.freight}`);
+  const k = Object.keys(w.routes).find(x => w.routes[x].mode === 'sea'); if (k) { const dear = (updateRoutes(w), w.routes[k]?.cost); w.freight = 0; updateRoutes(w); assert.ok(dear > w.routes[k].cost + .1, `and every sea route costs more: ${dear} against ${w.routes[k].cost}`); }
+  // Commerce war: a raider on a belligerent's trade route.
+  if (k) { const [x, y] = k.split('|').map(id => w.countries[id]), foe = cs.find(o => o !== x && o !== y); set(x, 40); set(y, 40); w.freight = 0; w.wars.push({ id: 'S-r', a: [foe.id], b: [x.id], civil: false, active: true, start: w.turn, name: 'r' }); w.seaRaids = { [w.routes[k].path[0]]: [foe.id] };
+    shipowners(w, cs, []); assert.ok(x._sunk > .5 && x.shipping < 40 && !(y._sunk > 0) && w.characters[x.leader].inbox.some(m => /sank about .* of our merchant tonnage/.test(m.text)), `raiders sink the belligerent's ships and leave the neutral's alone: ${x._sunk}`); w.wars = w.wars.filter(v => v.id !== 'S-r'); w.seaRaids = {}; }
+  // The yards.
+  const m = inherited(); run(m, 2); const mc = aliveCountries(m).find(x => countryProvinces(m, x.id).some(p => p.port > 0)), boss = m.characters[mc.leader], yard = countryProvinces(m, mc.id).find(p => p.port > 0); mc.treasury = mc.gdp * 3; mc.stock.steel = 500; mc.stock.timber = 500;
+  const was = mc.shipping, lift = liftFor(mc), r = applyOp(m, boss, { op: 'build_ship', province: yard.id, ships: 12, kind: 'merchant' }); assert.ok(r.ok && /add 12 to the country's merchant tonnage/.test(r.msg), r.msg); run(m, 3);
+  assert.ok(mc.shipping > was + 10 && liftFor(mc) > lift + 20 && !Object.values(m.fleets).some(f => f.kind === 'merchant'), `twelve steamers add twelve of tonnage and room for twenty-four thousand men: ${mc.shipping} from ${was}`);
+  // Troops cross in merchant ships.
+  const t = twoNavies(); t.a.shipping = 10; t.ship('U1', t.hb.seas[0], 10); militaryStep(t.w); const big = soldier(t.w, 'U1', t.ha.id, 30), small = soldier(t.w, 'U1', t.ha.id, 12), third = soldier(t.w, 'U1', t.ha.id, 12);
+  const no = applyOp(t.w, t.gen, { op: 'amphibious', unit: big.id, to: t.hb.id }); assert.ok(!no.ok && /carry about 20 thousand men/.test(no.msg), no.msg);
+  assert.ok(applyOp(t.w, t.gen, { op: 'amphibious', unit: small.id, to: t.hb.id }).ok && small.province === t.hb.id, 'twelve thousand fit in ten of tonnage');
+  const full = applyOp(t.w, t.gen, { op: 'amphibious', unit: third.id, to: t.hb.id }); assert.ok(!full.ok && /carry about 8 thousand men/.test(full.msg), `and the ships that took them are not there for the next: ${full.msg}`);
+});
+
+chain('A blockade closes a coast in the measure of its weight: a few cruisers off a harbour make its trade dearer and a battle squadron stops it; and a state at war with nobody whose ships are turned back holds it against whoever turned them', () => {
+  const w = fresh(); for (const f of Object.values(w.fleets)) delete w.fleets[f.id]; for (const u of Object.values(w.units)) delete w.units[u.id]; updateRoutes(w);
+  const k = Object.keys(w.routes).find(x => w.routes[x].mode === 'sea' && !x.split('|').includes('U1')); assert.ok(k, 'two states that trade by sea');
+  // v is the one to be blockaded; its only harbour is the one that trade leaves from.
+  const [v, n] = k.split('|').map(id => w.countries[id]), sea = w.routes[k].path[0], home = countryProvinces(w, v.id).find(p => p.port > 0 && p.seas.includes(sea)) ?? countryProvinces(w, v.id).find(p => p.port > 0);
+  const gate = home.seas.includes(sea) ? sea : w.routes[k].path.at(-1); for (const p of countryProvinces(w, v.id)) if (p !== home) p.port = 0; home.seas = [gate];
+  w.wars = [{ id: 'S-k', a: ['U1'], b: [v.id], civil: false, active: true, start: w.turn, name: 'k' }]; for (const c of [w.countries.U1, v]) { c.stock.coal = 3000; c.budget.military = .3; }
+  updateRoutes(w); assert.equal(w.routes[k]?.mode, 'sea'); const open = w.routes[k].cost, rel = n.relations.U1 ?? 0;
+  const thin = makeFleet(w, 'U1', gate, 2, 'cruiser'); thin.coaled = 1; militaryStep(w); const e1 = closedBy(w, gate, v.id); updateRoutes(w);
+  assert.ok(e1 > 0 && e1 < .8 && w.routes[k]?.mode === 'sea' && w.routes[k].cost > open + .05, `two cruisers do not seal a harbour: runners get through, at a price (${e1}, ${w.routes[k]?.cost} against ${open})`);
+  thin.ships = 60; militaryStep(w); const e2 = closedBy(w, gate, v.id); updateRoutes(w);
+  assert.ok(e2 >= .8 && w.routes[k]?.mode !== 'sea', `a battle squadron does: ${e2}, ${JSON.stringify(w.routes[k] ?? null)}`);
+  assert.ok((n.relations.U1 ?? 0) <= rel - 5 && w.characters[n.leader].inbox.some(m => /have closed the harbours of/.test(m.text)), 'the neutral whose ships were turned back protests');
+  const again = n.relations.U1; updateRoutes(w); assert.equal(n.relations.U1, again, 'once, when the trade stops, not every quarter after');
+});
+
+chain('Ships as an argument in time of peace: a squadron shown off a coast is a threat the other government must answer or swallow, and a creditor\'s squadron that commands the water off a defaulter\'s harbour takes his customs until the debt is cleared or the ships are gone', () => {
+  const t = twoNavies(), { w, a, b, e, hb } = t, boss = ld(w, a); w.wars = [];
+  assert.ok(/No surface squadron of ours lies at sea off the coast/.test(applyOp(w, boss, { op: 'demonstrate', target: e }).msg), 'there has to be a squadron there');
+  const f = t.ship('U1', t.meet, 6, 'battleship'); militaryStep(w); const heat = b.grudges?.U1?.incident ?? 0, rel = b.relations.U1 ?? 0;
+  assert.equal(applyOp(w, t.gen, { op: 'demonstrate', target: e }).ok, false, 'a demonstration is the government\'s act, not the staff\'s');
+  w.newsThisTurn = []; const r = applyOp(w, boss, { op: 'demonstrate', target: e }); assert.ok(r.ok && /fires on nothing/.test(r.msg), r.msg);
+  assert.ok(b.grudges.U1.incident > heat + 5 && (b.relations.U1 ?? 0) < rel && w.newsThisTurn.some(x => /is lying off/.test(x.text)) && ld(w, b).inbox.some(m => /has anchored off/.test(m.text)) && a.shown[e] === w.turn, 'the other country sees it, resents it, and its government is told');
+  assert.ok(!applyOp(w, boss, { op: 'demonstrate', target: e }).ok, 'the same ships say nothing new in the same quarter');
+  // The customs house.
+  assert.ok(/owes this state nothing/.test(applyOp(w, boss, { op: 'seize_customs', target: e }).msg)); b.creditors.U1 = 50; assert.ok(/paying what it owes/.test(applyOp(w, boss, { op: 'seize_customs', target: e }).msg), 'a debtor who pays is left alone');
+  b.defaulted = true; const s = applyOp(w, boss, { op: 'seize_customs', target: e }); assert.ok(s.ok && w.seizures.length === 1 && ld(w, b).inbox.some(m => /sit in our customs house/.test(m.text)), s.msg);
+  b.lastBooks = { ...(b.lastBooks || {}), customs: 25 }; b.treasury = 400; b.rate = 1; const gold = a.reserves, legit = b.legitimacy; militaryStep(w);
+  assert.ok(Math.abs(a.reserves - gold - 20) < 1e-6 && Math.abs(b.creditors.U1 - 30) < 1e-6 && b.legitimacy < legit && Math.abs(b.treasury - 380) < 1e-6, `four fifths of a quarter's customs go to the creditor: ${a.reserves - gold}`);
+  militaryStep(w); w.newsThisTurn = []; militaryStep(w); assert.ok(!(b.creditors.U1 > .5) && !w.seizures.length && w.newsThisTurn.some(x => /debt to .* is cleared/.test(x.text)), 'and when the debt is cleared the customs house is handed back');
+  // Driven off.
+  b.creditors.U1 = 500; assert.ok(applyOp(w, boss, { op: 'seize_customs', target: e }).ok); f.port = t.ha.id; w.newsThisTurn = []; militaryStep(w); assert.ok(!w.seizures.length && w.newsThisTurn.some(x => /no longer holds/.test(x.text)) && b.creditors.U1 > 400, 'when the ships go the customs house goes back with the debt unpaid');
+  const ref = refereePrompt(w, a, [{ actor: boss, decisions: ['Send the gunboats.'] }]); assert.ok(ref.includes('demonstrate{target,fleet?}') && ref.includes('seize_customs{target}') && ref.includes('kind:cruiser|battleship|torpedo|submarine|merchant'), 'the referee knows these orders');
+});
 console.log('All checks passed.');

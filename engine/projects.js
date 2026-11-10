@@ -2,9 +2,10 @@
 import { clamp, news, nextId } from './util.js';
 import { PLANTS, GOOD_LABEL, makeUnit, makeFleet, aliveCountries, provincePop } from './world.js';
 import { restake } from './firms.js';
+import { MERCHANT } from './navy.js';
 
 const TURNS = { mine: 3, railway: 4, port: 4, dam: 6, farming: 2, forestry: 2, infrastructure: 2, fort: 5, battery: 4, trench: 2, administration: 3, unit: 1, ship: 3, canal: 12 };
-const UNIT_TURNS = { infantry: 1, artillery: 2, armor: 2, air: 3 }, SHIP_TURNS = { cruiser: 3, battleship: 6, submarine: 3, torpedo: 2 };
+const UNIT_TURNS = { infantry: 1, artillery: 2, armor: 2, air: 3 }, SHIP_TURNS = { cruiser: 3, battleship: 6, submarine: 3, torpedo: 2, merchant: 3 };
 export const DEFENSES = ['fort', 'battery', 'trench'];
 export const MAX_DEFENSE = { fort: 3, battery: 3, trench: 2 };
 export const WORKS = ['mine', 'railway', 'port', 'dam', 'farming', 'forestry', 'infrastructure', 'administration', ...DEFENSES];
@@ -78,6 +79,8 @@ function finish(w, c, x) {
   else if (k === 'administration') { const add = Math.min(x.add ?? 0, MAX_SEAT - (p.seat || 0)); if (add > 0) { p.seat = (p.seat || 0) + add; p.admin = clamp((p.admin ?? .5) + add, 0, 1); } }
   else if (k === 'fort' || k === 'battery' || k === 'trench') p[k] = Math.min(MAX_DEFENSE[k], (p[k] || 0) + 1);
   else if (k === 'unit') makeUnit(w, c.id, p.id, x.men, .8, 60 + c.legitimacy * .3, x.unitKind);
+  // Merchant ships join the country's tonnage; warships form a squadron in the harbour that built them.
+  else if (k === 'ship' && x.shipKind === 'merchant') { c.shipBuilt = (c.shipBuilt || 0) + x.ships * MERCHANT; c.shipping = (c.shipping || 0) + x.ships * MERCHANT; }
   else if (k === 'ship') { const f = makeFleet(w, c.id, p.seas[0], x.ships, x.shipKind); f.port = f.home = p.id; }
   else if (k === 'canal') { w.canals.push({ province: p.id, a: p.seas[0], b: p.seas[p.seas.length - 1], owner: c.id }); const s = w.strategic.find(y => y.id === x.strategic); if (s) s.type = 'canal'; news(w, `${c.name} opened the ${p.name} canal; the sea lanes have changed.`, { kind: 'economy', countries: [c.id] }); }
 }

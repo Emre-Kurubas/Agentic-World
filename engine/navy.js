@@ -140,6 +140,7 @@ export function navalStep(w) {
     if (f.orders === 'port' || d > SHIPS[kindOf(f)].reach) { const p = (f.orders === 'port' && friendlyPort(w, f.country, w.provinces[f.home]) && !enemyHolds(w, w.provinces[f.home].seas[0], f.country) ? w.provinces[f.home] : null) ?? refuge(w, f); if (p) f.target = p.id; }
   }
   for (const f of fleets()) if (f.ships + (f.damaged || 0) < .5) delete w.fleets[f.id];
+  gunboatStep(w);
 }
 
 function sail(w, f) {
@@ -258,4 +259,90 @@ export function shipGuns(w, p, ids, against) {
   if (!p.coast) return 1;
   const weight = sum(p.seas, s => sum(ids, id => (enemyHolds(w, s, id) ? 0 : w.seaPower?.[s]?.[id] || 0)));
   return 1 + clamp(weight / Math.max(against, 20) * .5, 0, .15);
+}
+
+// ---- The merchant marine ----
+// Goods that cross the sea cross it in somebody's ships, and so does what a country moves along its own coast. A country's merchant tonnage is
+// counted in what it can carry in a quarter; it settles where its harbours, its sea trade and its taste for the sea put it (a state of merchants
+// keeps twice the ships its own traffic needs and hires them out, a state of landowners hardly two thirds), grows when freights are high, and
+// grows by what the state lays down in its own yards.
+const AFFINITY = { merchant: 2, republic: 1.2, federation: 1.2, monarchy: 1, revolutionary: .8, junta: .8, theocracy: .8, agrarian: .6 };
+// How many thousand men, with their horses and stores, a unit of tonnage puts across in a quarter; and what one merchant ship ordered by the state adds.
+export const LIFT = 2, MERCHANT = 1;
+const harbours = (w, c) => sum(countryProvinces(w, c.id), p => p.port || 0);
+// What a country's own traffic asks of ships: its coasting trade, by the size of its harbours, and half of every cargo it sends or receives by sea.
+const traffic = (w, c, sea) => harbours(w, c) + sea / 2, fleetFor = (w, c) => (harbours(w, c) * 1.5 + (c._seaVol || 0)) * (AFFINITY[c.archetype] ?? 1);
+export const liftOf = c => Math.max(0, (c.shipping ?? 20) - (c._lifted || 0)) * LIFT;
+// carried: every shipment that went by sea this quarter, as [exporter, importer, quantity, freight paid]. Each end of a shipment carries half
+// of it if it has the ships; what neither end can carry is carried by whoever in the world has ships to spare, and the freight goes with the cargo.
+export function merchantStep(w, cs, carried) {
+  const vol = {}, st = {}; let needAll = 0, shortAll = 0, spareAll = 0, pool = 0;
+  for (const [x, b, q] of carried) { vol[x] = (vol[x] || 0) + q; vol[b] = (vol[b] || 0) + q; }
+  for (const c of cs) {
+    const seaborne = vol[c.id] || 0, need = traffic(w, c, seaborne); c._seaVol = c._seaVol == null ? seaborne : c._seaVol * .7 + seaborne * .3;
+    if (c.shipping == null) c.shipping = fleetFor(w, c);
+    const cap = Math.max(0, c.shipping - (c._lifted || 0)), own = Math.min(cap, need);
+    st[c.id] = { cover: need > 0 ? own / need : 1, spare: cap - own }; needAll += need; shortAll += need - own; spareAll += cap - own; c._freightIn = 0; c._freightOut = 0;
+  }
+  const hired = shortAll > 0 ? Math.min(shortAll, spareAll) / shortAll : 0;
+  for (const [x, b, , f] of carried) {
+    const X = w.countries[x], B = w.countries[b], theirs = f * .5 * st[b].cover, out = f * .5 * (2 - st[x].cover - st[b].cover) * hired, due = theirs + out, pay = Math.min(due, Math.max(X.reserves, 0)), k = due > 0 ? pay / due : 0;
+    X.reserves -= pay; X._freightOut += pay; B.reserves += theirs * k; B._freightIn += theirs * k; pool += out * k;
+  }
+  if (spareAll > 0) for (const c of cs) { const g = pool * st[c.id].spare / spareAll; c.reserves += g; c._freightIn += g; }
+  // When the world has fewer ships than cargoes, every freight rises.
+  w.freight = (w.freight ?? 0) * .5 + clamp(needAll > 0 ? Math.max(0, shortAll - spareAll) / needAll * .6 : 0, 0, .35) * .5;
+  for (const c of cs) {
+    // A war at sea is fought against merchant ships first: raiders and mines on a belligerent's trade routes sink his tonnage.
+    let lost = 0; const where = new Set();
+    for (const [k, r] of Object.entries(w.routes || {})) { if (r.mode !== 'sea' || !k.split('|').includes(c.id)) continue; for (const s of r.path) { const raid = (w.seaRaids?.[s] || []).some(o => atWar(w, o, c.id)), m = w.mines?.[s]; if (where.has(s)) continue; if (raid) { lost += .03; where.add(s); } if (m && atWar(w, m.by, c.id)) { lost += .012 * m.level; where.add(s); } } }
+    if (lost > 0 && c.shipping > .5) { const sunk = c.shipping * Math.min(lost, .12); c.shipping -= sunk; c._sunk = sunk; tell(w, c, `Enemy raiders and mines sank about ${Math.round(sunk * 10) / 10} of our merchant tonnage this quarter (${Math.round(c.shipping)} is left), in ${[...where].map(s => seaName(w, s)).slice(0, 4).join(', ')}. Cruisers on that water, or the raiders' bases taken, would stop it.`); } else c._sunk = 0;
+    const target = fleetFor(w, c) * (1 + (w.freight || 0) * 2) + (c.shipBuilt || 0);
+    c.shipBuilt = (c.shipBuilt || 0) * .985; c.shipping += (target - c.shipping) * (target > c.shipping ? .05 : .03); c._lifted = 0;
+  }
+}
+
+// How tightly a stretch of water is closed to a country by its enemies: not at all where they do not outweigh it, and from a quarter (a
+// cruiser or two off a coast with several harbours, past which most runners get through) to the whole as the weight of ships grows.
+export function blockadeOf(w, sea, id) {
+  if (!enemyHolds(w, sea, id)) return 0;
+  let mine = 0, theirs = 0;
+  for (const [o, v] of Object.entries(w.seaPower[sea])) { if (o === id || hasTreaty(w, o, id, 'alliance')) mine += v; else if (atWar(w, o, id)) theirs += v; }
+  const harbours = w.seas[sea].coast.filter(pid => w.provinces[pid].controller === id && w.provinces[pid].port > 0).length;
+  return clamp((theirs - mine) / (3 + 3 * harbours), .25, 1);
+}
+
+// ---- Ships as an argument ----
+// A squadron sent to lie off a foreign coast in time of peace says what a note cannot. Whoever it is shown to has to answer it or swallow it.
+export function demonstrate(w, c, target, fs, sea) {
+  const off = w.seas[sea].coast.map(id => w.provinces[id]).filter(p => p.controller === target.id).sort((a, b) => b.port - a.port)[0], line = Object.entries(fs.reduce((a, f) => ((a[kindOf(f)] = (a[kindOf(f)] || 0) + f.ships), a), {})).map(([k, n]) => count(n, k)).join(', ');
+  (c.shown ||= {})[target.id] = w.turn; target.relations[c.id] = clamp((target.relations[c.id] ?? 0) - 8, -100, 100);
+  const g = ((target.grudges ||= {})[c.id] ||= { incident: 0, kin: 0 }); g.incident += 6;
+  news(w, `A squadron of ${c.name} (${line}) is lying off ${off?.name ?? 'the coast'} of ${target.name}.`, { kind: 'diplomacy', countries: [c.id, target.id], province: off?.id });
+  tell(w, target, `A squadron of ${c.name} has anchored off ${off?.name ?? 'our coast'}: ${line}. No shot has been fired and no demand came with it that we have not already had. The town can see it from the quays, the papers have it, and the country will ask what the government means to do. Our own ships there: ${Object.values(w.fleets).filter(f => f.country === target.id && w.seas[sea].coast.includes(f.port ?? '') || (f.country === target.id && f.sea === sea)).map(f => count(f.ships, kindOf(f))).join(', ') || 'none'}.`);
+  return { ok: true, msg: `The squadron shows itself off ${off?.name ?? 'their coast'}: ${line}. ${target.name}'s government and its public know it is there; it is taken there as a threat and held against us until it is answered, and it gives weight to whatever is demanded of them while it stays. At home it counts as part of an answer to what the country holds against them. It fires on nothing: shelling or landing would be war.` };
+}
+// A creditor's squadron collects what a defaulting state will not pay: it holds the harbour and takes the customs until the debt is cleared,
+// the ships are driven off or they are called home.
+export function seizeCustoms(w, c, target, sea, port, shame) {
+  (w.seizures ||= []).push({ by: c.id, of: target.id, sea, port: port.id, since: w.turn });
+  target.relations[c.id] = clamp((target.relations[c.id] ?? 0) - 25, -100, 100); for (const o of aliveCountries(w)) if (o.id !== c.id && o.id !== target.id) o.relations[c.id] = clamp((o.relations[c.id] ?? 0) - 3, -100, 100);
+  news(w, `${c.name}'s squadron has taken over the customs house at ${port.name}: the duties of ${target.name} are to go to its creditors until the debt is paid.`, { kind: 'diplomacy', countries: [c.id, target.id], province: port.id });
+  tell(w, target, `${c.name}'s ships hold the harbour of ${port.name} and its officers sit in our customs house. They say they will take the duties until what we owe them (${Math.round(target.creditors[c.id])} in gold) is paid. It ends when the debt is cleared (repay_foreign), when their squadron is driven off or outweighed in that water, or when they call it home.`);
+  return { ok: true, msg: `Our officers sit in the customs house at ${port.name}. Each quarter the squadron stays and outweighs whatever ${target.name} has at sea there, about four fifths of their customs revenue comes to us against the ${Math.round(target.creditors[c.id])} in gold they owe. It costs their government standing at home every quarter it lasts, and their country will not forget it; other governments have taken note.` };
+}
+function gunboatStep(w) {
+  for (const s of w.seizures ||= []) {
+    const by = w.countries[s.by], of = w.countries[s.of], port = w.provinces[s.port], owed = of?.creditors?.[s.by] ?? 0, p = w.seaPower?.[s.sea] || {};
+    const held = by?.alive && of?.alive && port?.controller === s.of && (p[s.by] || 0) > 0 && (p[s.by] || 0) > (p[s.of] || 0);
+    if (!held || owed < .5) { s.over = true; if (by?.alive && of?.alive) { news(w, owed < .5 ? `${of.name}'s debt to ${by.name} is cleared: the customs house at ${port?.name} is handed back.` : `${by.name}'s squadron no longer holds ${port?.name}: the customs house is back in ${of.name}'s hands.`, { kind: 'diplomacy', countries: [s.by, s.of] }); tell(w, by, owed < .5 ? `${of.name}'s debt to us is collected in full; our officers have left the customs house at ${port?.name}.` : `Our squadron no longer commands the water off ${port?.name}: the customs house there is lost to us, with ${Math.round(owed)} in gold still owed.`); } continue; }
+    const rate = of.rate || 1, take = Math.min(owed, Math.max(0, Math.min((of.lastBooks?.customs ?? 0) * .8, of.treasury)) / rate);
+    of.treasury -= take * rate; by.reserves += take; of.creditors[s.by] = owed - take; s.taken = (s.taken || 0) + take;
+    of.legitimacy = clamp(of.legitimacy - 1.5, 0, 100); const g = ((of.grudges ||= {})[s.by] ||= { incident: 0, kin: 0 }); g.incident += 5;
+    // Paid in full: the officers go home the same quarter.
+    if (of.creditors[s.by] < .5) { delete of.creditors[s.by]; s.over = true; news(w, `${of.name}'s debt to ${by.name} is cleared: the customs house at ${port.name} is handed back.`, { kind: 'diplomacy', countries: [s.by, s.of] }); tell(w, by, `The last ${Math.round(take * 10) / 10} in gold came in at ${port.name}: ${of.name}'s debt to us is collected in full, and our officers have left its customs house.`); tell(w, of, `${by.name} has taken the last of what we owed out of the customs at ${port.name} and handed the customs house back.`); continue; }
+    tell(w, by, `The customs house at ${port.name} yielded ${Math.round(take * 10) / 10} in gold this quarter; ${Math.round(of.creditors[s.by])} is still owed.`);
+    tell(w, of, `${by.name}'s officers took ${Math.round(take * rate)} of our customs revenue at ${port.name} this quarter; ${Math.round(of.creditors[s.by])} in gold is still owed them. Every quarter it lasts the government stands lower at home.`);
+  }
+  w.seizures = w.seizures.filter(s => !s.over);
 }
