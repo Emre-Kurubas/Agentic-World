@@ -19,6 +19,7 @@ const POSTS = { treasury: 'keeps the treasury', police: 'heads the police', hous
 // What a minor person is, in a few words, for those who look them up.
 export function postOf(w, ch) {
   const u = commandOf(w, ch); if (u) return `commands ${u.id}, ${Math.round(u.men)} thousand men at ${w.provinces[u.province]?.name}`;
+  const f = Object.values(w.fleets).find(x => x.commander === ch.id && x.country === ch.country); if (f) return `admiral commanding the squadron ${f.id}`;
   const p = Object.values(w.provinces).find(x => x.governor === ch.id); if (p) return `governor of ${p.name}`;
   return POSTS[ch.post] ?? (ch.office ? `holds ${ch.office}` : ch.clerkOf ? `a clerk ${{ treasury: 'in the treasury', police: 'at police headquarters', house: 'in the banking house', army: 'on the general staff' }[ch.clerkOf]}` : '');
 }
@@ -72,7 +73,11 @@ function fillPosts(w, c) {
     const cur = w.characters[u.commander]; if (cur?.alive && cur.status === 'free' && cur.country === c.id) continue;
     if (!room()) break; const ch = spawnCharacter(w, c.id, 'officer', c.axes, { power: 30 }); u.commander = ch.id; mine.push(ch);
   }
+  // And the heaviest squadron an admiral.
+  const flag = Object.values(w.fleets).filter(f => f.country === c.id).sort((a, b) => weightOf(b) - weightOf(a))[0], cur = flag && w.characters[flag.commander];
+  if (flag && weightOf(flag) >= 3 && !(cur?.alive && cur.status === 'free' && cur.country === c.id) && room()) { const ch = spawnCharacter(w, c.id, 'officer', c.axes, { power: 28 }); flag.commander = ch.id; mine.push(ch); }
 }
+const weightOf = f => (f.ships + (f.damaged || 0)) * ({ battleship: 3.5, torpedo: .3, submarine: .6 }[f.kind] ?? 1);
 
 // How a minor person stands toward the ruler settles where the state of the country puts it: a ruler people believe in, pay that arrives and
 // troops in good heart keep men loyal; each also has a bent of his own, and ambition wears loyalty thin. Favours raise it for a while.

@@ -1,6 +1,7 @@
 import { rand, pick, sum } from '../engine/util.js';
 import { atWar, countryProvinces, aliveCountries, hasTreaty } from '../engine/world.js';
 import { stanceOf } from '../engine/diplomacy.js';
+import { strength, kindOf, baseMap, SHIPS } from '../engine/navy.js';
 
 const enemies = (w, c) => aliveCountries(w).filter(o => o.id !== c.id && atWar(w, c.id, o.id));
 const might = (w, id) => sum(Object.values(w.units).filter(u => u.country === id), u => u.men);
@@ -30,8 +31,20 @@ export function npcDecide(w, ch) {
 
 // A chief of staff by the book. At war, the weaker side stands on the defensive and a frontier unit that is hopelessly outnumbered where it
 // stands is told to fall back if pressed; the stronger side keeps its hands free. At peace, troops facing a much stronger neighbour hold their fire.
+function npcNavy(w, c, foes) {
+  const ops = [], fs = Object.values(w.fleets).filter(f => f.country === c.id && kindOf(f) !== 'submarine'), weight = id => sum(Object.values(w.fleets).filter(f => f.country === id && kindOf(f) !== 'torpedo'), f => strength(w, f));
+  if (!foes.length) { for (const f of fs) if (!f.port && f.orders !== 'port') ops.push({ op: 'fleet_orders', fleet: f.id, orders: 'port' }); return ops; }
+  // The enemy within reach whose harbours can be closed: the one with the lighter fleet.
+  const bases = baseMap(w, c.id), mineW = weight(c.id), prey = foes.map(o => ({ o, sea: countryProvinces(w, o.id).filter(p => p.port > 0).flatMap(p => p.seas).map(s => ({ s, d: bases[s]?.d ?? 99 })).sort((a, b) => a.d - b.d)[0] })).filter(x => x.sea && x.sea.d <= 8 && mineW > weight(x.o.id) * 1.25)[0];
+  for (const f of fs) {
+    if (kindOf(f) === 'torpedo') continue;
+    if (prey && (f.sea !== prey.sea.s || f.port) && f.target !== prey.sea.s && prey.sea.d <= SHIPS[kindOf(f)].reach) ops.push({ op: 'move_fleet', fleet: f.id, to: prey.sea.s }, { op: 'fleet_orders', fleet: f.id, orders: 'blockade' });
+    else if (!prey && !f.port && f.orders !== 'port') ops.push({ op: 'fleet_orders', fleet: f.id, orders: 'port' });
+  }
+  return ops;
+}
 function npcStaff(w, c) {
-  const ops = [], mine = Object.values(w.units).filter(u => u.country === c.id), foes = enemies(w, c), menAt = (id, pid) => sum(Object.values(w.units).filter(u => u.country === id && u.province === pid), u => u.men);
+  const ops = [...npcNavy(w, c, enemies(w, c))], mine = Object.values(w.units).filter(u => u.country === c.id), foes = enemies(w, c), menAt = (id, pid) => sum(Object.values(w.units).filter(u => u.country === id && u.province === pid), u => u.men);
   if (!mine.length) return ops;
   if (foes.length) {
     const theirs = sum(foes, f => might(w, f.id)), weaker = might(w, c.id) < theirs * .75;

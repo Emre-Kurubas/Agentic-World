@@ -19,6 +19,7 @@ import { settleUnderground } from './underground.js';
 import { distance } from './politics.js';
 import { writeChronicles, writeLives } from './chronicle.js';
 import { updateStrategic, updateRoutes, costOfCapacity, costOfPolice, settleBases } from './economy.js';
+import { outfitFleets } from './navy.js';
 
 const R = (a, b) => [a, b];
 const ARCHETYPES = [
@@ -157,6 +158,7 @@ export function inheritStates(w) {
   initAdmin(w);
   writeChronicles(w); writeLives(w);
   initFirms(w);
+  outfitFleets(w);
   // Routes are known from the start so shipment and credit decisions can be made in the first quarter too.
   updateStrategic(w); updateRoutes(w);
   // The people around the seats are there from the first day, and the state's offices work as they are staffed.

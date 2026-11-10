@@ -17,6 +17,7 @@ import { prosecute, forge, forgeryFound } from './justice.js';
 import { shame, honourOf, aimsMet, aimsText, kindWord, dealsWith, maySign, tieOf, tieWord, stanceOf, seesTreaty, reveal } from './diplomacy.js';
 import { foundPaper, papersOf, carry, MAX_PAPERS } from './press.js';
 import { buyBonds, sellBonds } from './bonds.js';
+import { SHIPS, kindOf, ORDERS, friendlyPort, baseMap, readiness, enemyHolds, seaPath, refuge, bombard as shell } from './navy.js';
 import { proposeContract, acceptContract, cancelContract, toStateAccount } from './contracts.js';
 import { governmentSeats, institutionRoom, delegated, vetoedBy, makeInstitution, mustPassParliament, createBill, parliamentOpen, makeParliament, leadsParties, enactLaw, normalizeClauses, activateClauses, allocateSeats, clauseText, MAX_AGENCY_BUDGET, governs } from './polity.js';
 
@@ -32,7 +33,7 @@ const LABOUR_OPS = new Set(['set_wages', 'set_safety', 'lockout', 'agitate', 'ar
 const PRIVATE = ['capital_flight', 'repatriate', 'draw_institution', 'buy_bonds', 'sell_bonds', 'back_claim', 'renounce_claim', 'fund_party', 'found_paper', 'fund_paper', 'close_paper', 'forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution', 'propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'fund_plot', 'bribe', 'custom', 'propaganda', 'noop'];
 PERMISSIONS.private = new Set(PRIVATE);
 // The chief of staff directs where the army's units and squadrons stand and who commands them. Raising and disbanding troops, war and peace stay with the ruler.
-for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'appoint_commander', 'spy', 'build', 'set_posture', 'amphibious', 'offensive']) PERMISSIONS.general.add(op);
+for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'appoint_commander', 'spy', 'build', 'set_posture', 'amphibious', 'offensive', 'fleet_orders', 'bombard', 'lay_mines']) PERMISSIONS.general.add(op);
 for (const seat of ['general', 'opposition', 'oligarch']) for (const op of ['capital_flight', 'repatriate', 'draw_institution', 'buy_bonds', 'sell_bonds', 'back_claim', 'renounce_claim', 'fund_party', 'found_paper', 'fund_paper', 'close_paper', 'forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'noop', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution']) PERMISSIONS[seat].add(op);
 PERMISSIONS.exiled = new Set(PRIVATE.filter(x => !['found_party', 'execute_plot', 'gather_dossier'].includes(x)));
 for (const k of ['general', 'opposition', 'oligarch', 'private', 'exiled']) PERMISSIONS[k].add('publish_treaty');
@@ -114,7 +115,7 @@ const noPerson = text => crowded ? CROWDED : text;
 function posted(w, c) {
   const ids = new Set([c.heir, c.regent]);
   for (const i of c.institutions || []) { ids.add(i.head); for (const m of i.members || []) ids.add(m); }
-  for (const u of Object.values(w.units)) ids.add(u.commander); for (const p of Object.values(w.provinces)) ids.add(p.governor);
+  for (const u of Object.values(w.units)) ids.add(u.commander); for (const f of Object.values(w.fleets)) ids.add(f.commander); for (const p of Object.values(w.provinces)) ids.add(p.governor);
   for (const pl of w.plots || []) if (pl.active) { ids.add(pl.leader); for (const m of pl.members || []) ids.add(m); }
   return ids;
 }
@@ -414,7 +415,8 @@ export function applyOp(w, actor, op) {
     case 'repay_foreign': { const l = target; if (!l || !c.creditors[l.id]) return fail('You owe this country nothing.'); const m = Math.min(Math.max(c.reserves, 0), c.creditors[l.id], num(op.amount, 0, 1e12, c.creditors[l.id])); if (m <= 0) return fail('No reserves.'); c.reserves -= m; l.reserves += m; c.creditors[l.id] -= m; return ok(); }
     case 'set_culture_policy': { if (op.language) { if (!LANGUAGE_POLICY.includes(op.language)) return fail('Unknown language policy.'); c.languagePolicy = op.language; } if (op.faith) { if (!FAITH_POLICY.includes(op.faith)) return fail('Unknown faith policy.'); c.faithPolicy = op.faith; } news(w, `${c.name} changed its policy toward peoples and faiths.`, { kind: 'politics', countries: [c.id] }); return ok(); }
     case 'appoint_governor': { const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('Province not yours.'); if (op.remove) { tell(w, w.characters[p.governor], c.name, `You are removed as governor of ${p.name}.`); p.governor = null; return ok(); } const ch = personFor(w, c, op, 'governor'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); p.governor = ch.id; tell(w, ch, c.name, `You are appointed governor of ${p.name}.`); return { ok: true, msg: `${ch.name} (${ch.id}) governs ${p.name}.` }; }
-    case 'appoint_commander': { const u = w.units[op.unit]; if (!u || u.country !== c.id) return fail('No such unit.'); const ch = personFor(w, c, op, 'officer'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); u.commander = ch.id; tell(w, ch, c.name, `You now command unit ${u.id}.`); return { ok: true, msg: `${ch.name} (${ch.id}) commands ${u.id}.` }; }
+    case 'appoint_commander': { if (op.fleet) { const f = w.fleets[op.fleet]; if (!f || f.country !== c.id) return fail('No such fleet of yours.'); const ch = personFor(w, c, op, 'officer'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); f.commander = ch.id; tell(w, ch, c.name, `You now command the squadron ${f.id}.`); return { ok: true, msg: `${ch.name} (${ch.id}) commands the squadron ${f.id}.` }; }
+      const u = w.units[op.unit]; if (!u || u.country !== c.id) return fail('No such unit.'); const ch = personFor(w, c, op, 'officer'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); u.commander = ch.id; tell(w, ch, c.name, `You now command unit ${u.id}.`); return { ok: true, msg: `${ch.name} (${ch.id}) commands ${u.id}.` }; }
     case 'propose_contract': { const k = proposeContract(w, actor, op, num); return k ? { ok: true, msg: `Contract offered: ${k.id}`, contract: k.id } : fail('No such counterparty.'); }
     case 'accept_contract': { const k = acceptContract(w, actor, op.id, op.from, op.state) ?? (op.state === true ? toStateAccount(w, actor, op.id) : null); return k ? { ok: true, msg: `Contract ${k.id} is in force${k.purse?.[actor.id] ? ", on the treasury's account" : ''}.` } : fail('No such offer is waiting for you.'); }
     // The state pays a person: a salary, a grant, a reward, a reimbursement, compensation. It is done in the open, and the money really leaves the treasury.
@@ -625,34 +627,81 @@ export function applyOp(w, actor, op) {
     case 'ship_goods': { if (!target || target.id === c.id) return fail('No such target.'); if (!GOODS.includes(op.good)) return fail('No such good.'); const route = w.routes[c.id < target.id ? `${c.id}|${target.id}` : `${target.id}|${c.id}`]; if (!route) return fail('No open route to this country.'); const q = Math.min(c.stock[op.good] || 0, num(op.amount, 0, 1e6)); if (q <= 0) return fail('Not in stock.'); c.stock[op.good] -= q; const arrived = q / route.cost; target.stock[op.good] = (target.stock[op.good] || 0) + arrived; tell(w, w.characters[target.leader], c.name, `Shipment of ${Math.round(arrived)} units of ${GOOD_LABEL[op.good]} has arrived.`); return { ok: true, msg: `${Math.round(arrived)} units arrived.` }; }
     case 'set_strait': { const s = w.strategic.find(x => x.id === op.id && x.type === 'strait'); if (!s || s.controller !== c.id) return fail('You do not control this strait.'); (c.straitPolicy ||= {})[s.id] = { closed: !!op.closed, toll: num(op.toll, 0, .6) }; if (op.closed) { news(w, `${c.name} closed the ${s.name} passage.`, { kind: 'war', countries: [c.id] }); for (const a of aliveCountries(w)) if (a.id !== c.id) a.relations[c.id] = clampRel((a.relations[c.id] ?? 0) - 8); } return ok(); }
     case 'build_canal': { const s = w.strategic.find(x => x.id === op.id && x.type === 'canal_site'); if (!s) return fail('No such route.'); const p = w.provinces[s.ref]; if (p.controller !== c.id) return fail('The land is not yours.'); if (w.canals.some(k => k.province === p.id)) return fail('The canal already exists.'); if (c.stock.machines < 8 || c.stock.steel < 20) return fail('Not enough machinery or steel.'); if ((w.projects || []).some(x => x.kind === 'canal' && x.province === p.id && !x.status)) return fail('Canal already under construction.'); const note = pay(c, gdp * .8, 'building'); if (note === null) return fail(NO_FUNDS); c.stock.machines -= 8; c.stock.steel -= 20; queueProject(w, c, { kind: 'canal', province: p.id, strategic: s.id, label: `${p.name} canal` }); return { ok: true, msg: `Digging, ready in ${durationOf('canal')} quarters.${note}` }; }
-    case 'build_ship': { const p = w.provinces[op.province]; if (!p || p.controller !== c.id || !p.port) return fail('There is no port here.'); const ships = Math.round(num(op.ships, 1, 30)), shipKind = ['battleship', 'submarine'].includes(op.kind) ? op.kind : 'cruiser', factor = { cruiser: 1, battleship: 4, submarine: 1.5 }[shipKind]; if (shipKind === 'submarine' && !hasTech(c, 'combustion_engine')) return fail('Submarines need the internal combustion engine.'); if (shipKind === 'battleship' && p.port < 2) return fail(`A battleship cannot be laid down at ${p.name}: its harbour is too small. It needs a harbour of the second size (build a larger one, or use another port).`); if (c.stock.steel < ships * 2 * factor) return fail('Not enough steel.'); const note = pay(c, ships * 1.5 * factor * c.priceLevel, 'forces'); if (note === null) return fail(NO_FUNDS); c.stock.steel -= ships * 2 * factor; queueProject(w, c, { kind: 'ship', province: p.id, ships, shipKind, label: `${ships} ${shipKind}` }); return { ok: true, msg: `Laid down, ready in ${durationOf('ship', shipKind)} quarters.${note}` }; }
+    case 'build_ship': { const p = w.provinces[op.province]; if (!p || p.controller !== c.id || !p.port) return fail('There is no port here.');
+      const ships = Math.round(num(op.ships, 1, 30)), shipKind = has(SHIPS, op.kind) ? op.kind : 'cruiser', k = SHIPS[shipKind];
+      if (k.tech && !hasTech(c, k.tech)) return fail('Submarines need the internal combustion engine.');
+      if (p.port < k.port) return fail(`A ${k.one} cannot be laid down at ${p.name}: its harbour is too small. It needs a harbour of the ${['first', 'second', 'third'][k.port - 1]} size (build a larger one, or use another port).`);
+      if (c.stock.steel < ships * k.steel) return fail(`Not enough steel: ${count(ships, shipKind)} need ${Math.round(ships * k.steel * 10) / 10}, and ${Math.round(c.stock.steel)} is in store.`);
+      const note = pay(c, ships * k.price * c.priceLevel, 'forces'); if (note === null) return fail(NO_FUNDS); c.stock.steel -= ships * k.steel;
+      queueProject(w, c, { kind: 'ship', province: p.id, ships, shipKind, label: `${ships} ${shipKind}` });
+      return { ok: true, msg: `${count(ships, shipKind)} laid down at ${p.name}, ready in ${durationOf('ship', shipKind)} quarters; they will lie in that harbour when they are delivered. Each has to be paid for out of the military budget every quarter from then on, and burns coal.${note}` }; }
+    // A squadron is sent to lie in a harbour (a province) or to keep station at sea (a sea). It goes as far as its kind can keep the sea from a base.
     case 'move_fleet': {
-      const f = w.fleets[op.fleet]; if (!f || f.country !== c.id || !w.seas[op.to]) return fail('Invalid fleet order.');
-      // A number of ships sends a squadron and leaves the rest on station.
-      const asked = Math.floor(Number(op.ships)); if (!(asked >= 1 && asked < f.ships)) { f.target = op.to; return ok(); }
-      const d = makeFleet(w, c.id, f.sea, asked); d.kind = f.kind; d.quality = f.quality; d.morale = f.morale; d.target = op.to; f.ships -= asked;
-      return { ok: true, msg: `${d.id}, ${asked} ships, was detached from ${f.id} and ordered to sea. ${f.id} keeps ${Math.round(f.ships)}.` };
+      const f = w.fleets[op.fleet]; if (!f || f.country !== c.id) return fail('No such fleet of yours.');
+      const port = has(w.provinces, op.to) ? w.provinces[op.to] : null, sea = has(w.seas, op.to) ? w.seas[op.to] : null; if (!port && !sea) return fail('Name a sea (such as D12) to keep station in, or a province with a harbour (such as P12) to lie in.');
+      if (port && !friendlyPort(w, c.id, port)) return fail(port.port > 0 ? `${port.name} is not a harbour open to our ships. Only a harbour of our own, an ally's, or one opened to us by a right of passage (a military_access treaty) coals and shelters them.` : `${port.name} has no harbour.`);
+      const k = SHIPS[kindOf(f)], goal = port ? (port.seas.includes(f.sea) ? f.sea : port.seas.find(x => seaPath(w, f.sea, x, c.id))) : sea.id, path = goal ? seaPath(w, f.sea, goal, c.id) : null;
+      if (!path) return fail('No open water leads there: the way is landlocked or passes a strait that is closed to us.');
+      const base = port ? { d: 0, port: port.id } : baseMap(w, c.id)[goal] ?? { d: 99, port: null }, baseName = w.provinces[base.port]?.name;
+      if (base.d > k.reach) return fail(`${seaLabel(w, goal)} lies ${base.d > 90 ? 'out of reach of' : `${base.d} seas from`} the nearest harbour that would coal our ships${baseName ? ` (${baseName})` : ''}; ${k.name} keep station ${k.reach} seas from a base at most. A harbour nearer to it would have to be ours, an ally's, or opened to us by treaty.`);
+      // A number of ships sends a squadron and leaves the rest where they are.
+      const asked = Math.floor(Number(op.ships)); let x = f;
+      if (asked >= 1 && asked < f.ships) { x = makeFleet(w, c.id, f.sea, asked, f.kind); for (const key of ['quality', 'morale', 'port', 'home', 'orders', 'coaled']) if (f[key] != null) x[key] = f[key]; f.ships -= asked; }
+      x.target = op.to; if (!port && x.orders === 'port') delete x.orders;
+      const far = path.length - 1, q = Math.max(1, Math.ceil(far / k.cells)), fit = readiness(w, x, base.d);
+      return { ok: true, msg: `${x.id}, ${count(x.ships, kindOf(x))}${x !== f ? `, was detached from ${f.id} (which keeps ${Math.round(f.ships)}) and` : ''} is ordered to ${port ? `the harbour of ${port.name}` : seaLabel(w, goal)}: ${far} sea${far === 1 ? '' : 's'} away, ${q === 1 ? 'there within the quarter' : `about ${q} quarters`} unless it meets an enemy squadron on the way, which stops it there. ${port ? 'In harbour it lies under the shore guns, burns little coal, mends its damage and commands no water.' : `On that station it is ${base.d} sea${base.d === 1 ? '' : 's'} from its nearest base${baseName ? ` (${baseName})` : ''} and fit to fight at about ${Math.round(fit * 100)} in the hundred of its strength; at sea it burns about ${Math.round(x.ships * k.coal * (1 + Math.max(0, base.d - 4) * .1) * 10) / 10} of coal a quarter (the country holds ${Math.round(c.stock.coal || 0)}), and it commands that water against whatever is weaker.`}` };
     }
     case 'merge_fleets': {
       const a = w.fleets[op.fleet], b = w.fleets[op.into]; if (!a || !b || a === b || a.country !== c.id || b.country !== c.id) return fail('No such fleets.');
-      if (a.sea !== b.sea) return fail(`${a.id} and ${b.id} must lie in the same waters to be joined.`);
-      if ((a.kind ?? 'cruiser') !== (b.kind ?? 'cruiser')) return fail('Ships of different kinds stay separate squadrons.');
-      const n = a.ships + b.ships; for (const k of ['quality', 'morale']) b[k] = ((a[k] ?? b[k]) * a.ships + (b[k] ?? a[k]) * b.ships) / n;
-      b.ships = n; delete w.fleets[a.id];
+      if (a.sea !== b.sea || (a.port ?? null) !== (b.port ?? null)) return fail(`${a.id} and ${b.id} must lie in the same waters, both at sea or both in the same harbour, to be joined.`);
+      if (kindOf(a) !== kindOf(b)) return fail('Ships of different kinds stay separate squadrons.');
+      const n = a.ships + b.ships; for (const k of ['quality', 'morale', 'coaled']) b[k] = ((a[k] ?? b[k] ?? 1) * a.ships + (b[k] ?? a[k] ?? 1) * b.ships) / Math.max(n, 1e-9);
+      b.ships = n; b.damaged = (a.damaged || 0) + (b.damaged || 0); delete w.fleets[a.id];
       return { ok: true, msg: `${a.id} was joined to ${b.id}, now ${Math.round(n)} ships.` };
+    }
+    // Standing orders to a squadron, in force until changed.
+    case 'fleet_orders': {
+      const kind = ORDERS.includes(op.orders) ? op.orders : null; if (!kind) return fail(`A squadron's standing orders are: ${ORDERS.join(', ')}.`);
+      const mine = Object.values(w.fleets).filter(f => f.country === c.id), fs = op.all === true ? mine : mine.filter(f => f.id === op.fleet); if (!fs.length) return fail('No such fleet of yours: name one (fleet) or give all:true.');
+      for (const f of fs) { if (kind === 'patrol') delete f.orders; else f.orders = kind; if (kind === 'port' && !f.port) { const home = w.provinces[f.home]; f.target = (friendlyPort(w, c.id, home) ? home : refuge(w, f))?.id ?? null; } }
+      const says = { patrol: 'They hold whatever water they lie in and fight whatever enemy comes into it.', seek: 'They hold the water they lie in and fight whatever enemy comes; an enemy that tries to slip away from them finds it harder.', evade: 'They do not give battle if they can help it: met by an enemy they try to get away, the more easily the faster they are than whatever hunts them, and fight only if caught. They command no water while they keep out of the way.', blockade: 'Lying at sea off an enemy coast they close it: nothing of his sails in or out through water they command, and what he has ashore beyond it gets nothing by sea. They fight whatever comes out.', raid: 'They go after the enemy\'s merchant ships in the water they lie in and keep away from his warships: his trade through that water costs him more for every quarter they are there. They command no water.', port: 'They make for harbour and lie there under the shore guns: they cost less, burn little coal, mend their damage, cannot be brought to battle, and command no water while they lie there.' }[kind];
+      return { ok: true, msg: `Standing orders to ${fs.map(f => f.id).join(', ')}: ${kind}. ${says}` };
+    }
+    case 'bombard': {
+      const p = has(w.provinces, op.province) ? w.provinces[op.province] : null; if (!p?.coast) return fail('Name a province on a coast.');
+      if (p.controller === c.id) return fail(`${p.name} is in our own hands.`);
+      if (!atWar(w, c.id, p.controller)) return fail(`${p.name} is held by ${w.countries[p.controller]?.name}, with whom there is no war. Shelling it would be one, and war is declared by whoever governs (declare_war).`);
+      if (hasTreaty(w, c.id, p.controller, 'armistice')) return fail('An armistice with them is in force: no ship fires while it lasts.');
+      const off = Object.values(w.fleets).filter(f => f.country === c.id && !f.port && kindOf(f) !== 'submarine' && p.seas.includes(f.sea)), f = op.fleet ? off.find(x => x.id === op.fleet) : off.sort((a, b) => b.ships * SHIPS[kindOf(b)].power - a.ships * SHIPS[kindOf(a)].power)[0];
+      if (!f) return fail(`No surface ships of ours lie at sea off ${p.name} (${p.seas.join(' or ')}): a squadron must be sent there first (move_fleet).`);
+      if (allowance(w, f, 'shell', 1, 1) <= 0) return fail(`${f.id} has fired off what it carries this quarter.`);
+      return shell(w, c, f, p, { shame });
+    }
+    // Mines. Laid from the shore in water off one's own coast, or by light craft lying off the coast of a state one is at war with. Nobody is told.
+    case 'lay_mines': {
+      const sea = has(w.seas, op.sea) ? w.seas[op.sea] : null; if (!sea) return fail('Name the sea (such as D12).');
+      const ours = sea.coast.some(id => w.provinces[id].controller === c.id), foes = sea.coast.some(id => atWar(w, c.id, w.provinces[id].controller)), layer = Object.values(w.fleets).some(f => f.country === c.id && !f.port && f.sea === sea.id && ['cruiser', 'torpedo'].includes(kindOf(f)));
+      if (!ours && !(layer && foes)) return fail('Mines are laid from the shore in water off our own coast, or by cruisers or torpedo craft of ours lying at sea off the coast of a state we are at war with.');
+      const m = (w.mines ||= {})[sea.id]; if (m && m.by !== c.id) return fail('That water is mined already, and not by us.'); if ((m?.level ?? 0) >= 3) return fail('The field there is as thick as it can usefully be.');
+      if (allowance(w, c, `mines:${sea.id}`, 1, 1) <= 0) return fail('One field is laid in one water in a quarter.');
+      if ((c.stock.steel || 0) < 3) return fail('Not enough steel for the mines (3).'); const note = pay(c, 25 * c.priceLevel, 'forces'); if (note === null) return fail(NO_FUNDS); c.stock.steel -= 3;
+      const level = (m?.level ?? 0) + 1; w.mines[sea.id] = { by: c.id, level, left: 8, turn: w.turn };
+      return { ok: true, msg: `Mines are laid in ${seaLabel(w, sea.id)}, ${['thinly', 'in a proper field', 'as thickly as is useful'][level - 1]}. An enemy squadron lying in that water loses about ${3 * level} ships in the hundred to them each quarter, half of those sunk, and clears part of the field as it does; our own ships know the channels. Nobody has been told. Merchant ships of states at war with no one pass there too: now and then one is lost, and its government learns whose mines they were. The field thins of itself in about two years, sooner once we are at peace.${note}` };
     }
     case 'amphibious': {
       // A landing needs a coast to embark from, water that can be crossed, a surface fleet holding the far shore and ships enough to carry the men.
       const u = w.units[op.unit], p = w.provinces[op.to]; if (!u || u.country !== c.id || !p?.coast) return fail('Invalid landing order.');
-      const from = w.provinces[u.province], enemyHolds = s => { const h = w.seaControl?.[s]; return !!h && atWar(w, h, c.id); };
+      const from = w.provinces[u.province];
       if (u.province === p.id) return fail('The unit is already there.');
       if (!from.coast) return fail('The unit must first march to the coast to embark.');
       if (u.shipped === w.turn) return fail('This unit has already been at sea this quarter.');
       if (!atWar(w, c.id, p.controller) && p.controller !== c.id) return fail('You are not at war with whoever holds that coast.');
       if (p.controller !== c.id && hasTreaty(w, c.id, p.controller, 'armistice')) return fail('An armistice with them is in force: no landing while it lasts. It would have to be broken first (break_treaty).');
-      const escort = Object.values(w.fleets).filter(f => f.country === c.id && f.kind !== 'submarine' && p.seas.includes(f.sea) && !enemyHolds(f.sea));
-      if (!escort.length) return fail('You need a surface fleet holding the water off the target coast.');
-      if (!from.seas.some(s => p.seas.some(t => s === t || bfsSea(w, s, t)))) return fail('No sea route joins the two coasts.');
+      const escort = Object.values(w.fleets).filter(f => f.country === c.id && kindOf(f) !== 'submarine' && !f.port && p.seas.includes(f.sea) && !enemyHolds(w, f.sea, c.id));
+      if (!escort.length) return fail('You need a surface fleet at sea, holding the water off the target coast (a squadron lying in harbour covers nothing).');
+      const ways = from.seas.flatMap(s => p.seas.map(t => seaPath(w, s, t, c.id))).filter(Boolean).sort((a, b) => a.length - b.length), way = ways[0]; if (!way) return fail('No sea route joins the two coasts.');
+      if (way.length - 1 > 12) return fail(`The crossing is ${way.length - 1} seas: too far for transports in one quarter. The troops must embark from a coast within twelve seas of the landing place.`);
+      { const held = way.find(s => enemyHolds(w, s, c.id)); if (held) return fail(`The enemy commands ${seaLabel(w, held)} on the way: transports cannot cross water an enemy squadron holds.`); }
       const lift = sum(escort, f => f.ships) * 3; if (u.men > lift) return fail(`The fleet there can carry about ${Math.round(lift)} thousand men; this unit has ${Math.round(u.men)} thousand.`);
       u.from = 'sea'; delete u.attack; u.province = p.id; u.men *= Math.max(.3, .9 - (p.battery || 0) * .15); u.morale = clamp(u.morale - 10, 0, 100); u.target = null; u.dug = 0; u.shipped = w.turn;
       return { ok: true, msg: `${Math.round(u.men)} thousand men were put ashore at ${p.name}.` };
@@ -1265,6 +1314,8 @@ function offensive(w, c, op) {
   const flank = cols.length > 1 ? ' Columns that come from different provinces and arrive together take the defender in flank and have more room to deploy; every column but the strongest keeps the timetable only as well as its commander can, and one that is late goes in a quarter after the rest, alone.' : '';
   return { ok: true, msg: `Offensive against ${to.name} (${to.terrain}${to.fort >= 1 ? ', a fortress' : ''}), held by ${foe.name}: ${went.length} unit${went.length > 1 ? 's' : ''}, ${menText(menAll)}, in ${cols.length} column${cols.length > 1 ? 's' : ''}: ${colText}. ${how} ${guns} ${timing}${flank} The attack will ask about ${Math.round(need * 10) / 10} of arms and ammunition a quarter of the arsenal, which holds ${Math.round(have)}${need > have ? ': not enough, and where the arsenal cannot send what the fight calls for the fire slackens' : ''}.${closedNow(w, to) ? ` ${to.name} is closed by ${season(w) === 'winter' ? 'snow' : 'mud'} this season: the attack waits for the roads.` : ''}${not.length ? ` Not part of it: ${not.join('; ')}.` : ''} What is known of the troops in ${to.name} is in the borders report; the staff reports after the fight what decided it.` };
 }
+const seaLabel = (w, id) => `${w.seas[id]?.name || 'the open sea'} (${id})`;
+const count = (n, k) => { const r = Math.round(n); return `${r} ${r === 1 ? SHIPS[k].one : SHIPS[k].name}`; };
 function setPosture(w, c, op) {
   const kind = POSTURES.includes(op.posture) ? op.posture : null; if (!kind) return fail(`The standing orders are: ${POSTURES.join(', ')}.`);
   const mine = Object.values(w.units).filter(u => u.country === c.id), on = op.on !== false || kind === 'ordinary'; let us, where, toward = null;

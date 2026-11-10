@@ -3,8 +3,8 @@ import { CLASSES, atWar, hasTreaty, countryProvinces, aliveCountries, provincePo
 import { hasTech } from './economy.js';
 import { die } from './politics.js';
 import { afflict, incapacitated } from './health.js';
+import { navalStep, portFalls, shipGuns, enemyHolds, SHIPS, kindOf } from './navy.js';
 
-const SHIP_POWER = { cruiser: 1, battleship: 3.5, submarine: .6 };
 // Two states at war fight unless an armistice between them is in force. Then the lines stand where they are: nobody attacks, nobody advances,
 // no fortress is pressed and no fleet engages, and the war is not over.
 export const truce = (w, a, b) => hasTreaty(w, a, b, 'armistice');
@@ -19,7 +19,7 @@ export function supplyNetwork(w, c) {
   for (const x of q) reach.add(x);
   const spread = () => { while (q.length) { const x = q.shift(); for (const n of w.provinces[x].neighbors) { const o = w.provinces[n].controller; if (!reach.has(n) && (o === c.id || hasTreaty(w, c.id, o, 'military_access') || hasTreaty(w, c.id, o, 'alliance'))) { reach.add(n); q.push(n); } } } };
   spread();
-  const open = p => p.port > 0 && p.seas.some(s => { const holder = w.seaControl?.[s]; return !holder || !atWar(w, holder, c.id); });
+  const open = p => p.port > 0 && p.seas.some(s => !enemyHolds(w, s, c.id));
   if ([...reach].some(id => open(w.provinces[id]))) for (const p of countryProvinces(w, c.id)) if (!reach.has(p.id) && open(p)) { reach.add(p.id); q.push(p.id); }
   spread();
   return reach;
@@ -35,7 +35,7 @@ const HAUL = { plains: 1, desert: 1.3, hills: 1.3, forest: 1.3, tundra: 1.5, mar
 const haul = (c, p) => (HAUL[p.terrain] ?? 1.3) * roadFactor(p) * (p.owner === c.id && p.controller === c.id ? .5 : 1);
 export function supplyLines(w, c) {
   const net = supplyNetwork(w, c), depth = {}, head = {}, q = [];
-  const open = p => p.port > 0 && p.controller === c.id && p.seas.some(s => { const h = w.seaControl?.[s]; return !h || !atWar(w, h, c.id); });
+  const open = p => p.port > 0 && p.controller === c.id && p.seas.some(s => !enemyHolds(w, s, c.id));
   const seed = id => { if (net.has(id) && !(id in depth)) { depth[id] = 0; head[id] = id; q.push(id); } };
   if (c.capital) seed(c.capital);
   // What comes by sea comes from home: a harbour on a far shore is a head only while some harbour of the country's own is open too.
@@ -242,50 +242,14 @@ export function seat(w, c) {
   return next ?? null;
 }
 
-function navalStep(w) {
-  for (const f of Object.values(w.fleets)) {
-    if (!f.target || f.target === f.sea) { f.target = null; continue; }
-    const prev = { [f.sea]: null }, q = [f.sea]; let path = null;
-    while (q.length && !path) { const x = q.shift(); if (x === f.target) { path = []; for (let c = x; c; c = prev[c]) path.unshift(c); break; } for (const n of [...w.seas[x].neighbors, ...w.canals.filter(k => k.a === x || k.b === x).map(k => k.a === x ? k.b : k.a)]) if (!(n in prev)) { prev[n] = x; q.push(n); } }
-    if (!path) { f.target = null; continue; }
-    f.sea = path[Math.min(3, path.length - 1)]; if (f.sea === f.target) f.target = null;
-  }
-  const bySea = {};
-  w.seaRaids = {};
-  for (const f of Object.values(w.fleets)) (bySea[f.sea] ||= []).push(f);
-  w.seaControl = {};
-  for (const [sea, fs] of Object.entries(bySea)) {
-    const owners = [...new Set(fs.map(f => f.country))];
-    // Only those at war with someone present fight; a neutral squadron in the same water looks on.
-    const fighters = owners.filter(a => owners.some(b => fighting(w, a, b)));
-    if (fighters.length) {
-      const pow = f => (SHIP_POWER[f.kind] ?? 1) * f.ships * f.quality * (f.morale / 70) * w.countries[f.country].tech.mil * (hasTech(w.countries[f.country], 'combustion_engine') && (w.countries[f.country].fuelRatio ?? 1) < .5 ? .4 : 1);
-      const force = Object.fromEntries(fighters.map(o => [o, sum(fs.filter(f => f.country === o), pow)]));
-      const top = [...fighters].sort((a, b) => force[b] - force[a])[0];
-      for (const f of fs) {
-        if (f.country !== top && !fighting(w, f.country, top)) continue;
-        const lost = f.country === top ? .06 : .3; f.ships *= 1 - lost; f.morale = clamp(f.morale + (f.country === top ? 2 : -14), 0, 100);
-        // A beaten squadron does not stay to be sunk: it runs for a home port where no enemy waits.
-        if (f.country !== top) { const refuge = countryProvinces(w, f.country).filter(q => q.port > 0).flatMap(q => q.seas).find(s => s !== sea && !Object.values(w.fleets).some(x => x.sea === s && atWar(w, x.country, f.country))); if (refuge) { f.sea = refuge; f.target = null; } }
-      }
-      news(w, `Naval clash in ${w.seas[sea].name || 'open waters'}: ${w.countries[top].name} prevailed.`, { kind: 'war', countries: fighters });
-    }
-    const alive = fs.filter(f => f.ships >= 1 && f.sea === sea), surface = alive.filter(f => f.kind !== 'submarine');
-    if (surface.length) w.seaControl[sea] = surface.sort((a, b) => (SHIP_POWER[b.kind] ?? 1) * b.ships - (SHIP_POWER[a.kind] ?? 1) * a.ships)[0].country;
-    const subs = [...new Set(alive.filter(f => f.kind === 'submarine').map(f => f.country))];
-    if (subs.length) w.seaRaids[sea] = subs;
-  }
-  for (const p of Object.values(w.provinces)) if (p.battery) for (const sea of p.seas) for (const f of Object.values(w.fleets)) if (f.sea === sea && fighting(w, f.country, p.controller)) f.ships *= 1 - p.battery * .03;
-  for (const f of Object.values(w.fleets)) if (f.ships < 1) delete w.fleets[f.id];
-}
-
 // What the armed forces cost each quarter. A standing army of one in a hundred of the people takes a few percent of GDP, as it did around 1900.
 // A war is dearer than a peace: men in the field eat, march and shoot half as much again as men in barracks, and men kept on soil that is not
 // their own country's cost twice their keep, at war or not. A state that goes to war on its peace budget watches its army go unpaid.
 export function upkeepCost(w, c) {
   const field = inTheField(w, c.id) ? 1.5 : 1;
   const men = sum(Object.values(w.units).filter(u => u.country === c.id), u => u.men * (UPKEEP[u.kind] ?? 1) * (w.provinces[u.province] && w.provinces[u.province].owner !== c.id ? 2 : field));
-  const ships = sum(Object.values(w.fleets).filter(f => f.country === c.id), f => f.ships * (SHIP_POWER[f.kind] ?? 1)) * field;
+  // A ship costs its keep whether it floats or lies in dock; a squadron kept at sea costs two fifths more than one lying in harbour.
+  const ships = sum(Object.values(w.fleets).filter(f => f.country === c.id), f => (f.ships + (f.damaged || 0) * .5) * SHIPS[kindOf(f)].power * (f.port ? 1 : 1.4)) * field;
   const forts = sum(countryProvinces(w, c.id), p => (p.fort || 0) * 3 + (p.battery || 0) * 2);
   return (men * .8 + ships * 3 + forts * 5) * c.priceLevel;
 }
@@ -413,8 +377,10 @@ function resolve(w, pid, us) {
   const breach = weight > 0 ? clamp(weight / Math.max(menD * .15, 1e-9), 0, 1) * .6 * shelled : 0, breachFort = heavy > 0 && p.fort >= 1 ? clamp(heavy / (8 * Math.ceil(p.fort)), 0, 1) * .5 * shelled : 0;
   const works = holds ? 1 + (p.fort || 0) * .3 * (1 - breachFort) + (p.trench || 0) * .15 * (1 - breach) : 1, terrain = natural * works;
   const plan = (1 + .07 * ready) * (manner === 'all_out' ? 1.1 : 1) * (1 + .1 * flank), luckD = between(w, .85, 1.15), luckA = between(w, .85, 1.15);
-  const fD = sum(D, u => force(w, u, terrain, fire[u.country], breach)) * crowdD * luckD;
-  const fA = sum(A, u => force(w, u, 1, fire[u.country])) * crowdA * plan * luckA;
+  // On a coast the ships' guns reach the field for whichever side has ships off it in water that is theirs.
+  const gunsA = shipGuns(w, p, atkSide, menD), gunsD = shipGuns(w, p, defSide, menA);
+  const fD = sum(D, u => force(w, u, terrain, fire[u.country], breach)) * crowdD * gunsD * luckD;
+  const fA = sum(A, u => force(w, u, 1, fire[u.country])) * crowdA * plan * gunsA * luckA;
   // A reconnaissance that finds the place all but empty walks in.
   if (manner === 'probe' && fA > fD * 4) manner = 'assault';
   const probe = manner === 'probe', press = manner === 'all_out';
@@ -438,7 +404,7 @@ function resolve(w, pid, us) {
   const led = xs => avg(xs, u => commanderOf(w, u)?.skill ?? 1), heart = xs => avg(xs, u => u.morale), kit = xs => avg(xs, u => u.equip * u.quality * w.countries[u.country].tech.mil), shells = xs => avg(xs, u => .55 + .45 * (fire[u.country] ?? 1));
   const dugD = avg(D, u => 1 + (u.dug || 0) * .1 * (1 - breach)), deepest = Math.max(0, ...D.map(u => u.dug || 0));
   // How far each thing favoured the attacker (above one) or the defender (below it).
-  const told = { numbers: (menA * crowdA) / Math.max(menD * crowdD, 1e-9), ground: 1 / natural, works: 1 / (works * dugD), supply: sup(A) / sup(D), shells: shells(A) / shells(D), command: led(A) / led(D), spirit: heart(A) / Math.max(heart(D), 1), arms: kit(A) / Math.max(kit(D), 1e-9), plan, luck: luckA / luckD };
+  const told = { numbers: (menA * crowdA) / Math.max(menD * crowdD, 1e-9), ground: 1 / natural, works: 1 / (works * dugD), supply: sup(A) / sup(D), shells: shells(A) / shells(D), command: led(A) / led(D), spirit: heart(A) / Math.max(heart(D), 1), arms: kit(A) / Math.max(kit(D), 1e-9), plan, fleet: gunsA / gunsD, luck: luckA / luckD };
   const winGen = commanderOf(w, (atkWins ? A : D)[0]), loseGen = commanderOf(w, (atkWins ? D : A)[0]);
   if (!probe) {
     if (winGen) { winGen.skill = clamp((winGen.skill ?? 1) + .01, .5, 1.6); (winGen.record ||= { won: 0, lost: 0 }).won++; }
@@ -483,6 +449,7 @@ function resolve(w, pid, us) {
     if (key === 'spirit') return lostIt ? 'our men went in with less heart than theirs' : 'our men were in better heart than theirs';
     if (key === 'arms') return lostIt ? 'they were the better armed and trained' : 'we were the better armed and trained';
     if (key === 'plan') return us === 'A' ? [flank ? `our columns came at them from ${flank + 1} sides together` : '', ready >= .5 ? 'the attack had been prepared' : '', press ? 'the attack was pressed regardless of loss' : ''].filter(Boolean).join(', and ') : [flank ? `they came at us from ${flank + 1} sides together` : '', ready >= .5 ? 'their attack had plainly been long prepared' : '', press ? 'they pressed it regardless of loss' : ''].filter(Boolean).join(', and ');
+    if (key === 'fleet') return lostIt ? 'their ships\' guns reached the field from the sea' : 'our ships\' guns reached the field from the sea';
     return 'for the rest it could have gone either way';
   };
   // What told for whoever carried the day, strongest first; a thing counts once it made a difference of a tenth or so.
@@ -508,6 +475,7 @@ export function capture(w, p, by) {
   p.controller = to; p.governor = null;
   // Whoever gives up a province wrecks what the enemy could use: a railway taken in war carries nothing for its new holder for two quarters.
   if (p.rail > 0) p.railOut = w.turn + 2;
+  if (p.port > 0) portFalls(w, p, to);
   if (to === by) {
     // Conquest is not free for the conquered: the fighting, the requisitions and the collapse of the old administration all leave their mark.
     p.unrest = clamp(p.unrest + 12, 0, 100); p.devastation = clamp(p.devastation + .05, 0, 1); p.admin = Math.min(p.admin ?? .5, .2);

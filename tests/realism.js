@@ -351,7 +351,7 @@ chain('A contract starts on acceptance, payment and delivery run, a breach is wr
   w.turn = k.until; contractStep(w); assert.equal(k.status, 'finished');
 });
 chain('Ship types: battleships are stronger, submarines hit trade but cannot hold the sea', () => {
-  const setup = (a, b) => { const w = fresh(), sea = Object.keys(w.seas)[0]; for (const f of Object.values(w.fleets)) delete w.fleets[f.id]; w.wars.push({ id: 'SD', a: ['U1'], b: ['U2'], civil: false, active: true, start: 0, name: 'D' }); const fa = makeFleet(w, 'U1', sea, 5), fb = makeFleet(w, 'U2', sea, 12); fa.kind = a; fb.kind = b; return { w, sea, fa, fb }; };
+  const setup = (a, b) => { const w = fresh(), sea = Object.keys(w.seas)[0]; for (const f of Object.values(w.fleets)) delete w.fleets[f.id]; w.wars.push({ id: 'SD', a: ['U1'], b: ['U2'], civil: false, active: true, start: 0, name: 'D' }); const fa = makeFleet(w, 'U1', sea, 6), fb = makeFleet(w, 'U2', sea, 10); fa.kind = a; fb.kind = b; return { w, sea, fa, fb }; };
   const s = setup('battleship', 'cruiser'); militaryStep(s.w); assert.equal(s.w.seaControl[s.sea], 'U1');
   const t = setup('submarine', 'cruiser'); t.fb.ships = 1; militaryStep(t.w); assert.notEqual(t.w.seaControl[t.sea], 'U1', 'a submarine does not hold the sea'); assert.ok(t.w.seaRaids[t.sea].includes('U1'));
   const w = fresh(), c = w.countries.U1, p = countryProvinces(w, 'U1').find(q => q.coast) ?? countryProvinces(w, 'U1')[0]; p.port = 1; c.treasury = c.gdp * 3; c.stock.steel = 1000; assert.equal(applyOp(w, ld(w, c), { op: 'build_ship', province: p.id, ships: 1, kind: 'submarine' }).ok, false, 'requires technology');
@@ -1057,7 +1057,8 @@ chain('A peace can name provinces and who pays: the land changes hands, gold is 
   assert.ok(leaderOf(w, 'U2').inbox.some(m => m.text.includes(prize.name) && m.text.includes('pays')), 'the terms are spelled out to the other side');
   const gold = a.reserves; assert.equal(applyOp(w, leaderOf(w, 'U2'), { op: 'accept_treaty', id: r.treaty }).ok, true);
   assert.equal(prize.owner, 'U1'); assert.equal(prize.controller, 'U1'); assert.ok(Math.abs(a.reserves - gold - 10) < 1e-6, 'only the gold that exists moves'); assert.ok(b.reserves >= 0 && b.creditors.U1 > 0, 'the rest is a debt');
-  const legit = a.legitimacy; assert.equal(applyOp(w, leaderOf(w, 'U1'), { op: 'declare_war', target: 'U2' }).ok, true); assert.ok(a.legitimacy <= legit - 8, 'breaking a fresh peace is breaking a given word');
+  // No frontier blood between them, so that nothing but the broken word weighs on the declaration.
+  a.grudges = {}; const legit = a.legitimacy; assert.equal(applyOp(w, leaderOf(w, 'U1'), { op: 'declare_war', target: 'U2' }).ok, true); assert.ok(a.legitimacy <= legit - 8, 'breaking a fresh peace is breaking a given word');
 });
 chain('Two armies ordered at each other meet and fight; a handful of men does not take a province; an ally hands back what it frees', () => {
   const { w, p, q } = frontWorld(), mine = soldier(w, 'U1', p.id, 60), theirs = soldier(w, 'U2', q.id, 60); mine.target = q.id; theirs.target = p.id; militaryStep(w);
@@ -1139,7 +1140,7 @@ chain('An order for part of a unit touches only that part: discharge, detachment
   d.loyalty = 40; u.loyalty = 80; r = applyOp(w, gen, { op: 'merge_units', unit: d.id, into: u.id }); assert.ok(r.ok && !w.units[d.id] && Math.abs(u.men - 75) < 1e-6, r.msg);
   assert.ok(Math.abs(u.loyalty - (40 * 20 + 80 * 55) / 75) < 1e-6, 'the joined unit is as loyal as its men were');
   r = applyOp(w, boss, { op: 'disband', unit: u.id }); assert.ok(r.ok && !w.units[u.id], 'with no number the whole unit goes home');
-  const seaId = Object.keys(w.seas)[0], other = Object.keys(w.seas)[1], fl = makeFleet(w, 'U1', seaId, 12); r = applyOp(w, gen, { op: 'move_fleet', fleet: fl.id, to: other, ships: 4 }); assert.ok(r.ok, r.msg);
+  const harbour = countryProvinces(w, 'U1').find(p => p.port > 0 && p.seas.length), seaId = harbour.seas[0], other = w.seas[seaId].neighbors[0], fl = makeFleet(w, 'U1', seaId, 12); r = applyOp(w, gen, { op: 'move_fleet', fleet: fl.id, to: other, ships: 4 }); assert.ok(r.ok, r.msg);
   const sq = Object.values(w.fleets).find(x => x.country === 'U1' && x.id !== fl.id && x.target === other && x.ships === 4); assert.ok(sq && fl.ships === 8 && !fl.target, 'a squadron sails and the fleet stays on station');
   r = applyOp(w, gen, { op: 'merge_fleets', fleet: sq.id, into: fl.id }); assert.ok(r.ok && fl.ships === 12 && !w.fleets[sq.id], r.msg);
   // An offer can be refused by the one it was made to and taken back by the one who made it; each hears of it.
@@ -2175,11 +2176,11 @@ chain('An offensive is one operation: columns sent against a place under one ord
   // Winter, and the second column has a snowed-in pass between it and its place in the line: it cannot be up before spring.
   const field = () => { const f = twoRoads(), { w, e2, over } = f; while (seasonOf(w) !== 'winter') w.turn++; Object.assign(e2, { terrain: 'mountain', rail: 0 });
     const start = e2.neighbors.map(n => w.provinces[n]).find(p => p.controller === 'U1' && !over.neighbors.includes(p.id) && !p.neighbors.includes(f.e1.id)) ?? e2.neighbors.map(n => w.provinces[n]).find(p => p.controller === 'U1' && !over.neighbors.includes(p.id)); assert.ok(start, 'somewhere behind the pass');
-    return { ...f, start, first: soldier(w, 'U1', f.e1.id, 70), second: soldier(w, 'U1', start.id, 70), def: soldier(w, 'U2', over.id, 90) }; };
+    return { ...f, start, first: soldier(w, 'U1', f.e1.id, 70), second: soldier(w, 'U1', start.id, 70), def: soldier(w, 'U2', over.id, 80) }; };
   // Marched in as they come: the first attacks alone in winter, the second alone when it is through the pass.
   const loose = field(); loose.first.target = loose.second.target = loose.over.id; const lf = [];
-  for (let i = 0; i < 4; i++) { lf.push(...quarter(loose.w)); for (const u of [loose.first, loose.second]) if (loose.w.units[u.id] && u.province !== loose.over.id) u.target = loose.over.id; }
-  assert.ok(lf.length >= 2 && lf.every(b => !b.attackerWon) && loose.over.controller === 'U2', `seventy thousand at a time do not beat ninety thousand: ${JSON.stringify(lf.map(b => [b.attackerWon, b.lossA, b.lossD]))}`);
+  for (let i = 0; i < 4; i++) lf.push(...quarter(loose.w));
+  assert.ok(lf.length === 2 && lf.every(b => !b.attackerWon) && loose.over.controller === 'U2', `seventy thousand at a time do not beat eighty thousand on the defensive: ${JSON.stringify(lf.map(b => [b.attackerWon, b.lossA, b.lossD]))}`);
   // Under one order: the first column forms up and waits; in spring both go in together, from two sides.
   const one = field(), r = applyOp(one.w, one.gen, { op: 'offensive', to: one.over.id, units: [one.first.id, one.second.id] }); assert.ok(r.ok && /in 2 columns/.test(r.msg) && /take the defender in flank/.test(r.msg) && /arms and ammunition/.test(r.msg), r.msg);
   const q1 = quarter(one.w); assert.ok(!q1.length && one.first.province === one.e1.id && /waits for the columns/.test(one.first.march.held), `the column that is up waits for the one that is not: ${one.first.march?.held}`);
@@ -2270,5 +2271,127 @@ chain('The manner of an attack is the general\'s to choose: a reconnaissance in 
   const ref = refereePrompt(s.w, s.a, [{ actor: s.gen, decisions: ['Attack.'] }]); assert.ok(ref.includes('offensive{to,units?:[unit ids]') && /reconnaissance in force/.test(ref), 'the referee knows the order');
   const army = lookUp(s.w, s.gen, 'army'); assert.ok(/An attack can be ordered as one operation \(offensive\)/.test(army) && /Supply: an army is fed from/.test(army), 'the commander is told how attacks and supply work');
   const men = lookUp(s.w, ld(s.w, s.a), 'commanders'); assert.ok(/Chief of the general staff: .*(able|competent|a poor hand)/.test(men), men); assert.ok(!/Chief of the general staff: [^.]*(, able|, competent|, a poor hand)/.test(lookUp(s.w, s.gen, 'commanders')), 'nobody is handed the opinion the army has of himself'); assert.ok(!/(, able|, competent|, a poor hand)/.test(lookUp(s.w, s.w.characters[s.a.opposition], 'commanders')), 'what the army thinks of its commanders is not known outside it');
+});
+import { strength as shipWeight, enemyHolds as heldByEnemy, baseMap as basesOf, readiness as fitness } from '../engine/navy.js';
+// Two navies with the sea to themselves: every other squadron is gone, and U1 is at war with the state whose best harbour lies nearest its own
+// (e). meet is the water off that harbour: within four seas of a base of each, so that both fight there at their best.
+const navalWorld = () => { const w = fresh(); for (const f of Object.values(w.fleets)) delete w.fleets[f.id]; for (const u of Object.values(w.units)) delete w.units[u.id];
+  const port = id => countryProvinces(w, id).filter(p => p.port > 0 && p.seas.length).sort((x, y) => y.port - x.port)[0], ha = port('U1'), near = basesOf(w, 'U1');
+  const rival = aliveCountries(w).filter(o => o.id !== 'U1' && port(o.id)).map(o => ({ o, hb: port(o.id) })).map(x => ({ ...x, sea: [...x.hb.seas].sort((s, t) => (near[s]?.d ?? 99) - (near[t]?.d ?? 99))[0] })).sort((x, y) => (near[x.sea]?.d ?? 99) - (near[y.sea]?.d ?? 99))[0];
+  assert.ok((near[rival.sea]?.d ?? 99) <= 4, 'a rival harbour within four seas'); ha.port = Math.max(ha.port, 2); rival.hb.port = Math.max(rival.hb.port, 2);
+  for (const c of [w.countries.U1, rival.o]) { c.stock.coal = 2000; c.stock.steel = 2000; c.budget.military = .3; c.treasury = c.gdp * 3; w.characters[c.general].skill = 1; }
+  w.wars.push({ id: 'S-n', a: ['U1'], b: [rival.o.id], civil: false, active: true, start: w.turn, name: 'n' });
+  return { w, ha: ha.id, hb: rival.hb.id, e: rival.o.id, meet: rival.sea }; };
+let navalBase = null;
+const twoNavies = () => { navalBase ||= navalWorld(); const w = structuredClone(navalBase.w), { e, meet } = navalBase, ha = w.provinces[navalBase.ha], hb = w.provinces[navalBase.hb];
+  const ship = (id, sea, n, kind = 'cruiser', harbour = null) => { const f = makeFleet(w, id, sea, n, kind); if (harbour) { f.port = f.home = harbour.id; f.sea = harbour.seas.includes(sea) ? sea : harbour.seas[0]; } return f; };
+  return { w, a: w.countries.U1, b: w.countries[e], e, ha, hb, meet, ship, gen: w.characters[w.countries.U1.general], gb: w.characters[w.countries[e].general], said: id => w.characters[w.countries[id].general].inbox.map(m => m.text).join('\n'), third: aliveCountries(w).find(o => o.id !== 'U1' && o.id !== e).id }; };
+
+chain('A squadron lives on coal and on its bases: in harbour it burns little and commands nothing, at sea it burns much and costs more; with empty bunkers or far from a harbour it is worth less; no ship keeps station beyond its reach; and a right of passage opens a foreign harbour to it', () => {
+  const t = twoNavies(), { w, a, ha } = t; w.wars = []; const f = t.ship('U1', ha.seas[0], 10, 'cruiser', ha), inPort = upkeepCost(w, a);
+  militaryStep(w); const banked = a._navyCoal; assert.ok(banked > .2 && banked < .4 && !w.seaControl[f.sea], `ten cruisers with banked fires burn about 0.3 and hold no water: ${banked}`);
+  const out = applyOp(w, t.gen, { op: 'move_fleet', fleet: f.id, to: ha.seas[0] }); assert.ok(out.ok && /burns about 3 of coal a quarter/.test(out.msg), out.msg);
+  militaryStep(w); assert.ok(!f.port && a._navyCoal > banked * 8 && w.seaControl[f.sea] === 'U1' && upkeepCost(w, a) > inPort * 1.05, `at sea they burn ten times as much, hold the water, and cost more: ${a._navyCoal}`);
+  // Empty bunkers.
+  const full = shipWeight(w, f); a.stock.coal = 0; for (let i = 0; i < 4; i++) militaryStep(w); assert.ok(f.coaled < .1 && shipWeight(w, f) < full * .5, `without coal the squadron is worth less than half: ${shipWeight(w, f)} of ${full}`);
+  assert.ok(/bunkers [0-9] in the hundred full/.test(lookUp(w, t.gen, 'fleet')) && /Coal: the fleet burned/.test(lookUp(w, t.gen, 'fleet')), 'and its staff is told so');
+  // Distance from a base.
+  a.stock.coal = 2000; for (let i = 0; i < 6; i++) militaryStep(w); const bases = basesOf(w, 'U1'), farSea = Object.keys(bases).filter(s => bases[s].d >= 8 && bases[s].d <= 14).sort((x, y) => bases[y].d - bases[x].d)[0], beyond = Object.keys(bases).find(s => bases[s].d > 16);
+  assert.ok(farSea, 'a stretch of water eight seas and more from home'); const near = fitness(w, f), home = f.sea; f.sea = farSea; assert.ok(fitness(w, f) < near - .2, `eight and more seas from a harbour a squadron is not what it was: ${fitness(w, f)} against ${near}`); f.sea = home;
+  if (beyond) { const no = applyOp(w, t.gen, { op: 'move_fleet', fleet: f.id, to: beyond }); assert.ok(!no.ok && /keep station 16 seas from a base at most/.test(no.msg), no.msg); }
+  // Torpedo craft are coast craft; a harbour opened by treaty is a base like any other.
+  const boats = t.ship('U1', ha.seas[0], 12, 'torpedo', ha), off = Object.keys(bases).find(s => bases[s].d >= 4 && bases[s].d < 90 && w.seas[s].coast.some(id => w.provinces[id].port > 0 && w.provinces[id].controller !== 'U1')); assert.ok(off, 'a foreign harbour four seas and more from ours');
+  const host = w.provinces[w.seas[off].coast.find(id => w.provinces[id].port > 0 && w.provinces[id].controller !== 'U1')], no = applyOp(w, t.gen, { op: 'move_fleet', fleet: boats.id, to: off }); assert.ok(!no.ok && /torpedo boats keep station 3 seas/.test(no.msg), no.msg);
+  assert.ok(!applyOp(w, t.gen, { op: 'move_fleet', fleet: boats.id, to: host.id }).ok, 'a foreign harbour is closed to them');
+  w.treaties.push({ id: 'A-pass', kind: 'military_access', parties: ['U1', host.controller], active: true, pending: false, terms: '', clauses: [], breaches: [], turn: w.turn });
+  const yes = applyOp(w, t.gen, { op: 'move_fleet', fleet: boats.id, to: off }); assert.ok(yes.ok, `with a right of passage that harbour is a base: ${yes.msg}`); assert.ok(applyOp(w, t.gen, { op: 'move_fleet', fleet: boats.id, to: host.id }).ok, 'and they may lie in it');
+});
+
+chain('A sea fight is not arithmetic: the heavier line wins more often than not and not always, an able admiral counts, ships that are hit are as often towed home as sunk and a harbour mends them at the pace of its size, a beaten squadron runs for port, a fast squadron told to avoid battle usually gets away, and a neutral squadron in the same water commands nothing for anybody', () => {
+  const fights = (prep = () => {}) => { let won = 0; for (let i = 0; i < 60; i++) { const t = twoNavies(); t.w.rng = 31 + i * 7907; t.ship('U1', t.meet, 10); const theirs = t.ship(t.e, t.meet, 8); prep(t, theirs); militaryStep(t.w); assert.equal(t.w.seaFights?.length, 1); if (t.w.seaFights[0].winner === 'U1') won++; } return won; };
+  const even = fights(); assert.ok(even >= 36 && even <= 57, `ten cruisers beat eight most days and not every day: ${even} of 60`);
+  // An admiral.
+  const led = fights((t, theirs) => { const r = applyOp(t.w, t.gb, { op: 'appoint_commander', fleet: theirs.id, name: 'Admiral Varn' }); assert.ok(r.ok, r.msg); t.w.characters[theirs.commander].skill = 1.5; });
+  assert.ok(led < even - 8, `under an able admiral the smaller squadron wins far more often: U1 won ${led} against ${even}`);
+  // One fight, looked at closely.
+  const t = twoNavies(); t.w.rng = 4242; const mine = t.ship('U1', t.meet, 10), theirs = t.ship(t.e, t.meet, 8); militaryStep(t.w);
+  const lid = t.w.seaFights[0].loser, loser = lid === 'U1' ? mine : theirs, winner = lid === 'U1' ? theirs : mine, report = t.said(lid);
+  assert.ok(loser.damaged > .3 && loser.ships + loser.damaged < (lid === 'U1' ? 10 : 8) - .3 && winner.damaged > 0, `some are sunk and some disabled: ${JSON.stringify([loser.ships, loser.damaged, winner.ships, winner.damaged])}`);
+  assert.ok(loser.port && t.w.provinces[loser.port].controller === lid && /ran for .* and lie in harbour/.test(report), `the beaten squadron runs for a harbour of its own: ${report}`);
+  assert.ok(/we were beaten/.test(report) && /What told:/.test(report) && /badly damaged and fight no more until a dock/.test(report) && /we hold the water/.test(t.said(t.w.seaFights[0].winner)), report);
+  // The dock. A larger harbour mends faster, and mending takes steel.
+  const mend = (size, steel = 2000) => { const y = twoNavies(); y.w.wars = []; y.hb.port = size; y.b.stock.steel = steel; const f = y.ship(y.e, y.hb.seas[0], 2, 'cruiser', y.hb); f.damaged = 8; militaryStep(y.w); return 8 - f.damaged; };
+  const small = mend(1), large = mend(3), starved = mend(3, 0); assert.ok(Math.abs(small - 3) < .01 && large > small * 2 && starved < large * .6, `a harbour of the first size mends three cruisers a quarter, one of the third far more, and less without steel: ${small}, ${large}, ${starved}`);
+  // Avoiding battle.
+  const slips = (kind, hunters) => { let n = 0; for (let i = 0; i < 60; i++) { const y = twoNavies(); y.w.rng = 97 + i * 6007; const prey = y.ship(y.e, y.meet, 4, kind), hunt = y.ship('U1', y.meet, 6, hunters); prey.orders = 'evade'; hunt.orders = 'seek'; militaryStep(y.w); if (prey.slipped === y.w.turn) n++; } return n; };
+  const fast = slips('cruiser', 'battleship'), slow = slips('battleship', 'cruiser'); assert.ok(fast > slow + 10 && fast >= 30, `cruisers get away from battleships far more often than battleships from cruisers: ${fast} and ${slow} of 60`);
+  // A neutral squadron, however large, commands nothing: the blockade stands.
+  const n = twoNavies(), block = n.ship('U1', n.meet, 10); n.ship(n.third, n.meet, 60); militaryStep(n.w);
+  assert.ok(n.w.seaControl[n.meet] === n.third && heldByEnemy(n.w, n.meet, n.e) && !heldByEnemy(n.w, n.meet, n.third), 'the water is closed to the blockaded state whoever else lies in it');
+  block.orders = 'raid'; militaryStep(n.w); assert.ok(!heldByEnemy(n.w, n.meet, n.e) && n.w.seaRaids[n.meet].includes('U1'), 'cruisers out after merchantmen prey on trade and command no water');
+});
+
+chain('Small craft and mines make a coast dangerous to a stronger navy: torpedo boats count for far more in their own waters than out of them, a minefield bleeds and is cleared by the squadron that keeps station in it, and now and then sinks a neutral merchant ship, which its government holds against whoever laid it', () => {
+  // The same boats against the same battleships: off their own harbour, and five seas and more from any harbour of theirs.
+  const boats = home => { let won = 0; for (let i = 0; i < 40; i++) { const y = twoNavies(), theirs = basesOf(y.w, y.e), ours = basesOf(y.w, 'U1'), sea = home ? y.meet : Object.keys(theirs).filter(s => theirs[s].d >= 5 && theirs[s].d < 90).sort((p, q) => (ours[p]?.d ?? 99) - (ours[q]?.d ?? 99))[0]; assert.ok(sea); y.w.rng = 5 + i * 9973;
+      y.ship(y.e, sea, 20, 'torpedo'); y.ship('U1', sea, 3, 'battleship'); militaryStep(y.w); if (y.w.seaFights?.at(-1)?.winner === y.e) won++; } return won; };
+  const near = boats(true), far = boats(false); assert.ok(near >= 22 && far <= 6, `twenty torpedo boats see off three battleships from their own coast and are swept aside anywhere else: ${near} and ${far} of 40`);
+  // Mines.
+  const t = twoNavies(), { w, hb, e } = t, sea = t.meet;
+  const nobody = Object.keys(w.seas).find(s => !w.seas[s].coast.some(id => ['U1', e].includes(w.provinces[id].controller))); assert.ok(!applyOp(w, t.gb, { op: 'lay_mines', sea: nobody }).ok, 'not in water that is neither one\'s own nor an enemy\'s');
+  const laid = applyOp(w, t.gb, { op: 'lay_mines', sea }); assert.ok(laid.ok && w.mines[sea].by === e && /Nobody has been told/.test(laid.msg), laid.msg); assert.ok(!applyOp(w, t.gb, { op: 'lay_mines', sea }).ok, 'one field in one water in a quarter');
+  w.turn++; assert.ok(applyOp(w, t.gb, { op: 'lay_mines', sea }).ok && w.mines[sea].level === 2);
+  const block = t.ship('U1', sea, 20); militaryStep(w); assert.ok(block.ships < 19.5 && block.damaged > .2 && w.mines[sea].level === 1 && /to mines/.test(t.said('U1')), `the blockading squadron loses ships to them and clears part of the field: ${block.ships}, ${JSON.stringify(w.mines[sea])}`);
+  assert.ok(/Mines of ours lie in/.test(lookUp(w, t.gb, 'fleet')) && !/Mines of ours/.test(lookUp(w, t.gen, 'fleet')), 'whoever laid them knows where they are');
+  // A neutral's trade through mined water.
+  const m = twoNavies(), other = aliveCountries(m.w).find(o => ![m.e, m.third, 'U1'].includes(o.id)).id, key = [m.third, other].sort().join('|'), rel = m.w.countries[m.third].relations[m.e] ?? 0; let lost = 0;
+  for (let i = 0; i < 40; i++) { m.w.newsThisTurn = []; m.w.mines = { [m.meet]: { by: m.e, level: 3, left: 8, turn: m.w.turn } }; m.w.routes = { [key]: { mode: 'sea', cost: 1.1, path: [m.meet], tolls: [] } }; militaryStep(m.w); lost += m.w.newsThisTurn.filter(x => /lost on a mine/.test(x.text)).length; }
+  assert.ok(lost >= 2 && (m.w.countries[m.third].relations[m.e] ?? 0) < rel - 8, `neutral merchantmen are lost on them, and it is remembered: ${lost} ships`);
+});
+
+chain('The fleet and the shore: ships shell a coast they lie off and the shore guns answer, shelling an open town is read about everywhere, a squadron\'s guns help the army fighting on that coast, a harbour that falls sends its ships to sea or to the bottom, and a landing needs ships at sea off the beach', () => {
+  const t = twoNavies(), { w, a, b, hb, e } = t, f = t.ship('U1', hb.seas[0], 4, 'battleship'); hb.battery = 2; const garrison = soldier(w, e, hb.id, 30); garrison.dug = 3;
+  const war = w.wars; w.wars = []; assert.ok(/no war/.test(applyOp(w, t.gen, { op: 'bombard', province: hb.id }).msg), 'ships do not open fire in peace'); w.wars = war;
+  const dev = hb.devastation, grudge = b.grudges?.U1?.incident ?? 0, r = applyOp(w, t.gen, { op: 'bombard', province: hb.id, fleet: f.id }); assert.ok(r.ok && /shore guns answered/.test(r.msg), r.msg);
+  assert.ok(hb.devastation > dev && hb.battery < 2 && f.ships < 4 && f.damaged > 0 && garrison.men < 30 && garrison.dug < 3 && b.grudges.U1.incident > grudge + 4, 'the harbour, its guns and the troops there are hit, the ships are hit back, and the country remembers');
+  assert.ok(!applyOp(w, t.gen, { op: 'bombard', province: hb.id, fleet: f.id }).ok, 'a squadron fires off what it carries once in a quarter');
+  const open = countryProvinces(w, e).find(p => p.coast && p.id !== hb.id && p.seas.length && !p.battery && !p.fort); assert.ok(open, 'an undefended town on their coast');
+  { const g = t.ship('U1', open.seas[0], 5), o = applyOp(w, t.gen, { op: 'bombard', province: open.id, fleet: g.id }); assert.ok(o.ok && /open town/.test(o.msg) && (a.honourLog || []).some(x => /undefended/.test(x.why)), o.msg); }
+  { const h = t.ship('U1', hb.seas[0], 3, 'cruiser'); h.port = t.ha.id; assert.ok(!applyOp(w, t.gen, { op: 'bombard', province: hb.id, fleet: h.id }).ok, 'ships in harbour shell nothing'); }
+  // Guns from the sea in a battle on the coast: the same fight, the same luck, with and without battleships lying off it.
+  const coast = ships => { const y = twoRoads(1), { over, e1 } = y; for (const g of Object.values(y.w.fleets)) delete y.w.fleets[g.id]; over.coast = true; over.seas = [countryProvinces(y.w, 'U1').find(p => p.port > 0 && p.seas.length).seas[0]]; if (ships) makeFleet(y.w, 'U1', over.seas[0], ships, 'battleship'); y.w.rng = 606;
+    const atk = soldier(y.w, 'U1', e1.id, 120), def = soldier(y.w, 'U2', over.id, 100); applyOp(y.w, y.gen, { op: 'offensive', to: over.id, units: [atk.id] }); quarter(y.w); return { lostD: 100 - (y.w.units[def.id]?.men ?? 0), said: y.said() }; };
+  const dry = coast(0), wet = coast(8); assert.ok(wet.lostD > dry.lostD * 1.05, `with battleships off the coast the defenders lose more: ${wet.lostD} against ${dry.lostD}`);
+  // A harbour falls.
+  const fall = blockaded => { const y = twoNavies(); y.hb.seas = [y.hb.seas[0]]; const docked = y.ship(y.e, y.hb.seas[0], 6, 'cruiser', y.hb); if (blockaded) y.ship('U1', y.hb.seas[0], 20); militaryStep(y.w); docked.damaged = 2; y.w.newsThisTurn = []; takeProvince(y.w, y.hb, 'U1'); return { ...y, docked }; };
+  const free = fall(false); assert.ok(free.w.fleets[free.docked.id] && !free.docked.port && free.docked.damaged === 0 && free.w.newsThisTurn.some(x => /put to sea as .* fell/.test(x.text)), 'with open water before them the ships put to sea, leaving those in dock');
+  const shut = fall(true); assert.ok(!shut.w.fleets[shut.docked.id] && shut.w.newsThisTurn.some(x => /scuttled/.test(x.text)) && Object.values(shut.w.fleets).some(g => g.country === 'U1' && g.port === shut.hb.id && g.damaged > 1), 'shut in, they are scuttled, and the victor raises a few');
+  // A landing.
+  const l = twoNavies(), troops = soldier(l.w, 'U1', l.ha.id, 6), idle = l.ship('U1', l.hb.seas[0], 10, 'cruiser'); idle.port = l.ha.id;
+  assert.ok(/covers nothing/.test(applyOp(l.w, l.gen, { op: 'amphibious', unit: troops.id, to: l.hb.id }).msg), 'ships lying in harbour cover no landing');
+  delete idle.port; militaryStep(l.w); const landed = applyOp(l.w, l.gen, { op: 'amphibious', unit: troops.id, to: l.hb.id }); assert.ok(landed.ok && troops.province === l.hb.id && troops.from === 'sea', `with the squadron at sea off the beach the troops go ashore: ${landed.msg}`);
+});
+
+chain('A navy is handed over as a navy of its time and its staff knows how it works: battleships, cruisers and torpedo craft lying in harbour, an admiral over the heaviest squadron; the yards build each kind where the harbour allows; the staff\'s appreciation of a war covers the sea; and a chief of staff played by rule blockades when he is the stronger and keeps his ships in harbour when he is not', () => {
+  const w = inherited(), cs = aliveCountries(w), fs = Object.values(w.fleets);
+  assert.ok(fs.every(f => f.kind && f.port && w.provinces[f.port].controller === f.country && f.home === f.port), 'every squadron has its kind and lies in a harbour of its own');
+  assert.ok(fs.some(f => f.kind === 'battleship') && fs.some(f => f.kind === 'torpedo') && cs.every(c => fs.some(f => f.country === c.id && f.kind === 'cruiser')), fs.map(f => `${f.country}:${f.kind}:${f.ships}`).join(' '));
+  assert.ok(fs.filter(f => f.kind === 'battleship').every(f => w.provinces[f.port].port >= 2), 'battleships lie where a harbour can take them');
+  const flag = fs.find(f => w.characters[f.commander]?.alive); assert.ok(flag && /admiral commanding the squadron/.test(lookUp(w, w.characters[w.countries[flag.country].leader], 'people')), 'the heaviest squadron has an admiral, and he is known');
+  run(w, 2); const c = [...cs].sort((x, y) => fs.filter(f => f.country === y.id).length - fs.filter(f => f.country === x.id).length)[0], gen = w.characters[c.general], boss = w.characters[c.leader], home = w.provinces[fs.find(f => f.country === c.id).port];
+  assert.ok(Object.values(w.fleets).every(f => f.port && (f.coaled ?? 1) > .95) && !Object.keys(w.seaControl).length, 'in peace they lie in harbour with full bunkers and hold no water');
+  const report = lookUp(w, gen, 'fleet'); assert.ok(/in harbour at/.test(report) && /Our harbours:/.test(report) && /A squadron works from a base/.test(report) && /Standing orders \(fleet_orders\)/.test(report), report);
+  assert.ok(/Fleet details are secret/.test(lookUp(w, w.characters[c.opposition], 'fleet')));
+  const other = cs.find(o => o.id !== c.id && Object.values(w.provinces).some(p => p.controller === o.id && p.port > 0)), plan = lookUp(w, gen, `war_plan:${other.id}`); assert.ok(/At sea\. Ours: .*Theirs, by the published navy lists/.test(plan) && /Their harbours:/.test(plan), plan);
+  const ref = refereePrompt(w, c, [{ actor: gen, decisions: ['The fleet puts to sea.'] }]); assert.ok(ref.includes('fleet_orders{fleet?|all?,orders:patrol|seek|evade|blockade|raid|port}') && ref.includes('Its harbours:') && ref.includes('in harbour at') && ref.includes('lay_mines{sea}') && ref.includes('bombard{province,fleet?}'), 'the referee knows the orders and sees where the ships lie');
+  // The yards.
+  c.treasury = c.gdp * 4; c.stock.steel = 500; const small = countryProvinces(w, c.id).find(p => p.port === 1);
+  assert.ok(applyOp(w, boss, { op: 'build_ship', province: home.id, ships: 6, kind: 'torpedo' }).ok); if (small) assert.ok(/harbour is too small/.test(applyOp(w, boss, { op: 'build_ship', province: small.id, ships: 1, kind: 'battleship' }).msg));
+  const before = Object.keys(w.fleets).length; run(w, 2); const built = Object.values(w.fleets).find(f => f.kind === 'torpedo' && f.ships === 6 && f.port === home.id); assert.ok(Object.keys(w.fleets).length === before + 1 && built, 'torpedo boats are delivered in two quarters and lie where they were built');
+  assert.ok(applyOp(w, gen, { op: 'fleet_orders', all: true, orders: 'evade' }).ok && Object.values(w.fleets).filter(f => f.country === c.id).every(f => f.orders === 'evade') && !applyOp(w, w.characters[c.opposition], { op: 'fleet_orders', all: true, orders: 'patrol' }).ok, 'standing orders are the staff\'s and the ruler\'s to give');
+  // Played by rule.
+  const t = twoNavies(), strong = t.ship('U1', t.ha.seas[0], 20, 'cruiser', t.ha), weak = t.ship(t.e, t.meet, 5, 'cruiser');
+  for (const op of npcDecide(t.w, t.gen)) applyOp(t.w, t.gen, op); assert.ok(strong.target && strong.orders === 'blockade', 'the stronger navy goes to lie off the enemy\'s harbour');
+  for (const op of npcDecide(t.w, t.gb)) applyOp(t.w, t.gb, op); assert.ok(weak.orders === 'port' && weak.target, 'the weaker makes for harbour');
 });
 console.log('All checks passed.');

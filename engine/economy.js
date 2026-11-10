@@ -4,6 +4,7 @@ import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_LABEL, PLANTS, TECHS, countryProv
 import { dealsWith, tieOf } from './diplomacy.js';
 import { migrate } from './culture.js';
 import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding, USUAL_COVER, treasuryPays } from './money.js';
+import { enemyHolds } from './navy.js';
 
 export const RECIPE = {
   steel: { iron: 1, coal: .8 }, fuel: { oil: 1.25 }, fertilizer: { phosphate: 1, coal: .2 },
@@ -13,10 +14,7 @@ const ORDER = ['steel', 'fuel', 'fertilizer', 'machines', 'arms', 'goods'];
 export const hasTech = (c, t) => !!c.techs?.[t];
 
 // Rule: goods move only if a route exists. War, a closed strait and an enemy fleet cut the route.
-function seaLocked(w, sea, a, b) {
-  const s = w.seaControl?.[sea];
-  return !!s && (atWar(w, s, a) || atWar(w, s, b));
-}
+function seaLocked(w, sea, a, b) { return enemyHolds(w, sea, a) || enemyHolds(w, sea, b); }
 function straitAt(w, sea) { return w.strategic.find(x => x.type === 'strait' && x.ref === sea); }
 function canalAdj(w, sea) { return w.canals.filter(k => k.a === sea || k.b === sea).map(k => k.a === sea ? k.b : k.a); }
 
@@ -49,7 +47,7 @@ export function updateStrategic(w) {
     if (s.type === 'strait') {
       const sea = w.seas[s.ref], counts = {};
       for (const pid of sea.coast) counts[w.provinces[pid].controller] = (counts[w.provinces[pid].controller] || 0) + 1;
-      const fleet = Object.values(w.fleets).filter(f => f.sea === s.ref).sort((a, b) => b.ships - a.ships)[0];
+      const fleet = Object.values(w.fleets).filter(f => f.sea === s.ref && !f.port).sort((a, b) => b.ships - a.ships)[0];
       s.controller = fleet?.country ?? Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
       if (!w.countries[s.controller]?.alive) s.controller = null;
       const pol = s.controller ? w.countries[s.controller].straitPolicy?.[s.id] : null;
@@ -70,9 +68,11 @@ export function updateRoutes(w) {
     if (path) {
       const tolls = path.map(s => straitAt(w, s)).filter(s => s && s.toll && s.controller && ![a.id, b.id].includes(s.controller));
       const raided = path.filter(s => (w.seaRaids?.[s] || []).some(x => atWar(w, x, a.id) || atWar(w, x, b.id))).length;
+      // Mines laid by an enemy of either make every passage through that water a risk; laid by anyone else they are a lesser one.
+      const mined = sum(path, s => { const m = w.mines?.[s]; return !m ? 0 : atWar(w, m.by, a.id) || atWar(w, m.by, b.id) ? .1 * m.level : [a.id, b.id].includes(m.by) ? 0 : .02 * m.level; });
       // A deep harbour with quays and cranes turns ships round faster than an open roadstead: each step of harbour at either end takes a little off the freight.
       const quay = (o, sea) => Math.max(1, ...countryProvinces(w, o.id).filter(p => p.port > 0 && p.controller === o.id && p.seas.includes(sea)).map(p => p.port));
-      w.routes[k] = { mode: 'sea', cost: 1.05 + risk + path.length * .008 - (quay(a, path[0]) + quay(b, path.at(-1)) - 2) * .012 + sum(tolls, t => t.toll) + raided * .15, path, tolls: tolls.map(t => t.id) };
+      w.routes[k] = { mode: 'sea', cost: 1.05 + risk + path.length * .008 - (quay(a, path[0]) + quay(b, path.at(-1)) - 2) * .012 + sum(tolls, t => t.toll) + raided * .15 + mined, path, tolls: tolls.map(t => t.id) };
     }
   }
   // Two countries with no road or water of their own between them still trade through a third that deals with both: the goods pay both freights and the middleman's handling.

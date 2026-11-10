@@ -243,7 +243,7 @@ export function createWorld(cfg) {
     const hubs = [c.capital, ...mine.filter(p => p.neighbors.some(n => w.provinces[n].owner !== id)).slice(0, 2).map(p => p.id)];
     hubs.forEach(pr => makeUnit(w, id, pr, Math.round(men / hubs.length)));
     const port = mine.find(p => p.port && p.seas.length);
-    if (port) makeFleet(w, id, port.seas[0], Math.round(between(w, 8, 20)));
+    if (port) { const f = makeFleet(w, id, port.seas[0], Math.round(between(w, 8, 20))); f.port = f.home = port.id; }
     bootEconomy(w, c);
   });
   findStrategic(w);
@@ -306,9 +306,9 @@ export function makeUnit(w, country, province, men, quality = 1, loyalty = 70, k
   return w.units[id];
 }
 
-export function makeFleet(w, country, sea, ships) {
+export function makeFleet(w, country, sea, ships, kind) {
   const id = nextId(w, 'G');
-  w.fleets[id] = { id, country, sea, ships, quality: 1, morale: 70, target: null };
+  w.fleets[id] = { id, country, sea, ships, quality: 1, morale: 70, target: null, ...(kind ? { kind } : {}) };
   return w.fleets[id];
 }
 

@@ -44,7 +44,7 @@ This folder contains everything that happened in the game, including the charact
 
 - timeline.ndjson: one event per line. t turn, d date, k kind, n person, c countries, a person ids, p location, imp importance (0-3), text body, x details.
 - Kinds: thought (inner voice, decisions, diary note), message (a letter between characters), notice (what the world itself told one person: intelligence reports, warnings, arrest orders, censored letters, offers, notary notes), query (what a character looked up and the answer they got), ruling (referee), rule (rule-based action), news, state (regime, leader, border, policy, health, economy change), battle (with losses), system (technical error).
-- Where an event has a place, p is the province id (see map.json); positions.ndjson has every unit and fleet each turn.
+- Where an event has a place, p is the province id (see map.json); positions.ndjson has every unit and fleet each turn (a fleet is [id, country, sea, ships, kind, target, harbour province or null when at sea, damaged ships, standing orders], and mines are [sea, country, thickness]).
 - A thought carries x.model (which Claude model plays that person) and x.standing (in office, out of office, imprisoned, exiled). A message with x.intercepted was copied by a prison censor for the ruler.
 - News has x.kind: politics, economy, diplomacy, war, plot, disaster, atrocity (state violence against a population; importance 3). If x.secret is true the event is hidden from the public; you can use it as dramatic irony in the story.
 - people.json: everyone, the dead included; private identity, public face, the model that played them, health, how and when they died, background, birthplace, life events, portrait file.
