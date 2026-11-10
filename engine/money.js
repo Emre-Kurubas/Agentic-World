@@ -85,7 +85,9 @@ export function treasuryPays(c, cost) {
 
 export function declareDefault(w, c, why) {
   if (!canDefault(w, c)) return false;
-  c.defaulted = true; c.defaultedAt = w.turn; c.cleanTurns = 0; c.extArrears = 0; c.debt *= .55; if (c.reserves > 0) c.reserves *= .7; c.bankHealth = clamp(c.bankHealth - 30, 0, 100);
+  c.defaulted = true; c.defaultedAt = w.turn; c.cleanTurns = 0; c.extArrears = 0; c.debt *= .55;
+  // Those who hold the state's paper by name lose with everyone else, and know whom to thank.
+  for (const b of w.bonds || []) if (b.country === c.id) { b.amount *= .55; const h = w.characters[b.holder]; if (h?.alive) { h.inbox.push({ turn: w.turn, from: 'Your banker', text: `${c.name} has defaulted. The paper you hold is written down to ${Math.round(b.amount)}.` }); if (h.loyalty != null && h.country === c.id) h.loyalty = clamp(h.loyalty - 30, 0, 100); } } if (c.reserves > 0) c.reserves *= .7; c.bankHealth = clamp(c.bankHealth - 30, 0, 100);
   // The creditors' loss is the part of their claim that is written off; no gold of theirs vanishes on top of it.
   for (const [cid, amt] of Object.entries(c.creditors)) { const o = w.countries[cid]; if (o?.alive) { o.relations[c.id] = clamp((o.relations[c.id] ?? 0) - 40, -100, 100); o.bankHealth = clamp(o.bankHealth - 12, 0, 100); c.creditors[cid] = amt * .55; } else delete c.creditors[cid]; }
   news(w, `${c.name} ${why}; ${Object.keys(c.creditors).length ? 'creditor countries are furious' : 'its bondholders are ruined'}.`, { kind: 'economy', countries: [c.id] });

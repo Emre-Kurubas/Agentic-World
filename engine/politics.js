@@ -19,7 +19,7 @@ export function moodParts(c, p, k, realWage = c.wageIndex / c.priceLevel) {
   // Relief counts as far as it is actually paid out, and past a point more of it buys little.
   const relief = clamp((c.budget.welfare * (c.paidRatio ?? 1) - .03) * 200, -6, 25);
   return [
-    ['hunger', -Math.max(0, 1 - c.foodRatio) * (k === 'elite' ? 12 : 95)],
+    ['hunger', -Math.max(0, 1 - c.foodRatio * (p.access ?? 1)) * (k === 'elite' ? 12 : 95)],
     ['rising prices', -Math.min(60, Math.max(0, c.inflation - .02) * 160)],
     [k === 'peasants' ? 'the land tax' : k === 'elite' ? 'the tax on business' : 'the income tax', -(k === 'elite' ? 1.5 : 1) * Math.max(0, tax - .12) * 70],
     ['what wages buy', (realWage - 1) * (k === 'elite' ? 15 : 55)],
@@ -127,7 +127,7 @@ export function installLeader(w, c, ch, regimeChange, keepSlot = false) {
 export function succeed(w, c, gone, shock = 0) {
   const free = id => { const x = w.characters[id]; return x?.alive && x.status === 'free' && x.country === c.id && x.id !== gone?.id && !incapacitated(x) ? x : null; };
   const rule = successionRule(c);
-  let next = free(c.heir), by = 'as the named successor';
+  let next = free(c.heir), by = 'as the named successor'; const named = !!next;
   if (!next) {
     if (rule === 'army') { next = free(c.general); by = 'at the head of the army'; }
     else if (rule === 'council') { next = free(c.oligarch); by = 'by the choice of the great houses'; }
@@ -146,7 +146,46 @@ export function succeed(w, c, gone, shock = 0) {
   if (!regular) c.legitBase = (c.legitBase ?? 0) * .6;
   next.rise = `Came to power in ${w.date ?? 'the first days'}, ${by}, after ${gone?.name ?? 'the last ruler'} ${gone ? fateOf(gone) : 'left office'}.`;
   news(w, `${next.name} took over the government of ${c.name} ${by}.`, { kind: 'politics', countries: [c.id] });
+  if (rule !== 'election' && !named) openDispute(w, c, next);
   return next;
+}
+
+// What stands behind someone who might take the state: their own name, and the army, the money or the street as the case may be.
+function claimOf(w, c, ch) {
+  let s = ch.power;
+  if (c.general === ch.id) s += c.blocs.army.power * .6;
+  if (c.oligarch === ch.id) s += Math.min(40, ch.wealth / 8) + c.blocs.capital.power * .3;
+  if (c.opposition === ch.id) s += Math.max(0, ...c.parties.filter(p => !p.banned && p.id !== c.rulingParty).map(p => p.support)) * .8 + Math.max(0, 55 - c.legitimacy) * .5;
+  return s;
+}
+const holdOf = (w, c, ch) => ch.power + c.legitimacy * .6 + c.police * .3;
+// Where no successor was named and the new ruler's hold is not much stronger than a rival's, the succession is disputed: for some quarters
+// two people have a claim, the others who matter may declare for one of them, and then it is settled by weight, or by war.
+function openDispute(w, c, holder) {
+  if (c.dispute || c.legitimacy >= 60) return;
+  const rivals = ['general', 'oligarch', 'opposition'].map(r => w.characters[c[r]]).filter(x => x?.alive && x.status === 'free' && x.id !== holder.id && !incapacitated(x)).sort((a, b) => claimOf(w, c, b) - claimOf(w, c, a)), rival = rivals[0];
+  if (!rival || claimOf(w, c, rival) < holdOf(w, c, holder) * .8) return;
+  c.dispute = { holder: holder.id, claimant: rival.id, since: w.turn, until: w.turn + 3, backers: {} };
+  news(w, `${c.name}: the succession is disputed. Many look to ${rival.name} rather than to ${holder.name}.`, { kind: 'politics', countries: [c.id] });
+  const say = (ch, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'The capital', text }); };
+  say(rival, `No successor had been named, and many do not accept ${holder.name}. A claim is being made in your name: officers, deputies and men of money are waiting to see whether you will press it. For three quarters the matter is open. You may press the claim, win others to it, or renounce it (and the country will settle).`);
+  say(holder, `Your succession is disputed: many look to ${rival.name}. For three quarters the matter is open; it will be settled by who stands behind each of you, and if the weights are near, by arms.`);
+  for (const r of ROLES) { const ch = w.characters[c[r]]; if (ch?.alive && ch.id !== holder.id && ch.id !== rival.id) say(ch, `The succession is disputed between ${holder.name}, who holds the palace, and ${rival.name}. Whom you declare for will count (back_claim), and so will silence.`); }
+}
+export function disputeStep(w) {
+  for (const c of aliveCountries(w)) {
+    const d = c.dispute; if (!d) continue;
+    const holder = w.characters[d.holder], rival = w.characters[d.claimant], live = x => x?.alive && x.status === 'free' && x.country === c.id;
+    if (!live(holder) || c.leader !== d.holder || !live(rival)) { c.dispute = null; continue; }
+    if (d.renounced) { c.dispute = null; c.legitimacy = clamp(c.legitimacy + 4, 0, 100); news(w, `${c.name}: ${rival.name} has renounced any claim; ${holder.name} is accepted.`, { kind: 'politics', countries: [c.id] }); continue; }
+    c.legitimacy = clamp(c.legitimacy - 1.5, 0, 100);
+    if (w.turn < d.until) continue;
+    const backed = side => sum(Object.entries(d.backers).filter(([, s]) => s === side).map(([id]) => w.characters[id]).filter(live), x => claimOf(w, c, x) * .5);
+    const a = holdOf(w, c, holder) + backed('holder'), b = claimOf(w, c, rival) + backed('claimant') + between(w, -8, 8); c.dispute = null;
+    if (b > a * 1.1) { news(w, `${c.name}: ${rival.name} has prevailed in the disputed succession; ${holder.name} has fled.`, { kind: 'politics', countries: [c.id] }); sideline(w, holder, 'exiled'); installLeader(w, c, rival); rival.rise = `Took power in ${w.date ?? 'the first days'} when the succession was disputed and the country came over.`; c.legitimacy = clamp(c.legitimacy - 4, 0, 100); }
+    else if (b > a * .9 && canSplit(w, c)) startCivilWar(w, c, rival, 'Claimant\'s Party');
+    else { rival.power = clamp(rival.power - 12, 0, 100); c.legitimacy = clamp(c.legitimacy + 5, 0, 100); news(w, `${c.name}: the claim made for ${rival.name} has collapsed; ${holder.name} holds the state.`, { kind: 'politics', countries: [c.id] }); }
+  }
 }
 
 // What became of someone, as the next person in their seat would put it.

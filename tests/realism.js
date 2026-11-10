@@ -280,9 +280,10 @@ await (async () => {
   const g = new Game({ world: w, cfg, backend, store }); await g.turn();
   const portraits = store.artIndex().filter(a => a.kind === 'portrait'); assert.equal(portraits.length, 5, 'every AI leader paints itself'); assert.ok(prompts[0].includes('studio') && prompts[0].includes('A leader.')); assert.ok(fs.existsSync(store.artPath(portraits[0].id)));
   const before = prompts.length; beginTurn(w); await g.artStep([]); assert.equal(prompts.length, before, 'a portrait is not painted twice');
+  const paintedBefore = store.artIndex().filter(a => a.kind === 'event').length;
   const e = { id: '9-1', k: 'state', t: 9, d: 'Q2 1902', imp: 3, text: 'War began: A War', c: ['U1', 'U2'], a: [], p: null }; await g.artStep([e]);
-  const tablo = store.artIndex().find(a => a.kind === 'event'); assert.ok(tablo && tablo.witnessName && tablo.prompt, 'painting and description'); assert.ok(prompts.at(-1).includes('Renaissance') && prompts.at(-1).includes('witness'));
-  limit = true; await g.artStep([{ ...e, id: '9-2', text: 'War began: Second' }]); assert.equal(store.loadArtQueue().length, 1, 'at the limit an image stays in the queue'); limit = false; await g.artStep([]); assert.equal(store.loadArtQueue().length, 0); assert.equal(store.artIndex().filter(a => a.kind === 'event').length, 2);
+  const tablo = store.artIndex().filter(a => a.kind === 'event').at(-1); assert.ok(tablo && tablo.witnessName && tablo.prompt, 'painting and description'); assert.ok(prompts.at(-1).includes('Renaissance') && prompts.at(-1).includes('witness'));
+  limit = true; await g.artStep([{ ...e, id: '9-2', text: 'War began: Second' }]); assert.equal(store.loadArtQueue().length, 1, 'at the limit an image stays in the queue'); limit = false; await g.artStep([]); assert.equal(store.loadArtQueue().length, 0); assert.equal(store.artIndex().filter(a => a.kind === 'event').length, paintedBefore + 2);
   const all = store.queryLedger({ limit: 500 }).items; assert.ok(all.some(x => x.k === 'thought' && x.x.notes === 'My diary note'), 'the diary note is written to the ledger');
   assert.ok(fs.readFileSync(store.file('stats.ndjson'), 'utf8').includes('"gold"'), 'turn statistics'); assert.ok(store.people()[w.countries.U1.leader].life.length, 'life in the person index');
   console.log('passed  Portraits and event paintings are made, the queue survives the limit, the record is complete');
@@ -1394,5 +1395,34 @@ chain('A party is built with money and a newspaper is somebody\'s weapon: funds 
   const head = ld(free, f); head.secrets = [{ turn: 0, text: 'In 1894: took money from a concession-holder.' }]; const stand = f.legitimacy; let printed = false; for (let i = 0; i < 300 && !printed; i++) { f.papers[0].funds = 80; free.newsThisTurn = []; pressOf(free); printed = free.newsThisTurn.some(e => /has printed that/.test(e.text)); f.mods = []; }
   assert.ok(printed && head.secrets[0].published && f.legitimacy < stand, 'in the end its reporters print what the ruler hides, and it costs him');
   const liberty = f.pressFreedom, seen = f.legitimacy; assert.equal(applyOp(free, free.characters[f.general], { op: 'close_paper', id: f.papers[0].id }).ok, false, 'not anyone can shut a paper'); assert.ok(applyOp(free, head, { op: 'close_paper', id: f.papers[0].id }).ok); assert.ok(!f.papers.length && f.pressFreedom < liberty && f.legitimacy < seen, 'the government can, and is seen doing it');
+});
+import { bondStep as bondsStepOf, marketPrice as priceOf } from '../engine/bonds.js';
+import { disputeStep as disputeOf, succeed as succeedOf } from '../engine/politics.js';
+import { season as seasonOf, closedNow as closedOf } from '../engine/military.js';
+chain('Part of a state\'s debt is owed to people one can name: they are paid interest, lose in a default with everyone else, and get out only at the market\'s price', () => {
+  const w = fresh(), c = w.countries.U1, rich = w.characters[c.oligarch]; rich.wealth = 200; c.interestRate = .02; c.paidRatio = 1; const debt = c.debt, till = c.treasury;
+  const r = applyOp(w, rich, { op: 'buy_bonds', amount: 100 }); assert.ok(r.ok, r.msg); assert.equal(rich.wealth, 100); assert.ok(Math.abs(c.debt - debt - 100) < 1e-6 && Math.abs(c.treasury - till - 100) < 1e-6, 'the money is lent to the state and owed by it');
+  bondsStepOf(w); assert.ok(Math.abs(rich.wealth - 102) < 1e-6, 'the holder is paid what the state pays its lenders'); assert.ok(lookUp(w, ld(w, c), 'budget').includes(rich.name), 'and whoever governs knows who holds the paper');
+  c.interestRate = .08; const cheap = priceOf(c); assert.ok(cheap < .6, `a state with bad credit has cheap paper: ${cheap}`); const had = rich.wealth, s = applyOp(w, rich, { op: 'sell_bonds', amount: 50 }); assert.ok(s.ok, s.msg); assert.ok(Math.abs(rich.wealth - had - 50 * cheap) < 1e-6, 'selling it fetches only what the market gives');
+  const left = w.bonds.find(b => b.holder === rich.id).amount; assert.ok(applyOp(w, ld(w, c), { op: 'default_debt' }).ok); assert.ok(w.bonds.find(b => b.holder === rich.id).amount < left * .6, 'a default writes it down with the rest'); assert.ok(rich.inbox.some(m => /has defaulted/.test(m.text)));
+});
+chain('A province that is cut off or besieged goes hungry before the rest of the country does', () => {
+  const w = fresh(), c = w.countries.U1, provs = countryProvinces(w, 'U1'), p = provs.find(x => x.id !== c.capital); c.foodRatio = 1; initAdmin(w); adminStep(w); assert.ok(Math.abs((p.access ?? 1) - 1) < .26, 'a province joined to the capital is fed with the rest');
+  const fed = moodParts(c, p, 'workers').find(m => m[0] === 'hunger')[1]; p.siege = { by: 'U2', since: w.turn }; adminStep(w); assert.ok(p.access < .6, `under siege little reaches it: ${p.access}`); const starving = moodParts(c, p, 'workers').find(m => m[0] === 'hunger')[1]; assert.ok(starving < fed - 20, `and its people feel it while the country has bread: ${fed} -> ${starving}`);
+  const other = provs.find(x => x.id !== p.id && x.id !== c.capital); if (other) assert.ok(moodParts(c, other, 'workers').find(m => m[0] === 'hunger')[1] > starving, 'the rest of the country does not');
+});
+chain('The year has seasons: in winter the passes are closed to troops without a railway and men are lost in the mountains; in summer they march', () => {
+  const w = fresh(); for (const u of Object.values(w.units)) delete w.units[u.id]; const from = countryProvinces(w, 'U1').find(p => p.neighbors.some(n => w.provinces[n].controller === 'U1')), to = w.provinces[from.neighbors.find(n => w.provinces[n].controller === 'U1')];
+  to.terrain = 'mountain'; to.rail = 0; from.terrain = 'plains'; while (seasonOf(w) !== 'winter') w.turn++; assert.ok(closedOf(w, to), 'the pass is closed in winter'); const u = makeUnit(w, 'U1', from.id, 20); u.target = to.id; militaryStep(w); assert.equal(u.province, from.id, 'the unit waits'); assert.equal(u.target, to.id, 'and keeps its orders');
+  to.rail = 1; assert.ok(!closedOf(w, to), 'a railway keeps the pass open'); to.rail = 0; while (seasonOf(w) !== 'summer') w.turn++; militaryStep(w); assert.equal(u.province, to.id, 'in summer it marches');
+  while (seasonOf(w) !== 'winter') w.turn++; const men = u.men; militaryStep(w); assert.ok(u.men < men * .97, `troops wintering in the mountains lose men: ${men} -> ${u.men}`);
+});
+chain('Where no successor was named and a rival stands as strong as the heir, the succession is disputed: the others declare, the weights decide, and a claim can be renounced', () => {
+  const setup = () => { const w = fresh(), c = w.countries.U1; c.elections = false; c.succession = 'dynasty'; c.heir = null; c.legitimacy = 35; const gen = w.characters[c.general]; gen.power = 95; c.blocs.army.power = 80; const old = ld(w, c); die(w, old, 'died'); return { w, c, gen, next: ld(w, c) }; };
+  const { w, c, gen, next } = setup(); assert.ok(c.dispute && c.dispute.claimant === gen.id && c.dispute.holder === next.id, 'the general is looked to rather than the heir'); assert.ok(gen.inbox.some(m => /claim is being made in your name/.test(m.text)), 'and is told so');
+  const rich = w.characters[c.oligarch]; assert.ok(applyOp(w, rich, { op: 'back_claim', character: gen.id }).ok); assert.equal(c.dispute.backers[rich.id], 'claimant'); const before = c.legitimacy; disputeOf(w); assert.ok(c.legitimacy < before, 'an open succession wears the state down');
+  w.turn = c.dispute.until; next.power = 5; c.police = 5; disputeOf(w); assert.ok(!c.dispute, 'the matter is settled'); assert.ok(c.leader === gen.id || aliveCountries(w).some(x => x.parent === 'U1'), 'by the claimant taking the state, or by arms');
+  const y = setup(); assert.ok(applyOp(y.w, y.gen, { op: 'renounce_claim' }).ok); disputeOf(y.w); assert.ok(!y.c.dispute && y.c.leader === y.next.id, 'a claim renounced leaves the heir in place');
+  const z = fresh(), k = z.countries.U1; k.elections = false; k.succession = 'dynasty'; k.legitimacy = 35; const named = z.characters[k.oligarch]; k.heir = named.id; z.characters[k.general].power = 95; die(z, ld(z, k), 'died'); assert.ok(!k.dispute, 'a successor named in time leaves nothing to dispute');
 });
 console.log('All checks passed.');

@@ -324,7 +324,9 @@ function demography(w, c) {
   for (const p of provs) {
     const welfare = 1 + c.budget.welfare * (c.paidRatio ?? 1);
     // A lean year is hunger, not yet famine: people begin to die in numbers once a twentieth of the bread is missing.
-    for (const k of CLASSES) { const pop = p.pops[k], sev = k === 'elite' ? .1 : k === 'middle' ? .5 : 1, lost = pop.n * Math.max(0, gap - .05) * .12 * sev / welfare; starved += lost; pop.n = Math.max(1, pop.n * (1 + .0035 * (c.foodRatio >= 1 ? 1 : .4)) - lost); }
+    // A province that is cut off or besieged gets less of the country's bread than the rest.
+    const here = Math.max(0, 1 - c.foodRatio * (p.access ?? 1));
+    for (const k of CLASSES) { const pop = p.pops[k], sev = k === 'elite' ? .1 : k === 'middle' ? .5 : 1, lost = pop.n * Math.max(0, Math.max(gap, here) - .05) * .12 * sev / welfare; starved += lost; pop.n = Math.max(1, pop.n * (1 + .0035 * (c.foodRatio >= 1 ? 1 : .4)) - lost); }
     // Urbanization comes with literacy and industry.
     // People leave the land for the towns while there is bread there; when bread fails they go back to it.
     if (c.foodRatio >= 1) { const mv = p.pops.peasants.n * clamp((sum(Object.values(p.plants)) - .3) * .002 + c.literacy * .00002, 0, .01); p.pops.peasants.n -= mv; p.pops.workers.n += mv * .8; p.pops.middle.n += mv * .2; }

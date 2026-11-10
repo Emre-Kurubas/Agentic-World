@@ -18,6 +18,8 @@ export function adminStep(w) {
     for (const p of provs) {
       if (p.governor && (!w.characters[p.governor]?.alive || w.characters[p.governor].country !== c.id)) p.governor = null;
       p.admin = (p.admin ?? .5) + (targetAdmin(w, c, p, d[p.id]) - (p.admin ?? .5)) * .06;
+      // Bread reaches a province by road, rail or sea from the rest of the country. One that is cut off or under siege eats what it has.
+      p.access = clamp((p.siege ? .45 : d[p.id] == null ? (p.port > 0 ? .85 : .55) : 1) * (1 - (p.devastation || 0) * .25), .3, 1);
     }
     // Rates that were ordered and are not yet fully collected come into force as the offices get round to it.
     const pace = clamp(.3 + c.bureaucracy / 100, .35, 1);

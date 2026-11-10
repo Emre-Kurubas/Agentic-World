@@ -15,6 +15,8 @@ import { frontierStep } from './frontier.js';
 import { justiceStep } from './justice.js';
 import { diplomacyStep } from './diplomacy.js';
 import { pressStep } from './press.js';
+import { bondStep } from './bonds.js';
+import { disputeStep } from './politics.js';
 import { countryProvinces, aliveCountries, provincePop } from './world.js';
 import { sum, quarterLabel } from './util.js';
 import { openCredit } from './money.js';
@@ -30,6 +32,7 @@ export function stepWorld(w) {
   economyStep(w);
   firmStep(w);
   contractStep(w);
+  bondStep(w);
   militaryStep(w);
   frontierStep(w);
   institutionStep(w);
@@ -42,6 +45,7 @@ export function stepWorld(w) {
   undergroundStep(w);
   uprisingStep(w);
   electionStep(w);
+  disputeStep(w);
   billStep(w, applyOp);
   justiceStep(w);
   lifeStep(w);

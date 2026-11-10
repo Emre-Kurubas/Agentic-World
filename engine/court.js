@@ -53,7 +53,7 @@ function fillPosts(w, c) {
   const mine = minorsOf(w, c), room = () => mine.length < 22;
   for (const post of Object.keys(POSTS)) if (!mine.some(x => x.post === post && x.status === 'free') && room()) {
     const ch = spawnCharacter(w, c.id, post === 'house' ? 'financier' : 'official', c.axes, { power: post === 'house' ? 36 : 28 }); ch.post = post;
-    if (post === 'house') ch.wealth = Math.round(70 + rand(w) * 130); mine.push(ch);
+    if (post === 'house') { ch.wealth = Math.round(70 + rand(w) * 130); (w.bonds ||= []).push({ id: nextId(w, 'O'), holder: ch.id, country: c.id, amount: Math.round(ch.wealth * .8), turn: w.turn }); } mine.push(ch);
   }
   for (const u of unitsOf(w, c).filter(u => u.men >= 10).sort((a, b) => b.men - a.men).slice(0, 4)) {
     const cur = w.characters[u.commander]; if (cur?.alive && cur.status === 'free' && cur.country === c.id) continue;

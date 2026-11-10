@@ -67,8 +67,15 @@ const force = (w, u, def) => {
   return u.men * u.equip * u.quality * c.tech.mil * (u.morale / 70) * supply * def * (KIND[u.kind] || 1) * auto * fuel * terrainApplies * dug * skill;
 };
 
+// The year has seasons. In the first quarter the high passes and the northern wastes are closed to anything but a railway; in the thaw and the
+// autumn rains the marshes are. Troops that winter in the mountains, or on foreign soil without a railway behind them, lose men to it.
+const WINTER = { mountain: 1, tundra: 1 }, MUD = { marsh: 1 };
+export const season = w => ['winter', 'spring', 'summer', 'autumn'][w.turn % 4];
+export const closedNow = (w, p) => !p.rail && ((season(w) === 'winter' && WINTER[p.terrain]) || (['spring', 'autumn'].includes(season(w)) && MUD[p.terrain]));
+
 export function militaryStep(w) {
   supplied = Object.fromEntries(aliveCountries(w).map(c => [c.id, supplyNetwork(w, c)]));
+  if (season(w) === 'winter') for (const u of Object.values(w.units)) { const p = w.provinces[u.province]; if (!p) continue; const hard = WINTER[p.terrain] ? .05 : p.controller !== u.country && !p.rail ? .03 : 0; if (hard) { u.men = Math.max(.05, u.men * (1 - hard)); u.morale = clamp(u.morale - (hard > .04 ? 6 : 4), 5, 100); } }
   for (const u of Object.values(w.units)) {
     if (!u.target) { u.dug = Math.min(3, (u.dug || 0) + 1); continue; }
     // Troops just put ashore do not march the same quarter. A unit with the enemy in its own province is engaged and cannot walk away:
@@ -79,6 +86,8 @@ export function militaryStep(w) {
     for (let i = 0; i < speed + (w.provinces[u.province].rail && w.provinces[u.province].controller === u.country ? 1 : 0) && u.target; i++) {
       const step = pathStep(w, u.province, u.target, u.country);
       if (!step || !canEnter(w, u.country, step)) { u.target = null; break; }
+      // Snow in the passes or mud in the marsh: the unit waits where it is and marches when the season turns.
+      if (closedNow(w, w.provinces[step])) break;
       u.province = step;
       if (u.province === u.target) u.target = null;
       // Armies halt on contact: moving next to the enemy ends the march, so fronts form.

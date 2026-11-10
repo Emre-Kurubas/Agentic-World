@@ -16,6 +16,7 @@ import { mobilize, demobilize } from './frontier.js';
 import { prosecute, forge, forgeryFound } from './justice.js';
 import { shame, honourOf } from './diplomacy.js';
 import { foundPaper, papersOf, carry, MAX_PAPERS } from './press.js';
+import { buyBonds, sellBonds } from './bonds.js';
 import { proposeContract, acceptContract, cancelContract, toStateAccount } from './contracts.js';
 import { governmentSeats, institutionRoom, delegated, vetoedBy, makeInstitution, mustPassParliament, createBill, parliamentOpen, makeParliament, leadsParties, enactLaw, normalizeClauses, activateClauses, allocateSeats, clauseText, MAX_AGENCY_BUDGET, governs } from './polity.js';
 
@@ -28,11 +29,11 @@ const PERMISSIONS = {
 };
 // What anyone may do whatever their office: deal, lend, scheme, speak.
 const LABOUR_OPS = new Set(['set_wages', 'set_safety', 'lockout', 'agitate', 'arbitrate_strike', 'break_strike']);
-const PRIVATE = ['fund_party', 'found_paper', 'fund_paper', 'close_paper', 'forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution', 'propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'fund_plot', 'bribe', 'custom', 'propaganda', 'noop'];
+const PRIVATE = ['buy_bonds', 'sell_bonds', 'back_claim', 'renounce_claim', 'fund_party', 'found_paper', 'fund_paper', 'close_paper', 'forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution', 'propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'fund_plot', 'bribe', 'custom', 'propaganda', 'noop'];
 PERMISSIONS.private = new Set(PRIVATE);
 // The chief of staff directs where the army's units and squadrons stand and who commands them. Raising and disbanding troops, war and peace stay with the ruler.
 for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'appoint_commander', 'spy']) PERMISSIONS.general.add(op);
-for (const seat of ['general', 'opposition', 'oligarch']) for (const op of ['fund_party', 'found_paper', 'fund_paper', 'close_paper', 'forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'noop', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution']) PERMISSIONS[seat].add(op);
+for (const seat of ['general', 'opposition', 'oligarch']) for (const op of ['buy_bonds', 'sell_bonds', 'back_claim', 'renounce_claim', 'fund_party', 'found_paper', 'fund_paper', 'close_paper', 'forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'noop', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution']) PERMISSIONS[seat].add(op);
 PERMISSIONS.exiled = new Set(PRIVATE.filter(x => !['found_party', 'execute_plot', 'gather_dossier'].includes(x)));
 PERMISSIONS.imprisoned = new Set(['accept_contract', 'cancel_contract', 'repay_debt', 'forgive_debt', 'join_plot', 'betray_plot', 'bribe', 'custom', 'noop']);
 // The office is the seat, not the title: a deposed or jailed leader keeps only what any private person has.
@@ -289,6 +290,12 @@ export function applyOp(w, actor, op) {
       c.pressFreedom = clamp(c.pressFreedom - 6, 0, 100); c.legitimacy = clamp(c.legitimacy - (2 + n.reach / 15), 0, 100); news(w, `${c.name}: the government has closed ${n.name}.`, { kind: 'politics', countries: [c.id] }); tell(w, w.characters[n.owner], c.name, `Your paper ${n.name} has been closed by order of ${actor.name}.`);
       return { ok: true, msg: `${n.name} is closed. The country saw who did it.` };
     }
+    // Lending one's own money to a state against its paper, and selling that paper again.
+    case 'buy_bonds': { const where = target ?? c, m = Math.min(Math.max(actor.wealth, 0), num(op.amount, 0, 1e6, 0)); if (!(m >= 1)) return fail('No money to lend.'); if (where.defaulted) return fail(`${where.name} is in default and is selling no paper.`); return buyBonds(w, where, actor, m); }
+    case 'sell_bonds': { const where = target ?? c; return sellBonds(w, where, actor, num(op.amount, 0, 1e6, 0)) ?? fail(`You hold none of ${where.name}'s paper.`); }
+    // A disputed succession: declaring for the one who holds the palace or for the one who claims it, or giving the claim up.
+    case 'back_claim': { const d = c.dispute; if (!d) return fail('No succession is in dispute here.'); if ([d.holder, d.claimant].includes(actor.id)) return fail('You are one of the two; the others declare for you or against.'); const side = op.character === d.claimant ? 'claimant' : op.character === d.holder ? 'holder' : null; if (!side) return fail('Declare for one of the two.'); d.backers[actor.id] = side; const whom = w.characters[side === 'claimant' ? d.claimant : d.holder]; tell(w, whom, actor.name, `${actor.name} has declared for you in the disputed succession.`); news(w, `${c.name}: ${actor.name} has declared for ${whom.name} in the disputed succession.`, { kind: 'politics', countries: [c.id] }); return { ok: true, msg: `You have declared for ${whom.name}. It will count when the matter is settled.` }; }
+    case 'renounce_claim': { const d = c.dispute; if (!d || d.claimant !== actor.id) return fail('No claim is being made in your name.'); d.renounced = true; return { ok: true, msg: 'You have let it be known that you make no claim. The country will settle.' }; }
     case 'accept_offer': { const r = takeOffer(w, actor, op.id); return r ?? fail('No such offer is waiting for you.'); }
     case 'decline_offer': { const r = refuseOffer(w, actor, op.id, governs(w, c, actor)); return r ?? fail('No such offer.'); }
     // A gift of one's own money to a person or to an institution, at home or abroad. Nothing is owed for it and it leaves no mark of a bribe.
