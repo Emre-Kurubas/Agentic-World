@@ -1,7 +1,7 @@
 import { clamp, news, rand, nextId, pick, sum } from './util.js';
 import { CLASSES, GOODS, countryProvinces, atWar, hasTreaty, makeUnit, aliveCountries, clampRel, provincePop } from './world.js';
 import { executePlot, neutralize, die, SUCCESSION, distance } from './politics.js';
-import { capture, pathStep, upkeepCost, settleOccupations, marchQuarters, POSTURES, postureWords } from './military.js';
+import { capture, pathStep, upkeepCost, settleOccupations, marchQuarters, POSTURES, postureWords, MANNERS, commanderOf, supplyOf, shellsFor, abilityWord, closedNow, season } from './military.js';
 import { makeFleet, TECHS, PLANTS, DEPOSITS, GOOD_LABEL, ROLES, spawnCharacter, bfsSea } from './world.js';
 import { hasTech, sealOf, importOrder } from './economy.js';
 import { FX_REGIMES, foreignRate, externalDebt, creditLeft, declareDefault, treasuryPays } from './money.js';
@@ -32,7 +32,7 @@ const LABOUR_OPS = new Set(['set_wages', 'set_safety', 'lockout', 'agitate', 'ar
 const PRIVATE = ['capital_flight', 'repatriate', 'draw_institution', 'buy_bonds', 'sell_bonds', 'back_claim', 'renounce_claim', 'fund_party', 'found_paper', 'fund_paper', 'close_paper', 'forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution', 'propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'fund_plot', 'bribe', 'custom', 'propaganda', 'noop'];
 PERMISSIONS.private = new Set(PRIVATE);
 // The chief of staff directs where the army's units and squadrons stand and who commands them. Raising and disbanding troops, war and peace stay with the ruler.
-for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'appoint_commander', 'spy', 'build', 'set_posture', 'amphibious']) PERMISSIONS.general.add(op);
+for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'appoint_commander', 'spy', 'build', 'set_posture', 'amphibious', 'offensive']) PERMISSIONS.general.add(op);
 for (const seat of ['general', 'opposition', 'oligarch']) for (const op of ['capital_flight', 'repatriate', 'draw_institution', 'buy_bonds', 'sell_bonds', 'back_claim', 'renounce_claim', 'fund_party', 'found_paper', 'fund_paper', 'close_paper', 'forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'noop', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution']) PERMISSIONS[seat].add(op);
 PERMISSIONS.exiled = new Set(PRIVATE.filter(x => !['found_party', 'execute_plot', 'gather_dossier'].includes(x)));
 for (const k of ['general', 'opposition', 'oligarch', 'private', 'exiled']) PERMISSIONS[k].add('publish_treaty');
@@ -654,7 +654,7 @@ export function applyOp(w, actor, op) {
       if (!escort.length) return fail('You need a surface fleet holding the water off the target coast.');
       if (!from.seas.some(s => p.seas.some(t => s === t || bfsSea(w, s, t)))) return fail('No sea route joins the two coasts.');
       const lift = sum(escort, f => f.ships) * 3; if (u.men > lift) return fail(`The fleet there can carry about ${Math.round(lift)} thousand men; this unit has ${Math.round(u.men)} thousand.`);
-      u.province = p.id; u.men *= Math.max(.3, .9 - (p.battery || 0) * .15); u.morale = clamp(u.morale - 10, 0, 100); u.target = null; u.dug = 0; u.shipped = w.turn;
+      u.from = 'sea'; delete u.attack; u.province = p.id; u.men *= Math.max(.3, .9 - (p.battery || 0) * .15); u.morale = clamp(u.morale - 10, 0, 100); u.target = null; u.dug = 0; u.shipped = w.turn;
       return { ok: true, msg: `${Math.round(u.men)} thousand men were put ashore at ${p.name}.` };
     }
     case 'found_party': { if (c.parties.length >= 8) return fail('There is no room for another party; the country has eight.'); const name = String(op.name || 'New Party').slice(0, 60); const axes = { econ: num(op.axes?.econ, -100, 100, 0), auth: num(op.axes?.auth, -100, 100, 0), nation: num(op.axes?.nation, -100, 100, 0), faith: num(op.axes?.faith, -100, 100, 0) }; c.parties.push({ id: nextId(w, 'F'), name, axes, base: CLASSES.includes(op.base) ? op.base : 'middle', support: 3, founder: actor.id, banned: false, organization: 10 }); news(w, `${c.name}: ${name} was founded.`, { kind: 'politics', countries: [c.id] }); return ok(); }
@@ -761,6 +761,7 @@ export function applyOp(w, actor, op) {
       const slow = Math.max(...went.map(u => marchQuarters(w, u, op.to) ?? 0));
       return { ok: true, msg: `${went.length} unit${went.length > 1 ? 's' : ''} (${went.map(u => u.id).join(', ')}) ordered to ${w.provinces[op.to].name}${slow ? `; the last should be there in about ${slow} quarter${slow > 1 ? 's' : ''} as the ground, the roads and the seasons stand` : ''}.${held}` }; }
     case 'set_posture': return setPosture(w, c, op);
+    case 'offensive': return offensive(w, c, op);
     case 'declare_war': {
       if (!target) return fail('War cannot be declared: no such country.');
       // Against a country one is already at war with, a declaration can only say what the war is for. Aims named late are measured from the day they are named.
@@ -1214,8 +1215,9 @@ function applyOrder(w, c, u, to, named = true) {
   const chief = w.characters[u.commander]; if (w.friction && chief?.alive && isMinor(chief) && chief.loyalty < 25 && rand(w) < .4) return fail(`${u.id} did not march: ${chief.name}, who commands it, finds reasons for delay.`);
   // A march order and an order to hold the ground cannot both stand. The one given to the unit by name, and last, is the one that does.
   let lifted = ''; if (u.posture === 'defensive') { delete u.posture; lifted = ` ${u.id} had been standing on the defensive: this order lifts that one, and it leaves its works.`; }
+  const off = u.attack ? ` It leaves the offensive against ${w.provinces[u.attack.to]?.name ?? 'its objective'} it had been ordered into.` : ''; delete u.attack;
   u.target = to; const q = marchQuarters(w, u, to), still = postureWords(u);
-  return { ok: true, msg: `${u.id} marches for ${w.provinces[to].name}${q ? `: about ${q} quarter${q > 1 ? 's' : ''} as the ground, the roads and the seasons stand (the army report shows how far it got each quarter and what held it)` : ''}.${lifted}${still ? ` Its standing orders go with it: ${still}.` : ''}` };
+  return { ok: true, msg: `${u.id} marches for ${w.provinces[to].name}${q ? `: about ${q} quarter${q > 1 ? 's' : ''} as the ground, the roads and the seasons stand (the army report shows how far it got each quarter and what held it)` : ''}.${lifted}${off}${still ? ` Its standing orders go with it: ${still}.` : ''}` };
 }
 // A standing order to troops: one unit, everything in a province, everything facing a neighbour, or the whole army. It holds until it is changed.
 const POSTURE_SAYS = {
@@ -1226,6 +1228,43 @@ const POSTURE_SAYS = {
   no_retreat: 'Beaten, they do not leave the field: they hold the ground for another quarter, at a price in men about two fifths higher than troops who break off, and their spirit and their faith in the government suffer when they are bled. They give way only when their spirit breaks.',
   barracks: 'They are not used against the country\'s own people: they do not hold the streets of their province, are not sent against strikers and take no part in measures against a population. They still fight an enemy.'
 };
+// An offensive: troops sent against one province the enemy holds, under one order and to one plan. They form up in the provinces beside it and
+// go in together; the order says how (a reconnaissance in force, an assault, an attack pressed whatever it costs), whether the guns prepare it,
+// and how long the staff has to get ready. What comes of it is the engine's to say (military.js: launch, resolve).
+function offensive(w, c, op) {
+  const to = w.provinces[op.to]; if (!to) return fail('Name the province to be attacked (to).');
+  const mine = Object.values(w.units).filter(u => u.country === c.id), on = mine.filter(u => u.attack?.to === to.id);
+  if (op.cancel === true) { if (!on.length) return fail(`No offensive against ${to.name} is in hand.`); for (const u of on) { delete u.attack; if (u.province !== to.id) u.target = null; } return { ok: true, msg: `The offensive against ${to.name} is called off: ${on.map(u => u.id).join(', ')} stand where they are.` }; }
+  if (to.controller === c.id) return fail(`${to.name} is in our own hands: troops are sent there with move.`);
+  const foe = w.countries[to.controller];
+  if (!atWar(w, c.id, to.controller)) return fail(`${to.name} is held by ${foe?.name ?? 'another state'}, with whom there is no war. An attack on it would be one, and war is declared by whoever governs (declare_war).`);
+  if (hasTreaty(w, c.id, to.controller, 'armistice')) return fail('An armistice with them is in force: no attack while it lasts. It would have to be broken first (break_treaty).');
+  const ids = Array.isArray(op.units) ? op.units.map(String) : [], from = Array.isArray(op.from) ? op.from.map(String) : [], named = ids.length > 0;
+  const unknown = ids.filter(id => !mine.some(u => u.id === id)); if (unknown.length) return fail(`No such unit of yours: ${unknown.join(', ')}.`);
+  // With no units named, the troops meant are those that start from the provinces named, or else every unit already standing beside the objective that is free to move.
+  const us = named ? mine.filter(u => ids.includes(u.id)) : from.length ? mine.filter(u => from.includes(u.province)) : mine.filter(u => to.neighbors.includes(u.province) && u.posture !== 'defensive');
+  if (!us.length) return fail(`No troops for it: name the units, or the provinces they start from (from). ${mine.some(u => to.neighbors.includes(u.province)) ? 'The units beside it stand on the defensive by standing order; an order to them by name lifts that.' : `No unit of ours stands beside ${to.name} now.`}`);
+  const manner = MANNERS.includes(op.manner) ? op.manner : 'assault', shelling = op.shelling === true || op.bombard === true, prepare = Math.round(num(op.prepare, 0, 4, 0)), wait = op.wait !== false, went = [], not = [];
+  // Where a unit will form up: the last province on its road before the objective.
+  const staging = u => { let cur = u.province, n = 0; while (!to.neighbors.includes(cur) && n++ < 80) { const step = pathStep(w, cur, to.id, c.id); if (!step || step === to.id) return step ? cur : null; cur = step; } return to.neighbors.includes(cur) ? cur : null; };
+  for (const u of us) {
+    const at = u.province === to.id ? to.id : staging(u); if (!at) { not.push(`${u.id} has no road to it`); continue; }
+    const chief = w.characters[u.commander]; if (w.friction && chief?.alive && isMinor(chief) && chief.loyalty < 25 && rand(w) < .4) { not.push(`${u.id} did not stir: ${chief.name}, who commands it, finds reasons for delay`); continue; }
+    if (u.posture === 'defensive') delete u.posture;
+    u.attack = { to: to.id, manner, shelling, wait, since: w.turn, start: w.turn + prepare }; if (u.province !== to.id) u.target = to.id;
+    went.push({ u, at, q: at === u.province ? 0 : marchQuarters(w, u, at) ?? 1 });
+  }
+  if (!went.length) return fail(`The offensive against ${to.name} could not be mounted: ${not.join('; ')}.`);
+  const cols = Object.values(went.reduce((a, x) => ((a[x.at] ||= []).push(x), a), {})).sort((a, b) => sum(b, x => x.u.men) - sum(a, x => x.u.men)), slow = Math.max(...went.map(x => x.q)), menAll = sum(went, x => x.u.men);
+  const colText = cols.map(col => { const lead = commanderOf(w, [...col].sort((a, b) => b.u.men - a.u.men)[0].u), late = Math.max(...col.map(x => x.q)), s = supplyOf(w, { ...col[0].u, province: col[0].at });
+    return `from ${w.provinces[col[0].at].name}${w.provinces[col[0].at].controller !== c.id && atWar(w, c.id, w.provinces[col[0].at].controller) ? ', which the enemy holds and the column must take first' : ''} (${col.map(x => x.u.id).join(', ')}: ${menText(sum(col, x => x.u.men))}${late ? `, about ${late} quarter${late > 1 ? 's' : ''} of marching away` : ', formed up'}${cols.length > 1 && lead ? `; led by ${lead.name}, ${abilityWord(lead)}` : ''}${s.linked && s.depth > 1 ? `; ${Math.round(s.depth * 10) / 10} marches of wagon road from its supply head` : !s.linked ? '; cut off from supply' : ''})`; }).join('; ');
+  const need = shellsFor(went.map(x => x.u), manner, shelling), have = Math.max(c.stock.arms || 0, 0), when = slow + prepare;
+  const how = { probe: 'It is a reconnaissance in force: the troops feel out what stands there, break off before it costs much, come back to where they started and report what they met. It takes the place only if it finds it all but empty.', assault: 'It is an assault: beaten, the troops fall back; if they carry it the province is taken, or its fortress invested.', all_out: 'It is to be pressed regardless of loss: the attack hits harder and costs both sides more, the attacker most, and troops that are beaten stay on the field and go in again next quarter until the place falls, the order is changed or their spirit breaks.' }[manner];
+  const guns = shelling ? 'The guns prepare it: a bombardment knocks in field works in the measure of the guns brought against the men behind them (the heavy pieces of artillery units count for much, the field guns that march with the infantry for little), and only heavy pieces tell against a fortress.' : 'No bombardment is ordered before it.';
+  const timing = when === 0 ? 'The troops are formed up and go in this quarter.' : `They go in together ${prepare ? `no sooner than ${prepare} quarter${prepare > 1 ? 's' : ''} from now, which is time to bring up shells and study the ground${slow > prepare ? ', and not before the last column is up' : ''}` : 'when the last column is up'}${wait ? '; the staff waits up to three quarters for a column that is not up, and then goes with what it has' : '; no column waits for another'}.`;
+  const flank = cols.length > 1 ? ' Columns that come from different provinces and arrive together take the defender in flank and have more room to deploy; every column but the strongest keeps the timetable only as well as its commander can, and one that is late goes in a quarter after the rest, alone.' : '';
+  return { ok: true, msg: `Offensive against ${to.name} (${to.terrain}${to.fort >= 1 ? ', a fortress' : ''}), held by ${foe.name}: ${went.length} unit${went.length > 1 ? 's' : ''}, ${menText(menAll)}, in ${cols.length} column${cols.length > 1 ? 's' : ''}: ${colText}. ${how} ${guns} ${timing}${flank} The attack will ask about ${Math.round(need * 10) / 10} of arms and ammunition a quarter of the arsenal, which holds ${Math.round(have)}${need > have ? ': not enough, and where the arsenal cannot send what the fight calls for the fire slackens' : ''}.${closedNow(w, to) ? ` ${to.name} is closed by ${season(w) === 'winter' ? 'snow' : 'mud'} this season: the attack waits for the roads.` : ''}${not.length ? ` Not part of it: ${not.join('; ')}.` : ''} What is known of the troops in ${to.name} is in the borders report; the staff reports after the fight what decided it.` };
+}
 function setPosture(w, c, op) {
   const kind = POSTURES.includes(op.posture) ? op.posture : null; if (!kind) return fail(`The standing orders are: ${POSTURES.join(', ')}.`);
   const mine = Object.values(w.units).filter(u => u.country === c.id), on = op.on !== false || kind === 'ordinary'; let us, where, toward = null;
@@ -1243,7 +1282,7 @@ function setPosture(w, c, op) {
     if (kind === 'ordinary') { delete u.posture; delete u.holdFire; delete u.barracks; }
     else if (kind === 'hold_fire') { if (on) u.holdFire = true; else delete u.holdFire; }
     else if (kind === 'barracks') { if (on) u.barracks = true; else delete u.barracks; }
-    else if (on) { u.posture = kind; if (kind === 'defensive' && u.target) { halted.push(u.id); u.target = null; } }
+    else if (on) { u.posture = kind; if (kind === 'defensive' && u.target) { halted.push(u.id); u.target = null; delete u.attack; } }
     else if (u.posture === kind) delete u.posture;
   }
   const names = us.length ? `${us.slice(0, 12).map(u => u.id).join(', ')}${us.length > 12 ? ` and ${us.length - 12} more` : ''}` : 'no unit stands there now';
