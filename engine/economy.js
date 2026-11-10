@@ -3,7 +3,7 @@ import { hungerOf } from './politics.js';
 import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_LABEL, PLANTS, TECHS, countryProvinces, provincePop, aliveCountries, atWar, hasTreaty } from './world.js';
 import { dealsWith, tieOf } from './diplomacy.js';
 import { migrate } from './culture.js';
-import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding, USUAL_COVER } from './money.js';
+import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding, USUAL_COVER, treasuryPays } from './money.js';
 
 export const RECIPE = {
   steel: { iron: 1, coal: .8 }, fuel: { oil: 1.25 }, fertilizer: { phosphate: 1, coal: .2 },
@@ -185,7 +185,9 @@ function trade(w, cs) {
   for (const c of cs) { c.lastSold = {}; c.lastBought = {}; c.lastOrders = []; }
   // What merchants would bring in of a good, and how much of that the law lets through: a prohibition or a quota cuts it, and the part the customs cannot hold back is smuggled.
   const wantOf = (c, g) => { const usual = Math.max(0, c._need[g] + c._reserve[g] * .5 - c.stock[g]) + displacedDemand(c, g), r = c.imports?.rules?.[g]; if (!r || (!r.ban && r.quota == null)) return { usual, legal: usual }; const legal = r.ban ? 0 : Math.min(usual, r.quota); return { usual: legal + (usual - legal) * (1 - sealOf(w, c)), legal }; };
-  const stateOrder = (c, g) => { const o = c.orders?.[g]; return o && (!(o.limit > 0) || w.globalPrice[g] <= o.limit) ? o.amount : 0; };
+  // The state's own order abroad is the treasury's purchase: it reaches as far as the cash above the working balance and what lenders will add, at the day's price and exchange.
+  const affords = (c, g) => (Math.max(0, c.treasury - (c.till || 0)) + Math.max(0, creditLeft(c))) / Math.max(w.globalPrice[g] * (c.rate || 1) * 1.05, .01);
+  const stateOrder = (c, g) => { const o = c.orders?.[g]; return o && (!(o.limit > 0) || w.globalPrice[g] <= o.limit) ? Math.min(o.amount, affords(c, g)) : 0; };
   // The gold a country has to spend abroad this quarter is what lies in its reserve beyond the debt service, and about what its exports brought in the quarter before.
   // It is shared out among the goods in the order of priority: each good may draw on its own share, and on whatever no good has claimed.
   for (const c of cs) {
@@ -198,7 +200,7 @@ function trade(w, cs) {
   for (const g of [...GOODS.filter(x => x !== 'grain' && x !== 'goods'), 'grain', 'goods']) {
     // A government can also go to the foreign markets itself for one quarter: an order to buy beyond what the country's trade brings in of its own accord,
     // or an offer of goods out of its stores beyond what merchants would let go. Either holds only while the price stays inside the limit it was given.
-    const price = w.globalPrice[g], wants = c => { const o = c.orders?.[g]; return o && (!(o.limit > 0) || price <= o.limit) ? o.amount : 0; }, offers = c => { const o = c.sales?.[g]; return o && (!(o.limit > 0) || price >= o.limit) ? Math.min(o.amount, Math.max(0, c.stock[g] || 0)) : 0; };
+    const price = w.globalPrice[g], wants = c => stateOrder(c, g), offers = c => { const o = c.sales?.[g]; return o && (!(o.limit > 0) || price >= o.limit) ? Math.min(o.amount, Math.max(0, c.stock[g] || 0)) : 0; };
     // What merchants may send out: all they can spare, unless the government has forbidden the export or set a quota on it (and then what slips past the customs still goes).
     const mayGo = c => { const all = Math.max(0, c.stock[g] - c._need[g] - c._reserve[g]), r = c.exports?.[g]; if (!r || (!r.ban && r.quota == null)) return all; const legal = r.ban ? 0 : Math.min(all, r.quota); return legal + (all - legal) * (1 - sealOf(w, c)); };
     const sellers = cs.map(c => ({ c, s: Math.max(mayGo(c), offers(c)) })).filter(x => x.s > 0);
@@ -235,11 +237,15 @@ function trade(w, cs) {
     // The customs house reports to whoever governs what became of the order: the first of what arrived went to the country's ordinary wants.
     for (const c of cs) {
       const o = c.orders?.[g], s = c.sales?.[g], say = text => { (c.lastOrders ||= []).push({ turn: w.turn, text }); const ch = w.characters[c.leader]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'The customs house', text }); };
-      if (o) { const b = buyers.find(x => x.c === c), got = clamp((c.lastBought[g] || 0) - (b?.usual ?? 0), 0, o.amount), held = o.limit > 0 && price > o.limit;
-        say(held ? `The order for ${Math.round(o.amount * 10) / 10} of ${GOOD_LABEL[g]} was not placed: the world price stood at ${Math.round(price * 10) / 10}, above the limit of ${o.limit}.` : `Of the ${Math.round(o.amount * 10) / 10} of ${GOOD_LABEL[g]} ordered abroad, ${Math.round(got * 10) / 10} arrived, at a world price of about ${Math.round(price * 10) / 10} a unit, paid in gold.${got < o.amount * .98 ? ' The rest found no seller with a surplus on an open route, or no gold to pay for it.' : ''}`);
+      if (o) { const b = buyers.find(x => x.c === c), got = clamp((c.lastBought[g] || 0) - (b?.usual ?? 0), 0, o.amount), held = o.limit > 0 && price > o.limit, short = !held && affords(c, g) < o.amount * .98;
+        // The treasury pays its supplier, in its own money at the day's exchange; the gold the purchase cost has already left the reserve with the goods.
+        const bill = got * price * 1.05 * (c.rate || 1), paid = treasuryPays(c, bill); if (paid > 0) (c._outlay ||= {}).purchases = (c._outlay.purchases || 0) + paid;
+        say(held ? `The order for ${Math.round(o.amount * 10) / 10} of ${GOOD_LABEL[g]} was not placed: the world price stood at ${Math.round(price * 10) / 10}, above the limit of ${o.limit}.` : `Of the ${Math.round(o.amount * 10) / 10} of ${GOOD_LABEL[g]} ordered abroad, ${Math.round(got * 10) / 10} arrived, at a world price of about ${Math.round(price * 10) / 10} a unit; the treasury paid ${Math.round(paid)} for it, and that much gold left the reserve.${got < o.amount * .98 ? (short ? ' The treasury and its lenders could pay for no more.' : ' The rest found no seller with a surplus on an open route, or no gold to pay for it.') : ''}`);
         delete c.orders[g]; }
       if (s) { const sold = clamp((c.lastSold[g] || 0) - (spare[c.id] ?? 0), 0, s.amount), all = Math.min(c.lastSold[g] || 0, s.amount), held = s.limit > 0 && price < s.limit;
-        say(held ? `The ${Math.round(s.amount * 10) / 10} of ${GOOD_LABEL[g]} offered abroad was held back: the world price stood at ${Math.round(price * 10) / 10}, below the limit of ${s.limit}.` : `Of the ${Math.round(s.amount * 10) / 10} of ${GOOD_LABEL[g]} offered abroad, ${Math.round(all * 10) / 10} was sold, at a world price of about ${Math.round(price * 10) / 10} a unit, for gold${sold > .05 ? ` (${Math.round(sold * 10) / 10} of it out of stores the country would otherwise have kept)` : ''}.${all < s.amount * .98 ? ' The rest found no buyer in want of it on an open route.' : ''}`);
+        // What was sold out of the state's own stores is the treasury's sale: it is credited in the country's money, and the gold lies in the reserve.
+        const takings = sold * price * (c.rate || 1); if (takings > 0) c.treasury += takings;
+        say(held ? `The ${Math.round(s.amount * 10) / 10} of ${GOOD_LABEL[g]} offered abroad was held back: the world price stood at ${Math.round(price * 10) / 10}, below the limit of ${s.limit}.` : `Of the ${Math.round(s.amount * 10) / 10} of ${GOOD_LABEL[g]} offered abroad, ${Math.round(all * 10) / 10} was sold, at a world price of about ${Math.round(price * 10) / 10} a unit, for gold${sold > .05 ? ` (${Math.round(sold * 10) / 10} of it out of stores the country would otherwise have kept, which brought the treasury ${Math.round(takings)})` : ''}.${all < s.amount * .98 ? ' The rest found no buyer in want of it on an open route.' : ''}`);
         delete c.sales[g]; }
     }
     const unmet = wanted > 0 ? clamp((wanted - moved) / wanted, 0, 1) : 0;

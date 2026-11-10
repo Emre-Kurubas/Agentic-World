@@ -1595,7 +1595,7 @@ chain('The chief of staff has troops dig in where they stand and orders no other
   const bare = countryProvinces(w, 'U1')[1]; bare.timber = .05; assert.equal(applyOp(w, l, { op: 'build', province: bare.id, kind: 'forestry', amount: 50 }).ok, false, 'no forest, no sawmill');
 });
 chain('A government can go to the foreign markets itself: the order is filled by the quarter\'s trade as far as sellers and gold reach, the gold goes to the seller, twenty orders are one order, and a price limit holds', () => {
-  const twin = () => { const w = fresh(), c = w.countries.U1; c.reserves = 5000; return [w, c]; }, [a, ca] = twin(), [b, cb] = twin(), l = ld(a, ca);
+  const twin = () => { const w = fresh(), c = w.countries.U1; c.reserves = 5000; c.treasury = 5000; return [w, c]; }, [a, ca] = twin(), [b, cb] = twin(), l = ld(a, ca);
   // A good somebody abroad has to spare and this country can reach.
   const good = ['steel', 'coal', 'grain', 'timber', 'iron', 'machines'].find(g => aliveCountries(a).some(o => o.id !== 'U1' && a.routes[o.id < 'U1' ? `${o.id}|U1` : `U1|${o.id}`] && o.stock[g] - (o._need?.[g] || 0) * 1.4 > 40)); assert.ok(good, 'someone has a surplus to sell');
   const gold = w => aliveCountries(w).reduce((s, c) => s + c.reserves, 0), all = (w, g) => aliveCountries(w).reduce((s, c) => s + (c.stock[g] || 0), 0), was = gold(a);
@@ -1603,7 +1603,11 @@ chain('A government can go to the foreign markets itself: the order is filled by
   assert.equal(applyOp(a, a.characters[ca.general], { op: 'buy_goods', good, amount: 30 }).ok, false, 'the chief of staff does not buy for the state');
   const stock = ca.stock[good]; assert.equal(ca.stock[good], stock, 'nothing arrives the day the order is written'); l.inbox = []; run(a, 1); run(b, 1);
   const got = (ca.lastBought[good] || 0) - (cb.lastBought[good] || 0); assert.ok(got > 20 && got <= 30.5, `about the quantity ordered came in beyond the ordinary trade, and not more: ${got}`);
-  assert.ok(ca.reserves < cb.reserves - got * a.globalPrice[good] * .5, 'it was paid for in gold'); assert.ok(Math.abs(gold(a) - gold(b)) < 1e-6 * was + 1e-6, `and the gold went to the sellers, not out of the world: ${gold(a)} against ${gold(b)}`);
+  assert.ok(ca.reserves < cb.reserves - got * a.globalPrice[good] * .5, 'gold left the reserve for it'); assert.ok(ca.treasury < cb.treasury - got * a.globalPrice[good] * .7 && ca.lastBooks.outlay.purchases > 0, `and the treasury paid for it: ${cb.treasury - ca.treasury}`);
+  // A treasury with nothing to spare and no lender buys nothing, however much gold lies in the reserve.
+  { const [p, cp] = twin(), lp = ld(p, cp); cp.treasury = 0; cp.debt = cp.gdp * 4 * 5; const no = applyOp(p, lp, { op: 'buy_goods', good, amount: 30 }); assert.equal(no.ok, false); assert.ok(/treasury/.test(no.msg), no.msg);
+    const [q, cq] = twin(), lq = ld(q, cq), [q2, cq2] = twin(); cq.debt = cq2.debt = cq.gdp * 4 * 5; cq.treasury = cq2.treasury = (cq.till || 0) + a.globalPrice[good] * 6; assert.ok(applyOp(q, lq, { op: 'buy_goods', good, amount: 30 }).ok); lq.inbox = []; run(q, 1); run(q2, 1);
+    const few = (cq.lastBought[good] || 0) - (cq2.lastBought[good] || 0); assert.ok(few < 9 && cq.reserves > 3000, `a thin treasury buys what it can pay for, not what the gold reserve could: ${few}`); assert.ok(lq.inbox.some(m => /could pay for no more/.test(m.text)), 'and is told so'); } assert.ok(Math.abs(gold(a) - gold(b)) < 1e-6 * was + 1e-6, `and the gold went to the sellers, not out of the world: ${gold(a)} against ${gold(b)}`);
   assert.ok(l.inbox.some(m => m.from === 'The customs house' && /ordered abroad/.test(m.text)), 'the customs house reports what arrived'); assert.ok(!ca.orders[good], 'the order stood for one quarter');
   assert.ok(/dealings on the foreign markets/.test(answer(a, l, 'trade')), 'and the report can be looked up');
   // A limit below the market: nothing is bought.
