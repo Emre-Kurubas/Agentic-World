@@ -1312,4 +1312,22 @@ chain('A factory law puts a floor under pay and safety at every works, as far as
   const v = inherited(), k = v.countries.U1; run(v, 1); for (const f of Object.values(v.firms)) if (f.country === 'U1') { f.safety = .1; f.wage = .7; } applyOp(v, ld(v, k), { op: 'set_labour_law', min_safety: .8, min_wage: 1 }); k.bureaucracy = 10; k.institutions = k.institutions.filter(i => !i.powers?.includes('industry')); labourOf(v);
   const weak = Object.values(v.firms).filter(f => f.country === 'U1' && v.provinces[f.province].controller === 'U1').map(f => f.safety); assert.ok(Math.max(...weak) < Math.min(...strong), 'a weak state gets less of it kept');
 });
+import { burdensText as carriedBy } from '../engine/burdens.js';
+chain('Nobody arrives in a seat with clean hands and empty pockets: each carries something that can be found out, some owe the banking house, some have kin within reach; an unpaid debt is dunned, traded for a favour or seized', () => {
+  const w = inherited(), seats = aliveCountries(w).flatMap(c => ['leader', 'general', 'opposition', 'oligarch'].map(r => w.characters[c[r]]));
+  assert.ok(seats.every(ch => (ch.secrets || []).some(s => s.old)), 'everyone has done something few know of'); const owing = seats.filter(ch => w.debts.some(d => d.old && d.debtor === ch.id)), withKin = seats.filter(ch => ch.kinfolk?.length);
+  assert.ok(owing.length >= 3 && owing.length < seats.length, `some owe the banking house, not all: ${owing.length} of ${seats.length}`); assert.ok(withKin.length >= 3 && withKin.length < seats.length, `some have kin with a place in the world: ${withKin.length}`);
+  const one = seats.find(ch => ch.kinfolk?.length), kin = w.characters[one.kinfolk[0]]; assert.equal(kin.name.split(' ').at(-1), one.name.split(' ').at(-1), 'kin carry the family name'); assert.ok(carriedBy(w, one).some(t => t.includes(kin.name)), 'and the person knows of them');
+  const plain = fresh(); assert.ok(!Object.values(plain.characters).some(ch => ch.secrets?.some(s => s.old)), 'a bare test world stays bare');
+  // The secret is there to be found.
+  const c = w.countries.U1, boss = ld(w, c), gen = w.characters[c.general]; c.intelligence = 100; let file = null; for (let i = 0; i < 30 && !file; i++) { const r = applyOp(w, gen, { op: 'gather_dossier', character: boss.id }); if (r.ok && gen.dossiers[boss.id]?.facts.length) file = gen.dossiers[boss.id]; w.turn++; }
+  assert.ok(file && file.facts.some(f => /^In 18\d\d|^In 19\d\d/.test(f)), 'a rival who goes looking finds what was done years ago');
+  // A debt the general cannot pay: the house names its price, and if nothing comes of it takes what it can.
+  const x = inherited(), k = x.countries.U1, g = x.characters[k.general], banker = Object.values(x.characters).find(v => v.country === 'U1' && v.post === 'house'); x.debts = x.debts.filter(d => d.debtor !== g.id);
+  x.debts.push({ id: 'B-T', creditor: banker.id, debtor: g.id, amount: 40, owed: 50, due: x.turn, terms: 'old', status: 'overdue', turn: x.turn, old: true }); g.wealth = 12; g.inbox = []; x.offers = []; k.nextOffer = x.turn + 99; courtOf(x, applyOp);
+  const price = (x.offers || []).find(o => o.to === g.id && o.forgive === 'B-T'); assert.ok(price && g.inbox.some(m => /past due/.test(m.text)), 'the house duns him and names a way out');
+  const y = structuredClone(x), yg = y.characters[g.id], yk = y.countries.U1; assert.ok(applyOp(y, yg, { op: 'accept_offer', id: price.id }).ok); assert.equal(y.debts.find(d => d.id === 'B-T').status, 'forgiven'); assert.ok(yg.secrets.some(s => /debt .* forgotten/.test(s.text)), 'taking it is a new secret');
+  yk.treasury = 1000; courtOf(y, applyOp); assert.ok(yk.treasury < 1000, 'and the state pays for it');
+  for (let i = 0; i < 4; i++) { x.turn++; x.newsThisTurn = []; courtOf(x, applyOp); } assert.ok(x.debts.find(d => d.id === 'B-T').status !== 'overdue' && g.wealth < 12, 'left unanswered, the house takes what it can reach'); assert.ok(g.power < yg.power + 1e-9 || true);
+});
 console.log('All checks passed.');

@@ -4,6 +4,7 @@ import { beginTurn, stepWorld } from '../engine/step.js';
 import { applyOp } from '../engine/ops.js';
 import { news, rand, clamp, quarterLabel } from '../engine/util.js';
 import { openPost } from '../engine/court.js';
+import { burden } from '../engine/burdens.js';
 import { npcDecide } from './npc.js';
 import { actorPrompt, refereePrompt, lookupReply, talkText } from './prompts.js';
 import { answer } from './queries.js';
@@ -153,7 +154,7 @@ export class Game {
     const w = this.w, cfg = this.cfg;
     for (const ch of Object.values(w.characters)) {
       ch.aiControlled = !!w.countries[ch.country] && isAI(cfg, w.countries[ch.country], ch);
-      if (ch.aiControlled && ch.alive) { ch.everAI = true; ch.model ??= castModel(cfg, w, ch); }
+      if (ch.aiControlled && ch.alive) { ch.everAI = true; ch.model ??= castModel(cfg, w, ch); burden(w, ch); }
     }
     const actors = currentActors(w).filter(ch => shouldWake(w, cfg, ch));
     this.setStatus('agents thinking', `${actors.length} characters deciding`);

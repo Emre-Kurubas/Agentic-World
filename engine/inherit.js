@@ -10,6 +10,8 @@ import { leaderForeignness } from './culture.js';
 import { makeParliament } from './polity.js';
 import { issueCurrency } from './money.js';
 import { initFirms } from './firms.js';
+import { seatCourt } from './court.js';
+import { burdenAll } from './burdens.js';
 import { writeChronicles, writeLives } from './chronicle.js';
 import { updateStrategic, updateRoutes, costOfCapacity, costOfPolice } from './economy.js';
 
@@ -132,4 +134,6 @@ export function inheritStates(w) {
     if (c.elections) makeParliament(c, a.key === 'merchant' ? 'Merchants\' Assembly' : 'Parliament');
     else if (a.advisory) makeParliament(c, a.advisory, false);
   }
+  // The people around the seats are there from the first day, and those in the seats do not arrive with clean hands and empty pockets.
+  w.burdens = true; seatCourt(w); burdenAll(w);
 }

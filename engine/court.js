@@ -19,8 +19,9 @@ const POSTS = { treasury: 'keeps the treasury', police: 'heads the police', hous
 export function postOf(w, ch) {
   const u = commandOf(w, ch); if (u) return `commands ${u.id}, ${Math.round(u.men)} thousand men at ${w.provinces[u.province]?.name}`;
   const p = Object.values(w.provinces).find(x => x.governor === ch.id); if (p) return `governor of ${p.name}`;
-  return POSTS[ch.post] ?? '';
+  return POSTS[ch.post] ?? (ch.office ? `holds ${ch.office}` : '');
 }
+export function seatCourt(w) { for (const c of aliveCountries(w)) fillPosts(w, c); }
 
 // ---- The post ----
 // A letter passes through the hands of the state it is sent from and the state it is sent to. How much of the mail a state opens depends on
@@ -65,7 +66,9 @@ function fillPosts(w, c) {
 function settle(w, c, ch) {
   const u = commandOf(w, ch), lean = hash(ch.id) % 31 - 15;
   const paid = u ? ((c.militaryFunding ?? 1) >= .95 ? 8 : -16) + ((u.morale ?? 60) - 60) * .2 : (c.paidRatio ?? 1) < 1 ? -12 : 4;
-  ch.loyalty += (clamp(18 + c.legitimacy * .55 + paid + lean - Math.max(0, ch.ambition - 60) * .25, 4, 96) - ch.loyalty) * .12;
+  // Blood counts: the ruler's own kin stand by the ruler, and the kin of a ruler's rival do not.
+  const blood = ch.kin === c.leader ? 30 : ch.kin && ROLES.some(r => r !== 'leader' && c[r] === ch.kin) ? -8 : 0;
+  ch.loyalty += (clamp(18 + c.legitimacy * .55 + paid + lean + blood - Math.max(0, ch.ambition - 60) * .25, 4, 96) - ch.loyalty) * .12;
 }
 
 // ---- Officers ----
@@ -128,6 +131,9 @@ export function takeOffer(w, actor, id) {
   const banker = w.characters[o.from], c = w.countries[o.country]; if (!banker?.alive || banker.status !== 'free') { o.status = 'lapsed'; return null; }
   const m = Math.min(Math.max(banker.wealth, 0), o.amount); banker.wealth -= m; actor.wealth += m; o.status = o.drain ? 'running' : 'taken'; o.until = w.turn + (o.turns ?? 0);
   const what = o.kind === 'lease' ? 'the lease of the customs' : o.kind === 'supply' ? 'the army supply contracts' : 'goodwill';
+  // A debt can be the price instead of money.
+  const debt = o.forgive ? (w.debts || []).find(d => d.id === o.forgive && ['open', 'overdue'].includes(d.status)) : null;
+  if (debt) { debt.status = 'forgiven'; debt.closedAt = w.turn; trace(w, actor, `Had a debt of ${Math.round(debt.owed)} to the banker ${banker.name} forgotten in return for ${what}.`); trace(w, banker, `Forgot ${actor.name}'s debt of ${Math.round(debt.owed)} in return for ${what}.`); return { ok: true, msg: `Your debt ${debt.id} of ${Math.round(debt.owed)} is forgotten. For ${o.turns} quarters about ${Math.round(o.drain)} a quarter of ${c?.name}'s money goes to the house of ${banker.name}. You and ${banker.name} both know of it.` }; }
   trace(w, actor, `Took ${Math.round(m)} from the banker ${banker.name} for ${what}.`); trace(w, banker, `Paid ${actor.name} ${Math.round(m)} for ${what}.`);
   return { ok: true, msg: `${Math.round(m)} reached your purse.${o.drain ? ` For ${o.turns} quarters about ${Math.round(o.drain)} a quarter of ${c?.name}'s money goes to the house of ${banker.name}.` : ''} You and ${banker.name} both know of it.` };
 }
@@ -150,6 +156,27 @@ function payLeases(w, c) {
     if (o.shoddy) for (const u of unitsOf(w, c)) u.equip = clamp((u.equip ?? .8) - .006, .2, 1.2);
   }
   w.offers = w.offers.filter(o => ['open', 'running'].includes(o.status) || w.turn - o.turn <= 40);
+}
+// The banking house wants its money. When an old debt falls due unpaid it first names a price for forgetting it; if nothing comes of that
+// it takes what it can reach, and lets the town know.
+function duns(w, c) {
+  const banker = minorsOf(w, c).find(x => x.post === 'house' && x.status === 'free'); if (!banker) return;
+  for (const d of (w.debts || []).filter(x => x.creditor === banker.id && x.status === 'overdue')) {
+    const who = w.characters[d.debtor]; if (!who?.alive) continue;
+    if (d.dunned == null) {
+      d.dunned = w.turn; const kind = c.leader === who.id ? 'lease' : c.general === who.id ? 'supply' : null;
+      if (kind && who.status === 'free' && !(w.offers ||= []).some(o => o.status === 'open' && o.to === who.id)) {
+        const g = Math.max(c.gdp, 1), o = { id: nextId(w, 'OF'), kind, from: banker.id, to: who.id, country: c.id, amount: 0, forgive: d.id, turn: w.turn, status: 'open', drain: g * (kind === 'lease' ? .0012 : .0008), turns: kind === 'lease' ? 12 : 8, shoddy: kind === 'supply' };
+        o.text = `your debt ${d.id} of ${Math.round(d.owed)} forgotten, if ${kind === 'lease' ? `the collection of the customs is leased to the banking house of ${banker.name} for three years (the house would keep about ${Math.round(o.drain)} a quarter of what the treasury now receives)` : `for two years the army's boots, cloth and rifles are bought from the suppliers the house stands behind (about ${Math.round(o.drain)} a quarter more than the army pays now, for goods that are not the best)`}`;
+        w.offers.push(o); say(w, who, banker.name, `Your debt ${d.id} of ${Math.round(d.owed)} to my house is past due. There is a way to settle it without money: ${o.text}. It is offer ${o.id}. Otherwise I shall take what the law gives me, and such things do not stay quiet.`);
+      } else say(w, who, banker.name, `Your debt ${d.id} of ${Math.round(d.owed)} to my house is past due. Pay it, or I shall take what the law gives me, and such things do not stay quiet.`);
+    } else if (w.turn - d.dunned >= 3) {
+      const took = Math.min(Math.max(who.wealth, 0), d.owed); who.wealth -= took; banker.wealth += took; d.status = took >= d.owed - .5 ? 'paid' : 'forgiven'; d.closedAt = w.turn;
+      who.power = clamp(who.power - 8, 0, 100); if (c.leader === who.id) c.legitimacy = clamp(c.legitimacy - 2, 0, 100);
+      news(w, `${c.name}: the banking house of ${banker.name} has called in the debts of ${who.name} and seized what it could.`, { kind: 'economy', countries: [c.id] });
+      say(w, who, banker.name, `I have taken ${Math.round(took)} against your debt ${d.id} and written off the rest. The town knows.`);
+    }
+  }
 }
 export const leaseDrain = (w, c) => (w.offers || []).filter(o => o.status === 'running' && o.country === c.id).reduce((a, o) => a + o.drain, 0);
 
@@ -199,7 +226,7 @@ export function courtStep(w, applyOp) {
       if (ch.role === 'officer' || commandOf(w, ch)) officer(w, c, ch, applyOp);
       const p = Object.values(w.provinces).find(x => x.governor === ch.id && x.controller === c.id); if (p) governor(w, c, ch, p);
     }
-    c._leaseDrain = 0; payLeases(w, c); tempt(w, c);
+    c._leaseDrain = 0; payLeases(w, c); duns(w, c); tempt(w, c);
   }
   // Said once, where everyone hears it: the mails are not safe.
   if (!w.postTold) { w.postTold = true; for (const ch of Object.values(w.characters)) if (ch.alive && ROLES.includes(ch.role)) say(w, ch, 'Common knowledge', 'It is said in every capital that letters are opened in the post. Where a state keeps watch on the mails, some letters are copied before they are delivered, more often when they cross a border, and nobody can tell which. Those around the great (officers, officials, bankers) have ambitions and prices of their own.'); }
