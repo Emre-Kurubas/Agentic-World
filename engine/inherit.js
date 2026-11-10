@@ -73,7 +73,7 @@ function makePast(w) {
     if (roll < .5) {
       const [winner, loser] = rand(w) < .5 ? [a, b] : [b, a], spoils = borderOf(w, winner, loser);
       if (!spoils.length) continue;
-      const p = pick(w, spoils); p.groups = [{ eth: loser.majorityEth, rel: loser.majorityRel, share: .7 }, { eth: winner.majorityEth, rel: winner.majorityRel, share: .3 }]; p.eth = loser.majorityEth; p.rel = loser.majorityRel; p.unrest = clamp(p.unrest + 12, 0, 100);
+      const p = pick(w, spoils); p.lostBy = loser.id; p.lostIn = year; p.groups = [{ eth: loser.majorityEth, rel: loser.majorityRel, share: .7 }, { eth: winner.majorityEth, rel: winner.majorityRel, share: .3 }]; p.eth = loser.majorityEth; p.rel = loser.majorityRel; p.unrest = clamp(p.unrest + 12, 0, 100);
       say(year, `In the war of ${year}, the province of ${p.name} passed from ${loser.name} to ${winner.name}. Most of its people are still ${loser.majorityEth}.`, winner, loser);
       winner.relations[loser.id] = -35; loser.relations[winner.id] = -55;
     } else if (roll < .75) {
@@ -148,6 +148,8 @@ export function inheritStates(w) {
   updateStrategic(w); updateRoutes(w);
   // The people around the seats are there from the first day, and the state's offices work as they are staffed.
   w.burdens = true; w.friction = true; seatCourt(w);
+  // An army that has stood for years has sent trained men home every year: they are its reserve.
+  for (const c of cs) c.reserve = Object.values(w.units).filter(u => u.country === c.id).reduce((a, u) => a + u.men, 0) * .6;
   settle(w, cs);
   balance(w, cs);
   for (let i = 0; i < 8; i++) partyStep(w);

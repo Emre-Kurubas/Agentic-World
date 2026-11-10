@@ -28,7 +28,7 @@ function hazard(w, gen, u, lost, p) {
   else if (roll < (lost ? .1 : .03) * front) afflict(w, gen, 'wound', 1 + Math.floor(rand(w) * 3), `the battle of ${p.name}`);
 }
 
-const TERRAIN_DEF = { plains: 1.05, hills: 1.35, forest: 1.25, mountain: 1.75, desert: 1.1, marsh: 1.4, tundra: 1.2 };
+export const TERRAIN_DEF = { plains: 1.05, hills: 1.35, forest: 1.25, mountain: 1.75, desert: 1.1, marsh: 1.4, tundra: 1.2 };
 // How many thousand men can come to grips in one province. Beyond that the rest wait their turn, so numbers count for less in a mountain pass than on a plain.
 const FRONTAGE = { plains: 160, hills: 110, forest: 100, mountain: 60, marsh: 70, desert: 130, tundra: 100 };
 const crowding = (men, terrain) => { const room = FRONTAGE[terrain] ?? 120; return men <= room ? 1 : (room + (men - room) * .4) / men; };

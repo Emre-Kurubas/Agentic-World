@@ -61,6 +61,14 @@ const num = (v, a, b, d = a) => clamp(Number.isFinite(Number(v)) ? Number(v) : d
 // How much of an order the state's offices carry out at once. A bare test world has none of this friction.
 const reach = (w, c) => w.friction ? clamp(.3 + c.bureaucracy / 100, .35, 1) : 1;
 const pc = v => `${Math.round(v * 1000) / 10}%`;
+// Land that changes hands is remembered by the state that lost it. Winning back what was lost is the kind of success a people does not forget either.
+function handOver(w, p, from, to) {
+  if (from === to) return;
+  const year = 1900 + Math.floor(w.turn / 4), taker = w.countries[to];
+  if (p.lostBy === to) { delete p.lostBy; delete p.lostIn; if (taker?.alive) { taker.legitimacy = clamp(taker.legitimacy + 5, 0, 100); news(w, `${taker.name} has recovered ${p.name}.`, { kind: 'diplomacy', countries: [to, from], province: p.id }); } return; }
+  p.lostBy = from; p.lostIn = year;
+}
+export const claimsOf = (w, id) => Object.values(w.provinces).filter(p => p.lostBy === id && p.owner !== id);
 const menText = men => men < 1 ? `${Math.round(men * 1000)} men` : `${Math.round(men * 10) / 10} thousand men`;
 const alive = (w, id) => { const c = w.countries[id]; return c?.alive ? c : null; };
 // A character's real traces that can be found: dossiers are made of these.
@@ -132,7 +140,7 @@ function endWar(w, a, b, annex) {
   }
   for (const p of Object.values(w.provinces)) {
     if (![a, b].includes(p.owner) || ![a, b].includes(p.controller) || p.owner === p.controller) continue;
-    if (annex) { p.owner = p.controller; p.admin = Math.min(p.admin ?? .5, .3); } else p.controller = p.owner;
+    if (annex) { const from = p.owner; p.owner = p.controller; p.admin = Math.min(p.admin ?? .5, .3); handOver(w, p, from, p.owner); } else p.controller = p.owner;
     delete p.siege;
   }
   settleOccupations(w);
@@ -453,6 +461,8 @@ export function applyOp(w, actor, op) {
       // War after an ultimatum that was let run out is the consequence that was announced. War on someone one had a treaty with is a broken word.
       if ((c.casus?.[target.id] ?? -1) >= w.turn) { c.legitimacy = clamp(c.legitimacy + 3, 0, 100); delete c.casus[target.id]; }
       else if (w.treaties.some(x => !x.active && x.brokenBy === c.id && x.brokenAt === w.turn)) shame(w, c, -10, `it made war on ${target.name} in spite of a treaty`);
+      // A war for land that was lost and never given up is a war the country understands.
+      if (claimsOf(w, c.id).some(p => p.owner === target.id)) c.legitimacy = clamp(c.legitimacy + 2, 0, 100);
       // A people that has been wronged by the enemy stands behind the declaration, for a while.
       { const g = c.grudges?.[target.id]; if (g) c.legitimacy = clamp(c.legitimacy + Math.min(6, g.incident * .1 + g.kin * .15), 0, 100); }
       news(w, `${c.name} declared war on ${target.name}.`, { kind: 'war', countries: [c.id, target.id] });
@@ -530,7 +540,7 @@ export function applyOp(w, actor, op) {
       if (t.kind === 'peace') endWar(w, c.id, other.id, t.annex);
       for (const pid of t.cede || []) {
         const p = w.provinces[pid], giver = w.countries[p.owner], taker = p.owner === c.id ? other : p.owner === other.id ? c : null; if (!taker) continue;
-        p.owner = taker.id; p.controller = taker.id; p.admin = Math.min(p.admin ?? .5, .3); p.governor = null; delete p.siege;
+        p.owner = taker.id; p.controller = taker.id; p.admin = Math.min(p.admin ?? .5, .3); p.governor = null; delete p.siege; handOver(w, p, giver.id, taker.id);
         if (giver.capital === pid) { const next = [...countryProvinces(w, giver.id)].sort((a, b) => provincePop(b) - provincePop(a))[0]; if (next) giver.capital = next.id; }
         news(w, `${p.name} passed from ${giver.name} to ${taker.name} by treaty.`, { kind: 'diplomacy', countries: [giver.id, taker.id], province: pid });
       }
