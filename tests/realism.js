@@ -1144,4 +1144,22 @@ chain('What the state buys the treasury pays for: a contract signed for the stat
   assert.equal(applyOp(w, boss, { op: 'pay_person', character: rich.id, amount: 5 }).ok, false, 'the ceiling is for the quarter, however many orders are written');
   const till = c.treasury; r = applyOp(w, rich, { op: 'pay_state', amount: 3, reason: 'the levy' }); assert.ok(r.ok, r.msg); near(c.treasury, till + 3, 'a person can pay into the treasury'); near(rich.wealth, 82, 'from their own purse');
 });
+import { answer as lookUp } from '../agents/queries.js';
+chain('Whoever governs can read where the deficit comes from: the books add up to the totals, the press shows as the cause of rising prices, and outsiders see none of it', () => {
+  const w = fresh(), c = w.countries.U1, boss = ld(w, c), k = c.lastBooks; assert.ok(k, 'the quarter leaves its books');
+  const near = (a, b, what) => assert.ok(Math.abs(a - b) < 1e-6 * Math.max(1, Math.abs(b)), `${what}: ${a} against ${b}`);
+  near(k.income + k.land + k.business + k.customs + k.tolls, c.lastRevenue, 'the taxes add up to the revenue');
+  near(Object.values(k.programs).reduce((a, v) => a + v, 0) + k.agencies + k.interest, c.lastRevenue - c.lastBalance, 'the items add up to what was due');
+  const text = lookUp(w, boss, 'budget'); for (const word of ['income tax', 'land tax', 'customs', 'reached the treasury', 'the armed forces', 'interest on the debt', 'Against the quarter before']) assert.ok(text.includes(word), `the ruler reads of ${word}`);
+  assert.ok(!lookUp(w, w.characters[c.opposition], 'budget').includes('income tax'), 'the opposition has only rumour');
+  const eff = k.eff; c.corruption = 80; run(w, 1); assert.ok(c.lastBooks.eff < eff && c.lastBooks.graft > k.graft, 'graft shows in the books as tax that never arrives');
+  beginTurn(w); assert.ok(applyOp(w, boss, { op: 'print_money', pct_gdp: .05 }).ok); stepWorld(w);
+  const parts = Object.entries(c.lastPrices).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])); assert.equal(parts[0][0], 'money', 'after the press has run, new money is the first cause of rising prices');
+  assert.ok(lookUp(w, boss, 'economy').includes('What moved prices'), 'and the ruler is told so');
+  // A commission is filled with ordinary members without filling the country with named people; a named member is a person.
+  const people = () => Object.values(w.characters).filter(x => x.alive && x.country === 'U1').length, made = applyOp(w, boss, { op: 'create_institution', name: 'School Commission', description: 'Plans the schools', budget_pct_gdp: .002, powers: [] }); assert.ok(made.ok, made.msg);
+  const inst = c.institutions.at(-1), n = people(); for (let i = 0; i < 7; i++) assert.ok(applyOp(w, boss, { op: 'appoint_institution', id: inst.id, role: 'member' }).ok);
+  assert.equal(inst.seats, 7); assert.equal(people(), n, 'seven seats, no new people'); assert.ok(applyOp(w, boss, { op: 'appoint_institution', id: inst.id, role: 'member', name: 'Orsolya Tarn' }).ok);
+  assert.equal(people(), n + 1); assert.ok(inst.members.some(id => w.characters[id].name === 'Orsolya Tarn'), 'a member appointed by name is someone');
+});
 console.log('All checks passed.');

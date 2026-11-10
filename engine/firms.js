@@ -106,7 +106,7 @@ export function firmStep(w) {
     if (profit > 0) {
       const dividend = profit * .4; f.cash += profit - dividend;
       const owner = w.characters[f.owner];
-      if (f.owner === STATE) c.treasury += dividend * (c.rate || 1);
+      if (f.owner === STATE) { c.treasury += dividend * (c.rate || 1); c._stateProfit = (c._stateProfit || 0) + dividend * (c.rate || 1); }
       else if (owner) {
         owner.wealth += dividend;
         if (owner.country !== f.country) { const paid = Math.min(Math.max(c.reserves, 0), dividend); c.reserves -= paid; if (w.countries[owner.country]?.alive) w.countries[owner.country].reserves += paid; }

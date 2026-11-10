@@ -101,7 +101,7 @@ export function institutionStep(w) {
     }
     inst.funding += (paid - inst.funding) * .4;
     const size = inst.sponsor ? clamp(need / 15, 0, 1.2) : clamp(inst.budget / Math.max(.003 * Math.max(inst.powers.length, 1), .001), 0, 1.2);
-    const target = clamp(inst.funding * size * (.45 + (inst.head ? .35 : 0) + Math.min(inst.members.length, 4) * .05), 0, 1.2);
+    const target = clamp(inst.funding * size * (.45 + (inst.head ? .35 : 0) + Math.min(inst.members.length + (inst.seats || 0), 4) * .05), 0, 1.2);
     inst.strength += (target - inst.strength) * .3;
     for (const p of inst.powers) applyPower(w, c, inst, p, inst.strength);
   }

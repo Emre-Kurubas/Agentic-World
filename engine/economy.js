@@ -240,10 +240,13 @@ function consume(w, c, prev) {
   const shock = shortage - (c._lastShortage ?? shortage); c._lastShortage = shortage;
   // Money follows output of itself. What moves prices is money made or lost beyond that (the printing press, gold flowing in or out), scarcity and the exchange rate.
   // A currency tied to gold has an anchor; one that floats drifts a little every quarter.
+  // The same sum, kept in its parts so that whoever governs can be told what moved prices.
+  c.lastPrices = { carried: .35 * c.inflation, money: .85 * mg, scarcity: shock * .4, currency: c._fxPass || 0, gold: c.reserves < 0 ? .03 : 0, banks: c.bankHealth < 30 ? .02 : 0, drift: c.fxRegime === 'floating' ? .004 : .001 };
   c.inflation = clamp(.35 * c.inflation + .85 * mg + shock * .4 + (c._fxPass || 0) + (c.reserves < 0 ? .03 : 0) + (c.bankHealth < 30 ? .02 : 0) + (c.fxRegime === 'floating' ? .004 : .001), -.04, 4);
   c.priceLevel *= 1 + c.inflation; c.wageIndex += (c.priceLevel - c.wageIndex) * .35;
   c.gdp = real * c.priceLevel; c.money *= 1 + g * .6 + .002; c._lastMoney = c.money;
   c.idleShare = clamp(c._idleV / Math.max(real + c._idleV, 1), 0, 1);
+  c.lastJobs = { inputs: (1 - c.inputRatio) * .3, damage: c._dev * .3, slump: Math.max(0, -g) * .9, idle: c.idleShare * .25 };
   c.unemployment += (clamp(.06 + (1 - c.inputRatio) * .3 + c._dev * .3 + Math.max(0, -g) * .9 + c.idleShare * .25, .02, .6) - c.unemployment) * .4;
   // Resource-rent dependence: easy money feeds corruption and oligarchs and weakens industry.
   c.rentShare = clamp((c._rent || 0) / Math.max(real, 1), 0, 1);
@@ -287,6 +290,12 @@ function fiscal(w, c) {
   }
   c.treasury = cash; if (paid === 1) c.arrears = Math.max(0, c.arrears - .5);
   creditStanding(w, c, paid === 1);
+  // The quarter's books in their parts: which tax brought what, what was lost in the collecting, where the money went, and how it stood the quarter before.
+  c.lastBooks = { eff, collect: clamp(.4 + c.bureaucracy / 120, 0, 1), graft: c.corruption / 130, unrest: (c.unrest ?? 0) / 400, reach: c._adminFactor ?? 1,
+    income: c.gdp * .45 * c.tax.income * eff, land: land * eff, business: business * eff, customs: (c._imports || 0) * c.priceLevel * c.tariff * eff, tolls: (c._tolls || 0) * c.priceLevel, works: c._stateProfit || 0,
+    programs: Object.fromEntries(Object.keys(b).map(k => [k, b[k] * c.gdp])), agencies, interest, abroad: extPaid * (c.rate || 1),
+    before: c.lastRevenue != null ? { revenue: c.lastRevenue, due: c.lastRevenue - (c.lastBalance ?? 0) } : null };
+  c._stateProfit = 0;
   c.lastRevenue = revenue; c.lastSpending = need * paid; c.paidRatio = paid;
   c.lastBalance = revenue - need; c.lastInterest = interest; c.lastAgencies = agencies; c.lastBorrowed = borrowed + (c._loans || 0); c._loans = 0;
   // State capacity has a running cost that grows with its level: what is spent decides where it settles, so a poor state stays small instead of decaying forever.
