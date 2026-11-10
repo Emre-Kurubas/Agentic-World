@@ -1,5 +1,6 @@
 import { clamp, sum, news, rand, between, nextId, pick } from './util.js';
 import { CLASSES, ROLES, countryProvinces, provincePop, aliveCountries, makeCountry, spawnCharacter, atWar, clampRel } from './world.js';
+import { voiceOf } from './press.js';
 import { allocateSeats } from './polity.js';
 import { issueCurrency } from './money.js';
 import { culturePenalty, leaderForeignness, minorityShare } from './culture.js';
@@ -387,7 +388,8 @@ export function partyStep(w) {
         const grievance = p.id === c.rulingParty ? pr.pops[k].sat / 50 : (100 - pr.pops[k].sat + 25) / 75;
         s += pr.pops[k].n * fit * grievance; n += pr.pops[k].n;
       }
-      return [p, s / Math.max(n, 1) * (1 + (p.organization || 0) / 100)];
+      // Committees and newspapers turn sympathy into a following.
+      return [p, s / Math.max(n, 1) * (1 + (p.organization || 0) / 100 + voiceOf(w, c, p) / 100)];
     });
     const tot = sum(scores, x => x[1]) || 1;
     for (const [p, v] of scores) p.support = p.support + (v / tot * 100 - p.support) * .3;
@@ -404,8 +406,11 @@ export function electionStep(w) {
     // A vote counts for as much as it was free: a gagged press, a banned party, stuffed boxes or a rival in a cell all take from it. Calling one every season adds nothing.
     const fairness = c.pressFreedom / 100 * (c.parties.some(p => p.banned) ? .6 : 1) * (c.rigging > 0 ? .5 : 1) * (w.turn - (c.rivalJailed ?? -99) < 16 ? .5 : 1), due = w.turn - (c.lastElection ?? -99) >= 8 ? 1 : 0;
     c.lastElection = w.turn;
-    const rulingSupport = c.parties.find(p => p.id === c.rulingParty)?.support ?? 30;
-    const rival = Math.max(1, ...c.parties.filter(p => p.id !== c.rulingParty && !p.banned).map(p => p.support));
+    // The country votes for parties, and a government is whoever can gather more of them behind it: the ruling party and the partners on its
+    // benches against its strongest rival and the parties that stand nearer to that rival than to the government.
+    const live = c.parties.filter(p => !p.banned), ruling = live.find(p => p.id === c.rulingParty), rivalP = [...live].filter(p => p.id !== c.rulingParty).sort((a, b) => b.support - a.support)[0];
+    const partners = live.filter(p => p !== ruling && (c.coalition || []).includes(p.id)), drift = live.filter(p => p !== ruling && p !== rivalP && !partners.includes(p) && ruling && rivalP && distance(p.axes, rivalP.axes) < distance(p.axes, ruling.axes));
+    const rulingSupport = (ruling?.support ?? 30) + sum(partners, p => p.support), rival = Math.max(1, (rivalP?.support ?? 0) + sum(drift, p => p.support) * .5);
     const share = clamp(rulingSupport / (rulingSupport + rival) * 100 + (1 - fairness) * 12 + c.rigging + between(w, -4, 4), 2, 98);
     c.rigging = 0;
     if (c.parliament) c.parliament.seats = allocateSeats(c);

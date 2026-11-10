@@ -14,6 +14,7 @@ import { undergroundStep } from './underground.js';
 import { frontierStep } from './frontier.js';
 import { justiceStep } from './justice.js';
 import { diplomacyStep } from './diplomacy.js';
+import { pressStep } from './press.js';
 import { countryProvinces, aliveCountries, provincePop } from './world.js';
 import { sum, quarterLabel } from './util.js';
 import { openCredit } from './money.js';
@@ -34,6 +35,7 @@ export function stepWorld(w) {
   institutionStep(w);
   cultureStep(w);
   satisfactionStep(w);
+  pressStep(w);
   partyStep(w);
   plotStep(w);
   courtStep(w, applyOp);

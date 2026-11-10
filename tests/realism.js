@@ -1379,4 +1379,20 @@ chain('A state\'s word has a price: an ultimatum accepted is a humiliation and i
   assert.ok(applyOp(e, hl, { op: 'recognise_exile', character: ex.id }).ok); const mods = ea.mods.length; diplomacyOf(e); assert.ok(ea.mods.length > mods && ea.mods.some(m => m.key === 'legitimacy' && m.delta < 0), 'recognition abroad weighs on the government at home');
   const rep = honourIn(host); assert.ok(applyOp(e, hl, { op: 'extradite', character: ex.id }).ok); assert.equal(ex.status, 'imprisoned'); assert.ok(honourIn(host) < rep, 'handing back someone who took shelter costs the host its name');
 });
+import { pressStep as pressOf } from '../engine/press.js';
+import { partyStep as partiesOf } from '../engine/politics.js';
+chain('A party is built with money and a newspaper is somebody\'s weapon: funds make organisation and organisation makes a following, a paper is read as far as people can read and the law allows, it prints what its owner\'s enemies hide, and closing it is seen', () => {
+  const grown = (fund, paper) => { const w = fresh(), c = w.countries.U1, opp = w.characters[c.opposition], mine = leadsOf(w, c, opp)[0]; c.pressFreedom = 80; c.literacy = 70; opp.wealth = 500;
+    if (fund) assert.ok(applyOp(w, opp, { op: 'fund_party', amount: 80 }).ok); if (paper) assert.ok(applyOp(w, opp, { op: 'found_paper', name: 'The Lantern', amount: 80 }).ok);
+    for (let i = 0; i < 8; i++) { pressOf(w); partiesOf(w); } return { w, c, opp, mine }; };
+  const bare = grown(false, false), funded = grown(true, false), voiced = grown(true, true);
+  assert.ok(funded.mine.organization > 5 && funded.mine.support > bare.mine.support, `committees turn sympathy into a following: ${bare.mine.support} -> ${funded.mine.support}`); assert.ok(voiced.mine.support > funded.mine.support, 'and a paper of its own adds to that');
+  const { w, c, opp } = voiced, boss = ld(w, c), paper = c.papers[0]; assert.ok(paper.reach > 3, `the paper has found readers: ${paper.reach}`);
+  for (let i = 0; i < 40; i++) pressOf(w); assert.ok(funded.mine.organization >= 0 && paper.reach < 3, 'a paper nobody pays for any more loses its readers');
+  const gag = fresh(), g = gag.countries.U1, go = gag.characters[g.opposition]; g.pressFreedom = 5; g.literacy = 70; go.wealth = 500; applyOp(gag, go, { op: 'found_paper', name: 'The Lantern', amount: 80 }); const free = fresh(), f = free.countries.U1, fo = free.characters[f.opposition]; f.pressFreedom = 90; f.literacy = 70; fo.wealth = 500; applyOp(free, fo, { op: 'found_paper', name: 'The Lantern', amount: 80 });
+  for (let i = 0; i < 6; i++) { pressOf(gag); pressOf(free); } assert.ok(f.papers[0].reach > g.papers[0].reach * 2, `a gagged press is read by far fewer: ${f.papers[0].reach} against ${g.papers[0].reach}`);
+  const head = ld(free, f); head.secrets = [{ turn: 0, text: 'In 1894: took money from a concession-holder.' }]; const stand = f.legitimacy; let printed = false; for (let i = 0; i < 300 && !printed; i++) { f.papers[0].funds = 80; free.newsThisTurn = []; pressOf(free); printed = free.newsThisTurn.some(e => /has printed that/.test(e.text)); f.mods = []; }
+  assert.ok(printed && head.secrets[0].published && f.legitimacy < stand, 'in the end its reporters print what the ruler hides, and it costs him');
+  const liberty = f.pressFreedom, seen = f.legitimacy; assert.equal(applyOp(free, free.characters[f.general], { op: 'close_paper', id: f.papers[0].id }).ok, false, 'not anyone can shut a paper'); assert.ok(applyOp(free, head, { op: 'close_paper', id: f.papers[0].id }).ok); assert.ok(!f.papers.length && f.pressFreedom < liberty && f.legitimacy < seen, 'the government can, and is seen doing it');
+});
 console.log('All checks passed.');
