@@ -63,9 +63,12 @@ export function contractStep(w) {
   w.contracts = w.contracts.filter(k => ['proposed', 'active'].includes(k.status) ? w.turn - k.turn <= 120 : w.turn - (k.closedAt ?? w.turn) <= 40);
 }
 
-export function cancelContract(w, actor, id) {
-  const k = (w.contracts || []).find(x => x.id === id && open(x) && [x.a, x.b].includes(actor.id)); if (!k) return false;
-  k.status = 'cancelled'; k.closedAt = w.turn;
-  say(w, w.characters[k.a === actor.id ? k.b : k.a], actor.name, `${actor.name} walked away from contract ${k.id}.`);
-  return true;
+// Walking away from a contract in force, refusing an offer that is waiting, or taking back one's own offer. Returns what happened in words, or null.
+export function cancelContract(w, actor, id, from) {
+  const mine = (w.contracts || []).filter(x => [x.a, x.b].includes(actor.id) && (open(x) || x.status === 'proposed')), sender = w.characters[from]?.id ?? w.countries[from]?.leader;
+  const withThem = sender ? mine.filter(x => [x.a, x.b].includes(sender)) : [], k = mine.find(x => x.id === id) ?? (withThem.length === 1 ? withThem[0] : null); if (!k) return null;
+  const other = w.characters[k.a === actor.id ? k.b : k.a], was = k.status; k.closedAt = w.turn;
+  if (was === 'active') { k.status = 'cancelled'; say(w, other, actor.name, `${actor.name} walked away from contract ${k.id}.`); return `Contract ${k.id} is ended.`; }
+  if (k.b === actor.id) { k.status = 'declined'; say(w, other, actor.name, `${actor.name} declined your contract offer ${k.id}.`); return `Offer ${k.id} was declined.`; }
+  k.status = 'withdrawn'; say(w, other, actor.name, `${actor.name} withdrew contract offer ${k.id}.`); return `Offer ${k.id} was withdrawn.`;
 }

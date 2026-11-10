@@ -1114,6 +1114,13 @@ chain('An order for part of a unit touches only that part: discharge, detachment
   const seaId = Object.keys(w.seas)[0], other = Object.keys(w.seas)[1], fl = makeFleet(w, 'U1', seaId, 12); r = applyOp(w, gen, { op: 'move_fleet', fleet: fl.id, to: other, ships: 4 }); assert.ok(r.ok, r.msg);
   const sq = Object.values(w.fleets).find(x => x.country === 'U1' && x.id !== fl.id && x.target === other && x.ships === 4); assert.ok(sq && fl.ships === 8 && !fl.target, 'a squadron sails and the fleet stays on station');
   r = applyOp(w, gen, { op: 'merge_fleets', fleet: sq.id, into: fl.id }); assert.ok(r.ok && fl.ships === 12 && !w.fleets[sq.id], r.msg);
+  // An offer can be refused by the one it was made to and taken back by the one who made it; each hears of it.
+  const rich = w.characters[c.oligarch]; rich.inbox = []; boss.inbox = [];
+  let offer = applyOp(w, rich, { op: 'propose_contract', to: boss.id, terms: 'Boots for the army', pay_per_turn: 2, payer: 'them', turns: 4 }); assert.ok(offer.ok, offer.msg);
+  r = applyOp(w, boss, { op: 'cancel_contract', id: offer.contract }); assert.ok(r.ok && /declined/.test(r.msg), r.msg); assert.ok(rich.inbox.some(m => /declined your contract offer/.test(m.text)), 'the one who offered hears of the refusal');
+  assert.equal(applyOp(w, boss, { op: 'accept_contract', id: offer.contract }).ok, false, 'a refused offer is no longer on the table');
+  offer = applyOp(w, rich, { op: 'propose_contract', to: boss.id, terms: 'Rifles for the army', pay_per_turn: 2, payer: 'them', turns: 4 });
+  r = applyOp(w, rich, { op: 'cancel_contract', id: offer.contract }); assert.ok(r.ok && /withdrawn/.test(r.msg), r.msg); assert.equal(applyOp(w, w.characters[c.opposition], { op: 'cancel_contract', id: offer.contract }).ok, false, 'a stranger to the contract cannot touch it');
   // The same occupied province, held once by two hundred men and once by a real garrison.
   const held = n => { const x = fresh(), p = countryProvinces(x, 'U2')[0]; for (const v of Object.values(x.units)) if (v.province === p.id) delete x.units[v.id];
     p.controller = 'U1'; makeUnit(x, 'U1', p.id, n); for (let i = 0; i < 40 && p.controller === 'U1'; i++) { p.unrest = 90; risingStep(x); } return p.controller === 'U1'; };
