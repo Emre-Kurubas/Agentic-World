@@ -281,7 +281,8 @@ function fiscal(w, c) {
   const need = programs + agencies + interest; let cash = c.treasury + revenue, paid = 1, borrowed = 0;
   // A treasury keeps a working balance of some days' spending. A deficit is met first from the cash above that, then from lenders; the last
   // cash in the till is touched only when lenders refuse. So an empty treasury means the state can no longer borrow, not merely that it runs a deficit.
-  const till = Math.min(need * .12, Math.max(c.treasury, 0));
+  c.till = need * .12;
+  const till = Math.min(c.till, Math.max(c.treasury, 0));
   if (cash - need < till) { borrowed = Math.max(0, Math.min(till - (cash - need), need - revenue, creditLeft(c))); c.debt += borrowed; cash += borrowed; c._taken = (c._taken || 0) + borrowed; }
   if (cash >= need) cash -= need;
   else {

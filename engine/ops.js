@@ -127,9 +127,10 @@ function personFor(w, c, op, kind, patch = {}) {
 // The state pays from the treasury and, once that is empty, on credit for as long as lenders agree. Returns a note for the record, or null when it cannot pay.
 function pay(c, cost) {
   if (!(cost > 0)) return '';
-  const cash = Math.min(Math.max(c.treasury, 0), cost), loan = cost - cash;
-  if (loan > creditLeft(c) + 1e-9) return null;
-  c.treasury -= cash; c.debt += loan; c._loans = (c._loans || 0) + loan; c._taken = (c._taken || 0) + loan;
+  // The treasury's working balance is the last money spent: first the cash above it, then lenders, and only then the till itself.
+  const cash = Math.min(Math.max(c.treasury - (c.till || 0), 0), cost), loan = Math.min(cost - cash, Math.max(creditLeft(c), 0)), last = cost - cash - loan;
+  if (last > Math.max(c.treasury - cash, 0) + 1e-9) return null;
+  c.treasury -= cash + last; c.debt += loan; c._loans = (c._loans || 0) + loan; c._taken = (c._taken || 0) + loan;
   return loan > cost * .01 ? ` ${Math.round(loan)} of the ${Math.round(cost)} cost was borrowed.` : '';
 }
 

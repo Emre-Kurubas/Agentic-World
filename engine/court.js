@@ -21,7 +21,9 @@ export function postOf(w, ch) {
   const p = Object.values(w.provinces).find(x => x.governor === ch.id); if (p) return `governor of ${p.name}`;
   return POSTS[ch.post] ?? (ch.office ? `holds ${ch.office}` : '');
 }
-export function seatCourt(w) { for (const c of aliveCountries(w)) { fillPosts(w, c); serve(w, c); } }
+// At the start the people around the seats stand toward the government where its standing, their pay and their own bent have long since put
+// them: nobody inherits a staff that all lost faith the day before.
+export function seatCourt(w) { for (const c of aliveCountries(w)) { fillPosts(w, c); for (const ch of minorsOf(w, c)) for (let i = 0; i < 40; i++) settle(w, c, ch); serve(w, c); } }
 // How well the two great offices are served: an able and faithful keeper gets the taxes in, an able and faithful chief makes the police count.
 function serve(w, c) {
   const served = post => { const m = minorsOf(w, c).find(x => x.post === post && x.status === 'free'); return m ? clamp(.92 + ((m.skill ?? 1) - 1) * .3, .82, 1.08) * (m.loyalty < 30 ? .85 : 1) : .88; };

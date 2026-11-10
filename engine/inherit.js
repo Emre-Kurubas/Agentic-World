@@ -13,6 +13,8 @@ import { initFirms } from './firms.js';
 import { seatCourt } from './court.js';
 import { burdenAll } from './burdens.js';
 import { beginTurn, stepWorld } from './step.js';
+import { governmentSeats } from './polity.js';
+import { distance } from './politics.js';
 import { writeChronicles, writeLives } from './chronicle.js';
 import { updateStrategic, updateRoutes, costOfCapacity, costOfPolice } from './economy.js';
 
@@ -157,6 +159,8 @@ export function inheritStates(w) {
     const a = ARCHETYPES.find(x => x.key === c.archetype);
     if (c.elections) makeParliament(c, a.key === 'merchant' ? 'Merchants\' Assembly' : 'Parliament');
     else if (a.advisory) makeParliament(c, a.advisory, false);
+    // A government that has sat for years sits on a majority: the parties nearest the ruling party are on its benches until it has one.
+    if (c.elections && c.parliament) { const ruling = c.parties.find(p => p.id === c.rulingParty); c.coalition = []; if (ruling) for (const p of c.parties.filter(p => p !== ruling && !p.banned).sort((x, y) => distance(x.axes, ruling.axes) - distance(y.axes, ruling.axes))) { if (governmentSeats(c) > 50) break; c.coalition.push(p.id); } }
   }
   // Those in the seats do not arrive with clean hands and empty pockets.
   burdenAll(w);
