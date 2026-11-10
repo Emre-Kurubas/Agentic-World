@@ -74,6 +74,13 @@ export function creditLeft(c) {
   return Math.max(0, Math.min(creditRoom(c), (c._room ?? Infinity) - (c._taken || 0)));
 }
 export function openCredit(c) { c._room = creditRoom(c); c._taken = 0; }
+// The treasury pays what it can in cash and borrows the rest while lenders agree. Returns what was actually paid.
+export function treasuryPays(c, cost) {
+  if (!(cost > 0)) return 0;
+  const cash = Math.min(Math.max(c.treasury, 0), cost), loan = Math.min(cost - cash, creditLeft(c));
+  c.treasury -= cash; c.debt += loan; c._loans = (c._loans || 0) + loan; c._taken = (c._taken || 0) + loan;
+  return cash + loan;
+}
 
 export function declareDefault(w, c, why) {
   if (!canDefault(w, c)) return false;

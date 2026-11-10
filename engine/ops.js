@@ -4,7 +4,7 @@ import { executePlot, neutralize, die, SUCCESSION } from './politics.js';
 import { capture, pathStep, upkeepCost, settleOccupations } from './military.js';
 import { makeFleet, TECHS, PLANTS, DEPOSITS, GOOD_LABEL, ROLES, spawnCharacter, bfsSea } from './world.js';
 import { hasTech } from './economy.js';
-import { FX_REGIMES, foreignRate, externalDebt, creditLeft, declareDefault } from './money.js';
+import { FX_REGIMES, foreignRate, externalDebt, creditLeft, declareDefault, treasuryPays } from './money.js';
 import { firmOp, seizeFirm, STATE } from './firms.js';
 import { queueProject, durationOf, DEFENSES, MAX_DEFENSE } from './projects.js';
 import { LANGUAGE_POLICY, FAITH_POLICY, groupsOf, removePeople, settlePeople } from './culture.js';
@@ -20,11 +20,11 @@ const PERMISSIONS = {
   oligarch: new Set(['propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'propose_law', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'lend_private', 'embezzle', 'create_institution', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda', 'capital_flight', 'invest', 'fund_plot'])
 };
 // What anyone may do whatever their office: deal, lend, scheme, speak.
-const PRIVATE = ['propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'fund_plot', 'bribe', 'custom', 'propaganda', 'noop'];
+const PRIVATE = ['pay_state', 'propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'fund_plot', 'bribe', 'custom', 'propaganda', 'noop'];
 PERMISSIONS.private = new Set(PRIVATE);
 // The chief of staff directs where the army's units and squadrons stand and who commands them. Raising and disbanding troops, war and peace stay with the ruler.
 for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'appoint_commander']) PERMISSIONS.general.add(op);
-for (const seat of ['general', 'opposition', 'oligarch']) PERMISSIONS[seat].add('noop');
+for (const seat of ['general', 'opposition', 'oligarch']) { PERMISSIONS[seat].add('noop'); PERMISSIONS[seat].add('pay_state'); }
 PERMISSIONS.exiled = new Set(PRIVATE.filter(x => !['found_party', 'execute_plot', 'gather_dossier'].includes(x)));
 PERMISSIONS.imprisoned = new Set(['accept_contract', 'cancel_contract', 'repay_debt', 'forgive_debt', 'join_plot', 'betray_plot', 'bribe', 'custom', 'noop']);
 // The office is the seat, not the title: a deposed or jailed leader keeps only what any private person has.
@@ -166,7 +166,19 @@ export function applyOp(w, actor, op) {
     case 'appoint_governor': { const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('Province not yours.'); if (op.remove) { tell(w, w.characters[p.governor], c.name, `You are removed as governor of ${p.name}.`); p.governor = null; return ok(); } const ch = personFor(w, c, op, 'governor'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail('No such person.'); p.governor = ch.id; tell(w, ch, c.name, `You are appointed governor of ${p.name}.`); return { ok: true, msg: `${ch.name} (${ch.id}) governs ${p.name}.` }; }
     case 'appoint_commander': { const u = w.units[op.unit]; if (!u || u.country !== c.id) return fail('No such unit.'); const ch = personFor(w, c, op, 'officer'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail('No such person.'); u.commander = ch.id; tell(w, ch, c.name, `You now command unit ${u.id}.`); return { ok: true, msg: `${ch.name} (${ch.id}) commands ${u.id}.` }; }
     case 'propose_contract': { const k = proposeContract(w, actor, op, num); return k ? { ok: true, msg: `Contract offered: ${k.id}`, contract: k.id } : fail('No such counterparty.'); }
-    case 'accept_contract': { const k = acceptContract(w, actor, op.id, op.from); return k ? { ok: true, msg: `Contract ${k.id} is in force.` } : fail('No such offer is waiting for you.'); }
+    case 'accept_contract': { const k = acceptContract(w, actor, op.id, op.from, op.state); return k ? { ok: true, msg: `Contract ${k.id} is in force${k.purse?.[actor.id] ? ", on the treasury's account" : ''}.` } : fail('No such offer is waiting for you.'); }
+    // The state pays a person: a salary, a grant, a reward, a reimbursement, compensation. It is done in the open, and the money really leaves the treasury.
+    case 'pay_person': {
+      const ch = has(w.characters, op.character) ? w.characters[op.character] : Object.values(w.characters).find(x => x.alive && x.name.toLowerCase() === String(op.character ?? '').toLowerCase()); if (!ch?.alive) return fail('No such person.');
+      const want = num(op.amount, 0, 1e9, 0), m = treasuryPays(c, allowance(w, c, 'grants', gdp * .005, want)); if (!(m > .01)) return fail(want > 0 ? 'The treasury has paid out all it can to persons this quarter, or lenders will not cover it.' : 'No amount was named.');
+      ch.wealth += m; const self = ch.id === actor.id, why = String(op.reason || '').slice(0, 120);
+      // People who watch their ruler draw on the treasury for himself think the less of him, the more he takes.
+      if (self) c.legitimacy = clamp(c.legitimacy - Math.min(5, m / Math.max(gdp * .002, .01)), 0, 100); else tell(w, ch, 'Treasury', `The treasury of ${c.name} paid you ${Math.round(m * 10) / 10}${why ? `: ${why}` : ''}.`);
+      if (m >= gdp * .001 || self) news(w, `${c.name}: the treasury paid ${Math.round(m)} to ${self ? `${ch.name}, who governs` : ch.name}${why ? ` (${why})` : ''}.`, { kind: 'economy', countries: [c.id] });
+      return { ok: true, msg: `The treasury paid ${Math.round(m * 10) / 10} to ${ch.name}${m < want - .01 ? `, not the ${Math.round(want * 10) / 10} ordered: that is all it can pay out to persons this quarter` : ''}.` };
+    }
+    // A person pays money into the treasury of their own country: a tax settled, a levy, a gift.
+    case 'pay_state': { const m = Math.min(Math.max(actor.wealth, 0), num(op.amount, 0, 1e9, 0)); if (!(m > .01)) return fail('No money to pay with.'); actor.wealth -= m; c.treasury += m; tell(w, w.characters[c.leader], 'Treasury', `${actor.name} paid ${Math.round(m * 10) / 10} into the treasury${op.reason ? `: ${String(op.reason).slice(0, 120)}` : ''}.`); return { ok: true, msg: `${Math.round(m * 10) / 10} was paid into the treasury of ${c.name}.` }; }
     case 'cancel_contract': { const msg = cancelContract(w, actor, op.id, op.from ?? op.to); return msg ? { ok: true, msg } : fail('No such contract or offer of yours.'); }
     case 'ship_goods': { if (!target || target.id === c.id) return fail('No such target.'); if (!GOODS.includes(op.good)) return fail('No such good.'); const route = w.routes[c.id < target.id ? `${c.id}|${target.id}` : `${target.id}|${c.id}`]; if (!route) return fail('No open route to this country.'); const q = Math.min(c.stock[op.good] || 0, num(op.amount, 0, 1e6)); if (q <= 0) return fail('Not in stock.'); c.stock[op.good] -= q; const arrived = q / route.cost; target.stock[op.good] = (target.stock[op.good] || 0) + arrived; tell(w, w.characters[target.leader], c.name, `Shipment of ${Math.round(arrived)} units of ${GOOD_LABEL[op.good]} has arrived.`); return { ok: true, msg: `${Math.round(arrived)} units arrived.` }; }
     case 'set_strait': { const s = w.strategic.find(x => x.id === op.id && x.type === 'strait'); if (!s || s.controller !== c.id) return fail('You do not control this strait.'); (c.straitPolicy ||= {})[s.id] = { closed: !!op.closed, toll: num(op.toll, 0, .6) }; if (op.closed) { news(w, `${c.name} closed the ${s.name} passage.`, { kind: 'war', countries: [c.id] }); for (const a of aliveCountries(w)) if (a.id !== c.id) a.relations[c.id] = clampRel((a.relations[c.id] ?? 0) - 8); } return ok(); }

@@ -1126,4 +1126,22 @@ chain('An order for part of a unit touches only that part: discharge, detachment
     p.controller = 'U1'; makeUnit(x, 'U1', p.id, n); for (let i = 0; i < 40 && p.controller === 'U1'; i++) { p.unrest = 90; risingStep(x); } return p.controller === 'U1'; };
   assert.equal(held(.2), false, 'two hundred men among a whole people are thrown out'); assert.equal(held(60), true, 'a garrison holds');
 });
+chain('What the state buys the treasury pays for: a contract signed for the state, a payment to a person, a payment into the treasury', () => {
+  const w = fresh(), c = w.countries.U1, boss = ld(w, c), rich = w.characters[c.oligarch], gen = w.characters[c.general]; w.contracts = []; beginTurn(w);
+  c.treasury = 500; boss.wealth = 30; rich.wealth = 50; const near = (a, b, what) => assert.ok(Math.abs(a - b) < 1e-6, `${what}: ${a} against ${b}`);
+  let o = applyOp(w, boss, { op: 'propose_contract', to: rich.id, terms: 'Boots', pay_per_turn: 10, payer: 'me', turns: 4 }); assert.ok(applyOp(w, rich, { op: 'accept_contract', id: o.contract }).ok);
+  contractStep(w); near(boss.wealth, 20, 'signed in her own name, her own purse pays'); near(rich.wealth, 60, 'the seller is paid'); near(c.treasury, 500, 'the treasury is not touched');
+  assert.ok(applyOp(w, boss, { op: 'cancel_contract', id: o.contract }).ok);
+  o = applyOp(w, boss, { op: 'propose_contract', to: rich.id, terms: 'Boots for the army', pay_per_turn: 10, payer: 'me', turns: 4, state: true }); assert.ok(applyOp(w, rich, { op: 'accept_contract', id: o.contract }).ok);
+  contractStep(w); near(boss.wealth, 20, 'signed for the state, her purse is left alone'); near(rich.wealth, 70, 'the seller is paid'); near(c.treasury, 490, 'by the treasury');
+  c.treasury = 0; const owed = c.debt; contractStep(w); near(rich.wealth, 80, 'an empty treasury still pays'); near(c.debt, owed + 10, 'on credit');
+  const g = applyOp(w, gen, { op: 'propose_contract', to: rich.id, terms: 'Fodder', pay_per_turn: 5, payer: 'me', turns: 2, state: true }); assert.ok(!w.contracts.find(k => k.id === g.contract).purse, 'only the one who governs can pledge the treasury');
+  const was = c.leader; c.leader = gen.id; assert.ok(applyOp(w, gen, { op: 'cancel_contract', id: o.contract }).ok, 'whoever governs next can end what was signed for the state'); c.leader = was;
+  c.treasury = 500; let r = applyOp(w, boss, { op: 'pay_person', character: rich.id, amount: 5, reason: 'a reward' }); assert.ok(r.ok, r.msg); near(rich.wealth, 85, 'the person is paid'); near(c.treasury, 495, 'out of the treasury');
+  assert.equal(applyOp(w, gen, { op: 'pay_person', character: gen.id, amount: 5 }).ok, false, 'the treasury is not the general\'s to pay from');
+  const legit = c.legitimacy, purse = boss.wealth; r = applyOp(w, boss, { op: 'pay_person', character: boss.id, amount: 1e6 }); assert.ok(r.ok, r.msg);
+  assert.ok(boss.wealth - purse <= c.gdp * .005 + 1e-6 && boss.wealth > purse, 'a quarter\'s payments to persons have a ceiling'); assert.ok(c.legitimacy < legit, 'and a ruler who pays herself is seen doing it');
+  assert.equal(applyOp(w, boss, { op: 'pay_person', character: rich.id, amount: 5 }).ok, false, 'the ceiling is for the quarter, however many orders are written');
+  const till = c.treasury; r = applyOp(w, rich, { op: 'pay_state', amount: 3, reason: 'the levy' }); assert.ok(r.ok, r.msg); near(c.treasury, till + 3, 'a person can pay into the treasury'); near(rich.wealth, 82, 'from their own purse');
+});
 console.log('All checks passed.');
