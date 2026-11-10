@@ -1,11 +1,12 @@
 import { clamp, sum, news, rand, between, nextId, pick } from './util.js';
 import { CLASSES, ROLES, countryProvinces, provincePop, aliveCountries, makeCountry, spawnCharacter, atWar, clampRel } from './world.js';
 import { voiceOf } from './press.js';
-import { allocateSeats } from './polity.js';
+import { allocateSeats, onBenches, rivalParty, seatGovernment } from './polity.js';
 import { issueCurrency } from './money.js';
 import { culturePenalty, leaderForeignness, minorityShare } from './culture.js';
 import { adminPressure } from './admin.js';
 import { afflict, healthStep, incapacitated } from './health.js';
+import { shut } from './underground.js';
 
 const CLASS_AXES = { peasants: { econ: -15, auth: 15, nation: 15, faith: 35 }, workers: { econ: -55, auth: -10, nation: 5, faith: 0 }, middle: { econ: 20, auth: -35, nation: 0, faith: -10 }, elite: { econ: 65, auth: 25, nation: 15, faith: 10 } };
 
@@ -16,6 +17,10 @@ export function modValue(c, key) { return sum(c.mods.filter(m => m.key === key),
 // What weighs on a class of people in a province and what they credit, each with its weight. The step that moves satisfaction and the report a ruler can ask for both read this one list.
 // How short of bread a province is. A country's shortage falls harder on a province that is cut off from the rest, and a besieged one
 // starves whatever the harvest was elsewhere; a province that is merely remote lives on what it grows.
+// How far the lawful ways to be heard have been shut since the country came into these hands: unions, the press, the vote, police in the
+// streets, and parties that people voted for and that are now forbidden. What a people has always lived under it is used to; what is taken
+// from it, it resents, and what is opened to it, it credits.
+export const closure = c => clamp(shut(c) - (c.shutBase ?? shut(c)) + sum((c.parties || []).filter(p => p.banned), p => p.support) / 100 * .8, -.6, 1.5);
 export const hungerOf = (c, p) => clamp(Math.max(0, 1 - c.foodRatio) * (1 + (1 - (p.access ?? 1)) * 2) + (p.siege ? .25 : 0), 0, 1);
 export function moodParts(c, p, k, realWage = c.wageIndex / c.priceLevel) {
   const tax = k === 'peasants' ? c.tax.land : k === 'elite' ? c.tax.business : c.tax.income, town = k === 'workers' || k === 'middle';
@@ -27,6 +32,8 @@ export function moodParts(c, p, k, realWage = c.wageIndex / c.priceLevel) {
     [k === 'peasants' ? 'the land tax' : k === 'elite' ? 'the tax on business' : 'the income tax', -(k === 'elite' ? 1.5 : 1) * Math.max(0, tax - .12) * 70],
     ['what wages buy', (realWage - 1) * (k === 'elite' ? 15 : 55)],
     ['unemployment', town ? -c.unemployment * 75 : 0],
+    // Townspeople live out of shops: fuller or emptier shelves than the country is used to are felt at once. Peasants make most of what they use.
+    ['what the shops have to sell', town ? clamp((Math.min(c.goodsRatio ?? 1, 1.1) - (c.shopBase ?? 1)) * 22, -16, 8) : 0],
     ['pay, safety and stoppages at the works', k === 'workers' ? (p.labour ?? 0) : 0],
     [k === 'elite' ? 'what relief for the poor costs them' : 'relief and welfare', k === 'elite' ? -relief * .3 : relief],
     ['the division of the estates', k === 'peasants' ? (c.landShare ?? 0) * 8 : k === 'elite' ? -(c.landShare ?? 0) * 12 : 0],
@@ -37,6 +44,7 @@ export function moodParts(c, p, k, realWage = c.wageIndex / c.priceLevel) {
     ['wrongs done by neighbours and left unanswered', -(c.grief ?? 0) * (k === 'elite' ? .5 : 1)],
     ['the standing of the government', (c.legitimacy - 50) * .14],
     ['the state of the press', k === 'middle' ? (c.pressFreedom - 50) * .12 : 0],
+    ['lawful ways to be heard that have been shut or opened', -closure(c) * (k === 'elite' ? 4 : k === 'middle' ? 15 : 11)],
     ['state ownership of industry', k === 'elite' ? -c.ownership * 30 : 0],
     ['foreign occupation', p.controller !== p.owner ? -18 : 0],
     ['how the state treats their people and faith', -culturePenalty(c, p)],
@@ -53,6 +61,7 @@ export function satisfactionStep(w) {
   for (const c of aliveCountries(w)) {
     const inWar = w.wars.some(x => x.active && (x.a.includes(c.id) || x.b.includes(c.id)));
     const realWage = c.wageIndex / c.priceLevel;
+    c.shutBase ??= shut(c);
     let unrestSum = 0, popSum = 0;
     for (const p of countryProvinces(w, c.id)) {
       for (const k of CLASSES) {
@@ -66,7 +75,9 @@ export function satisfactionStep(w) {
       const grip = c.police * (c.service?.police ?? 1) * (.1 + .2 * (1 - c.pressFreedom / 100));
       // A province does not forget what was done to it, for as long as those who did it still rule there.
       const scar = p.scar && p.scar.by === p.controller ? p.scar.weight * 40 * Math.max(0, 1 - (w.turn - p.scar.turn) / 80) : 0;
-      const pressure = 88 - meanSat * 1.3 + (c.pressFreedom > 70 ? 3 : 0) - grip - garrisonHold(garrison[p.id] || 0, pp) - c.repress * .35 + modValue(c, 'unrest') + adminPressure(p) + scar;
+      // A rising that was fought out and put down leaves a province quiet for some years, the longer the harder it was put down.
+      const quiet = p.quelled ? p.quelled.weight * Math.max(0, 1 - (w.turn - p.quelled.turn) / 12) : 0;
+      const pressure = 88 - meanSat * 1.3 + (c.pressFreedom > 70 ? 3 : 0) - grip - garrisonHold(garrison[p.id] || 0, pp) - c.repress * .35 + modValue(c, 'unrest') + adminPressure(p) + scar - quiet;
       p.unrest = clamp(p.unrest + (clamp(pressure, 0, 100) - p.unrest) * .35, 0, 100);
       unrestSum += p.unrest * pp; popSum += pp;
     }
@@ -159,7 +170,7 @@ function claimOf(w, c, ch) {
   let s = ch.power;
   if (c.general === ch.id) s += c.blocs.army.power * .6;
   if (c.oligarch === ch.id) s += Math.min(40, ch.wealth / 8) + c.blocs.capital.power * .3;
-  if (c.opposition === ch.id) s += Math.max(0, ...c.parties.filter(p => !p.banned && p.id !== c.rulingParty).map(p => p.support)) * .8 + Math.max(0, 55 - c.legitimacy) * .5;
+  if (c.opposition === ch.id) s += (rivalParty(c)?.support ?? 0) * .8 + Math.max(0, 55 - c.legitimacy) * .5;
   return s;
 }
 const holdOf = (w, c, ch) => ch.power + c.legitimacy * .6 + c.police * .3;
@@ -197,8 +208,9 @@ const fateOf = ch => ch.status === 'dead' ? ch.death?.how ?? 'died' : ch.status 
 function replaceSlot(w, c, ch) {
   if (!ROLES.includes(ch.role) || c[ch.role] !== ch.id || ch.role === 'leader') return;
   const n = spawnCharacter(w, c.id, ch.role, c.axes); c[ch.role] = n.id; ch.outSince = w.turn;
-  // A business house outlives its head: the heir takes over most of the fortune.
-  if (ch.role === 'oligarch' && ch.status === 'dead' && ch.wealth > 0) { n.wealth += Math.round(ch.wealth * .8); ch.wealth = 0; }
+  // A business house outlives its head, and its fortune is the one it had: whoever takes it over takes over what was left of it, most of it if
+  // the old head is dead, what could be reached at home if he sits in a cell or abroad. No new fortune comes with a new name.
+  if (ch.role === 'oligarch') { const left = ch.status === 'dead' ? Math.max(0, ch.wealth) * .8 : Math.max(0, ch.wealth - (ch.abroad || 0)) * .7; n.wealth = Math.round(left); ch.wealth = ch.status === 'dead' ? 0 : ch.wealth - n.wealth; }
   n.rise = `Took the place of ${ch.name}, who ${fateOf(ch)}, in ${w.date ?? 'the first days'}.`;
 }
 
@@ -239,9 +251,12 @@ export function die(w, ch, how = 'died', { quiet = false, shock = 0 } = {}) {
   if (wasLeader) succeed(w, c, ch, shock); else replaceSlot(w, c, ch);
 }
 
-export function startCivilWar(w, c, leaderCh, label, seedProvinces = []) {
+// With `only`, nothing goes over but the provinces and units that are named: a rising called by plotters takes what was ready to follow it,
+// and if that is nothing there is no rising. Without it (a country in revolt, a split army, a disputed throne) a quarter of the land goes at the least.
+export function startCivilWar(w, c, leaderCh, label, seedProvinces = [], { only = false, units: named = null } = {}) {
   // No land to stand on, no rising: nothing is created and the caller is told so.
   if (!countryProvinces(w, c.id).some(p => p.owner === c.id && p.id !== c.capital)) return null;
+  if (only) { const ground = new Set(countryProvinces(w, c.id).filter(p => p.owner === c.id && p.id !== c.capital).map(p => p.id)); if (!seedProvinces.some(x => ground.has(x)) && !(named || []).some(u => w.units[u.id]?.country === c.id)) return null; }
   const id = nextId(w, 'U');
   const f = makeCountry(w, id, {
     name: `${label} (${c.rootName || c.name})`, rootName: c.rootName || c.name, noSplitUntil: w.turn + 16, adj: '', ideology: leaderCh.role === 'general' ? 'Military revolution' : 'Opposition front', regime: 'Revolutionary council', motto: 'The order will fall.',
@@ -256,11 +271,11 @@ export function startCivilWar(w, c, leaderCh, label, seedProvinces = []) {
   const provs = countryProvinces(w, c.id), open = new Set(provs.filter(p => p.owner === c.id && p.id !== c.capital).map(p => p.id));
   let take = [...new Set(seedProvinces)].filter(x => open.has(x));
   const units = Object.values(w.units).filter(u => u.country === c.id);
-  const defecting = units.filter(u => u.loyalty < 52 || (leaderCh.role === 'general' && rand(w) < .35));
-  if (!defecting.length && units.length > 1) defecting.push([...units].sort((a, b) => a.loyalty - b.loyalty)[0]);
+  const defecting = named ? named.filter(u => w.units[u.id] && u.country === c.id) : units.filter(u => u.loyalty < 52 || (leaderCh.role === 'general' && rand(w) < .35));
+  if (!only && !defecting.length && units.length > 1) defecting.push([...units].sort((a, b) => a.loyalty - b.loyalty)[0]);
   defecting.forEach(u => { u.country = id; u.loyalty = 75; u.target = null; u.commander = null; delete u.bond; if (open.has(u.province)) take.push(u.province); });
   const byUnrest = [...provs].filter(p => open.has(p.id)).sort((a, b) => b.unrest - a.unrest).map(p => p.id);
-  const minimum = Math.max(1, Math.round(provs.length * .25));
+  const minimum = only ? 0 : Math.max(1, Math.round(provs.length * .25));
   for (const x of byUnrest) if (take.length < minimum) take.push(x);
   take = [...new Set(take)];
   if (!take.length) take = byUnrest.slice(0, 1);
@@ -293,6 +308,7 @@ export function plotStep(w) {
     const lead = w.characters[pl.leader];
     // A plot can be run from exile, not from a cell; and it dies with the person it was aimed at.
     if (!c?.alive || !lead?.alive || lead.status === 'imprisoned' || (pl.kind === 'assassination' && pl.target && !w.characters[pl.target]?.alive)) { pl.active = false; continue; }
+    pl.members = [...new Set(pl.members)].filter(x => x !== pl.leader);
     pl.progress = clamp(pl.progress + 9 + pl.members.length * 7, 0, 100);
     const leak = clamp(.03 + pl.members.length * .05 + (c.police + c.intelligence) / 100 * .1 - pl.secrecy * .12, .02, .75);
     if (!pl.exposed && rand(w) < leak) {
@@ -305,26 +321,31 @@ export function plotStep(w) {
   }
 }
 
+// How the army divides when the palace is struck at. No regiment goes over whole for one point of loyalty: every unit splits, and the part of
+// it that marches grows as its faith in the government falls, as the chief of staff or its own commander is in the plot, as the government's
+// standing in the country sinks and as the army's own temper sours. Soldiers do not readily turn on a government the country stands behind.
 export function armySides(w, c, pl) {
   const inPlot = new Set([pl.leader, ...pl.members]);
-  const generalIn = inPlot.has(c.general);
+  const generalIn = inPlot.has(c.general), climate = (50 - c.legitimacy) * .5 + (50 - (c.blocs?.army?.sat ?? 50)) * .4;
   let pro = 0, anti = 0;
   for (const u of Object.values(w.units)) {
     if (u.country !== c.id) continue;
     // Men follow the officer who commands them: a commander in the plot brings most of his unit with him, and one who stands by the government holds his together.
     const chief = w.characters[u.commander], led = chief?.alive && chief.status === 'free' && chief.country === c.id;
     // An officer on a plotter's private payroll leans the way his paymaster goes.
-    const lean = (100 - u.loyalty) + (generalIn ? 22 : 0) + (led ? (inPlot.has(chief.id) ? 45 : inPlot.has(chief.payroll) ? 28 : chief.id !== c.general && (chief.loyalty ?? 50) >= 55 ? -15 : 0) : 0) - 40;
-    if (lean > 0) pro += u.men * lean / 50; else anti += u.men * (-lean) / 50;
+    const lean = (55 - u.loyalty) + (generalIn ? 14 : 0) + (led ? (inPlot.has(chief.id) ? 30 : inPlot.has(chief.payroll) ? 18 : chief.id !== c.general && (chief.loyalty ?? 50) >= 55 ? -10 : 0) : 0) + climate;
+    const share = 1 / (1 + Math.exp(-lean / 10));
+    pro += u.men * share; anti += u.men * (1 - share);
   }
   return { pro, anti };
 }
 
-export function executePlot(w, pl) {
+export function executePlot(w, pl, { fate } = {}) {
   const c = w.countries[pl.country], lead = w.characters[pl.leader];
   if (!pl.active || !c?.alive || !lead?.alive) return 'The plot is no longer valid.';
   pl.active = false;
-  const prep = .55 + pl.progress / 160, inPlot = [pl.leader, ...pl.members].map(x => w.characters[x]).filter(Boolean);
+  // A stroke thought of yesterday is not a stroke prepared: until a plot has had some quarters (or money, or hands) behind it, it carries little weight of its own.
+  const prep = pl.progress < 40 ? .3 + pl.progress / 80 : .55 + pl.progress / 160, inPlot = [...new Set([pl.leader, ...pl.members])].map(x => w.characters[x]).filter(Boolean);
   const target = w.characters[c.leader];
   const surprise = pl.exposed ? .65 : 1.2;
   if (pl.kind === 'assassination') {
@@ -359,10 +380,27 @@ export function executePlot(w, pl) {
     return outcome === 'killed' ? `${victim.name} was killed.${hand}` : outcome === 'wounded' ? `${victim.name} was wounded but lives.${hand}` : `The attempt on ${victim.name} failed.${hand}`;
   }
   if (pl.kind === 'uprising') {
-    if (!canSplit(w, c)) { neutralize(w, lead, 'imprisoned'); news(w, `In ${c.name}, an armed uprising was put down before it could take root.`, { kind: 'plot', countries: [c.id] }); return 'Not enough ground for an uprising.'; }
-    const seeds = countryProvinces(w, c.id).filter(p => p.unrest > 30 && p.id !== c.capital).sort((a, b) => b.unrest - a.unrest).slice(0, 3).map(p => p.id);
-    startCivilWar(w, c, lead, lead.role === 'general' ? 'Rebel Army' : 'People\'s Front', seeds);
-    return 'The armed uprising has begun.';
+    // A rising takes what is ready to follow it: provinces restless enough, regiments that have lost faith or whose commander is in the plot.
+    // Months of preparation and an armed underground lower the bar; in a quiet country with a loyal army, calling one is only a way to be found out.
+    const ready = clamp(pl.progress / 100, 0, 1), bar = 62 - ready * 20 - (c.cells ?? 0) * .12, ids = new Set(inPlot.map(x => x.id));
+    const ground = canSplit(w, c) ? countryProvinces(w, c.id).filter(p => p.owner === c.id && p.id !== c.capital && p.unrest > bar).sort((a, b) => b.unrest - a.unrest).map(p => p.id) : [];
+    const faith = 38 + ready * 14 + (c.general === lead.id ? 8 : 0), led = {};
+    const over = canSplit(w, c) ? Object.values(w.units).filter(u => u.country === c.id && (u.loyalty < faith || ids.has(u.commander) || ids.has(w.characters[u.commander]?.payroll))) : [];
+    for (const u of over) if (ids.has(u.commander) && u.commander !== lead.id) led[u.id] = u.commander;
+    const men = sum(over, u => u.men), f = canSplit(w, c) ? startCivilWar(w, c, lead, lead.role === 'general' ? 'Rebel Army' : 'People\'s Front', ground, { only: true, units: over }) : null;
+    if (!f) {
+      // Nobody followed. Those who called it are known, and what becomes of them is the government's affair.
+      const ruler = w.characters[c.leader], names = inPlot.map(x => x.name).join(', ');
+      news(w, `In ${c.name}, an armed rising called by ${lead.name} found no following and was put down before it took root.`, { kind: 'plot', countries: [c.id] });
+      for (const x of inPlot) { x.power = clamp(x.power - 10, 0, 100); (x.secrets ||= []).push({ turn: w.turn, text: `Called an armed rising in ${w.date ?? 'the first days'} that nobody followed.`, published: true }); x.secrets = x.secrets.slice(-12);
+        if (ruler?.alive && ruler.id !== x.id) { const file = ruler.dossiers[x.id] ||= { turn: w.turn, about: x.name, facts: [] }; file.facts.push(`Called an armed rising in ${w.date ?? 'the first days'}.`); file.facts = file.facts.slice(-8); } }
+      if (ruler?.alive) ruler.inbox.push({ turn: w.turn, from: 'Police', text: `An armed rising was called by ${names} and found no following: no province rose and no regiment came over. It is put down. They are known and at liberty; the papers are in your file.` });
+      c.legitimacy = clamp(c.legitimacy + 2, 0, 100);
+      return 'No province was ready to rise and no regiment came over: the rising was put down before it took root, and it is known who called it. A rising needs restless provinces, soldiers who have lost faith or commanders who are in it, and time to prepare.';
+    }
+    // Officers who brought their men over go with them.
+    for (const [uid, cid] of Object.entries(led)) { const u = w.units[uid], x = w.characters[cid]; if (u?.country === f.id && x?.alive && !ROLES.some(r => c[r] === x.id)) { x.country = f.id; u.commander = x.id; } }
+    return `The armed uprising has begun: ${countryProvinces(w, f.id).length} province${countryProvinces(w, f.id).length > 1 ? 's' : ''} rose${men >= .5 ? ` and about ${Math.round(men)} thousand soldiers came over` : ' but no regiment came over'}.`;
   }
   // A coup is decided first by which way the army leans, whatever its size: the share of it that will march against the government, and the share that will stand.
   const { pro, anti } = armySides(w, c, pl), marching = pro + anti > 0 ? pro / (pro + anti) : .5, ARMY = 130;
@@ -371,20 +409,30 @@ export function executePlot(w, pl) {
   const def = ((1 - marching) * ARMY + target.power * .9 + c.police * .55 + c.legitimacy * .55 + content * .8) * between(w, .75, 1.25);
   const r = att / Math.max(def, 1);
   if (r > 1.12) {
-    news(w, `Coup in ${c.name}: ${target.name} was overthrown and ${lead.name} took power.`, { kind: 'plot', countries: [c.id] });
-    sideline(w, target, 'exiled');
+    // What becomes of the fallen ruler is for those who took the palace to decide, as far as they can lay hands on him. Driving him out always
+    // works; to hold or to kill him they must reach him first, and a ruler who was warned, or whose enemies struck in haste, may be over the border by then.
+    const want = ['imprisoned', 'dead'].includes(fate) ? fate : 'exiled', slipped = want !== 'exiled' && rand(w) < clamp(.2 + (pl.exposed ? .3 : 0) + (1.1 - prep) * .4, .05, .75), end = slipped ? 'exiled' : want;
+    const after = end === 'dead' ? ` ${target.name} was shot.` : end === 'imprisoned' ? ` ${target.name} is held prisoner.` : slipped ? ` ${target.name} escaped abroad.` : ` ${target.name} was driven into exile.`;
+    news(w, `Coup in ${c.name}: ${target.name} was overthrown and ${lead.name} took power.${after}`, { kind: 'plot', countries: [c.id] });
+    if (end !== 'dead') sideline(w, target, end);
     const military = ['general', 'officer'].includes(lead.role);
-    installLeader(w, c, lead, military ? { regime: 'Military junta', elections: false, succession: 'army', pressFreedom: Math.min(c.pressFreedom, 25) } : { succession: c.elections ? c.succession : 'open' });
+    // Soldiers who seize the state rule as soldiers until they say otherwise: no vote is due and the army names what follows. What they do about the press is theirs to order.
+    installLeader(w, c, lead, military ? { regime: 'Military junta', elections: false, succession: 'army' } : { succession: c.elections ? c.succession : 'open' });
+    if (end === 'dead') {
+      // The killing of a fallen ruler is remembered: by his following, by whoever keeps files, and by those who already hated the men who did it.
+      die(w, target, 'was shot when the government fell', { quiet: true }); mark(w, lead, `Had ${target.name} shot when the palace was taken.`);
+      c.legitimacy = clamp(c.legitimacy - 5 * (.4 + c.pressFreedom / 100), 0, 100); c.blood = (c.blood || 0) + 2; c.mods.push({ key: 'unrest', delta: clamp(target.power / 12, 1, 6), turns: 3, label: `The shooting of ${target.name}` });
+    }
     // Soldiers who take the palace send the deputies home; the chamber sits again only when the junta recalls it.
     if (military && c.parliament) c.parliament.suspendedUntil = w.turn + 400;
     lead.rise = `Seized power in ${w.date ?? 'the first days'} by overthrowing ${target.name}.`;
     // Those who take the palace by force do not inherit what the old order stood on.
     c.legitimacy = clamp(c.legitimacy - 14, 0, 100); c.legitBase = Math.min(c.legitBase ?? 0, 0);
-    return 'The coup succeeded.';
+    return `The coup succeeded.${slipped ? ` ${target.name} was to be ${want === 'dead' ? 'shot' : 'held'} but got away across the border.` : after}`;
   }
   // A colonel whose stroke stalls takes the army with him only if a good part of it is his own; otherwise he is simply put down.
   const own = lead.role === 'officer' ? sum(Object.values(w.units).filter(u => u.country === c.id && u.commander === lead.id), u => u.men) / Math.max(sum(Object.values(w.units).filter(u => u.country === c.id), u => u.men), 1e-9) : 1;
-  if (r > .92 && canSplit(w, c) && own >= .25) {
+  if (r > .92 && canSplit(w, c) && own >= .25 && marching >= .25) {
     startCivilWar(w, c, lead, 'Coup Forces');
     return 'The coup stalled and the army split.';
   }
@@ -409,8 +457,11 @@ export function uprisingStep(w) {
       }
       p.devastation = clamp(p.devastation + .06, 0, 1);
       for (const k of CLASSES) p.pops[k].n *= .996;
-      // A rising that has been fought out leaves the province spent for a while, whatever it still feels.
-      p.unrest = clamp(p.unrest - 14, 0, 100);
+      // A rising that has been fought out leaves the province spent for a while, whatever it still feels. For how long depends on what was done
+      // there: put down by troops quartered in the province it does not rise again for years, and the dead are remembered by those who take
+      // up arms in secret; left to burn itself out, it is back sooner.
+      const hold = garrisonHold(sum(Object.values(w.units).filter(u => u.province === p.id && u.country === c.id), u => u.men), provincePop(p));
+      p.unrest = clamp(p.unrest - 14, 0, 100); p.quelled = { turn: w.turn, weight: 8 + hold }; c.blood = (c.blood || 0) + hold * .05;
       news(w, `${p.name}: mass uprising, fighting in the streets.`, { kind: 'disaster', countries: [c.id], hush: true, province: p.id });
       // A rising in a remote valley shakes the government less than one in a great city.
       c.legitimacy = clamp(c.legitimacy - clamp(provincePop(p) / people * 20, .3, 2.5), 0, 100);
@@ -432,7 +483,8 @@ export function partyStep(w) {
       let s = 0, n = 0;
       for (const pr of homeProvinces(w, c)) for (const k of CLASSES) {
         const fit = Math.max(4, 100 - distance(p.axes, CLASS_AXES[k]) * 1.1) * (p.base === k ? 1.6 : 1);
-        const grievance = p.id === c.rulingParty ? pr.pops[k].sat / 50 : (100 - pr.pops[k].sat + 25) / 75;
+        // Whoever sits on the government's benches answers for it with it: content keeps their voters, discontent sends them to the parties outside.
+        const grievance = onBenches(c, p) ? pr.pops[k].sat / 50 : (100 - pr.pops[k].sat + 25) / 75;
         s += pr.pops[k].n * fit * grievance; n += pr.pops[k].n;
       }
       // Committees and newspapers turn sympathy into a following.
@@ -454,16 +506,19 @@ export function electionStep(w) {
     const fairness = c.pressFreedom / 100 * (c.parties.some(p => p.banned) ? .6 : 1) * (c.rigging > 0 ? .5 : 1) * (w.turn - (c.rivalJailed ?? -99) < 16 ? .5 : 1), due = w.turn - (c.lastElection ?? -99) >= 8 ? 1 : 0;
     c.lastElection = w.turn;
     // The country votes for parties, and a government is whoever can gather more of them behind it: the ruling party and the partners on its
-    // benches against its strongest rival and the parties that stand nearer to that rival than to the government.
-    const live = c.parties.filter(p => !p.banned), ruling = live.find(p => p.id === c.rulingParty), rivalP = [...live].filter(p => p.id !== c.rulingParty).sort((a, b) => b.support - a.support)[0];
+    // benches against the strongest party outside them and the parties that stand nearer to that rival than to the government.
+    const live = c.parties.filter(p => !p.banned), ruling = live.find(p => p.id === c.rulingParty), rivalP = rivalParty(c);
     const partners = live.filter(p => p !== ruling && (c.coalition || []).includes(p.id)), drift = live.filter(p => p !== ruling && p !== rivalP && !partners.includes(p) && ruling && rivalP && distance(p.axes, rivalP.axes) < distance(p.axes, ruling.axes));
     const rulingSupport = (ruling?.support ?? 30) + sum(partners, p => p.support), rival = Math.max(1, (rivalP?.support ?? 0) + sum(drift, p => p.support) * .5);
-    const share = clamp(rulingSupport / (rulingSupport + rival) * 100 + (1 - fairness) * 12 + c.rigging + between(w, -4, 4), 2, 98);
+    // Stuffed boxes are delivered by officials and policemen, so a state gets only as many as its offices reach; and the more of them there are,
+    // the likelier a free press or an honest bench is to find them.
+    const ordered = c.rigging || 0, rig = ordered * clamp((c.bureaucracy + c.police) / 110, .35, 1), found = ordered > 0 && rand(w) < clamp(ordered / 25 * (.1 + c.pressFreedom / 180 + c.courts / 300), 0, .8);
+    const share = clamp(rulingSupport / (rulingSupport + rival) * 100 + (1 - fairness) * 12 + rig + between(w, -4, 4), 2, 98);
     c.rigging = 0;
     if (c.parliament) c.parliament.seats = allocateSeats(c);
     if (share >= 50 || !opp?.alive || opp.status !== 'free') {
       news(w, `${c.name} election: ${inc.name} stayed in office with ${Math.round(share)}% of the vote.`, { kind: 'politics', countries: [c.id] });
-      c.legitimacy = clamp(c.legitimacy + 6 * fairness * due, 0, 100);
+      c.legitimacy = clamp(c.legitimacy + 6 * fairness * due * (found ? 0 : 1), 0, 100);
     } else {
       news(w, `${c.name} election: ${opp.name} won; ${inc.name} lost power (${Math.round(100 - share)}%).`, { kind: 'politics', countries: [c.id] });
       const prev = inc.id;
@@ -472,10 +527,19 @@ export function electionStep(w) {
       const ex = w.characters[prev]; ex.role = 'opposition'; ex.loyalty = 40;
       c.opposition = prev; c.legitimacy = clamp(c.legitimacy + 10 * fairness * due, 0, 100);
       opp.rise = `Won the election of ${w.date ?? 'the first days'} against ${ex.name}.`;
-      c.rulingParty = [...c.parties].filter(p => !p.banned && p.id !== c.rulingParty).sort((a, b) => b.support - a.support)[0]?.id ?? c.rulingParty;
+      // The party that won governs, with a house of its own making: the old benches are cleared and the beaten party sits outside.
+      const fallen = c.rulingParty; c.rulingParty = rivalP?.id ?? [...c.parties].filter(p => !p.banned && p.id !== c.rulingParty).sort((a, b) => b.support - a.support)[0]?.id ?? c.rulingParty;
+      seatGovernment(w, c, fallen);
       // The state's course moves toward the programme of the party that won, not to any one person's private leanings.
       const platform = c.parties.find(p => p.id === c.rulingParty)?.axes;
       if (platform) for (const a of ['econ', 'auth', 'nation', 'faith']) c.axes[a] = Math.round(c.axes[a] + (platform[a] - c.axes[a]) * .6);
+    }
+    if (found) {
+      // The returns were falsified and it has come out. The count stands, since those who made it still hold the offices; the standing of whoever ordered it does not.
+      news(w, `${c.name}: the returns of the election were falsified on the orders of ${inc.name}; ${c.pressFreedom >= 40 ? 'the papers have printed the proof' : 'the proof is passing from hand to hand'}.`, { kind: 'plot', countries: [c.id] });
+      for (const x of inc.secrets || []) if (/returns of the election/.test(x.text)) x.published = true;
+      if (c.leader === inc.id) { c.legitimacy = clamp(c.legitimacy - (3 + ordered * .3) * (.4 + c.pressFreedom / 100), 0, 100); c.mods.push({ key: 'unrest', delta: clamp(ordered / 5, 1, 5), turns: 3, label: 'The falsified election' }); } else inc.power = clamp(inc.power - 12, 0, 100);
+      if (inc.alive) inc.inbox.push({ turn: w.turn, from: 'Press office', text: 'It has come out that the returns of the election were arranged on your orders. Officials who were told to stuff the boxes have talked, and the proof is in other hands.' });
     }
   }
 }

@@ -28,16 +28,27 @@ function strike(w, c) {
   if (now?.alive) say(w, now, 'Police', `${deed}${outcome === 'killed' ? ', who is dead' : outcome === 'wounded' ? ', who is wounded' : ', who escaped unhurt'}. The man belonged to the armed underground, which the police judge to be ${cellsWord(c.cells)}. It lives on the bitterness of the working people and on every lawful door that is shut to them, and on blood the state has shed; it is weakened by police work and by whatever opens those doors.`);
 }
 
+// Where the underground settles: anger times how far the doors are shut, plus fresh blood and outside money, less what the police break up.
+export function cellsRest(w, c) {
+  const provs = countryProvinces(w, c.id), mean = k => sum(provs, p => p.pops[k].sat * p.pops[k].n) / Math.max(sum(provs, p => p.pops[k].n), 1e-9);
+  const anger = Math.max(0, 45 - mean('workers')) + Math.max(0, 40 - mean('peasants')) * .6;
+  return clamp(anger * shut(c) * 1.6 + (c.blood || 0) * 2 + (c.cellFunds || 0) - (c.police + c.intelligence) / 200 * 12, 0, 100);
+}
+// A state that is handed over has had its misery and its police for years: whatever underground they breed is there already, not something
+// the new ruler watches grow from nothing.
+export function settleUnderground(w) { for (const c of aliveCountries(w)) { c.cells = cellsRest(w, c); c.cellsKnown = false; } }
+
 export function undergroundStep(w) {
   for (const c of aliveCountries(w)) {
-    const provs = countryProvinces(w, c.id), mean = k => sum(provs, p => p.pops[k].sat * p.pops[k].n) / Math.max(sum(provs, p => p.pops[k].n), 1e-9);
-    const anger = Math.max(0, 45 - mean('workers')) + Math.max(0, 40 - mean('peasants')) * .6, was = c.cells ?? 0;
+    const was = c.cells ?? 0;
     c.blood = (c.blood || 0) * .88;
-    // Where it settles: anger times how far the doors are shut, plus fresh blood and outside money, less what the police break up.
-    const want = clamp(anger * shut(c) * 1.6 + c.blood * 2 + (c.cellFunds || 0) - (c.police + c.intelligence) / 200 * 12, 0, 100);
+    const want = cellsRest(w, c);
     c.cellFunds = (c.cellFunds || 0) * .7; c.cells = clamp(was + (want - was) * .14, 0, 100);
     const ruler = w.characters[c.leader], opp = w.characters[c.opposition];
-    if (was < 30 && c.cells >= 30) {
+    // The police report it once when it takes shape (or, in a state handed over with one, in the new ruler's first quarter), and again only if it was broken and came back.
+    c.cellsKnown ??= was >= 30; if (c.cells < 24) c.cellsKnown = false;
+    if (c.cells >= 30 && !c.cellsKnown) {
+      c.cellsKnown = true;
       say(w, ruler, 'Police', `The police report that an armed underground has taken shape: cells with weapons and printing presses, ${cellsWord(c.cells)}. They expect attempts on the lives of people in office.`);
       // They look for money and for friends in the lawful opposition.
       if (opp?.alive && opp.status === 'free' && opp.id !== c.leader) say(w, opp, 'A visitor', `Men who say they speak for the armed underground have sought you out. They want money and your silence, and they say that what you will not do, they will. You may give them money (it would be a secret that could hang you), tell the police, or send them away.`);

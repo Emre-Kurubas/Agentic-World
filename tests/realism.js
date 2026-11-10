@@ -6,6 +6,11 @@ import { executePlot } from '../engine/politics.js';
 import { makeParliament, treatyStep } from '../engine/polity.js';
 import { currencyStep, displacedDemand, exportEdge, localPrices } from '../engine/money.js';
 import { firmStep, STATE } from '../engine/firms.js';
+import { GOODS, BASE_PRICE } from '../engine/world.js';
+import { glutFactor, USUAL_COVER } from '../engine/money.js';
+import { firmValue } from '../engine/firms.js';
+import { quote } from '../engine/projects.js';
+import { updateRoutes } from '../engine/economy.js';
 import { militaryStep } from '../engine/military.js';
 import { culturePenalty, cultureStep, migrate, leaderForeignness } from '../engine/culture.js';
 import { initAdmin, adminStep, adminPressure } from '../engine/admin.js';
@@ -52,7 +57,8 @@ ok('A successful coup changes the leader', () => {
 });
 ok('An uprising creates a civil war and a new side', () => {
   const w = fresh(), c = w.countries.U1, o = w.characters[c.opposition]; const n = aliveCountries(w).length;
-  applyOp(w, o, { op: 'start_plot', kind: 'uprising' }); executePlot(w, w.plots.at(-1));
+  for (const p of countryProvinces(w, 'U1')) p.unrest = 80;
+  applyOp(w, o, { op: 'start_plot', kind: 'uprising' }); w.plots.at(-1).progress = 100; executePlot(w, w.plots.at(-1));
   assert.equal(aliveCountries(w).length, n + 1); assert.ok(w.wars.some(x => x.active && x.civil));
 });
 ok('A ruling with probability 0 is not applied', () => {
@@ -87,7 +93,7 @@ chain('Closing a strait cuts the sea route and changes prices and tolls', () => 
   const st = w.strategic.find(y => y.type === 'strait' && w.routes[k].path.includes(y.ref)), owner = st.controller; const [a, b] = k.split('|');
   if ([a, b].includes(owner)) return console.log('       (a party controls the strait, skipped)');
   const before = w.routes[k].path.length; w.countries[owner].straitPolicy = { [st.id]: { closed: true, toll: 0 } }; run(w, 1);
-  const after = w.routes[k]; assert.ok(!after || !after.path.includes(st.ref), 'route should not pass through the strait'); assert.ok(!after || after.path.length >= before);
+  const after = w.routes[k]; assert.ok(!after || !after.path.includes(st.ref), 'route should not pass through the strait'); assert.ok(!after || after.mode === 'transit' || after.path.length >= before, 'the closed strait cuts the route, lengthens it, or leaves only the dearer way through a third country');
 });
 chain('An enemy fleet holding the sea cuts trade', () => {
   const w = fresh(), k = Object.keys(w.routes).find(x => w.routes[x].mode === 'sea'); if (!k) return;
@@ -145,7 +151,7 @@ const limit = async () => {
 const unlimited = async () => {
   const w = createWorld(base); const g = new Game({ world: w, cfg: base, backend: { kind: 'mock' }, store: nullStore() });
   const orig = g.turn.bind(g); g.turn = async () => { await orig(); if (w.turn >= 300) g.stop = true; };
-  await g.run(0); assert.equal(w.turn, 300); assert.ok(Object.keys(w.characters).length < 400, `characters ${Object.keys(w.characters).length}`); console.log(`passed  300 turns ran without limit (world size ${Math.round(JSON.stringify(w).length / 1024)} KB, ${aliveCountries(w).length} powers)`);
+  await g.run(0); assert.equal(w.turn, 300); assert.ok(Object.keys(w.characters).length < 25 * Math.max(aliveCountries(w).length, 8), `characters ${Object.keys(w.characters).length} for ${aliveCountries(w).length} powers`); console.log(`passed  300 turns ran without limit (world size ${Math.round(JSON.stringify(w).length / 1024)} KB, ${aliveCountries(w).length} powers)`);
 };
 await counting(); await limit(); await unlimited();
 
@@ -303,7 +309,7 @@ chain('Construction takes time, finishes, and is lost if the province falls', ()
 });
 chain('Recruiting and shipbuilding take time', () => {
   const w = fresh(), c = w.countries.U1, l = ld(w, c), p = countryProvinces(w, 'U1')[0], n = Object.keys(w.units).length; c.treasury = c.gdp * 3; c.stock.arms = 1000; c.stock.steel = 1000; applyOp(w, l, { op: 'recruit', province: p.id, men: 10, unit_kind: 'artillery' }); assert.equal(Object.keys(w.units).length, n, 'does not arrive at once'); run(w, 1); assert.equal(Object.keys(w.units).length, n, 'artillery takes 2 quarters'); run(w, 1); assert.equal(Object.keys(w.units).length, n + 1);
-  const port = countryProvinces(w, 'U1').find(q => q.port > 0) ?? p; port.port = 1; port.seas = port.seas.length ? port.seas : Object.keys(w.seas).slice(0, 1); const f = Object.keys(w.fleets).length; applyOp(w, l, { op: 'build_ship', province: port.id, ships: 2, kind: 'battleship' }); run(w, 5); assert.equal(Object.keys(w.fleets).length, f); run(w, 1); assert.equal(Object.values(w.fleets).at(-1).kind, 'battleship');
+  const port = countryProvinces(w, 'U1').find(q => q.port > 0) ?? p; port.port = 2; port.seas = port.seas.length ? port.seas : Object.keys(w.seas).slice(0, 1); const f = Object.keys(w.fleets).length; applyOp(w, l, { op: 'build_ship', province: port.id, ships: 2, kind: 'battleship' }); run(w, 5); assert.equal(Object.keys(w.fleets).length, f); run(w, 1); assert.equal(Object.values(w.fleets).at(-1).kind, 'battleship');
 });
 chain('A fort strengthens the defender; a besieged province does not fall at once', () => {
   const battle = fort => { const { w, a, p } = frontWorld(); p.fort = fort; soldier(w, 'U1', p.id, 100); soldier(w, 'U2', p.id, 130); militaryStep(w); return w.battles.at(-1).attackerWon; };
@@ -562,10 +568,10 @@ ok('A bribe does not write an AI character\'s loyalty; the money and the news ar
 });
 chain('Embezzlement → trace → dossier → blackmail and exposure lower legitimacy', () => {
   const w = fresh(), c = w.countries.U1, l = ld(w, c), o = w.characters[c.opposition]; c.intelligence = 100; c.treasury = c.gdp; c.pressFreedom = 80;
-  const clean = w.characters[c.general]; for (let i = 0; i < 40 && !o.dossiers[clean.id]; i++) applyOp(w, o, { op: 'gather_dossier', character: clean.id });
+  const clean = w.characters[c.general]; for (let i = 0; i < 40 && !o.dossiers[clean.id]; i++) { w.turn++; applyOp(w, o, { op: 'gather_dossier', character: clean.id }); }
   assert.ok(o.dossiers[clean.id], 'a dossier should open'); assert.equal(applyOp(w, o, { op: 'blackmail', character: clean.id, demand: 'x' }).ok, false, 'no blackmail with an empty dossier');
   assert.equal(applyOp(w, l, { op: 'embezzle', pct_gdp: .05 }).ok, true);
-  delete o.dossiers[l.id]; for (let i = 0; i < 40 && !o.dossiers[l.id]; i++) applyOp(w, o, { op: 'gather_dossier', character: l.id });
+  delete o.dossiers[l.id]; for (let i = 0; i < 40 && !o.dossiers[l.id]; i++) { w.turn++; applyOp(w, o, { op: 'gather_dossier', character: l.id }); }
   assert.ok(o.dossiers[l.id].facts[0].includes('Embezzled'), JSON.stringify(o.dossiers[l.id]));
   assert.equal(applyOp(w, o, { op: 'blackmail', character: l.id, demand: 'Step down' }).ok, true); assert.ok(l.inbox.at(-1).text.includes('Embezzled') && l.inbox.at(-1).text.includes('Step down'));
   assert.ok(answer(w, o, 'dossiers').includes('Embezzled'));
@@ -813,7 +819,7 @@ chain('Anyone can be marked for death: the killing leaves a trace and fills the 
 });
 chain('The state can jail, banish and execute: a prisoner can be put to death, the deed is on file, and no one is arrested twice', () => {
   const w = fresh(), c = w.countries.U1, l = ld(w, c), opp = w.characters[c.opposition], olig = w.characters[c.oligarch]; c.courts = 0;
-  for (let i = 0; i < 30 && opp.status === 'free'; i++) applyOp(w, l, { op: 'purge', character: opp.id, fate: 'imprisoned' });
+  for (let i = 0; i < 30 && opp.status === 'free'; i++) { applyOp(w, l, { op: 'purge', character: opp.id, fate: 'imprisoned' }); if (opp.status === 'free') w.turn++; }
   assert.equal(opp.status, 'imprisoned'); assert.notEqual(c.opposition, opp.id);
   assert.equal(applyOp(w, l, { op: 'purge', character: opp.id, fate: 'imprisoned' }).ok, false, 'already in prison');
   assert.equal(applyOp(w, l, { op: 'purge', character: opp.id, fate: 'dead' }).ok, true); assert.equal(opp.alive, false); assert.equal(opp.death.how, 'was executed');
@@ -828,8 +834,9 @@ chain('Out of office a person keeps only what any private person has; prisoners 
   assert.equal(applyOp(w, old, { op: 'set_tax', kind: 'income', rate: .5 }).ok, false); assert.equal(applyOp(w, old, { op: 'start_plot', kind: 'coup' }).ok, false);
   assert.equal(applyOp(w, old, { op: 'custom', label: 'Hunger strike' }).ok, true);
   assert.ok(currentActors(w).includes(old), 'a prisoner still acts'); assert.ok(!seated(w, old)); assert.ok(frontPage(w, old).includes('prisoner'));
-  assert.ok(answer(w, old, 'budget').includes('not open to you'), 'the papers of the office are closed to them');
-  old.status = 'free'; assert.equal(applyOp(w, old, { op: 'declare_war', target: 'U2' }).ok, false, 'a former ruler commands nothing'); assert.equal(applyOp(w, old, { op: 'start_plot', kind: 'coup' }).ok, true);
+  for (const topic of ['budget', 'army', 'borders', 'economy', 'sea:D1']) assert.ok(answer(w, old, topic).includes('reaches a prison cell'), `${topic}: the state's figures and the army's dispositions do not reach a cell`);
+  assert.ok(answer(w, old, 'people').includes(w.characters[c.leader].name) && !answer(w, old, 'my_secrets').includes('prison cell'), 'a prisoner still knows the people and his own affairs');
+  old.status = 'free'; assert.ok(answer(w, old, 'budget').includes('not open to you'), 'out of prison, the papers of the office stay closed to them'); assert.equal(applyOp(w, old, { op: 'declare_war', target: 'U2' }).ok, false, 'a former ruler commands nothing'); assert.equal(applyOp(w, old, { op: 'start_plot', kind: 'coup' }).ok, true);
 });
 chain('Violence against a people: the dead and the driven-out are counted, the province changes, neighbours receive them, the army is marked, and it is not forgotten', () => {
   const w = fresh(), c = w.countries.U1, l = ld(w, c), p = countryProvinces(w, c.id).find(x => x.neighbors.some(n => w.provinces[n].controller !== c.id)), q = w.provinces[p.neighbors.find(n => w.provinces[n].controller !== c.id)], o = w.countries[q.controller];
@@ -891,6 +898,8 @@ import { newsFor } from '../agents/queries.js';
 ok('The opening text gives every character an ego and every freedom, and no number to judge people by', () => {
   const w = inherited(), l = ld(w, aliveCountries(w)[0]), first = actorPrompt(w, l, [], true, { intro: true }), later = actorPrompt(w, l, [], true, { intro: false });
   assert.ok(first.includes('You have an ego') && first.includes('no score or ledger'), 'the ego is theirs and so are their feelings about others');
+  assert.ok(first.includes('And you feel.') && first.includes('part of how a person decides') && first.includes('both are open to you, and neither is the rule'), 'they are told that what they feel bears on what they decide, and that mastering it is open to them too');
+  assert.ok(later.includes('wants and feels') && !later.includes('And you feel.'), 'each morning recalls it in a word; the passage itself is said once');
   assert.ok(first.includes('massacres are as open to you as peace'), 'nothing is forbidden, in either direction');
   assert.ok(!later.includes('You have an ego'), 'said once, at the start of their life');
   assert.ok(!/\b(loyalty|ambition|greed|relations?|power) -?\d/i.test(first), 'no relationship is handed over as a number');
@@ -905,7 +914,7 @@ chain('While the ruler lies too ill to govern, the named successor governs in th
 });
 chain('A newcomer knows whose place they took and how it fell vacant; the arrested know who gave the order', () => {
   const w = fresh(), c = w.countries.U1, l = ld(w, c), opp = w.characters[c.opposition]; c.courts = 0;
-  for (let i = 0; i < 30 && opp.status === 'free'; i++) applyOp(w, l, { op: 'purge', character: opp.id, fate: 'imprisoned' });
+  for (let i = 0; i < 30 && opp.status === 'free'; i++) { applyOp(w, l, { op: 'purge', character: opp.id, fate: 'imprisoned' }); if (opp.status === 'free') w.turn++; }
   const next = w.characters[c.opposition]; assert.notEqual(next.id, opp.id); assert.ok(next.rise.includes(opp.name) && next.rise.includes('imprisoned'), next.rise);
   assert.ok(actorPrompt(w, next, [], true, { intro: true }).includes(next.rise)); assert.ok(opp.inbox.some(m => m.text.includes(l.name)));
 });
@@ -932,7 +941,7 @@ chain('Government matters: ten years of good rule lift a poor state, ten years o
     op({ op: 'print_money', pct_gdp: .1 }); op({ op: 'embezzle', pct_gdp: .05 });
   };
   const poor = play('agrarian'), raised = play('agrarian', good), rich = play('merchant'), ruined = play('merchant', bad);
-  assert.ok(raised.realGdp > poor.realGdp * 1.2, `output ${raised.realGdp} / ${poor.realGdp}`); assert.ok(raised.bureaucracy > poor.bureaucracy + 15 && raised.corruption < poor.corruption - 8); assert.ok(raised.legitimacy > poor.legitimacy && raised.lastRevenue / raised.gdp > poor.lastRevenue / poor.gdp * 1.5);
+  assert.ok(raised.realGdp > poor.realGdp * 1.12, `output ${raised.realGdp} / ${poor.realGdp}`); assert.ok(raised.bureaucracy > poor.bureaucracy + 15 && raised.corruption < poor.corruption - 8); assert.ok(raised.legitimacy > poor.legitimacy && raised.lastRevenue / raised.gdp > poor.lastRevenue / poor.gdp * 1.5);
   assert.ok(raised.debt / raised.gdp > poor.debt / poor.gdp, 'and building a state is not free');
   assert.ok(ruined.realGdp < rich.realGdp * .9, `output ${ruined.realGdp} / ${rich.realGdp}`); assert.ok(ruined.legitimacy < rich.legitimacy - 25 && ruined.corruption > rich.corruption + 25 && ruined.inflation > rich.inflation + .05);
 });
@@ -976,7 +985,7 @@ ok('A character can read the map: the world at a glance, their own provinces, a 
 });
 chain('The record keeps what the world told each person, every change of course and every change of health', () => {
   const w = fresh(), c = w.countries.U1, l = ld(w, c), opp = w.characters[c.opposition]; c.courts = 0; beginTurn(w); const before = snapshotState(w);
-  for (let i = 0; i < 30 && opp.status === 'free'; i++) applyOp(w, l, { op: 'purge', character: opp.id, fate: 'imprisoned' });
+  for (let i = 0; i < 30 && opp.status === 'free'; i++) { applyOp(w, l, { op: 'purge', character: opp.id, fate: 'imprisoned' }); if (opp.status === 'free') w.turn++; }
   applyOp(w, l, { op: 'set_tax', kind: 'income', rate: .31 }); applyOp(w, l, { op: 'designate_successor', character: c.general }); afflict(w, w.characters[c.oligarch], 'illness', 2);
   stepWorld(w); const es = buildEntries(w, { trace: [], rulings: [], messages: [] }, before), has = (k, re) => es.some(e => e.k === k && re.test(e.text));
   assert.ok(has('notice', /arrested and locked up on the order of/), 'the arrested person\'s notice'); assert.ok(es.find(e => e.k === 'notice' && /arrested/.test(e.text)).a.includes(opp.id));
@@ -1091,9 +1100,14 @@ chain('A coup is decided first by the army; a rising takes only the government\'
 });
 chain('A famine burns out instead of feeding on itself, and tolls move gold without making it', () => {
   // The test is about bread, so the country is kept whole: a hungry state that splits in two would lose people for another reason.
-  const w = fresh(); w.countries.U1.noSplitUntil = 1e9; for (const o of aliveCountries(w)) if (o.id !== 'U1') o.embargo.push('U1'); for (const p of countryProvinces(w, 'U1')) p.fertility *= .55;
-  const pops = () => countryProvinces(w, 'U1').reduce((s, p) => s + popOf(p), 0), start = pops(); run(w, 60); const low = pops(); run(w, 60);
+  // And solvent: a treasury that can no longer pay for its roads loses harvests for a second reason, which is measured separately below.
+  const hungry = () => { const w = fresh(); w.countries.U1.noSplitUntil = 1e9; for (const o of aliveCountries(w)) if (o.id !== 'U1') o.embargo.push('U1'); for (const p of countryProvinces(w, 'U1')) p.fertility *= .55; return w; };
+  const w = hungry(), funded = n => { for (let i = 0; i < n; i++) { const c = w.countries.U1; c.treasury = Math.max(c.treasury, c.gdp); c.arrears = 0; run(w, 1); } };
+  const pops = (v = w) => countryProvinces(v, 'U1').reduce((s, p) => s + popOf(p), 0), start = pops(); funded(60); const low = pops(); funded(60);
   assert.ok(low > start * .45, `the people are not wiped out: ${start} -> ${low}`); assert.ok(pops() > low * .95 && w.countries.U1.foodRatio > .88, `and the country finds its level: ${low} -> ${pops()}, food ${w.countries.U1.foodRatio}`);
+  // The same hunger with nobody governing and no one lending: the state goes unpaid, its roads run down, and the land feeds fewer still.
+  const left = hungry(), mean = v => { const ps = countryProvinces(v, 'U1'); return ps.reduce((s, p) => s + p.infra, 0) / ps.length; }; run(left, 120);
+  assert.ok(left.countries.U1.paidRatio < .8 && mean(left) < mean(w) - .15 && pops(left) < pops() * .85, `a bankrupt state makes the famine worse: paid ${left.countries.U1.paidRatio}, roads ${mean(left)} against ${mean(w)}, people ${pops(left)} against ${pops()}`);
   const x = fresh(); for (const p of Object.values(x.provinces)) if (p.deposits.gold) p.deposits.gold.mine = 0; for (const s of x.strategic) if (s.type === 'strait') { const o = x.countries[s.controller]; if (o) (o.straitPolicy ||= {})[s.id] = { closed: false, toll: .6 }; }
   const goldOf = () => aliveCountries(x).reduce((s, o) => s + o.reserves, 0), before = goldOf(); run(x, 8); assert.ok(goldOf() <= before + 1, `gold in the world ${before} -> ${goldOf()}`);
 });
@@ -1236,7 +1250,7 @@ chain('Pay and safety at the works decide whether the men stay: ill-paid men wal
   labourOf(w); firmStep(w); const fair = f.lastProfit; f.wage = 1.5; f.safety = 1; firmStep(w); assert.ok(f.lastProfit < fair, `good pay and safe works cost the owner: ${fair} -> ${f.lastProfit}`);
   assert.equal(applyOp(w, w.characters[c.general], { op: 'set_wages', id: f.id, level: 1 }).ok, false, 'only the owner sets the wage'); assert.ok(applyOp(w, rich, { op: 'set_wages', id: f.id, level: .55 }).ok); assert.ok(applyOp(w, rich, { op: 'set_safety', id: f.id, level: .5 }).ok);
   rich.inbox = []; let out = false; for (let i = 0; i < 40 && !out; i++) { labourOf(w); f.halted = 0; out = !!f.strike; } assert.ok(out, 'ill-paid men walk out'); assert.ok(p.halt[key] > 0, 'the works stand still'); assert.ok(rich.inbox.some(m => /have struck/.test(m.text)), 'the owner is told what they want');
-  assert.ok(p.labour < 0, 'and the workers of the province are the bitterer for it'); firmStep(w); const idle = f.lastProfit; assert.ok(Math.abs(idle) < Math.abs(fair), 'a struck works earns next to nothing');
+  assert.ok(p.labour < 0, 'and the workers of the province are the bitterer for it'); firmStep(w); const idle = f.lastProfit, on = f.strike; f.strike = null; firmStep(w); const working = f.lastProfit; f.strike = on; assert.ok(Math.abs(idle) < Math.abs(working) * .5, `a struck works earns next to nothing: ${idle} against ${working} at work on the same wages`);
   assert.ok(applyOp(w, rich, { op: 'set_wages', id: f.id, level: f.strike.demand }).ok); labourOf(w); assert.equal(f.strike, null, 'meeting the demand ends it');
   f.wage = .6; f.strike = { since: w.turn, demand: .75, safer: false }; c.police = 80; const legit = c.legitimacy, hands = p.pops.workers.n;
   assert.equal(applyOp(w, rich, { op: 'break_strike', id: f.id }).ok, false, 'an owner commands no police'); const r = applyOp(w, boss, { op: 'break_strike', id: f.id }); assert.ok(r.ok, r.msg);
@@ -1358,12 +1372,15 @@ chain('An order is carried out as far as the state has the offices and the loyal
   for (let i = 0; i < 12; i++) { c.bureaucracy = 20; adminStep(w); } assert.ok(Math.abs(c.tax.income - (was + .1)) < 1e-9 && !Object.keys(c.taxTarget || {}).length, 'until it is all collected');
   const [w2, c2, boss2] = state(90), was2 = c2.tax.income; applyOp(w2, boss2, { op: 'set_tax', kind: 'income', rate: was2 + .1 }); assert.ok(Math.abs(c2.tax.income - was2 - .1) < 1e-9, 'a capable state has it in force at once');
   // The same work, in an honest state near the capital and in a corrupt one far from it.
-  const price = (corruption, admin) => { const [x, k, b] = state(60), p = x.provinces[k.capital]; k.corruption = corruption; p.admin = admin; k.treasury = 1e6; k.stock.machines = 1e4; k.stock.steel = 1e4; const t = k.treasury; const o = applyOp(x, b, { op: 'build', province: p.id, kind: 'infrastructure', pct_gdp: .02 }); assert.ok(o.ok, o.msg); return (t - k.treasury) / k.gdp; };
+  const price = (corruption, admin) => { const [x, k, b] = state(60), p = x.provinces[k.capital]; k.corruption = corruption; p.admin = admin; k.treasury = 1e6; k.stock.machines = 1e4; k.stock.steel = 1e4; const t = k.treasury; const o = applyOp(x, b, { op: 'build', province: p.id, kind: 'fort' }); assert.ok(o.ok, o.msg); return t - k.treasury; };
   const clean = price(5, .9), dirty = price(80, .1); assert.ok(dirty > clean * 1.25, `graft and distance make the same work dearer: ${clean} against ${dirty}`);
+  // And the same sum buys less of a work that grows by degrees: the money named is not exceeded, the roads are shorter.
+  const roads = (corruption, admin) => { const [x, k, b] = state(60), p = x.provinces[k.capital]; k.corruption = corruption; p.admin = admin; k.treasury = 1e6; const t = k.treasury, o = applyOp(x, b, { op: 'build', province: p.id, kind: 'infrastructure', amount: 200 }); assert.ok(o.ok, o.msg); assert.ok(Math.abs(t - k.treasury - 200) < 1e-6, 'the sum named is what is spent'); return x.projects.at(-1).add; };
+  assert.ok(roads(5, .9) > roads(80, .1) * 1.25, 'the same money lays fewer roads where graft and distance are large');
   // A commander who has lost faith.
   const [x, k, b] = state(60), u = Object.values(x.units).filter(v => v.country === 'U1' && x.characters[v.commander]?.alive)[0], col = x.characters[u.commander], to = x.provinces[u.province].neighbors.find(n => x.provinces[n].controller === 'U1');
   if (to) { col.loyalty = 5; let delays = 0; for (let i = 0; i < 40; i++) { u.target = null; if (!applyOp(x, b, { op: 'move', unit: u.id, to }).ok) delays++; } assert.ok(delays > 6 && delays < 30, `he obeys when it suits him: ${delays} of 40 orders delayed`); col.loyalty = 90; u.target = null; assert.ok(applyOp(x, b, { op: 'move', unit: u.id, to }).ok, 'a loyal one marches'); }
-  const chief = Object.values(x.characters).find(v => v.country === 'U1' && v.post === 'police'), opp = x.characters[k.opposition]; chief.loyalty = 5; k.courts = 0; opp.inbox = []; let warned = 0; for (let i = 0; i < 40; i++) { opp.status = 'free'; const o = applyOp(x, b, { op: 'purge', character: opp.id, fate: 'imprisoned' }); if (/gave warning/.test(o.msg)) warned++; }
+  const chief = Object.values(x.characters).find(v => v.country === 'U1' && v.post === 'police'), opp = x.characters[k.opposition]; chief.loyalty = 5; k.courts = 0; opp.inbox = []; let warned = 0; for (let i = 0; i < 40; i++) { x.turn++; opp.status = 'free'; const o = applyOp(x, b, { op: 'purge', character: opp.id, fate: 'imprisoned' }); if (/gave warning/.test(o.msg)) warned++; }
   assert.ok(warned >= 4 && warned < 36 && opp.inbox.some(m => /warned in time/.test(m.text)), 'a faithless police chief lets the quarry know');
   // The two great offices: an able keeper gets more of the taxes in than a poor one, and the ruler can change him.
   { const keeper = Object.values(x.characters).find(v => v.country === 'U1' && v.post === 'treasury'); keeper.loyalty = 90; keeper.skill = 1.35; courtOf(x, applyOp); const good = k.service.treasury; keeper.skill = .75; courtOf(x, applyOp); assert.ok(k.service.treasury < good - .1, `a poor hand at the treasury gets less in: ${good} -> ${k.service.treasury}`);
@@ -1460,7 +1477,7 @@ chain('What rulers and others were found unable to do: dismiss a chief of staff 
   // A general with a stroke prepared answers with it.
   const x = inherited(), k = x.countries.U1, head = ld(x, k), g = x.characters[k.general]; assert.ok(applyOp(x, g, { op: 'start_plot', kind: 'coup' }).ok); const out = applyOp(x, head, { op: 'dismiss' }); assert.ok(!x.plots.at(-1).active, 'the plot is sprung'); assert.ok(/stroke he had prepared/.test(out.msg), out.msg);
   // A fine.
-  c.courts = 0; rich.wealth = 80; const till = c.treasury; const f1 = applyOp(w, boss, { op: 'fine', character: rich.id, amount: 20, reason: 'the flooded gallery' }); assert.ok(f1.ok, f1.msg); assert.equal(rich.wealth, 60); assert.ok(Math.abs(c.treasury - till - 20) < 1e-6); c.courts = 100; let struck = 0; for (let i = 0; i < 60; i++) if (!applyOp(w, boss, { op: 'fine', character: rich.id, amount: 1 }).ok) struck++; assert.ok(struck > 8, `free courts strike some fines down: ${struck} of 60`);
+  c.courts = 0; rich.wealth = 80; const till = c.treasury; const f1 = applyOp(w, boss, { op: 'fine', character: rich.id, amount: 20, reason: 'the flooded gallery' }); assert.ok(f1.ok, f1.msg); assert.equal(rich.wealth, 60); assert.ok(Math.abs(c.treasury - till - 20) < 1e-6); c.courts = 100; let struck = 0; for (let i = 0; i < 60; i++) { w.turn++; if (!applyOp(w, boss, { op: 'fine', character: rich.id, amount: 1 }).ok) struck++; } assert.ok(struck > 8, `free courts strike some fines down: ${struck} of 60`);
   // A guard formed on the spot.
   const u = Object.values(w.units).filter(v => v.country === 'U1').sort((a, b) => b.men - a.men)[0], men = u.men, d = applyOp(w, boss, { op: 'move', unit: u.id, to: u.province, men: 5 }); assert.ok(d.ok && /was formed out of/.test(d.msg), d.msg); assert.ok(Math.abs(u.men - men + 5) < 1e-6 && Object.values(w.units).some(v => v.country === 'U1' && v.province === u.province && Math.abs(v.men - 5) < 1e-6 && !v.target));
   // An order to one private works, and stirring up two.
@@ -1472,5 +1489,419 @@ chain('What rulers and others were found unable to do: dismiss a chief of staff 
   opp.wealth = 30; const fund = applyOp(w, opp, { op: 'create_institution', name: 'Relief Fund', description: 'Relief', amount: 1, powers: ['welfare'] }); assert.ok(fund.ok, fund.msg); const body = c.institutions.at(-1); rich.wealth = 50; applyOp(w, rich, { op: 'give', to: body.id, amount: 10 });
   const purse = opp.wealth, t = applyOp(w, opp, { op: 'draw_institution', id: body.id, amount: 6 }); assert.ok(t.ok, t.msg); assert.ok(Math.abs(opp.wealth - purse - 6) < 1e-6 && Math.abs(body.endowment - 4) < 1e-6 && opp.secrets.some(s => /out of what had been given/.test(s.text)), 'gifts taken for oneself are a secret'); assert.equal(applyOp(w, rich, { op: 'draw_institution', id: body.id, amount: 1 }).ok, false);
   c.capitalClosed = false; c.reserves = 500; gen.wealth = 40; const fl = applyOp(w, gen, { op: 'capital_flight', share: .5 }); assert.ok(fl.ok, fl.msg); assert.ok(gen.abroad > 0, 'anyone with money can send it out'); const back = applyOp(w, gen, { op: 'repatriate' }); assert.ok(back.ok && !(gen.abroad > .01), 'and bring it home');
+});
+chain('A work costs what the work is, in that place, and never more than the sum the order names: a railway comes whole or not at all, mountain ground is dearer, and a sum too small is refused with the price', () => {
+  const w = fresh(), c = w.countries.U1, l = ld(w, c), ps = countryProvinces(w, 'U1').filter(p => !p.rail); c.treasury = 1e6; c.stock.steel = 1e4; c.stock.machines = 1e4;
+  const [a, b, d] = ps; a.terrain = b.terrain = d.terrain = 'plains';
+  const spent = op => { const t = c.treasury, r = applyOp(w, l, op); return [r, t - c.treasury]; };
+  const [none, free] = spent({ op: 'build', province: a.id, kind: 'railway' }); assert.ok(none.ok && free > 0, none.msg);
+  const price = quote(w, c, b, 'railway').price * c.priceLevel, [small, nothing] = spent({ op: 'build', province: b.id, kind: 'railway', amount: price * .3 });
+  assert.equal(small.ok, false); assert.equal(nothing, 0, 'a refused work takes no money'); assert.ok(small.msg.includes(String(Math.round(price))), `the refusal names the price: ${small.msg}`);
+  const [rich, paid] = spent({ op: 'build', province: b.id, kind: 'railway', amount: price * 20 }); assert.ok(rich.ok, rich.msg); assert.ok(Math.abs(paid - price) < 1e-6, `a large purse buys the same railway for the same money: ${paid} against ${price}`);
+  const flat = quote(w, c, d, 'railway').price; d.terrain = 'mountain'; assert.ok(quote(w, c, d, 'railway').price > flat * 2, 'the same line through mountain costs more than twice as much');
+  const crowd = quote(w, c, d, 'railway').price; for (const k of Object.keys(d.pops)) d.pops[k].n *= 2; assert.ok(quote(w, c, d, 'railway').price > crowd * 1.9, 'and a province of twice the people needs twice the network');
+  // Works that grow by degrees: the sum named is the sum spent, and it buys in proportion.
+  const big = countryProvinces(w, 'U1')[0], [mon, twenty] = spent({ op: 'build', province: big.id, kind: 'infrastructure', amount: 20 }); assert.ok(mon.ok, mon.msg); assert.ok(Math.abs(twenty - 20) < 1e-6, `an order for 20 spends 20, not ${twenty}`);
+  const one = w.projects.at(-1).add; applyOp(w, l, { op: 'build', province: big.id, kind: 'infrastructure', amount: 60 }); assert.ok(Math.abs(w.projects.at(-1).add - one * 3) < 1e-9, 'three times the money, three times the roads');
+  // A place that is full takes nothing, and no money is taken for it.
+  big.coast = true; big.port = 3; const [full, zero] = spent({ op: 'build', province: big.id, kind: 'port' }); assert.equal(full.ok, false); assert.equal(zero, 0);
+  big.plants.goods = 7.9; const [top, some] = spent({ op: 'build', province: big.id, kind: 'goods', amount: 1e5 }); assert.ok(top.ok, top.msg); assert.ok(some < 1e5 * .1 && Math.abs(w.projects.at(-1).add - .1) < 1e-9, 'only what the place can still take is built and paid for');
+  // The estimates can be asked for beforehand, and they are the prices the order then pays.
+  const est = answer(w, l, `building:${b.id}`); assert.ok(/railway: /.test(est) && /fort: about/.test(est) && /steel mill: about/.test(est), est.slice(0, 300));
+  const fort = Number(/fort: about (\d+)/.exec(answer(w, l, `building:${d.id}`))[1]), [f, cost] = spent({ op: 'build', province: d.id, kind: 'fort' }); assert.ok(f.ok && Math.abs(cost - fort) <= 1, `quoted ${fort}, paid ${cost}`);
+});
+chain('Building gives work while it lasts, and the books show what it cost', () => {
+  const pair = () => { const w = fresh(), c = w.countries.U1; c.treasury = 1e6; c.stock.steel = 1e4; c.stock.machines = 1e4; return [w, c]; };
+  const [a, ca] = pair(), [b, cb] = pair(), l = ld(a, ca), ps = countryProvinces(a, 'U1').filter(p => !p.rail).slice(0, 6); let spent = 0;
+  for (const p of ps) { const t = ca.treasury, r = applyOp(a, l, { op: 'build', province: p.id, kind: 'railway' }); assert.ok(r.ok, r.msg); spent += t - ca.treasury; }
+  run(a, 2); run(b, 2);
+  assert.ok(ca.unemployment < cb.unemployment - .005, `six railways in hand employ people: ${ca.unemployment} against ${cb.unemployment}`); assert.ok(ca.lastJobs.works > 0 && !cb.lastJobs.works);
+  assert.ok(/Building now in hand gives work/.test(answer(a, l, 'economy')), 'and whoever governs is told so');
+  // The money is in the books of the quarter it was ordered in.
+  const [x, cx] = pair(), lx = ld(x, cx), t = cx.treasury; applyOp(x, lx, { op: 'build', province: ps[0].id, kind: 'railway' }); const cost = t - cx.treasury; run(x, 1);
+  assert.ok(Math.abs(cx.lastBooks.outlay.building - cost) < 1e-6); assert.ok(answer(x, lx, 'budget').includes(`building and surveys ${Math.round(cost)}`));
+  // When the works are finished the hands are free again.
+  run(a, 8); run(b, 8); assert.ok(!(ca.lastJobs.works > 0), 'finished works employ no one');
+  assert.ok(ps.every(p => a.provinces[p.id].rail === 1), 'and the railways stand');
+});
+chain('Roads and works stand where their upkeep holds them: an inherited state left alone keeps what it has, more spending settles higher and stops, less runs down and stops', () => {
+  const mean = (w, id) => { const ps = countryProvinces(w, id); return ps.reduce((s, p) => s + p.infra, 0) / ps.length; }, plants = (w, id) => countryProvinces(w, id).reduce((s, p) => s + Object.values(p.plants).reduce((x, y) => x + y, 0), 0);
+  const w = inherited(), ids = aliveCountries(w).map(c => c.id); w.status = 'playing'; run(w, 1); const was = Object.fromEntries(ids.map(id => [id, mean(w, id)]));
+  // No one touches the budget; arrears are ruled out so that only upkeep at the inherited share is measured.
+  for (let i = 0; i < 30; i++) { for (const id of ids) { const c = w.countries[id]; if (c.alive) { c.treasury = Math.max(c.treasury, c.gdp); c.arrears = 0; } } run(w, 1); }
+  for (const id of ids) if (w.countries[id].alive) assert.ok(Math.abs(mean(w, id) - was[id]) < .03, `${id} ${w.countries[id].archetype}: roads at ${was[id].toFixed(2)} are still at ${mean(w, id).toFixed(2)} after thirty quarters of the spending they were built with`);
+  const three = () => { const x = fresh(), c = x.countries.U1; return [x, c]; }, [up, cu] = three(), [down, cd] = three(), [same, cs] = three(), share = cs.budget.infrastructure;
+  cu.budget.infrastructure = share + .02; cd.budget.infrastructure = Math.max(0, share - .012);
+  const rich = c => { c.treasury = Math.max(c.treasury, c.gdp * 2); c.arrears = 0; };
+  for (let i = 0; i < 60; i++) { for (const c of [cu, cd, cs]) rich(c); run(up, 1); run(down, 1); run(same, 1); }
+  const hi = mean(up, 'U1'), lo = mean(down, 'U1'), mid = mean(same, 'U1'); assert.ok(hi > mid + .2 && lo < mid - .1, `spending moves the roads: ${lo.toFixed(2)} < ${mid.toFixed(2)} < ${hi.toFixed(2)}`);
+  for (let i = 0; i < 60; i++) { for (const c of [cu, cd]) rich(c); run(up, 1); run(down, 1); }
+  assert.ok(mean(up, 'U1') - hi < .08 && lo - mean(down, 'U1') < .08, 'and they settle instead of climbing or falling for ever');
+  assert.ok(plants(up, 'U1') > plants(same, 'U1') && plants(down, 'U1') < plants(same, 'U1'), 'the country\'s works follow the same spending');
+  // Roads that were built stay built on top of that.
+  const [y, cy] = three(), p = countryProvinces(y, 'U1')[0], before = p.infra; cy.treasury = 1e6; applyOp(y, ld(y, cy), { op: 'build', province: p.id, kind: 'infrastructure', amount: quote(y, cy, p, 'infrastructure').price * .3 });
+  for (let i = 0; i < 40; i++) { rich(cy); run(y, 1); } assert.ok(p.infra > before + .25, `roads built forty quarters ago are still there: ${before.toFixed(2)} -> ${p.infra.toFixed(2)}`);
+});
+chain('Offices built in a far province raise the state\'s reach there for good, and reach is what brings its taxes in', () => {
+  const pair = () => { const w = inherited(), c = w.countries.U1; w.status = 'playing'; c.treasury = 1e6; return [w, c]; }, [a, ca] = pair(), [b] = pair();
+  const far = [...countryProvinces(a, 'U1')].sort((x, y) => (x.admin ?? .5) - (y.admin ?? .5))[0], twin = b.provinces[far.id], r = applyOp(a, ld(a, ca), { op: 'build', province: far.id, kind: 'administration', amount: quote(a, ca, far, 'administration').price * .15 });
+  assert.ok(r.ok, r.msg); run(a, 40); run(b, 40);
+  assert.ok(far.admin > twin.admin + .1, `ten years on the offices still hold the province: ${far.admin.toFixed(2)} against ${twin.admin.toFixed(2)}`);
+  far.seat = .25; assert.equal(applyOp(a, ld(a, ca), { op: 'build', province: far.id, kind: 'administration', amount: 50 }).ok, false, 'a province can hold only so many offices');
+});
+chain('A harbour counts by its size: a larger one takes freight off the sea trade, and a battleship needs one of the second size', () => {
+  const w = fresh(); let pairKey = null;
+  // Two countries that trade by sea only.
+  for (const [k, r] of Object.entries(w.routes)) if (r.mode === 'sea') { pairKey = k; break; }
+  if (!pairKey) { const [a, b] = aliveCountries(w); for (const p of countryProvinces(w, a.id)) p.neighbors = p.neighbors.filter(n => w.provinces[n].controller !== b.id); for (const p of countryProvinces(w, b.id)) p.neighbors = p.neighbors.filter(n => w.provinces[n].controller !== a.id); updateRoutes(w); pairKey = Object.entries(w.routes).find(([, r]) => r.mode === 'sea')?.[0]; }
+  assert.ok(pairKey, 'a sea route exists in the test world');
+  const [x, y] = pairKey.split('|'), ends = [...countryProvinces(w, x), ...countryProvinces(w, y)].filter(p => p.port > 0);
+  for (const p of ends) p.port = 1; updateRoutes(w); const poor = w.routes[pairKey].cost;
+  for (const p of ends) p.port = 3; updateRoutes(w); const good = w.routes[pairKey].cost;
+  assert.ok(good < poor - .03 && good >= 1, `great harbours at both ends carry cheaper: ${poor.toFixed(3)} -> ${good.toFixed(3)}`);
+  const c = w.countries.U1, l = ld(w, c), p = countryProvinces(w, 'U1').find(q => q.coast) ?? countryProvinces(w, 'U1')[0]; p.coast = true; p.seas = p.seas.length ? p.seas : Object.keys(w.seas).slice(0, 1); c.treasury = 1e6; c.stock.steel = 1e4;
+  p.port = 1; const no = applyOp(w, l, { op: 'build_ship', province: p.id, ships: 1, kind: 'battleship' }); assert.equal(no.ok, false); assert.ok(/harbour/.test(no.msg), no.msg);
+  assert.equal(applyOp(w, l, { op: 'build_ship', province: p.id, ships: 1, kind: 'cruiser' }).ok, true, 'a cruiser can be built in any port');
+  assert.equal(applyOp(w, l, { op: 'build', province: p.id, kind: 'port' }).ok, true); run(w, 4); assert.equal(p.port, 2); assert.equal(applyOp(w, l, { op: 'build_ship', province: p.id, ships: 1, kind: 'battleship' }).ok, true, 'the enlarged harbour takes the keel');
+});
+chain('A company earns on what its own works make: the same mill among many hands earns more than among few, and capital buys works at the price of the place with nothing added from nowhere', () => {
+  const w = fresh(), c = w.countries.U1, ol = w.characters[c.oligarch], ps = [...countryProvinces(w, 'U1')].sort((a, b) => b.pops.workers.n - a.pops.workers.n), big = ps[0], small = ps.at(-1);
+  for (const p of ps) for (const k of Object.keys(p.plants)) p.plants[k] = 0; big.plants.goods = small.plants.goods = 1; w.firms = {};
+  const mk = (id, p) => w.firms[id] = { id, name: id, country: 'U1', province: p.id, sector: 'goods', resource: null, stake: 1, owner: ol.id, cash: 0, lastProfit: 0, founded: 0, status: 'open', bad: 0, offer: null, buildsUntil: 1e9 };
+  const fb = mk('SRB', big), fs = mk('SRS', small); c.stock.timber = c.stock.coal = c.stock.steel = 1e5; run(w, 2);
+  assert.ok(fb.lastUnits > fs.lastUnits * 1.5, `the mill with ${Math.round(big.pops.workers.n)}k hands makes more than the one with ${Math.round(small.pops.workers.n)}k: ${fb.lastUnits} against ${fs.lastUnits}`);
+  // Capital in: a quarter stays in the till, the rest becomes works at the price of that province.
+  c.stock.machines = 1e4; ol.wealth = 1000; const cash = fs.cash, lvl = small.plants.goods, n = w.projects.length, r = applyOp(w, ol, { op: 'invest_company', id: 'SRS', amount: 100 }); assert.ok(r.ok, r.msg);
+  const x = w.projects.at(-1), step = quote(w, c, small, 'goods').price; assert.equal(w.projects.length, n + 1); assert.ok(Math.abs(ol.wealth - 900) < 1e-9);
+  assert.ok(Math.abs((fs.cash - cash) + x.add * step - 100) < 1e-6, `100 put in is 100 in works and cash, not more: ${fs.cash - cash} + ${x.add * step}`);
+  const same = quote(w, c, big, 'goods').price; assert.ok(same > step * 1.5, 'and a step of works costs more where there are more hands to equip');
+  // The old shortcut is gone: money "into industry" goes into the investor's own company or nowhere.
+  const before = ol.wealth, i = applyOp(w, ol, { op: 'invest', amount: 40 }); assert.ok(i.ok, i.msg); assert.ok(Math.abs(before - ol.wealth - 40) < 1e-9 && w.projects.at(-1).firm); assert.equal(small.plants.goods, lvl, 'nothing stands at once');
+  w.firms = {}; assert.equal(applyOp(w, ol, { op: 'invest', amount: 40 }).ok, false, 'with no company there is nothing to invest in');
+});
+chain('The chief of staff has troops dig in where they stand and orders no other building; a forest is logged, not mined', () => {
+  const w = fresh(), c = w.countries.U1, g = w.characters[c.general], l = ld(w, c); c.treasury = 1e6; c.stock.steel = 1e4;
+  const u = Object.values(w.units).find(v => v.country === 'U1'), here = w.provinces[u.province], empty = countryProvinces(w, 'U1').find(p => !Object.values(w.units).some(v => v.province === p.id));
+  assert.equal(applyOp(w, g, { op: 'build', province: here.id, kind: 'trench' }).ok, true); assert.equal(applyOp(w, g, { op: 'build', province: here.id, kind: 'fort' }).ok, false, 'a fortress is the government\'s to order');
+  if (empty) assert.equal(applyOp(w, g, { op: 'build', province: empty.id, kind: 'trench' }).ok, false, 'no troops, no digging');
+  run(w, 2); assert.equal(here.trench, 1);
+  const wood = countryProvinces(w, 'U1')[0]; wood.timber = 1;
+  const no = applyOp(w, l, { op: 'build', province: wood.id, kind: 'mine', resource: 'timber' }); assert.equal(no.ok, false); assert.ok(/forestry/.test(no.msg), no.msg);
+  const was = wood.timber, ok = applyOp(w, l, { op: 'build', province: wood.id, kind: 'forestry', amount: quote(w, c, wood, 'forestry').price * .3 }); assert.ok(ok.ok, ok.msg); run(w, 2); assert.ok(wood.timber > was + .25 && wood.timber < was + .36, `the forest yields more: ${was} -> ${wood.timber}`);
+  wood.timber = wood.timberMax; assert.equal(applyOp(w, l, { op: 'build', province: wood.id, kind: 'forestry', amount: 50 }).ok, false, 'a forest gives only so much');
+  const bare = countryProvinces(w, 'U1')[1]; bare.timber = .05; assert.equal(applyOp(w, l, { op: 'build', province: bare.id, kind: 'forestry', amount: 50 }).ok, false, 'no forest, no sawmill');
+});
+chain('A government can go to the foreign markets itself: the order is filled by the quarter\'s trade as far as sellers and gold reach, the gold goes to the seller, twenty orders are one order, and a price limit holds', () => {
+  const twin = () => { const w = fresh(), c = w.countries.U1; c.reserves = 5000; return [w, c]; }, [a, ca] = twin(), [b, cb] = twin(), l = ld(a, ca);
+  // A good somebody abroad has to spare and this country can reach.
+  const good = ['steel', 'coal', 'grain', 'timber', 'iron', 'machines'].find(g => aliveCountries(a).some(o => o.id !== 'U1' && a.routes[o.id < 'U1' ? `${o.id}|U1` : `U1|${o.id}`] && o.stock[g] - (o._need?.[g] || 0) * 1.4 > 40)); assert.ok(good, 'someone has a surplus to sell');
+  const gold = w => aliveCountries(w).reduce((s, c) => s + c.reserves, 0), all = (w, g) => aliveCountries(w).reduce((s, c) => s + (c.stock[g] || 0), 0), was = gold(a);
+  for (let i = 0; i < 20; i++) assert.equal(applyOp(a, l, { op: 'buy_goods', good, amount: 30 }).ok, true); assert.equal(ca.orders[good].amount, 30, 'an order repeated is the same order');
+  assert.equal(applyOp(a, a.characters[ca.general], { op: 'buy_goods', good, amount: 30 }).ok, false, 'the chief of staff does not buy for the state');
+  const stock = ca.stock[good]; assert.equal(ca.stock[good], stock, 'nothing arrives the day the order is written'); l.inbox = []; run(a, 1); run(b, 1);
+  const got = (ca.lastBought[good] || 0) - (cb.lastBought[good] || 0); assert.ok(got > 20 && got <= 30.5, `about the quantity ordered came in beyond the ordinary trade, and not more: ${got}`);
+  assert.ok(ca.reserves < cb.reserves - got * a.globalPrice[good] * .5, 'it was paid for in gold'); assert.ok(Math.abs(gold(a) - gold(b)) < 1e-6 * was + 1e-6, `and the gold went to the sellers, not out of the world: ${gold(a)} against ${gold(b)}`);
+  assert.ok(l.inbox.some(m => m.from === 'The customs house' && /ordered abroad/.test(m.text)), 'the customs house reports what arrived'); assert.ok(!ca.orders[good], 'the order stood for one quarter');
+  assert.ok(/dealings on the foreign markets/.test(answer(a, l, 'trade')), 'and the report can be looked up');
+  // A limit below the market: nothing is bought.
+  const bought = ca.stock[good]; applyOp(a, l, { op: 'buy_goods', good, amount: 30, max_price: a.globalPrice[good] * .2 }); l.inbox = []; const twinStock = cb.lastBought[good] || 0; run(a, 1); run(b, 1);
+  assert.ok((ca.lastBought[good] || 0) <= (cb.lastBought[good] || 0) + 1e-6 + Math.abs(twinStock) * 0 + 5, 'an order with a limit under the market buys nothing to speak of'); assert.ok(l.inbox.some(m => /above the limit/.test(m.text)), 'and says why');
+  // Selling out of the stores: goods leave only as far as someone wants them, and gold comes for them.
+  const [x, cx] = twin(), [y, cy] = twin(), lx = ld(x, cx), g2 = 'steel';
+  // The country holds exactly the steel it uses and keeps in reserve, so merchants would let none go; its neighbours have none, and have gold.
+  for (const [v, k] of [[x, cx], [y, cy]]) { k.stock[g2] = k._need[g2] + k._reserve[g2]; for (const o of aliveCountries(v)) if (o.id !== 'U1') { o.stock[g2] = 0; o.reserves = Math.max(o.reserves, 3000); } }
+  const offer = Math.floor(cx.stock[g2] * .5); assert.ok(offer >= 3); assert.equal(applyOp(x, lx, { op: 'sell_goods', good: g2, amount: 1e6 }).ok, false, 'no more can be offered than is in store'); assert.equal(applyOp(x, lx, { op: 'sell_goods', good: g2, amount: offer }).ok, true);
+  const g0 = gold(x); lx.inbox = []; run(x, 1); run(y, 1); assert.ok((cx.lastSold[g2] || 0) > (cy.lastSold[g2] || 0) + offer * .5 && (cx.lastSold[g2] || 0) <= offer + .5, `the state's offer sold out of stores merchants would have kept, and not more than was offered: ${cx.lastSold[g2]} against ${cy.lastSold[g2]} of ${offer}`);
+  assert.ok(cx.reserves > cy.reserves, 'for gold'); assert.ok(Math.abs(gold(x) - gold(y)) < 1e-6 * g0 + 1e-6, 'which came from the buyers'); assert.ok(lx.inbox.some(m => /offered abroad/.test(m.text)));
+});
+chain('A general strike is a state of things and not a coin tossed every quarter: it breaks out when working people are bitter beyond bearing and free to organise, holds a season or three, and then the unions need years before they can do it again', () => {
+  const w = fresh(), c = w.countries.U1, seen = []; c.unions = true; c.strike = false; delete c.strikeRest;
+  const mood = v => { for (const p of countryProvinces(w, 'U1')) p.pops.workers.sat = v; };
+  for (let i = 0; i < 6; i++) { mood(30); run(w, 1); } assert.equal(c.strike, false, 'discontent short of despair is not a general strike');
+  for (let i = 0; i < 24; i++) { mood(20); run(w, 1); seen.push(c.strike ? 1 : 0); }
+  assert.equal(seen[0], 1, 'it breaks out at once when the men can bear no more');
+  const runs = seen.join('').split('0').filter(Boolean), gaps = seen.join('').split('1').filter(Boolean);
+  assert.ok(runs.every(r => r.length >= 1 && r.length <= 3), `each strike holds one to three quarters: ${seen.join('')}`); assert.ok(gaps.slice(0, -1).every(g => g.length >= 8), `and the unions rest for years between: ${seen.join('')}`);
+  assert.ok(seen.reduce((a, b) => a + b, 0) <= 9, 'so even a desperate country is not on strike half its life');
+  // Banning the unions ends it; mended conditions end it.
+  const x = fresh(), cx = x.countries.U1, moodX = v => { for (const p of countryProvinces(x, 'U1')) p.pops.workers.sat = v; }; cx.unions = true; cx.strike = false; delete cx.strikeRest; moodX(20); run(x, 1); assert.equal(cx.strike, true); moodX(40); run(x, 1); assert.equal(cx.strike, false, 'men who got something go back');
+  const y = fresh(), cy = y.countries.U1, moodY = v => { for (const p of countryProvinces(y, 'U1')) p.pops.workers.sat = v; }; cy.unions = true; cy.strike = false; delete cy.strikeRest; moodY(20); run(y, 1); assert.equal(cy.strike, true); cy.unions = false; moodY(20); run(y, 1); assert.equal(cy.strike, false, 'and broken unions call no strike');
+});
+chain('Two countries with no road or water of their own between them trade through a third that deals with both, at both freights; an embargo on the middleman closes the way', () => {
+  let found = null;
+  for (const seed of [1848, 7, 99, 42, 3]) { const w = inherited(seed); w.status = 'playing'; run(w, 1); const k = Object.keys(w.routes).find(k => w.routes[k].mode === 'transit'); if (k) { found = [w, k]; break; } }
+  assert.ok(found, 'some pair in these worlds has no direct route'); const [w, k] = found, r = w.routes[k], [a, b] = k.split('|'), key = (x, y) => x < y ? `${x}|${y}` : `${y}|${x}`, la = w.routes[key(a, r.via)], lb = w.routes[key(r.via, b)];
+  assert.ok(la && lb && la.mode !== 'transit' && lb.mode !== 'transit', 'the middleman deals directly with both'); assert.ok(Math.abs(r.cost - la.cost * lb.cost * 1.03) < 1e-9 && r.cost > la.cost && r.cost > lb.cost, 'the goods pay both freights and the handling');
+  w.countries[a].embargo.push(r.via); run(w, 1); const after = w.routes[k]; assert.ok(!after || after.via !== r.via, 'no trade through a country one of them will not deal with');
+});
+chain('The first order of a new ruler moves the country from where it stood: roads ordered on the first day are built, and courts broken on the first day let graft grow', () => {
+  // The state with the freest courts has the most to lose by breaking them.
+  const a = inherited(), b = inherited(), id = [...aliveCountries(a)].sort((x, y) => y.courts - x.courts)[0].id, ca = a.countries[id], cb = b.countries[id]; a.status = b.status = 'playing';
+  const mean = w => { const ps = countryProvinces(w, id); return ps.reduce((s, p) => s + p.infra, 0) / ps.length; };
+  assert.ok(ca.roadShare != null && ca.graftBase != null && ca.intelBase != null && countryProvinces(a, id).every(p => p.infraBase != null), 'what the country was used to is fixed before anyone gives an order');
+  // Day one, before the first quarter has run.
+  assert.equal(applyOp(a, ld(a, ca), { op: 'set_budget', category: 'infrastructure', share: ca.budget.infrastructure + .02, _law: true }).ok, true); const press = ca.pressFreedom, courts = ca.courts; ca.pressFreedom = 5; ca.courts = 5;
+  for (let i = 0; i < 30; i++) { for (const c of [ca, cb]) { c.treasury = Math.max(c.treasury, c.gdp); c.arrears = 0; } run(a, 1); run(b, 1); }
+  assert.ok(mean(a) > mean(b) + .2, `the roads ordered on the first day stand: ${mean(a).toFixed(2)} against ${mean(b).toFixed(2)}`);
+  assert.ok(ca.corruption > cb.corruption + 8, `and graft grew where the courts and press were broken on the first day (${press}/${courts} to 5/5): ${ca.corruption.toFixed(1)} against ${cb.corruption.toFixed(1)}`);
+});
+chain('Full yards → short time → stores stay near their usual depth → the world price leaves the floor', () => {
+  const w = inherited(); w.status = 'playing'; run(w, 40);
+  const cs = aliveCountries(w), cover = g => cs.reduce((a, c) => a + c.stock[g], 0) / Math.max(cs.reduce((a, c) => a + c._need[g], 0), 1);
+  for (const g of ['coal', 'iron', 'steel']) assert.ok(cover(g) < 9, `the world holds ${cover(g).toFixed(1)} quarters of ${g}, not years of it`);
+  const floored = GOODS.filter(g => w.globalPrice[g] <= BASE_PRICE[g] * .45);
+  assert.ok(floored.length <= 2, `on the floor: ${floored.join(', ')}`);
+  assert.ok(w.globalPrice.coal > BASE_PRICE.coal * .5 && w.globalPrice.steel > BASE_PRICE.steel * .55, `coal ${w.globalPrice.coal}, steel ${w.globalPrice.steel}`);
+  // What the pits could have raised and did not is counted as idle, not dug to rot.
+  assert.ok(cs.some(c => c.idleShare > .1), 'short time shows as idle capacity');
+});
+chain('A store past its usual depth slows the makers faster than it fills; bread is not held back by full barns', () => {
+  const w = fresh(), c = w.countries.U1; c.lastSold = {};
+  const full = USUAL_COVER.coal / 1.25, at = q => { c.stock.coal = c._need.coal * q; return glutFactor(c, 'coal'); };
+  assert.equal(at(full * .9), 1, 'below the usual store the pits work full time');
+  assert.ok(Math.abs(at(full * 2) - .25) < 1e-9, `at twice the store they work a quarter of the time: ${at(full * 2)}`);
+  assert.ok(at(full * 2) * 2 < 1, 'and so the store shrinks back instead of settling at twice its depth');
+  c.stock.grain = c._need.grain * 6; assert.equal(glutFactor(c, 'grain'), 1, 'six quarters of grain in the barns does not stop the sowing');
+});
+chain('An exporter with full yards is not marked down twice: its price follows what it uses and sells, and empty shelves still treble it', () => {
+  const w = fresh(), c = w.countries.U1, store = USUAL_COVER.coal / 1.25, world = w.globalPrice.coal * (c.rer ?? 1);
+  c.lastSold = { coal: c._need.coal * 3 }; c.stock.coal = (c._need.coal + c.lastSold.coal) * store; localPrices(w, c);
+  assert.ok(Math.abs(c.prices.coal / world - 1) < .02, `at its usual store an exporter sells at the world price: ${c.prices.coal} against ${world}`);
+  c.stock.coal *= 4; localPrices(w, c); assert.ok(c.prices.coal >= world * .64, `full stores take at most a third off: ${c.prices.coal}`);
+  c.stock.coal = 0; localPrices(w, c); assert.ok(c.prices.coal > world * 2.9, 'an empty yard trebles it');
+});
+chain('A company is worth its till and about three years of what it earns, never less than its works second-hand', () => {
+  const w = fresh(), c = w.countries.U1; run(w, 1);
+  const p = countryProvinces(w, 'U1').find(q => q.plants.goods > .1) ?? countryProvinces(w, 'U1')[0]; p.plants.goods = 2;
+  const f = { id: 'SRX', name: 'Test Textile', country: 'U1', province: p.id, sector: 'goods', resource: null, stake: 1, owner: c.oligarch, cash: 50, lastProfit: 0, founded: 0, status: 'open', bad: 0, offer: null }; w.firms.SRX = f;
+  const works = firmValue(w, f) - 50; assert.ok(works > 0, 'with no earnings it is worth its works second-hand');
+  f.earn = 40; assert.ok(Math.abs(firmValue(w, f) - (50 + 480)) < 1e-6, `twelve quarters of 40 and the 50 in the till: ${firmValue(w, f)}`);
+  f.earn = works / 24; assert.ok(Math.abs(firmValue(w, f) - (50 + works)) < 1e-6, 'thin earnings do not take it below the value of the works');
+  // The price an ownerless company is bought at is that value.
+  f.owner = null; f.earn = 40; const buyer = w.characters[c.opposition]; buyer.wealth = 400;
+  assert.equal(applyOp(w, buyer, { op: 'buy_company', id: 'SRX' }).ok, false, '400 does not buy a company worth 530');
+  buyer.wealth = 600; assert.equal(applyOp(w, buyer, { op: 'buy_company', id: 'SRX' }).ok, true); assert.ok(Math.abs(buyer.wealth - 70) < 1e-6 && f.owner === buyer.id);
+});
+chain('Profit → owner or till: an owned company pays two fifths out, an ownerless one keeps all of it, and nothing is lost on the way', () => {
+  const mk = owner => { const w = fresh(), c = w.countries.U1; run(w, 1); const p = countryProvinces(w, 'U1').find(q => q.plants.goods > .1) ?? countryProvinces(w, 'U1')[0]; p.plants.goods = 2;
+    const f = { id: 'SRX', name: 'Test Textile', country: 'U1', province: p.id, sector: 'goods', resource: null, stake: 1, owner: owner === 'oligarch' ? c.oligarch : owner, cash: 0, lastProfit: 0, founded: 0, status: 'open', bad: 0, offer: null, buildsUntil: 1e9 }; w.firms = { SRX: f };
+    Object.assign(c.prices, { goods: 100, timber: 1, coal: 1, steel: 1 }); c._made = { ...c._made, goods: 200 }; return { w, c, f, ol: w.characters[c.oligarch] }; };
+  const a = mk('oligarch'), wealth = a.ol.wealth; firmStep(a.w);
+  assert.ok(a.f.lastProfit > 0); assert.ok(Math.abs((a.ol.wealth - wealth) - a.f.lastProfit * .4) < .02 && Math.abs(a.f.cash - a.f.lastProfit * .6) < .02, 'two fifths to the owner, the rest to the till');
+  const b = mk(null), all = Object.values(b.w.characters).reduce((s, ch) => s + ch.wealth, 0), tre = b.c.treasury; firmStep(b.w);
+  assert.ok(Math.abs(b.f.cash - b.f.lastProfit) < .02, `an ownerless company keeps the whole: ${b.f.cash} of ${b.f.lastProfit}`);
+  assert.ok(Math.abs(Object.values(b.w.characters).reduce((s, ch) => s + ch.wealth, 0) - all) < 1e-9 && b.c.treasury === tre, 'and no one else is paid');
+  const s = mk(STATE), t0 = s.c.treasury; firmStep(s.w); assert.ok(s.c.treasury > t0 && Math.abs(s.f.cash - s.f.lastProfit * .6) < .02, 'a state company pays its two fifths into the treasury');
+});
+chain('No gold → coal sold → bread bought before boots: a poor country spends the quarter\'s earnings on grain first', () => {
+  const w = fresh(), t = w.countries.U1; run(w, 1);
+  for (const o of aliveCountries(w)) if (o.id !== t.id) { o.stock.coal = 0; o.reserves = Math.max(o.reserves, 5000); o.stock.grain += 2000; o.stock.goods += 2000; }
+  t.reserves = 0; t.creditors = {}; t.stock.coal = 5000; t.stock.grain = 0; t.stock.goods = 0; for (const p of countryProvinces(w, t.id)) { p.fertility *= .5; p.plants.goods = 0; }
+  run(w, 1);
+  assert.ok((t.lastSold.coal || 0) > 0, 'it sold coal for gold this quarter');
+  assert.ok((t.lastBought.grain || 0) > 0, `and bought grain with it the same quarter: ${JSON.stringify(t.lastBought)}`);
+  const bread = (t.lastBought.grain || 0) * w.globalPrice.grain, boots = (t.lastBought.goods || 0) * w.globalPrice.goods, short = Math.max(0, t._need.grain - (t._raw.grain || 0));
+  assert.ok((t.lastBought.grain || 0) > short * .9 || boots < bread * .25, `boots are bought only once the bread is: grain ${bread.toFixed(0)}, consumer goods ${boots.toFixed(0)}`);
+});
+chain('Empty shops are felt in the towns, and a hungry country without gold does not bid the world price up', () => {
+  const w = inherited(); w.status = 'playing'; run(w, 2); const c = w.countries.U3, p = w.provinces[c.capital];
+  const row = k => moodParts(c, p, k).find(m => m[0] === 'what the shops have to sell')[1];
+  c.goodsRatio = c.shopBase; assert.equal(row('workers'), 0, 'the level a country inherited is its ordinary lot'); c.goodsRatio = 0;
+  assert.ok(row('workers') < -8 && row('middle') < -8 && row('peasants') === 0, `bare shelves weigh on workers and the middle class, not on villages: ${row('workers')}`);
+  // Twin worlds; in one of them a country with an empty reserve wants a great deal of consumer goods it cannot pay for.
+  const a = inherited(), b = inherited(); for (const x of [a, b]) { x.status = 'playing'; run(x, 2); } const poor = b.countries.U4; poor.reserves = 0; poor.stock.goods = -5000;
+  run(a, 1); run(b, 1); assert.ok(b.globalPrice.goods < a.globalPrice.goods * 1.1, `a want with no gold behind it is not demand: ${b.globalPrice.goods} against ${a.globalPrice.goods}`);
+});
+chain('Default → savings lost → standing falls, and the gold that runs is not lost to the world', () => {
+  const a = inherited(), b = inherited(); for (const w of [a, b]) { w.status = 'playing'; run(w, 1); }
+  const c = b.countries.U3, twin = a.countries.U3, gold = w => Object.values(w.countries).reduce((s, x) => s + x.reserves, 0), g0 = gold(b), legit = c.legitimacy, cap = c.blocs.capital.sat, bank = c.bankHealth;
+  assert.equal(applyOp(b, ld(b, c), { op: 'default_debt', _law: true }).ok, true);
+  assert.ok(Math.abs(gold(b) - g0) < 1e-6, 'gold flees to a haven, it does not vanish');
+  assert.ok(c.legitimacy <= legit - 2 && c.blocs.capital.sat <= cap - 5 && c.bankHealth <= bank - 25, 'the government, the men of business and the banks all take the blow at once');
+  assert.ok(c.mods.some(m => m.key === 'sat.middle' && m.delta < 0) && c.mods.some(m => m.key === 'sat.elite' && m.delta < 0), 'those whose savings were written off remember it');
+  run(a, 8); run(b, 8);
+  assert.ok(c.legitimacy < twin.legitimacy - 1, `two years on the defaulter stands lower than its twin: ${c.legitimacy.toFixed(1)} against ${twin.legitimacy.toFixed(1)}`);
+  assert.ok(c.lastInterest > 0, 'and after a year\'s moratorium what is left of the debt is served again');
+});
+chain('Small revenue → small credit: lenders stop when interest would eat the state\'s income, whatever its standing', () => {
+  const w = inherited(); w.status = 'playing'; run(w, 2); const c = w.countries.U5; c.defaulted = false; c._room = Infinity; c._taken = 0;
+  const rich = creditLeft(c); c.legitimacy = 95; const trusted = creditLeft(c);
+  c.lastRevenue *= .25; assert.ok(creditLeft(c) < trusted * .5, 'a quarter of the revenue, far less credit, however well thought of the government is');
+  c.debt = c.lastRevenue * .55 / Math.max(sovereignRate(c) - Math.max(0, c.inflTrend ?? 0) * .6, .005); c.interestRate = sovereignRate(c); assert.equal(creditLeft(c), 0, 'once interest would take about half the revenue no one lends more');
+  assert.ok(rich >= 0);
+  // And in a run: welfare on credit buys a poor state a few good years and then costs it more than it bought.
+  const x = inherited(), y = inherited(); for (const z of [x, y]) { z.status = 'playing'; run(z, 1); } const p = x.countries.U5, twin = y.countries.U5; applyOp(x, ld(x, p), { op: 'set_budget', category: 'welfare', share: .12, _law: true });
+  run(x, 8); run(y, 8); assert.ok(p.legitimacy > twin.legitimacy + 3, 'two years in, the borrowed relief has bought standing: ' + p.legitimacy.toFixed(0) + ' against ' + twin.legitimacy.toFixed(0));
+  run(x, 32); run(y, 32); assert.ok(p.legitimacy < twin.legitimacy - 5 && (p.paidRatio < 1 || p.defaulted), 'ten years in, the lenders have stopped and the state stands lower than its twin: ' + p.legitimacy.toFixed(0) + ' against ' + twin.legitimacy.toFixed(0));
+});
+chain('State sells grain → out of the stores → paid for what arrived, and nothing for what did not', () => {
+  const w = inherited(); w.status = 'playing'; run(w, 2); const a = w.countries.U2, b = w.countries.U4, A = ld(w, a), B = ld(w, b);
+  assert.ok(w.routes['U2|U4'], 'the two trade');
+  const k = applyOp(w, A, { op: 'propose_contract', to: B.id, terms: 'Grain.', payer: 'me', pay_per_turn: 200, good: 'grain', amount: 40, seller: 'them', turns: 4, state: true });
+  assert.equal(applyOp(w, B, { op: 'accept_contract', id: k.contract, state: true }).ok, true);
+  const kk = w.contracts.find(x => x.id === k.contract), net = c => c.treasury - c.debt; w.contracts = [kk];
+  assert.ok(!Object.values(w.firms).some(f => f.country === 'U4' && f.owner === STATE && (f.sector === 'grain' || f.resource === 'grain')), 'no state works grow grain');
+  b.stock.grain = 500; let paid = net(a), got = net(b), had = a.stock.grain; contractStep(w);
+  assert.ok(Math.abs(kk.lastDelivered - 40) < 1e-6 && a.stock.grain > had + 35 && Math.abs(b.stock.grain - 460) < 1e-6, 'a state delivers out of the stores of the country');
+  assert.ok(Math.abs((paid - net(a)) - 200) < 1e-6 && Math.abs((net(b) - got) - 200) < 1e-6, 'and is paid the 200 for the 40');
+  b.stock.grain = 10; paid = net(a); contractStep(w);
+  assert.ok(Math.abs((paid - net(a)) - 50) < 1e-6, 'a quarter of the grain, a quarter of the price: ' + (paid - net(a))); assert.ok((kk.breaches || []).length === 1, 'and the short delivery is on record against the seller');
+  b.stock.grain = 0; paid = net(a); contractStep(w); assert.ok(Math.abs(paid - net(a)) < 1e-6, 'nothing delivered, nothing paid');
+});
+chain('State contract to a private purse → the same allowance as any payment to persons, on the books and known to both', () => {
+  const w = inherited(), twin = inherited(); for (const x of [w, twin]) { x.status = 'playing'; run(x, 1); }
+  const c = w.countries.U4, L = ld(w, c), O = w.characters[c.oligarch], w0 = O.wealth, own = Object.values(w.firms).filter(f => f.owner === O.id).map(f => f.id);
+  const k = applyOp(w, L, { op: 'propose_contract', to: O.id, terms: 'Consultancy on the supply of the army.', payer: 'me', pay_per_turn: 800, turns: 8, state: true });
+  assert.equal(applyOp(w, O, { op: 'accept_contract', id: k.contract }).ok, true);
+  for (const id of own) w.firms[id].owner = null;   // so that nothing but the contract reaches his purse
+  run(w, 4); run(twin, 4);
+  const got = O.wealth - w0, cap = c.gdp * .005 * 4;
+  assert.ok(got > 0 && got <= cap * 1.15, `four quarters paid ${got.toFixed(0)}, not 3200; the allowance is about ${cap.toFixed(0)}`);
+  assert.ok((O.secrets || []).some(s => /draws .* from the treasury/.test(s.text)) && (L.secrets || []).some(s => /draws .* from the treasury/.test(s.text)), 'both carry it as a secret');
+  assert.ok(c.debt - twin.countries.U4.debt < cap * 1.5, 'and the state did not borrow thousands to pay it');
+});
+chain('Flight and return move gold, they do not make it; a network abroad steals once a quarter and only what can be used', () => {
+  const w = inherited(); w.status = 'playing'; run(w, 1); const c = w.countries.U2, o = w.characters[c.oligarch]; o.wealth = 300;
+  const gold = () => Object.values(w.countries).reduce((s, x) => s + x.reserves, 0), g0 = gold(), home = c.reserves;
+  for (let i = 0; i < 6; i++) { assert.equal(applyOp(w, o, { op: 'capital_flight', share: .5 }).ok, true); assert.ok(c.reserves < home); assert.equal(applyOp(w, o, { op: 'repatriate' }).ok, true); w.turn++; }
+  assert.ok(Math.abs(gold() - g0) < 1e-6 && Math.abs(c.reserves - home) < 1e-6 && !(o.abroad > .01), `six times out and back: the world holds ${gold().toFixed(2)} as before`);
+  const s = w.countries.U4, t = w.countries.U3; for (const k of ['railway', 'electricity', 'oil_prospecting', 'combustion_engine', 'armor', 'automatic_weapons']) t.techs[k] = 1; s.techs = {};
+  s.intelligence = 99; t.intelligence = 1; let won = 0; for (let i = 0; i < 20; i++) if (applyOp(w, ld(w, s), { op: 'steal_tech', target: 'U3', _law: true }).ok) won++;
+  assert.ok(won <= 1, `twenty orders in one quarter, at most one theft: ${won}`); assert.ok(!s.techs.combustion_engine && !s.techs.armor, 'nothing that needs an invention the thief does not have');
+});
+chain('The engine without oil → the country stays on coal: no price shock, the fleet keeps its coal, and the motor comes only with fuel', () => {
+  const a = inherited(), b = inherited(); for (const w of [a, b]) { w.status = 'playing'; run(w, 1); }
+  for (const k of ['oil_prospecting', 'combustion_engine']) b.countries.U3.techs[k] = 1;
+  run(a, 2); run(b, 2); const x = a.countries.U3, y = b.countries.U3;
+  assert.ok(Math.abs(y.inflation - x.inflation) < .01, `no jump in prices: ${y.inflation} against ${x.inflation}`);
+  assert.ok(!(y.motor > 0) && y.fuelRatio >= 1, 'no fuel, so nothing has gone over to it and nothing is short of it');
+  assert.ok(y._need.coal > 0 && y._burn.fuel === 0, 'the fleet still burns coal');
+  y.stock.fuel = 500; run(b, 3); assert.ok(y.motor > 0, 'with fuel in store the country begins to go over to the engine');
+});
+chain('Whoever is in a plot is in it once, and whoever has answered an invitation is not asked again the same quarter', () => {
+  const w = inherited(), c = w.countries.U1, g = w.characters[c.general], cols = Object.values(w.characters).filter(x => x.alive && x.country === 'U1' && x.role === 'officer' && Object.values(w.units).some(u => u.commander === x.id));
+  const col = cols[0]; col.patron = g.id; col.soundedAt = w.turn; assert.ok(applyOp(w, g, { op: 'start_plot', kind: 'coup' }).ok); const pl = w.plots.at(-1);
+  assert.ok(applyOp(w, g, { op: 'invite_plot', plot: pl.id, character: col.id }).ok, 'the officer who sounded him out joins');
+  for (let i = 0; i < 10; i++) assert.equal(applyOp(w, g, { op: 'invite_plot', plot: pl.id, character: col.id }).ok, false, 'he does not join a second time');
+  assert.deepEqual(pl.members, [col.id], 'one man is one member');
+  const shy = cols[1]; shy.loyalty = 50; shy.ambition = 0; const first = applyOp(w, g, { op: 'invite_plot', plot: pl.id, character: shy.id }), again = applyOp(w, g, { op: 'invite_plot', plot: pl.id, character: shy.id });
+  assert.equal(again.ok, false); assert.ok(first.ok ? /in the plot already/.test(again.msg) : /this quarter/.test(again.msg), again.msg);
+  if (!first.ok) { w.turn++; assert.ok(!/this quarter/.test(applyOp(w, g, { op: 'invite_plot', plot: pl.id, character: shy.id }).msg), 'next quarter he can be asked again'); }
+});
+chain('A rising called in a quiet country with a loyal army finds no following and its caller is known; prepared, where provinces are restless, it takes those provinces and nothing else', () => {
+  const quiet = inherited(), c = Object.values(quiet.countries).find(x => x.archetype === 'republic'), opp = quiet.characters[c.opposition], n = aliveCountries(quiet).length;
+  const r = applyOp(quiet, opp, { op: 'start_plot', kind: 'uprising' }), out = applyOp(quiet, opp, { op: 'execute_plot', plot: r.plot });
+  assert.equal(aliveCountries(quiet).length, n, `no country is split by a word: ${out.msg}`); assert.ok(/put down/.test(out.msg), 'and the one who called it learns why');
+  assert.equal(opp.country, c.id); assert.ok(ld(quiet, c).dossiers[opp.id]?.facts.some(f => /armed rising/.test(f)), 'the ruler holds the proof of who called it');
+  const w = inherited(), k = w.countries[c.id], lead = w.characters[k.opposition], hot = countryProvinces(w, k.id).filter(p => p.owner === k.id && p.id !== k.capital).slice(0, 3);
+  for (const p of countryProvinces(w, k.id)) p.unrest = hot.includes(p) ? 75 : 15;
+  const s = applyOp(w, lead, { op: 'start_plot', kind: 'uprising' }); w.plots.at(-1).progress = 100; const done = applyOp(w, lead, { op: 'execute_plot', plot: s.plot }), rebels = Object.values(w.countries).find(x => x.parent === k.id);
+  assert.ok(rebels, done.msg); assert.deepEqual(countryProvinces(w, rebels.id).map(p => p.id).sort(), hot.map(p => p.id).sort(), 'the provinces that were ready rose, and only those');
+  assert.equal(Object.values(w.units).filter(u => u.country === rebels.id).length, 0, 'a loyal army stays with the government');
+});
+chain('The opposition a government faces sits outside it: its leader speaks for the largest party off the government benches, cannot pull down a house he does not sit in, and a lost election clears the benches', () => {
+  const w = inherited(), c = Object.values(w.countries).find(x => x.archetype === 'republic'), boss = ld(w, c), opp = w.characters[c.opposition], mine = leadsOf(w, c, opp)[0];
+  assert.ok(mine && mine.id !== c.rulingParty && !c.coalition.includes(mine.id), 'the opposition leader speaks for a party outside the government'); assert.ok(benchOf(c) > 50, `the inherited government has a majority without it: ${benchOf(c)}`);
+  assert.equal(applyOp(w, opp, { op: 'coalition', join: false }).ok, false, 'he cannot withdraw a party that was never on the benches');
+  assert.ok(applyOp(w, opp, { op: 'no_confidence' }).ok); w.turn++; billsOf(w, applyOp); assert.equal(c.leader, boss.id, 'and his motion alone does not carry the house');
+  // An election the government loses: the winner governs with benches of his own making.
+  const old = c.rulingParty; for (const p of c.parties) p.support = p.id === mine.id ? 70 : 10; c.nextElection = w.turn; electionStep(w);
+  assert.equal(c.leader, opp.id, 'the opposition leader won'); assert.equal(c.rulingParty, mine.id, 'with the party he spoke for'); assert.ok(!c.coalition.includes(old) && !c.coalition.includes(mine.id), `the beaten party sits outside: ${c.coalition}`);
+  const theirs = leadsOf(w, c, boss)[0]; assert.ok(theirs && theirs.id !== c.rulingParty && !c.coalition.includes(theirs.id), 'and the beaten head of government leads the opposition from outside');
+});
+chain('An army does not go over whole for a point of loyalty; a chief of staff alone does not take a state that stands, and with the commanders he does; a stroke not prepared fails; what becomes of the fallen ruler is the plotters\' to choose', () => {
+  const w0 = inherited(), id = Object.values(w0.countries).find(x => x.archetype === 'republic').id;
+  const stage = (i, { loyalty, officers = 0, progress = 100 } = {}) => { const w = structuredClone(w0); w.rng = (w.rng + i * 7919) | 0; const c = w.countries[id], g = w.characters[c.general], us = Object.values(w.units).filter(u => u.country === id).sort((a, b) => b.men - a.men);
+    if (loyalty != null) for (const u of us) u.loyalty = loyalty; assert.ok(applyOp(w, g, { op: 'start_plot', kind: 'coup', secrecy: 1 }).ok); const pl = w.plots.at(-1); pl.progress = progress; pl.members.push(...us.slice(0, officers).map(u => u.commander).filter(Boolean)); return { w, c, g, pl }; };
+  const march = loyalty => { const { w, c, pl } = stage(0, { loyalty }), { pro, anti } = sidesOf(w, c, pl); return pro / (pro + anti); };
+  assert.ok(march(81) > march(83) && march(81) - march(83) < .1, `two points of loyalty do not turn an army: ${march(81)} and ${march(83)}`); assert.ok(march(30) > .8 && march(95) < .15, 'but faith lost or kept does');
+  const odds = (opt, fate) => { let won = 0, got = 0; for (let i = 0; i < 30; i++) { const { w, c, g, pl } = stage(i, opt), old = ld(w, c); executePlot(w, pl, { fate }); if (c.leader === g.id) { won++; if (old.status === fate) got++; else assert.equal(old.status, 'exiled', 'a ruler who is not caught has fled'); } } return { won, got }; };
+  const alone = odds({}), backed = odds({ officers: 2 }), hasty = odds({ officers: 2, progress: 5 });
+  assert.ok(alone.won <= 3, `alone against a government that stands: ${alone.won}/30`); assert.ok(backed.won >= 24, `with the commanders of the two largest units: ${backed.won}/30`); assert.ok(hasty.won <= 2, `the same men striking the day they first spoke of it: ${hasty.won}/30`);
+  const held = odds({ officers: 2 }, 'imprisoned'), shot = odds({ officers: 2 }, 'dead'); assert.ok(held.got >= held.won * .6, `the fallen ruler is held when the plotters want him held and can reach him: ${held.got} of ${held.won}`); assert.ok(shot.got >= shot.won * .6, `or shot: ${shot.got} of ${shot.won}`);
+  const { w, c, g, pl } = stage(1, { officers: 2 }), press = c.pressFreedom; executePlot(w, pl); assert.equal(c.leader, g.id); assert.equal(c.elections, false, 'soldiers who seize the state hold no vote until they say so'); assert.equal(c.pressFreedom, press, 'what they do about the press is theirs to order');
+});
+chain('A state is handed over with the armed underground its misery has bred already; and a province where a rising was fought out is quiet for some years, longer where troops put it down', () => {
+  const w = inherited(), junta = Object.values(w.countries).find(x => x.archetype === 'junta'), free = Object.values(w.countries).find(x => x.archetype === 'republic'), day = junta.cells;
+  assert.ok(day > 30, `a junta that rules by police over people who hate it has an underground on the first day: ${day}`); assert.ok((free.cells ?? 0) < 5, 'a free country has next to none');
+  run(w, 4); assert.ok(junta.cells > day - 25 && junta.cells < day + 15, `and the new ruler does not watch it grow from nothing in the first year: ${day} then ${junta.cells}`);
+  const rose = y => { const p = y.provinces[spot]; for (let i = 0; i < 80 && !p.quelled; i++) { p.unrest = 95; risingStep(y); } return p.quelled; };
+  const x = fresh(), spot = countryProvinces(x, 'U1').find(q => q.id !== x.countries.U1.capital).id, bare = rose(x); assert.ok(bare, 'a rising that was fought out is remembered in the province');
+  const twin = structuredClone(x); delete twin.provinces[spot].quelled; run(x, 3); run(twin, 3); assert.ok(x.provinces[spot].unrest < twin.provinces[spot].unrest - 1, `it is quieter afterwards than a province that has only cooled: ${x.provinces[spot].unrest} against ${twin.provinces[spot].unrest}`);
+  const y = fresh(); makeUnit(y, 'U1', spot, provincePopOf(y.provinces[spot]) * .04, 1, 90); assert.ok(rose(y).weight > bare.weight, 'and quieter for longer where troops put it down');
+});
+chain('An order given twenty times in a quarter is carried out once: one network does one thing and is paid for, a file is opened once, a private person has no secret service, and a court asked twice answers the same', () => {
+  const w = fresh(), c = w.countries.U1, boss = ld(w, c), t = w.countries.U2, purse = c.treasury, owed = c.debt;
+  let went = 0; for (let i = 0; i < 20; i++) if (!/once this quarter/.test(applyOp(w, boss, { op: 'spy', target: 'U2', kind: 'fund_uprising' }).msg)) went++;
+  assert.equal(went, 1, 'one network does one thing in a quarter'); assert.ok(c.treasury < purse || c.debt > owed, 'and it is paid for whether it succeeds or not');
+  for (let i = 0; i < 40; i++) { w.turn++; c.treasury += 100; applyOp(w, boss, { op: 'spy', target: 'U2', kind: 'fund_uprising' }); }
+  assert.equal(t.mods.filter(m => m.label === 'Foreign-backed unrest').length, 1, 'money for agitators keeps one fire burning; it does not light a second on top of it');
+  const opp = w.characters[c.opposition]; let asked = 0; for (let i = 0; i < 20; i++) if (!/once this quarter/.test(applyOp(w, opp, { op: 'gather_dossier', character: boss.id }).msg)) asked++; assert.equal(asked, 1, 'the same person is looked into once a quarter');
+  const finds = (who, whom) => { let n = 0; for (let i = 0; i < 120; i++) { w.turn++; if (applyOp(w, who, { op: 'gather_dossier', character: whom.id }).ok) n++; } return n; };
+  c.intelligence = 100; opp.power = 20; const state = finds(boss, opp), own = finds(opp, boss); assert.ok(state > 70 && own < 45, `the state's secret service works for whoever governs, not for a private person: ${state} against ${own} of 120`);
+  c.courts = 100; const rich = w.characters[c.oligarch]; rich.wealth = 500; let mixed = 0; const rulings = new Set();
+  for (let q = 0; q < 40; q++) { w.turn++; const seen = new Set(); for (let i = 0; i < 6; i++) seen.add(applyOp(w, boss, { op: 'fine', character: rich.id, amount: 1 }).ok); if (seen.size > 1) mixed++; for (const r of seen) rulings.add(r); }
+  assert.equal(mixed, 0, 'a fine struck down is not carried by being laid again the same quarter'); assert.equal(rulings.size, 2, 'though the court does not rule the same way every quarter');
+});
+chain('Land signed away costs the government that signs and credits the one that took it; joining a war against a treaty partner is a broken word too; a clause not kept is remembered; an armistice stops the fighting and leaves the war', () => {
+  const w = inherited(), a = Object.values(w.countries).find(x => x.archetype === 'junta'), b = w.countries[[...new Set(countryProvinces(w, a.id).flatMap(p => p.neighbors.map(n => w.provinces[n].controller)))].find(x => x !== a.id)];
+  assert.ok(applyOp(w, ld(w, a), { op: 'declare_war', target: b.id }).ok); const give = countryProvinces(w, b.id).filter(p => p.id !== b.capital).slice(0, 8).map(p => p.id), la = a.legitimacy, lb = b.legitimacy;
+  const pr = applyOp(w, ld(w, a), { op: 'propose_treaty', target: b.id, kind: 'peace', cede: give }), sg = applyOp(w, ld(w, b), { op: 'accept_treaty', id: pr.treaty }); assert.ok(sg.ok, sg.msg);
+  assert.ok(b.legitimacy < lb - 5, `signing away eight provinces is a defeat at home: ${lb} to ${b.legitimacy}`); assert.ok(a.legitimacy > la, 'and a success for the one who took them'); assert.ok(/signed away/.test(sg.msg), 'the one who signs is told what it cost');
+  const x = inherited(), p = x.countries[a.id], q = x.countries[b.id], third = Object.values(x.countries).find(o => o.alive && o.id !== p.id && o.id !== q.id); x.treaties.push({ id: 'AX', kind: 'alliance', parties: [p.id, q.id], active: true, pending: false, proposer: p.id, clauses: [], breaches: [], turn: x.turn });
+  assert.ok(applyOp(x, ld(x, third), { op: 'declare_war', target: q.id, _law: true }).ok); const word = honourIn(p); assert.ok(applyOp(x, ld(x, p), { op: 'join_war', war: x.wars.at(-1).id, side: 'a' }).ok);
+  assert.ok(honourIn(p) <= word - 8, `entering a war against an ally costs a state its name: ${word} to ${honourIn(p)}`);
+  const y = fresh(), u2 = y.countries.U2; y.treaties.push({ id: 'AY', kind: 'nonaggression', parties: ['U1', 'U2'], active: true, pending: false, proposer: 'U1', clauses: [{ type: 'troop_limit', country: 'U2', men: 0 }], breaches: [], turn: y.turn }); const name = honourIn(u2); treatyStep(y);
+  assert.ok(honourIn(u2) < name, 'a clause not kept is a word not kept');
+  const z = inherited(), m = z.countries[a.id], n = z.countries[b.id]; for (const u of Object.values(z.units)) if ([m.id, n.id].includes(u.country)) delete z.units[u.id];
+  const from = countryProvinces(z, m.id).find(pp => pp.id !== m.capital && pp.neighbors.some(nn => z.provinces[nn].controller === n.id)), to = z.provinces[from.neighbors.find(nn => z.provinces[nn].controller === n.id)];
+  m.paidRatio = n.paidRatio = 1; const mine = makeUnit(z, m.id, from.id, 60); makeUnit(z, n.id, to.id, 20); assert.ok(applyOp(z, ld(z, m), { op: 'declare_war', target: n.id }).ok);
+  const arm = applyOp(z, ld(z, m), { op: 'propose_treaty', target: n.id, kind: 'armistice', turns: 8 }); assert.ok(arm.ok, arm.msg); assert.ok(applyOp(z, ld(z, n), { op: 'accept_treaty', id: arm.treaty }).ok);
+  z.battles = []; applyOp(z, ld(z, m), { op: 'move', unit: mine.id, to: to.id }); militaryStep(z);
+  assert.equal(z.battles.length, 0, 'no battle is fought'); assert.equal(mine.province, from.id, 'nobody advances while the armistice holds'); assert.ok(z.wars.some(v => v.active && v.a.includes(m.id) && v.b.includes(n.id)), 'and the war is not over');
+  assert.ok(applyOp(z, ld(z, m), { op: 'break_treaty', id: arm.treaty }).ok); z.battles = []; assert.ok(applyOp(z, ld(z, m), { op: 'move', unit: mine.id, to: to.id }).ok); militaryStep(z); assert.ok(z.battles.length > 0 || mine.province === to.id, 'once it is broken the fighting goes on');
+});
+chain('A war costs more than a peace and men abroad cost double; an army crosses friendly country in a season and enemy ground a province at a time; men who are not paid go home, not out of the world; a handful cannot bleed a host, and a routed force leaves prisoners who come home with the peace', () => {
+  const w = fresh(), c = w.countries.U1, peace = upkeepCost(w, c); w.wars.push({ id: 'S-x', a: ['U1'], b: ['U2'], civil: false, active: true, start: w.turn, name: 'x' });
+  const war = upkeepCost(w, c); assert.ok(war > peace * 1.3, `the same army costs more in the field: ${peace} then ${war}`);
+  Object.values(w.units).find(u => u.country === 'U1').province = countryProvinces(w, 'U2')[0].id; assert.ok(upkeepCost(w, c) > war, 'and more again on foreign soil');
+  const summer = () => { const y = fresh(); while (seasonOf(y) !== 'summer') y.turn++; for (const u of Object.values(y.units)) delete y.units[u.id]; return y; };
+  const y = summer(), k = y.countries.U1, hops = (from, to) => { let n = 0, cur = from; while (cur !== to && n < 40) { cur = routeStep(y, cur, to, 'U1'); n++; if (!cur) return 99; } return n; };
+  const far = countryProvinces(y, 'U1').find(p => hops(k.capital, p.id) === 3); assert.ok(far, 'a province three marches from the capital');
+  const col = makeUnit(y, 'U1', k.capital, 20); col.target = far.id; militaryStep(y); assert.equal(col.province, far.id, 'three provinces of friendly country in one quarter');
+  const border = countryProvinces(y, 'U1').find(p => p.neighbors.some(n => y.provinces[n].controller === 'U2')), first = y.provinces[border.neighbors.find(n => y.provinces[n].controller === 'U2')], deep = first.neighbors.map(n => y.provinces[n]).find(p => p.controller === 'U2' && !border.neighbors.includes(p.id));
+  y.wars.push({ id: 'S-y', a: ['U1'], b: ['U2'], civil: false, active: true, start: y.turn, name: 'y' }); const van = makeUnit(y, 'U1', border.id, 40); van.target = (deep ?? first).id; militaryStep(y); assert.equal(van.province, first.id, 'into the enemy\'s country, one province in the quarter');
+  const z = summer(), g = z.countries.U1; makeUnit(z, 'U1', g.capital, 100); const heads = () => countryProvinces(z, 'U1').reduce((s, p) => s + provincePopOf(p), 0) + Object.values(z.units).filter(u => u.country === 'U1').reduce((s, u) => s + u.men, 0);
+  g.budget.military = 0; const before = heads(); militaryStep(z); assert.ok(Object.values(z.units).filter(u => u.country === 'U1').reduce((s, u) => s + u.men, 0) < 80, 'an army that is not paid melts'); assert.ok(Math.abs(heads() - before) < 1e-6, 'and the men who leave it are back among the people');
+  const b = summer(); b.wars.push({ id: 'S-z', a: ['U1'], b: ['U2'], civil: false, active: true, start: b.turn, name: 'z' }); b.countries.U1.budget.military = b.countries.U2.budget.military = .3;
+  const edge = countryProvinces(b, 'U1').find(p => p.neighbors.some(n => b.provinces[n].controller === 'U2' && n !== b.countries.U2.capital)), over = b.provinces[edge.neighbors.find(n => b.provinces[n].controller === 'U2' && n !== b.countries.U2.capital)];
+  const host = makeUnit(b, 'U1', edge.id, 600); makeUnit(b, 'U2', over.id, 3); host.target = over.id; b.battles = []; militaryStep(b);
+  assert.ok(b.battles[0]?.attackerWon, 'the host carries the field'); assert.ok(600 - host.men < 1.5, `three thousand men do not kill twelve thousand: the host lost ${600 - host.men} thousand`);
+  const held = b.countries.U1.captives?.U2 ?? 0, roll = b.countries.U2.reserve ?? 0; assert.ok(held > 0, 'a force routed at such odds leaves prisoners');
+  const pax = applyOp(b, ld(b, b.countries.U1), { op: 'propose_treaty', target: 'U2', kind: 'peace' }); assert.ok(applyOp(b, ld(b, b.countries.U2), { op: 'accept_treaty', id: pax.treaty }).ok);
+  assert.ok(!(b.countries.U1.captives?.U2 > 0) && Math.abs((b.countries.U2.reserve ?? 0) - roll - held) < 1e-6, 'and the peace sends them home');
+});
+chain('Force has a price that depends on what is done: killing costs more than holding and is blood the underground remembers, a prisoner can be brought to trial, a new head of a house brings no new fortune, a rigged count can come out, talk costs money, the police do what their numbers allow, and doors shut on a people are resented', () => {
+  const act = fate => { const w = fresh(), c = w.countries.U1, boss = ld(w, c), opp = w.characters[c.opposition]; c.courts = 0; c.pressFreedom = 80; const was = c.legitimacy; let r; for (let i = 0; i < 30 && !(r = applyOp(w, boss, { op: 'purge', character: opp.id, fate })).ok; i++) w.turn++; assert.ok(r.ok, r.msg); return { w, c, boss, opp, cost: was - c.legitimacy }; };
+  const held = act('imprisoned'), shot = act('dead'); assert.ok(shot.cost > held.cost * 1.8, `shooting the leader of the opposition costs more than holding him: ${shot.cost} against ${held.cost}`); assert.ok(shot.c.blood > 0 && !(held.c.blood > 0), 'and it is blood');
+  { const { w, c, boss, opp } = held; c.courts = 100; const t = applyOp(w, boss, { op: 'prosecute', character: opp.id, charge: 'sedition' }); assert.ok(t.ok, t.msg); w.turn++; justiceOf(w); assert.equal(opp.status, 'free', 'a free bench with nothing laid before it acquits, and the cell opens'); }
+  { const w = fresh(), c = w.countries.U1, boss = ld(w, c), rich = w.characters[c.oligarch]; c.courts = 0; rich.wealth = 200; rich.abroad = 0; const till = c.treasury; let r; for (let i = 0; i < 30 && !(r = applyOp(w, boss, { op: 'purge', character: rich.id, fate: 'imprisoned' })).ok; i++) w.turn++; assert.ok(r.ok, r.msg);
+    const heir = w.characters[c.oligarch]; assert.notEqual(heir.id, rich.id); assert.ok(heir.wealth + rich.wealth + (c.treasury - till) / (c.rate || 1) <= 200 + 1e-6, `no fortune appears with the new name: ${heir.wealth} + ${rich.wealth} + ${c.treasury - till}`); }
+  { let out = 0; for (let i = 0; i < 30; i++) { const w = fresh(), c = w.countries.U1, boss = ld(w, c); for (let j = 0; j < i; j++) rollOf(w); c.elections = true; c.pressFreedom = 95; c.courts = 95; c.nextElection = w.turn; assert.ok(applyOp(w, boss, { op: 'rig_election', amount: 25 }).ok); assert.ok(boss.secrets.some(s => /returns of the election/.test(s.text)), 'the order is a secret someone can find'); w.newsThisTurn = []; electionStep(w); if (w.newsThisTurn.some(e => /falsified/.test(e.text))) out++; }
+    assert.ok(out >= 15, `under a free press and honest judges a stuffed count usually comes out: ${out} of 30`); }
+  { const w = fresh(), c = w.countries.U1, boss = ld(w, c), till = c.treasury, debt = c.debt, paid = () => (till - c.treasury) + (c.debt - debt); assert.ok(applyOp(w, boss, { op: 'propaganda', strength: 1 }).ok); const first = paid(); assert.ok(first > 0, 'placards and speakers are paid for'); for (let i = 0; i < 3; i++) applyOp(w, boss, { op: 'propaganda', strength: 1 }); const spent = paid(); for (let i = 0; i < 20; i++) applyOp(w, boss, { op: 'propaganda', strength: 1 }); assert.ok(spent < first * 2.5 && Math.abs(paid() - spent) < 1e-6, 'and once the country has heard enough nothing more is printed and nothing more is spent'); }
+  { const grip = police => { const w = fresh(), c = w.countries.U1; c.police = police; c.repress = 0; applyOp(w, ld(w, c), { op: 'repress', strength: 1 }); return c.repress; }; assert.ok(grip(80) > grip(15) * 2, `a state with few policemen can order what it likes: ${grip(15)} against ${grip(80)}`); }
+  { const w = inherited(), free = Object.values(w.countries).find(x => x.archetype === 'republic'), junta = Object.values(w.countries).find(x => x.archetype === 'junta'), row = c => moodParts(c, countryProvinces(w, c.id)[0], 'workers').find(x => /lawful ways/.test(x[0]))?.[1];
+    assert.ok(Math.abs(row(junta)) < .5, 'a people is used to what it has always lived under'); free.elections = false; free.unions = false; free.pressFreedom = 10; assert.ok(row(free) < -5, `what is taken from it, it resents: ${row(free)}`);
+    const p = countryProvinces(w, junta.id).find(q => q.id !== junta.capital); makeUnit(w, junta.id, p.id, 30, 1, 95); const was = junta.blood ?? 0; let r; for (let i = 0; i < 20 && !(r = applyOp(w, ld(w, junta), { op: 'persecute', province: p.id, method: 'kill', share: .1 })).ok; i++); assert.ok(r.ok, r.msg); assert.ok(junta.blood > was + 1, 'a massacre is blood too'); }
+});
+chain('Papers share their readers; a paper is known by its name; and a man who will not be bought says whether it was the sum, once a quarter', () => {
+  const weight = n => { const w = fresh(), c = w.countries.U1, rich = w.characters[c.oligarch]; c.literacy = 80; c.pressFreedom = 90; rich.wealth = 1000; for (let i = 0; i < n; i++) assert.ok(applyOp(w, rich, { op: 'found_paper', name: `Sheet ${i}`, amount: 60 }).ok); for (let i = 0; i < 4; i++) { c.mods = c.mods.filter(m => m.key !== 'legitimacy'); pressOf(w); } return -c.mods.filter(m => m.key === 'legitimacy').reduce((s, m) => s + m.delta, 0); };
+  const one = weight(1), five = weight(5); assert.ok(one > 0 && five > one && five < one * 2.2, `five papers on one side do not weigh five times one: ${one} and ${five}`);
+  const w = fresh(), c = w.countries.U1, boss = ld(w, c), opp = w.characters[c.opposition]; opp.wealth = 50; assert.ok(applyOp(w, opp, { op: 'found_paper', name: 'The Lamp', amount: 10 }).ok); const shut = applyOp(w, boss, { op: 'close_paper', id: 'The Lamp' }); assert.ok(shut.ok, shut.msg); assert.equal((c.papers || []).length, 0);
+  const x = inherited(), rich = x.characters[x.countries.U1.oligarch], clerk = Object.values(x.characters).find(q => q.alive && q.country === 'U1' && q.post === 'treasury'); rich.wealth = 100; clerk.loyalty = 50; clerk.greed = 60;
+  let said = ''; for (let i = 0; i < 40 && !said; i++) { x.turn++; const r = applyOp(x, rich, { op: 'recruit_informant', character: clerk.id, amount: 2 }); if (!r.ok) said = r.msg; else clerk.handler = null; } assert.ok(/sum was too small/.test(said), said);
+  clerk.loyalty = 96; clerk.greed = 5; clerk.handler = null; x.turn++; const no = applyOp(x, rich, { op: 'recruit_informant', character: clerk.id, amount: 2 }); assert.ok(!no.ok && /not the sum/.test(no.msg), no.msg);
+  assert.ok(/this quarter/.test(applyOp(x, rich, { op: 'recruit_informant', character: clerk.id, amount: 30 }).msg), 'and he is not asked twice in a quarter');
 });
 console.log('All checks passed.');

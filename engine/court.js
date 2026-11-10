@@ -235,7 +235,9 @@ export function recruitInformant(w, actor, ch, amount) {
   if (rand(w) >= p) {
     const host = w.countries[ch.country], ruler = w.characters[host?.leader];
     if (ch.loyalty > 58 && ruler?.alive && ruler.id !== actor.id) { say(w, ruler, ch.name, `${ch.name} reports that ${actor.name}${actor.country !== ch.country ? ` of ${w.countries[actor.country]?.name}` : ''} offered him ${Math.round(amount)} to pass on what he sees in his post. He refused.`); trace(w, actor, `Tried to buy ${ch.name} as an informant.`); }
-    return { ok: false, msg: `${ch.name} would not be bought.` };
+    // The one who asked learns what stood in the way: the sum, or the man.
+    const atBest = clamp(.12 + ch.greed / 170 + Math.max(amount * 3, 30) / 45 - ch.loyalty / 190, .04, .92);
+    return { ok: false, msg: `${ch.name} would not be bought${atBest >= .55 && p < .45 ? ` for ${Math.round(amount)}: the sum was too small for the risk he would run, and a good deal more might have been heard differently` : atBest < .55 ? ': it was not the sum; he will not sell what passes through his hands while he stands toward the government as he does' : ' this time'}.` };
   }
   ch.handler = actor.id; ch.stipend = amount; ch.boughtAt = w.turn;
   trace(w, actor, `Bought ${ch.name} as an informant.`); trace(w, ch, `Sold what passes through his post to ${actor.name}.`);

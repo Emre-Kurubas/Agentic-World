@@ -34,6 +34,12 @@ function npcLeader(w, ch, c) {
   if (c.paidRatio < .75 && rand(w) < .5) ops.push({ op: 'print_money', pct_gdp: .08 });
   if (c.unrest > 42) ops.push(c.axes.auth > 20 ? { op: 'repress', strength: .55 } : { op: 'concession', cls: 'workers', pct_gdp: .02 });
   if (c.foodRatio < 1 && c.tariff > 0) ops.push({ op: 'set_tariff', rate: 0 });
+  // A ruler whose granaries are running low buys grain abroad while there is gold, and has land drained and watered where it will still take it.
+  if (c.foodRatio < 1.08) {
+    if (c.foodRatio < 1 && c.reserves > 20) ops.push({ op: 'buy_goods', good: 'grain', amount: Math.round((c._need?.grain || 0) * .25) });
+    const land = countryProvinces(w, c.id).filter(p => (p.fertileMax ?? p.fertility * 1.5) - p.fertility > .05).sort((a, b) => b.pops.peasants.n - a.pops.peasants.n)[0];
+    if (land && (c.paidRatio ?? 1) >= .95) ops.push({ op: 'build', province: land.id, kind: 'farming', pct_gdp: .01 });
+  }
   if (c.blocs.army.sat < 40) ops.push({ op: 'set_budget', category: 'military', share: Math.min(c.budget.military + .01, .14) });
   for (const m of ch.inbox.slice(-5)) {
     const match = /(K-\d+)/.exec(m.text);

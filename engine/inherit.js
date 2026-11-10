@@ -13,10 +13,11 @@ import { initFirms } from './firms.js';
 import { seatCourt } from './court.js';
 import { burdenAll } from './burdens.js';
 import { beginTurn, stepWorld } from './step.js';
-import { governmentSeats } from './polity.js';
+import { seatGovernment, allocateSeats } from './polity.js';
+import { settleUnderground } from './underground.js';
 import { distance } from './politics.js';
 import { writeChronicles, writeLives } from './chronicle.js';
-import { updateStrategic, updateRoutes, costOfCapacity, costOfPolice } from './economy.js';
+import { updateStrategic, updateRoutes, costOfCapacity, costOfPolice, settleBases } from './economy.js';
 
 const R = (a, b) => [a, b];
 const ARCHETYPES = [
@@ -111,6 +112,12 @@ function makePast(w) {
 // where the first quarters actually come out, instead of leaving every state to find a hole in its accounts by the end of the first year.
 const BOOKS = { merchant: .010, republic: .003, federation: .001, monarchy: -.002, theocracy: -.003, revolutionary: -.007, agrarian: -.009, junta: -.016 };
 function balance(w, cs) {
+  // A country that has stood for years has its warehouses at their usual depth, its prices where its trade has settled them and its people in such work
+  // as there is. Three years are run on a copy and the stores, the market and the labour market are taken from it, so that the first year anyone
+  // governs is an ordinary year and not the year the stores fill up.
+  { const trial = structuredClone(w); trial.status = 'playing'; for (let i = 0; i < 12; i++) { beginTurn(trial); stepWorld(trial); }
+    for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive) continue; for (const g of Object.keys(c.stock)) if (g !== 'grain') c.stock[g] = t.stock[g]; c.unemployment = t.unemployment; c.lastSold = { ...t.lastSold }; c._need = { ...t._need }; }
+    w.globalPrice = { ...trial.globalPrice }; }
   // The books are read after a year and a half, when the first quarters' adjustments are over: that is the level the state lives at.
   for (let pass = 0; pass < 1; pass++) {
     const trial = structuredClone(w); trial.status = 'playing';
@@ -159,9 +166,16 @@ export function inheritStates(w) {
     const a = ARCHETYPES.find(x => x.key === c.archetype);
     if (c.elections) makeParliament(c, a.key === 'merchant' ? 'Merchants\' Assembly' : 'Parliament');
     else if (a.advisory) makeParliament(c, a.advisory, false);
-    // A government that has sat for years sits on a majority: the parties nearest the ruling party are on its benches until it has one.
-    if (c.elections && c.parliament) { const ruling = c.parties.find(p => p.id === c.rulingParty); c.coalition = []; if (ruling) for (const p of c.parties.filter(p => p !== ruling && !p.banned).sort((x, y) => distance(x.axes, ruling.axes) - distance(y.axes, ruling.axes))) { if (governmentSeats(c) > 50) break; c.coalition.push(p.id); } }
+    // A government that has sat for years sits on a majority: the parties nearest the ruling party are on its benches until it has one, and
+    // the strongest of the others, the party the leader of the opposition speaks for, sits outside.
+    if (c.elections && c.parliament) seatGovernment(w, c);
   }
+  // Those benches have been sat on for years: the parties' followings, and the seats that go with them, are where that has left them.
+  for (let i = 0; i < 8; i++) partyStep(w);
+  for (const c of cs) if (c.elections && c.parliament) { c.parliament.seats = allocateSeats(c); seatGovernment(w, c); }
   // Those in the seats do not arrive with clean hands and empty pockets.
   burdenAll(w);
+  settleBases(w);
+  // Whatever armed underground such a state breeds is already there on the day it is handed over.
+  settleUnderground(w);
 }

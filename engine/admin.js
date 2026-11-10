@@ -7,7 +7,8 @@ function distances(w, c) {
   while (q.length) { const x = q.shift(); for (const n of w.provinces[x]?.neighbors ?? []) if (w.provinces[n].controller === c.id && !(n in dist)) { dist[n] = dist[x] + 1; q.push(n); } }
   return dist;
 }
-const targetAdmin = (w, c, p, d) => clamp(c.bureaucracy / 100 * (1.05 - (d ?? 8) * .05 + p.rail * .08) + (w.characters[p.governor]?.alive ? .12 : 0), .08, 1);
+// Offices, courts and the telegraph built in a province (p.seat) are the state's standing presence there, whoever the governor is.
+const targetAdmin = (w, c, p, d) => clamp(c.bureaucracy / 100 * (1.05 - (d ?? 8) * .05 + p.rail * .08) + (w.characters[p.governor]?.alive ? .12 : 0) + (p.seat || 0), .08, 1);
 
 export function initAdmin(w) { for (const c of aliveCountries(w)) { const d = distances(w, c); for (const p of countryProvinces(w, c.id)) p.admin = targetAdmin(w, c, p, d[p.id]); } adminStep(w); }
 

@@ -21,23 +21,33 @@ export function updateRer(w) {
   for (const c of cs) c.rer = clamp((c.priceLevel / (c.rate || 1)) / avg, .2, 5);
 }
 
-// With full warehouses producers slow down: looks at how many turns of domestic demand and last turn's sales the stock covers.
-// Durable goods are kept in deep stores without anyone calling it a glut: a year's machinery, an arsenal for a war.
-export const USUAL_COVER = { machines: 8, arms: 16 };
-const coverOf = (c, g, demand) => (c.stock[g] || 0) / demand * 2 / (USUAL_COVER[g] ?? 2);
-// Makers of ordinary goods slow down when the warehouses hold years of sales; makers of durable goods when the usual store is full, before the price is ruined.
+// The store a trade ordinarily keeps of each good, in quarters of what the country uses and sells: a year's coal and ore at the pithead, half a year's
+// steel in the yards, a quarter's wares on the shelves, two years' machinery, an arsenal for a war. One number does three things, so that they agree:
+// at that depth the world price stands at its ordinary level, a country's own price stands at the world's, and makers begin to work short time.
+// (Bread is left as it was: the granaries fill and empty with the harvest, and farmers do not stop sowing because the barns are full.)
+const STORE = { timber: 4, coal: 4, iron: 4, copper: 4, oil: 3, phosphate: 4, rare: 4, steel: 2, fuel: 2, fertilizer: 2, machines: 8, goods: 1, arms: 16 };
+// What the world market reads (economy.js `trade`): its price stands at the ordinary level when the world's stores hold four fifths of this, hence the quarter added.
+// Consumer goods are the exception on the world's side: a country that cannot pay for them keeps no shelves at all, so the world as a whole holds
+// about half of what its makers do, and the world price is at its ordinary level there.
+export const USUAL_COVER = { ...Object.fromEntries(Object.entries(STORE).map(([g, q]) => [g, q * 1.25])), goods: STORE.goods * .5 * 1.25 };
+const coverOf = (c, g, demand) => (c.stock[g] || 0) / demand * 2 / (STORE[g] ?? 2);
+// With full warehouses producers slow down: looks at how many quarters of domestic demand and last quarter's sales the stock covers.
+// Past the usual store they cut back faster than the stock grows, so the store stays near its ordinary depth instead of running to years of unsold
+// coal and copper with the price on the floor; what the pits and mills could have made beyond that stands idle and is counted as idle.
 export function glutFactor(c, g) {
   if (!c._need) return 1;
-  const cover = (c.stock[g] || 0) / Math.max((c._need?.[g] || 0) + (c.lastSold?.[g] || 0), .001), full = USUAL_COVER[g] ?? GLUT_TURNS;
-  return cover > full ? full / cover : 1;
+  const cover = (c.stock[g] || 0) / Math.max((c._need?.[g] || 0) + (c.lastSold?.[g] || 0), .001), full = STORE[g] ?? GLUT_TURNS;
+  return cover > full ? (STORE[g] ? (full / cover) ** 2 : full / cover) : 1;
 }
 
 // Domestic market: a good's local price comes from the world price, the currency's value and local scarcity.
+// Scarcity is measured against what the country uses and what it sells abroad: an exporter's full yards are its trade, not a glut, and the world
+// price has already been marked down for them once. Full stores take at most a third off the going price; empty ones can treble it.
 export function localPrices(w, c) {
   c.prices ||= {};
   for (const g of GOODS) {
     // An arsenal is bought by the state at its own price: a full one does not make rifles cheap the way a full granary makes bread cheap.
-    const cover = coverOf(c, g, Math.max(c._need?.[g] || 0, .001)), scarcity = clamp(1.4 / (Math.min(cover, 6) * .5 + .4), g === 'arms' ? .9 : .5, 3);
+    const demand = (c._need?.[g] || 0) + (STORE[g] ? c.lastSold?.[g] || 0 : 0), cover = coverOf(c, g, Math.max(demand, .001)), scarcity = clamp(1.4 / (Math.min(cover, 6) * .5 + .4), g === 'arms' ? .9 : STORE[g] ? .65 : .5, 3);
     c.prices[g] = +(w.globalPrice[g] * (c.rer ?? 1) * scarcity).toFixed(2);
   }
 }
@@ -70,7 +80,10 @@ export function creditStanding(w, c, paidInFull) {
 // How much more lenders would still put up in one quarter. Trust in the government widens it; a default nearly closes it.
 // The quarter's allowance is fixed when the quarter opens (openCredit): asking the lenders ten times in one quarter does not get ten allowances.
 // Lenders take up about an eighth of the remaining headroom in a quarter: enough for a war loan, not for the whole ceiling at once.
-const creditRoom = c => Math.max(0, c.gdp * 4 * (1.1 + c.legitimacy / 100) - c.debt) * (c.defaulted ? .03 : .12);
+// And they look at what the state takes in: no one lends on to a treasury whose interest would eat more than about half its revenue.
+// Inflation is left out of that sum: it raises the interest asked and wears the debt down by as much.
+const ceiling = c => { const trust = c.gdp * 4 * (1.1 + c.legitimacy / 100), rate = Math.max((c.interestRate ?? sovereignRate(c)) - Math.max(0, c.inflTrend ?? c.inflation ?? 0) * .6, .005); return c.lastRevenue > 0 ? Math.min(trust, c.lastRevenue * .5 / rate) : trust; };
+const creditRoom = c => Math.max(0, ceiling(c) - c.debt) * (c.defaulted ? .03 : .12);
 export function creditLeft(c) {
   return Math.max(0, Math.min(creditRoom(c), (c._room ?? Infinity) - (c._taken || 0)));
 }
@@ -86,9 +99,16 @@ export function treasuryPays(c, cost) {
 
 export function declareDefault(w, c, why) {
   if (!canDefault(w, c)) return false;
+  // What is written off was somebody's savings: the banks that held the paper, the middle class and the rich who held the banks' deposits, the men of business.
+  // They take the loss in proportion to its size, and they remember who did it.
+  const weight = clamp(c.debt * .45 / Math.max(c.gdp * 4, 1), 0, 1.5);
+  c.legitimacy = clamp(c.legitimacy - clamp(weight * 30, 2, 14), 0, 100); if (c.blocs?.capital) c.blocs.capital.sat = clamp(c.blocs.capital.sat - clamp(weight * 60, 5, 30), 0, 100);
+  (c.mods ||= []).push({ key: 'sat.middle', delta: -clamp(weight * 40, 3, 18), turns: 8, label: 'Savings lost in the default' }, { key: 'sat.elite', delta: -clamp(weight * 50, 3, 20), turns: 8, label: 'Savings lost in the default' });
   c.defaulted = true; c.defaultedAt = w.turn; c.cleanTurns = 0; c.extArrears = 0; c.debt *= .55;
   // Those who hold the state's paper by name lose with everyone else, and know whom to thank.
-  for (const b of w.bonds || []) if (b.country === c.id) { b.amount *= .55; const h = w.characters[b.holder]; if (h?.alive) { h.inbox.push({ turn: w.turn, from: 'Your banker', text: `${c.name} has defaulted. The paper you hold is written down to ${Math.round(b.amount)}.` }); if (h.loyalty != null && h.country === c.id) h.loyalty = clamp(h.loyalty - 30, 0, 100); } } if (c.reserves > 0) c.reserves *= .7; c.bankHealth = clamp(c.bankHealth - 30, 0, 100);
+  for (const b of w.bonds || []) if (b.country === c.id) { b.amount *= .55; const h = w.characters[b.holder]; if (h?.alive) { h.inbox.push({ turn: w.turn, from: 'Your banker', text: `${c.name} has defaulted. The paper you hold is written down to ${Math.round(b.amount)}.` }); if (h.loyalty != null && h.country === c.id) h.loyalty = clamp(h.loyalty - 30, 0, 100); } } c.bankHealth = clamp(c.bankHealth - clamp(20 + weight * 60, 25, 55), 0, 100);
+  // Gold runs from a defaulter to wherever it is safest; it does not vanish from the world.
+  if (c.reserves > 0) { const haven = aliveCountries(w).filter(o => o.id !== c.id && !o.capitalClosed).sort((a, b) => b.legitimacy - a.legitimacy)[0], out = c.reserves * .3; if (haven) { c.reserves -= out; haven.reserves += out; } }
   // The creditors' loss is the part of their claim that is written off; no gold of theirs vanishes on top of it.
   for (const [cid, amt] of Object.entries(c.creditors)) { const o = w.countries[cid]; if (o?.alive) { o.relations[c.id] = clamp((o.relations[c.id] ?? 0) - 40, -100, 100); o.bankHealth = clamp(o.bankHealth - 12, 0, 100); c.creditors[cid] = amt * .55; } else delete c.creditors[cid]; }
   news(w, `${c.name} ${why}; ${Object.keys(c.creditors).length ? 'creditor countries are furious' : 'its bondholders are ruined'}.`, { kind: 'economy', countries: [c.id] });

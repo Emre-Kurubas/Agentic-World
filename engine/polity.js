@@ -3,12 +3,13 @@ import { clamp, sum, news, rand, nextId } from './util.js';
 import { GOODS, GOOD_LABEL, aliveCountries } from './world.js';
 import { distance, installLeader } from './politics.js';
 import { incapacitated } from './health.js';
+import { shame } from './diplomacy.js';
 
 export const num = (v, a, b, d = a) => clamp(Number.isFinite(Number(v)) ? Number(v) : d, a, b);
 
 export const STATE_POWERS = ['audit', 'judiciary', 'security', 'intelligence', 'bureaucracy', 'bank', 'army'];
 export const CIVIL_POWERS = ['education', 'welfare', 'propaganda', 'clergy', 'capital', 'farming', 'industry', 'research'];
-export const DELEGABLE = new Set(['appoint_governor', 'appoint_commander', 'set_culture_policy', 'set_fx_regime', 'devalue', 'borrow_foreign', 'repay_foreign', 'set_capital_controls', 'ship_goods', 'set_tax', 'set_budget', 'set_tariff', 'set_arms_share', 'print_money', 'borrow', 'embargo', 'build', 'survey', 'set_research', 'move', 'move_army', 'recruit', 'repress', 'concession', 'purge', 'ban_party', 'set_institutions', 'propose_treaty', 'accept_treaty', 'spy', 'steal_tech', 'gather_dossier']);
+export const DELEGABLE = new Set(['appoint_governor', 'appoint_commander', 'set_culture_policy', 'set_fx_regime', 'devalue', 'borrow_foreign', 'repay_foreign', 'set_capital_controls', 'ship_goods', 'buy_goods', 'sell_goods', 'set_tax', 'set_budget', 'set_tariff', 'set_arms_share', 'print_money', 'borrow', 'embargo', 'build', 'survey', 'set_research', 'move', 'move_army', 'recruit', 'repress', 'concession', 'purge', 'ban_party', 'set_institutions', 'propose_treaty', 'accept_treaty', 'spy', 'steal_tech', 'gather_dossier']);
 export const GATED = new Set(['set_labour_law', 'set_culture_policy', 'nationalize_company', 'set_tax', 'set_budget', 'set_tariff', 'borrow', 'print_money', 'default_debt', 'declare_war', 'ban_party', 'land_reform', 'nationalize', 'privatize', 'set_regime']);
 // What a law can do. A legislature makes rules and votes money; it does not arrest people, name heirs or move regiments. Those are acts of the executive.
 export const LEGISLATIVE = new Set([...GATED, 'prosecute', 'create_institution', 'fund_institution', 'dissolve_institution', 'set_institutions', 'hold_election', 'concession', 'set_arms_share', 'set_capital_controls', 'set_fx_regime', 'release', 'repay_state_debt']);
@@ -134,9 +135,26 @@ export function makeParliament(c, name, legislative = true) {
 export const parliamentOpen = (w, c) => !!c.parliament && w.turn >= (c.parliament.suspendedUntil ?? 0);
 export const mustPassParliament = (w, c, op) => parliamentOpen(w, c) && c.parliament.legislative && GATED.has(op.op) && !op._law;
 
+// The opposition a government faces stands outside it: the strongest party that sits neither as the ruling party nor on its benches.
+export const onBenches = (c, p) => p.id === c.rulingParty || (c.coalition || []).includes(p.id);
+export const rivalParty = c => (c.parties || []).filter(p => !p.banned && !onBenches(c, p)).sort((a, b) => b.support - a.support)[0] ?? null;
 export function leadsParties(w, c, ch) {
-  const rivals = c.parties.filter(p => !p.banned && p.id !== c.rulingParty).sort((a, b) => b.support - a.support);
-  return c.parties.filter(p => p.founder === ch.id || (p.id === c.rulingParty && c.leader === ch.id) || (p.id === rivals[0]?.id && c.opposition === ch.id));
+  // The leader of the opposition speaks for that party. If he has himself taken a party onto the government's benches, he speaks for that one, and can take it off again.
+  const mine = c.opposition === ch.id ? c.parties.find(p => !p.banned && (c.coalition || []).includes(p.id) && c.coalitionBy?.[p.id] === ch.id) ?? rivalParty(c) : null;
+  return c.parties.filter(p => p.founder === ch.id || (p.id === c.rulingParty && c.leader === ch.id) || p === mine);
+}
+// A government that takes office gathers a majority where it can: the parties nearest to it sit on its benches until it has one. One party is
+// left outside if a majority can be had without it (the party it has just beaten, or failing that the strongest of the others): that is the
+// opposition it faces. A party whose founder still leads it is not seated by anyone but its founder.
+export function seatGovernment(w, c, keepOut = null) {
+  c.coalition = []; c.coalitionBy = {};
+  const ruling = c.parties.find(p => p.id === c.rulingParty && !p.banned); if (!ruling || !c.parliament) return;
+  const free = p => { const f = w.characters[p.founder]; return !(f?.alive && f.country === c.id && f.id !== c.leader); };
+  const others = c.parties.filter(p => p !== ruling && !p.banned && free(p)), near = [...others].sort((x, y) => distance(x.axes, ruling.axes) - distance(y.axes, ruling.axes));
+  const out = others.find(p => p.id === keepOut) ?? [...others].sort((a, b) => b.support - a.support)[0];
+  for (const p of near) { if (governmentSeats(c) > 50) break; if (p !== out) c.coalition.push(p.id); }
+  // No majority without it: then that is the party the government rests on, and the opposition is whoever is left.
+  if (governmentSeats(c) <= 50 && out) { c.coalition = [out.id]; for (const p of near) { if (governmentSeats(c) > 50) break; if (p !== out) c.coalition.push(p.id); } }
 }
 
 export function createBill(w, c, actor, { title, text, ops, axes }) {
@@ -178,13 +196,14 @@ function confidenceVote(w, c, b, p) {
 function governmentFalls(w, c, b, yes, no) {
   const old = w.characters[c.leader], next = w.characters[b.proposer], fit = next?.alive && next.status === 'free' && next.country === c.id && next.id !== old?.id;
   news(w, `${c.name}: parliament voted no confidence in ${old?.name ?? 'the government'} (${yes} to ${no}).${fit ? ` ${next.name} forms the new government.` : ' An election is called.'}`, { kind: 'politics', countries: [c.id] });
-  c.lastMotion = w.turn; c.coalition = [];
+  c.lastMotion = w.turn; c.coalition = []; c.coalitionBy = {};
   if (!fit || !old) { c.nextElection = w.turn + 1; c.legitimacy = clamp(c.legitimacy - 4, 0, 100); return; }
-  const wasOpp = c.opposition === next.id, prev = old.id, party = c.parties.find(p => p.id === b.party);
+  const wasOpp = c.opposition === next.id, prev = old.id, party = c.parties.find(p => p.id === b.party), fallen = c.rulingParty;
   installLeader(w, c, next, null, wasOpp);
   // If it was the leader of the opposition who brought the government down, the two change places.
   if (wasOpp) { const ex = w.characters[prev]; ex.role = 'opposition'; ex.loyalty = 40; c.opposition = prev; }
-  if (party) { c.rulingParty = party.id; for (const a of ['econ', 'auth', 'nation', 'faith']) c.axes[a] = Math.round(c.axes[a] + (party.axes[a] - c.axes[a]) * .5); }
+  // The house that voted the old government out seats the new one: the parties nearest to it, without the party that has just fallen.
+  if (party) { c.rulingParty = party.id; for (const a of ['econ', 'auth', 'nation', 'faith']) c.axes[a] = Math.round(c.axes[a] + (party.axes[a] - c.axes[a]) * .5); if (party.id !== fallen) seatGovernment(w, c, fallen); }
   next.rise = `Became head of government in ${w.date ?? 'the first days'} when parliament voted no confidence in ${old.name}.`;
   c.legitimacy = clamp(c.legitimacy + 3, 0, 100);
 }
@@ -275,6 +294,8 @@ function breach(w, t, cl, party, text) {
   cl.lastBreach = w.turn;
   (t.breaches ||= []).push({ turn: w.turn, party, text });
   t.breaches = t.breaches.slice(-12);
+  // A clause not kept is a word not kept, and it is seen: the state's name for keeping its promises is the worse for it.
+  if (w.countries[party]?.alive) shame(w, w.countries[party], -3, `it did not keep a clause of its ${t.kind.replace('_', ' ')} treaty`);
   for (const id of t.parties) { const leader = w.characters[w.countries[id]?.leader]; if (leader?.alive) leader.inbox.push({ turn: w.turn, from: 'Foreign Ministry', text: `Treaty ${t.id} breached: ${text}` }); }
   news(w, `Treaty breach: ${text}`, { kind: 'diplomacy', countries: t.parties });
 }

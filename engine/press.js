@@ -4,12 +4,13 @@
 // country: committees, organisers and dues turn sympathy into votes, and they cost money too.
 import { clamp, rand, news, nextId, sum } from './util.js';
 import { aliveCountries, ROLES } from './world.js';
+import { rivalParty } from './polity.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 export const MAX_PAPERS = 6;
 export const papersOf = c => c.papers || [];
 // Which party a person's paper speaks for: the one they founded or lead.
-const sideOf = (w, c, id) => id === c.leader ? c.rulingParty : c.parties.find(p => p.founder === id)?.id ?? (id === c.opposition ? [...c.parties].filter(p => !p.banned && p.id !== c.rulingParty).sort((a, b) => b.support - a.support)[0]?.id : null);
+const sideOf = (w, c, id) => id === c.leader ? c.rulingParty : c.parties.find(p => p.founder === id)?.id ?? (id === c.opposition ? rivalParty(c)?.id ?? null : null);
 // How much the papers behind a party add to what it can make of the country's mood, in points of a hundred.
 export const voiceOf = (w, c, party) => clamp(sum(papersOf(c).filter(n => sideOf(w, c, n.owner) === party.id), n => n.reach), 0, 60);
 // How far a publication carries: with a paper of one's own it is read across the country, without one it is a pamphlet.
@@ -33,7 +34,6 @@ export function pressStep(w) {
       n.reach += (clamp(spend * 8 * (c.literacy / 100) * (.2 + c.pressFreedom / 100), 0, 40) - n.reach) * .3;
       if (n.reach < 1) continue;
       const friendly = n.owner === c.leader;
-      c.mods.push({ key: 'legitimacy', delta: friendly ? n.reach * .02 : -n.reach * .03, turns: 1, label: n.name });
       // Reporters dig where the owner's enemies are, as far as the law lets them print what they find.
       if (c.pressFreedom < 30 || rand(w) >= n.reach / 300) continue;
       const marks = Object.values(w.characters).filter(x => x.alive && x.country === c.id && x.id !== n.owner && x.status === 'free' && (ROLES.some(r => c[r] === x.id) || x.post) && (x.secrets || []).some(s => !s.published) && (friendly ? x.id !== c.leader : true));
@@ -42,6 +42,12 @@ export function pressStep(w) {
       news(w, `${c.name}: ${n.name} has printed that ${mark.name}: ${s.text}`, { kind: 'plot', countries: [c.id] });
       if (mark.id === c.leader) c.legitimacy = clamp(c.legitimacy - 3.5 * (.4 + c.pressFreedom / 100), 0, 100); else mark.power = clamp(mark.power - 8, 0, 100);
       say(w, mark, n.name, `${n.name}, the paper of ${owner.name}, has printed this about you: ${s.text}`); if (ruler?.alive && ruler.id !== mark.id && ruler.id !== n.owner) say(w, ruler, 'Press office', `${n.name} (${owner.name}) has printed about ${mark.name}: ${s.text}`);
+    }
+    // What the papers do to the government's standing. Readers are shared: a second paper on the same side reaches mostly people the first
+    // already reaches, so after the widest-read one each further paper adds half of what the one before it added.
+    for (const own of [true, false]) {
+      const side = papers.filter(n => n.reach >= 1 && (n.owner === c.leader) === own).sort((a, b) => b.reach - a.reach), heard = side.reduce((a, n, i) => a + n.reach * .5 ** i, 0);
+      if (heard > 0) c.mods.push({ key: 'legitimacy', delta: own ? heard * .02 : -heard * .03, turns: 1, label: side.map(n => n.name).join(', ') });
     }
   }
 }

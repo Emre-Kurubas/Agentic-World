@@ -5,6 +5,12 @@ import { die } from './politics.js';
 import { afflict, incapacitated } from './health.js';
 
 const SHIP_POWER = { cruiser: 1, battleship: 3.5, submarine: .6 };
+// Two states at war fight unless an armistice between them is in force. Then the lines stand where they are: nobody attacks, nobody advances,
+// no fortress is pressed and no fleet engages, and the war is not over.
+export const truce = (w, a, b) => hasTreaty(w, a, b, 'armistice');
+export const fighting = (w, a, b) => atWar(w, a, b) && !truce(w, a, b);
+// Whether a country has an enemy it is actually fighting this quarter.
+export const inTheField = (w, id) => w.wars.some(x => x.active && ((x.a.includes(id) && x.b.some(o => !truce(w, id, o))) || (x.b.includes(id) && x.a.some(o => !truce(w, id, o)))));
 let supplied = {};
 // A unit is in supply only if its province connects to its capital through friendly ground.
 // Supply also crosses the sea, from a home port to the country's other ports, unless an enemy fleet holds the water in front of them.
@@ -52,8 +58,10 @@ export function pathStep(w, from, to, country) {
 
 export function canEnter(w, country, pid) {
   const p = w.provinces[pid];
-  return p.controller === country || atWar(w, country, p.controller) || hasTreaty(w, country, p.controller, 'military_access') || hasTreaty(w, country, p.controller, 'alliance');
+  return p.controller === country || fighting(w, country, p.controller) || hasTreaty(w, country, p.controller, 'military_access') || hasTreaty(w, country, p.controller, 'alliance');
 }
+// Troops may stay where the war has brought them while an armistice lasts, though they may not go further.
+const mayStand = (w, country, pid) => canEnter(w, country, pid) || atWar(w, country, w.provinces[pid].controller);
 
 const force = (w, u, def) => {
   const c = w.countries[u.country];
@@ -80,18 +88,23 @@ export function militaryStep(w) {
     if (!u.target) { u.dug = Math.min(3, (u.dug || 0) + 1); continue; }
     // Troops just put ashore do not march the same quarter. A unit with the enemy in its own province is engaged and cannot walk away:
     // that is also what stops two armies ordered at each other from passing on the road.
-    if (u.shipped === w.turn || Object.values(w.units).some(x => x.province === u.province && atWar(w, x.country, u.country))) continue;
+    if (u.shipped === w.turn || Object.values(w.units).some(x => x.province === u.province && fighting(w, x.country, u.country))) continue;
     u.dug = 0;
-    const c = w.countries[u.country], speed = ['armor', 'air'].includes(u.kind) && (c.fuelRatio ?? 1) >= .6 ? 2 : 1;
-    for (let i = 0; i < speed + (w.provinces[u.province].rail && w.provinces[u.province].controller === u.country ? 1 : 0) && u.target; i++) {
+    // A quarter is a long time on roads one holds: an army crosses three provinces of friendly country in it, and twice that where the railway
+    // runs from one to the next. Into ground the enemy holds it advances one province and no more that quarter (two with engines and fuel).
+    const c = w.countries[u.country], motor = ['armor', 'air'].includes(u.kind) && (c.fuelRatio ?? 1) >= .6;
+    let left = motor ? 4 : 3;
+    while (u.target && left > 1e-9) {
       const step = pathStep(w, u.province, u.target, u.country);
       if (!step || !canEnter(w, u.country, step)) { u.target = null; break; }
       // Snow in the passes or mud in the marsh: the unit waits where it is and marches when the season turns.
-      if (closedNow(w, w.provinces[step])) break;
-      u.province = step;
+      const from = w.provinces[u.province], to = w.provinces[step]; if (closedNow(w, to)) break;
+      const hostile = fighting(w, u.country, to.controller), cost = hostile ? (motor ? 2 : 3) : from.rail && to.rail && !fighting(w, u.country, from.controller) ? .5 : 1;
+      if (!hostile && left < cost - 1e-9) break;
+      left = Math.max(0, left - cost); u.province = step;
       if (u.province === u.target) u.target = null;
       // Armies halt on contact: moving next to the enemy ends the march, so fronts form.
-      if (Object.values(w.units).some(x => atWar(w, x.country, u.country) && (x.province === step || w.provinces[step].neighbors.includes(x.province)))) break;
+      if (Object.values(w.units).some(x => fighting(w, x.country, u.country) && (x.province === step || w.provinces[step].neighbors.includes(x.province)))) break;
     }
   }
   navalStep(w);
@@ -106,9 +119,9 @@ export function militaryStep(w) {
   for (const p of Object.values(w.provinces)) if (p.siege && !(remaining[p.id] || []).some(u => u.country === p.siege.by && atWar(w, u.country, p.controller))) delete p.siege;
   for (const [pid, us] of Object.entries(remaining)) {
     const p = w.provinces[pid];
-    const occ = us.filter(u => atWar(w, u.country, p.controller));
+    const occ = us.filter(u => fighting(w, u.country, p.controller));
     // A province is held by its controller's troops and by the troops of anyone fighting the invader beside them.
-    if (!occ.length || us.some(u => u.country === p.controller || (!atWar(w, u.country, p.controller) && occ.some(o => atWar(w, o.country, u.country))))) continue;
+    if (!occ.length || us.some(u => u.country === p.controller || (!fighting(w, u.country, p.controller) && occ.some(o => fighting(w, o.country, u.country))))) continue;
     const by = occ.sort((a, b) => b.men - a.men)[0].country, strength = sum(occ.filter(u => u.country === by), u => u.men);
     // A patrol does not conquer a province, and a fortress is not invested by a handful.
     if (strength < Math.max(1, provincePop(p) * .002) || ((p.fort || 0) >= 1 && strength < 8 * Math.ceil(p.fort))) continue;
@@ -134,7 +147,7 @@ export function settleOccupations(w) {
   }
   for (const c of aliveCountries(w)) seat(w, c);
   for (const u of Object.values(w.units)) {
-    if (canEnter(w, u.country, u.province)) continue;
+    if (mayStand(w, u.country, u.province)) continue;
     const c = w.countries[u.country], home = w.provinces[c?.capital]?.controller === u.country ? c.capital : countryProvinces(w, u.country)[0]?.id;
     if (home) { u.province = home; u.target = null; } else delete w.units[u.id];
   }
@@ -162,13 +175,13 @@ function navalStep(w) {
   for (const [sea, fs] of Object.entries(bySea)) {
     const owners = [...new Set(fs.map(f => f.country))];
     // Only those at war with someone present fight; a neutral squadron in the same water looks on.
-    const fighters = owners.filter(a => owners.some(b => atWar(w, a, b)));
+    const fighters = owners.filter(a => owners.some(b => fighting(w, a, b)));
     if (fighters.length) {
       const pow = f => (SHIP_POWER[f.kind] ?? 1) * f.ships * f.quality * (f.morale / 70) * w.countries[f.country].tech.mil * (hasTech(w.countries[f.country], 'combustion_engine') && (w.countries[f.country].fuelRatio ?? 1) < .5 ? .4 : 1);
       const force = Object.fromEntries(fighters.map(o => [o, sum(fs.filter(f => f.country === o), pow)]));
       const top = [...fighters].sort((a, b) => force[b] - force[a])[0];
       for (const f of fs) {
-        if (f.country !== top && !atWar(w, f.country, top)) continue;
+        if (f.country !== top && !fighting(w, f.country, top)) continue;
         const lost = f.country === top ? .06 : .3; f.ships *= 1 - lost; f.morale = clamp(f.morale + (f.country === top ? 2 : -14), 0, 100);
         // A beaten squadron does not stay to be sunk: it runs for a home port where no enemy waits.
         if (f.country !== top) { const refuge = countryProvinces(w, f.country).filter(q => q.port > 0).flatMap(q => q.seas).find(s => s !== sea && !Object.values(w.fleets).some(x => x.sea === s && atWar(w, x.country, f.country))); if (refuge) { f.sea = refuge; f.target = null; } }
@@ -180,14 +193,17 @@ function navalStep(w) {
     const subs = [...new Set(alive.filter(f => f.kind === 'submarine').map(f => f.country))];
     if (subs.length) w.seaRaids[sea] = subs;
   }
-  for (const p of Object.values(w.provinces)) if (p.battery) for (const sea of p.seas) for (const f of Object.values(w.fleets)) if (f.sea === sea && atWar(w, f.country, p.controller)) f.ships *= 1 - p.battery * .03;
+  for (const p of Object.values(w.provinces)) if (p.battery) for (const sea of p.seas) for (const f of Object.values(w.fleets)) if (f.sea === sea && fighting(w, f.country, p.controller)) f.ships *= 1 - p.battery * .03;
   for (const f of Object.values(w.fleets)) if (f.ships < 1) delete w.fleets[f.id];
 }
 
 // What the armed forces cost each quarter. A standing army of one in a hundred of the people takes a few percent of GDP, as it did around 1900.
+// A war is dearer than a peace: men in the field eat, march and shoot half as much again as men in barracks, and men kept on soil that is not
+// their own country's cost twice their keep, at war or not. A state that goes to war on its peace budget watches its army go unpaid.
 export function upkeepCost(w, c) {
-  const men = sum(Object.values(w.units).filter(u => u.country === c.id), u => u.men * (UPKEEP[u.kind] ?? 1));
-  const ships = sum(Object.values(w.fleets).filter(f => f.country === c.id), f => f.ships * (SHIP_POWER[f.kind] ?? 1));
+  const field = inTheField(w, c.id) ? 1.5 : 1;
+  const men = sum(Object.values(w.units).filter(u => u.country === c.id), u => u.men * (UPKEEP[u.kind] ?? 1) * (w.provinces[u.province] && w.provinces[u.province].owner !== c.id ? 2 : field));
+  const ships = sum(Object.values(w.fleets).filter(f => f.country === c.id), f => f.ships * (SHIP_POWER[f.kind] ?? 1)) * field;
   const forts = sum(countryProvinces(w, c.id), p => (p.fort || 0) * 3 + (p.battery || 0) * 2);
   return (men * .8 + ships * 3 + forts * 5) * c.priceLevel;
 }
@@ -199,19 +215,21 @@ function upkeep(w, c) {
   const inWar = w.wars.some(x => x.active && (x.a.includes(c.id) || x.b.includes(c.id)));
   // A country tires of war with every quarter it lasts and with every province it has lost, and recovers in peace, army or no army.
   const mine = Object.values(w.provinces).filter(p => p.owner === c.id), lost = mine.filter(p => p.controller !== c.id).length / Math.max(mine.length, 1);
-  c.warExhaustion = clamp(c.warExhaustion + (inWar ? .6 + lost * 6 : -2), 0, 100);
+  // Under an armistice the dying has stopped but the men are not home and the lost provinces are still lost.
+  c.warExhaustion = clamp(c.warExhaustion + (!inWar ? -2 : inTheField(w, c.id) ? .6 + lost * 6 : lost * 3 - .5), 0, 100);
   if (!men) { c.militaryFunding = 1; return; }
   const required = upkeepCost(w, c);
   const funded = clamp((c.budget.military * c.gdp * c.paidRatio) / Math.max(required, 1), 0, 1.3);
   c.militaryFunding = funded;
-  const consume = men * (inWar ? .012 : .004);
+  const consume = men * (inWar && inTheField(w, c.id) ? .012 : .004);
   c.stock.arms = Math.max(0, c.stock.arms - consume);
   // Pay, arrears and a long war decide where the troops' spirit settles; a battle only knocks it about for a while.
   const spirit = clamp(40 + funded * 35 - c.arrears * 6 - c.warExhaustion * .3, 8, 95);
+  let gone = 0;
   for (const u of us) {
     u.morale = clamp(u.morale + (spirit - u.morale) * .2, 0, 100);
     // Soldiers who are not paid go home: the army shrinks toward what the budget can keep.
-    if (funded < .85) u.men *= 1 - clamp((.85 - funded) * .35, 0, .3);
+    if (funded < .85) { const left = u.men * clamp((.85 - funded) * .35, 0, .3); u.men -= left; gone += left; }
     u.equip = clamp(u.equip + (c.stock.arms > 0 ? .02 : -.05) * (funded > .6 ? 1 : .3), .2, 1.4);
     if (supplied[c.id] && !supplied[c.id].has(u.province) && !w.provinces[u.province].neighbors.some(n => supplied[c.id].has(n))) { u.men *= .92; u.morale = clamp(u.morale - 6, 0, 100); }
     // Loyalty settles where pay and the government's standing put it, around the bond the unit already had; a shock fades, it does not add up for ever.
@@ -219,6 +237,8 @@ function upkeep(w, c) {
     u.bond ??= u.loyalty - pull;
     u.loyalty = clamp(u.loyalty + (clamp(u.bond + pull, 0, 100) - u.loyalty) * .12, 0, 100);
   }
+  // And home is where they arrive: back among the working people of their own provinces, not out of the world.
+  if (gone > 0) { const provs = countryProvinces(w, c.id).filter(p => p.owner === c.id), pop = sum(provs, provincePop) || 1; for (const p of provs) p.pops.workers.n += gone * provincePop(p) / pop; }
 }
 
 function resolve(w, pid, us) {
@@ -227,10 +247,10 @@ function resolve(w, pid, us) {
   const p = w.provinces[pid];
   // Whoever is not at war with the province's controller defends it, and the rest attack. Only where no one stands for the controller
   // do two intruders fight over ground neither holds, and then no one has the benefit of its walls.
-  const sides = first => { const def = owners.filter(o => o === first || !atWar(w, o, first)); return [def, owners.filter(o => !def.includes(o) && def.some(d => atWar(w, o, d)))]; };
+  const sides = first => { const def = owners.filter(o => o === first || !fighting(w, o, first)); return [def, owners.filter(o => !def.includes(o) && def.some(d => fighting(w, o, d)))]; };
   let [defSide, atkSide] = sides(p.controller), holds = true;
-  if (!atkSide.length || !defSide.some(d => atkSide.some(a => atWar(w, a, d)))) { [defSide, atkSide] = sides(owners[0]); holds = false; }
-  defSide = defSide.filter(d => atkSide.some(a => atWar(w, a, d)));
+  if (!atkSide.length || !defSide.some(d => atkSide.some(a => fighting(w, a, d)))) { [defSide, atkSide] = sides(owners[0]); holds = false; }
+  defSide = defSide.filter(d => atkSide.some(a => fighting(w, a, d)));
   if (!atkSide.length || !defSide.length) return;
   const defCountry = defSide.includes(p.controller) ? p.controller : defSide[0];
   const D = us.filter(u => defSide.includes(u.country)), A = us.filter(u => atkSide.includes(u.country));
@@ -238,8 +258,11 @@ function resolve(w, pid, us) {
   const terrain = TERRAIN_DEF[p.terrain] * (1 + p.infra * .08) * point * (holds ? 1 + (p.fort || 0) * .3 + (p.trench || 0) * .15 : 1);
   const fD = sum(D, u => force(w, u, terrain)) * crowding(sum(D, u => u.men), p.terrain) * between(w, .85, 1.15);
   const fA = sum(A, u => force(w, u, 1)) * crowding(sum(A, u => u.men), p.terrain) * between(w, .85, 1.15);
-  const lossD = clamp(.09 * Math.pow(fA / Math.max(fD, 1), .7), .02, .42);
-  const lossA = clamp(.09 * Math.pow(fD / Math.max(fA, 1), .7), .02, .42);
+  // Men are killed by the men who face them. What a side loses is set by the strength the other side brings to bear, and more of it the more
+  // it is outmatched; never more than about four in ten of those present in one quarter. A handful cannot bleed a host, however large the host.
+  const menD = sum(D, u => u.men), menA = sum(A, u => u.men);
+  const lossD = Math.min(.42, .09 * fA * Math.pow(fA / Math.max(fD, 1e-9), .35) / Math.max(menD, 1e-9));
+  const lossA = Math.min(.42, .09 * fD * Math.pow(fD / Math.max(fA, 1e-9), .35) / Math.max(menA, 1e-9));
   const apply = (xs, loss, won) => xs.map(u => {
     const dead = u.men * loss; u.men -= dead;
     u.morale = clamp(u.morale + (won ? 3 : -8 - loss * 45), 0, 100);
@@ -255,13 +278,18 @@ function resolve(w, pid, us) {
   const dd = apply(D, lossD, !atkWins), da = apply(A, lossA, atkWins);
   p.devastation = clamp(p.devastation + .1 + (dd + da) / 700, 0, 1);
   for (const k of CLASSES) p.pops[k].n *= .985;
-  const loser = atkWins ? D : A;
+  const loser = atkWins ? D : A, victor = w.countries[atkWins ? atkSide[0] : defCountry], odds = (atkWins ? fA : fD) / Math.max(atkWins ? fD : fA, 1e-9);
+  // A beaten force that was badly outmatched leaves men in the victor's hands as it goes; one with no road home leaves far more. Prisoners
+  // are held by the victor until a peace sends them home.
+  let taken = 0;
   for (const u of loser) {
     const back = w.provinces[pid].neighbors.find(n => w.provinces[n].controller === u.country) ?? w.provinces[pid].neighbors.find(n => hasTreaty(w, u.country, w.provinces[n].controller, 'alliance'));
-    if (back) { u.province = back; u.target = null; } else { u.morale *= .4; u.men *= .6; }
+    const caught = u.men * (back ? clamp((odds - 2) * .1, 0, .3) : .4);
+    if (back) { u.province = back; u.target = null; } else u.morale *= .4;
+    if (caught > 0) { u.men -= caught; taken += caught; const held = victor.captives ||= {}; held[u.country] = (held[u.country] || 0) + caught; const home = w.countries[u.country]; home.warExhaustion = clamp(home.warExhaustion + caught / Math.max(home._pop || 10000, 1) * 2500, 0, 100); }
   }
-  news(w, `Battle of ${p.name}: ${atkWins ? w.countries[atkSide[0]].name : w.countries[defCountry].name} prevailed. Losses: attacker ${Math.round(da)}k, defender ${Math.round(dd)}k.`, { kind: 'war', countries: [...atkSide, ...defSide] });
-  w.battles.push({ province: pid, attacker: atkSide[0], defender: defCountry, attackerWon: atkWins, lossA: Math.round(da), lossD: Math.round(dd) });
+  news(w, `Battle of ${p.name}: ${atkWins ? w.countries[atkSide[0]].name : w.countries[defCountry].name} prevailed. Losses: attacker ${Math.round(da)}k, defender ${Math.round(dd)}k.${taken >= .5 ? ` About ${Math.round(taken)} thousand of the beaten side were taken prisoner.` : ''}`, { kind: 'war', countries: [...atkSide, ...defSide] });
+  w.battles.push({ province: pid, attacker: atkSide[0], defender: defCountry, attackerWon: atkWins, lossA: Math.round(da), lossD: Math.round(dd), prisoners: Math.round(taken) });
 }
 
 export function capture(w, p, by) {

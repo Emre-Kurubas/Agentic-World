@@ -2,7 +2,7 @@
 import { clamp, news, nextId, rand } from './util.js';
 import { PLANTS, BASE_PRICE, GOOD_LABEL, DEPOSITS, aliveCountries, countryProvinces } from './world.js';
 import { RECIPE } from './economy.js';
-import { queueProject, durationOf } from './projects.js';
+import { queueProject, durationOf, plantPrice, minePrice, machinesFor, MAX_PLANT, MAX_MINE } from './projects.js';
 import { governs } from './polity.js';
 
 const SCALE = .05, MAX_PER_COUNTRY = 14, BANKRUPT_TURNS = 6;
@@ -12,7 +12,12 @@ const sectorName = f => f.sector === 'mine' ? `${GOOD_LABEL[f.resource]} mine` :
 export const ownerName = (w, f) => f.owner === STATE ? 'state' : w.characters[f.owner]?.name ?? 'publicly held';
 
 function capacity(w, f) { const p = w.provinces[f.province]; return f.sector === 'mine' ? p.deposits[f.resource]?.mine ?? 0 : p.plants[f.sector] ?? 0; }
-export const firmValue = (w, f) => Math.max(f.cash, 0) + f.stake * capacity(w, f) * 40;
+// A step of capacity costs what it takes to equip the working people of its province. Second-hand, works fetch a fifth of that (a pit a tenth).
+const stepPrice = (w, f) => { const p = w.provinces[f.province]; return f.sector === 'mine' ? minePrice(p) : plantPrice(p); };
+const secondHand = (w, f) => f.stake * capacity(w, f) * stepPrice(w, f) * (f.sector === 'mine' ? .1 : .2);
+// A company is worth the cash in its till and what its works bring in: about three years of what it has lately earned (f.earn, smoothed over the
+// last few quarters so that one strike or one lucky season does not set the price), and never less than the works would fetch second-hand.
+export const firmValue = (w, f) => Math.max(f.cash, 0) + Math.max(secondHand(w, f), 12 * Math.max(f.earn ?? f.lastProfit ?? 0, 0));
 
 function setCapacity(w, f, next) {
   const p = w.provinces[f.province], old = capacity(w, f), add = next - old;
@@ -36,11 +41,14 @@ export function seizeFirm(w, c, firm, tell) {
   firm.owner = STATE; firm.offer = null;
 }
 // Capital put into a company becomes works only after they are built, and only if the country has the machinery to equip them.
+// A quarter of it stays in the company's till as working cash; the rest buys works at what they cost in that province, and what the place cannot take stays in the till too.
 function expand(w, host, firm, capital, fail) {
-  const mine = firm.sector === 'mine', add = capital * (mine ? .002 : .004);
-  if ((host.stock.machines || 0) < add) return fail('The country does not have the machinery to equip it; machines must be made or imported first.');
-  host.stock.machines -= add; firm.cash += capital * .25;
-  queueProject(w, host, { kind: firm.sector, province: firm.province, resource: firm.resource ?? undefined, add, firm: firm.id, label: firm.name });
+  const p = w.provinces[firm.province], room = (firm.sector === 'mine' ? MAX_MINE : MAX_PLANT) - capacity(w, firm), price = stepPrice(w, firm);
+  const add = Math.min(capital * .75 / price, room), machines = add * machinesFor(p);
+  if (!(add > 0)) return fail('These works are already as large as the place can carry.');
+  if ((host.stock.machines || 0) < machines) return fail(`The country does not have the machinery to equip it (about ${Math.round(machines * 10) / 10} needed, ${Math.round((host.stock.machines || 0) * 10) / 10} in store); machines must be made or imported first.`);
+  host.stock.machines -= machines; firm.cash += capital - add * price;
+  queueProject(w, host, { kind: firm.sector, province: firm.province, resource: firm.resource ?? undefined, add, cost: add * price, firm: firm.id, label: firm.name });
   return null;
 }
 
@@ -81,11 +89,13 @@ function unitProfit(c, f, p) {
   const price = c.prices?.[f.sector === 'mine' ? f.resource : f.sector] ?? 0;
   if (f.sector === 'mine') {
     const all = Object.values(c._mineLevel?.[f.resource] ? { x: c._mineLevel[f.resource] } : {}), total = all[0] || p.deposits[f.resource]?.mine || 1;
+    // A company earns on what its own works raised, not on a share of the country's output reckoned by size on paper.
     // A pit that pays above the going wage or spends on its timbering keeps less of what the ore fetches.
-    return { units: (c._raw?.[f.resource] || 0) * (p.deposits[f.resource]?.mine || 0) / total, margin: price * (.5 - .25 * ((f.wage ?? 1) - 1) - .06 * ((f.safety ?? .3) - .3)) };
+    return { units: p.dug ? p.dug[f.resource] || 0 : (c._raw?.[f.resource] || 0) * (p.deposits[f.resource]?.mine || 0) / total, margin: price * (.5 - .25 * ((f.wage ?? 1) - 1) - .06 * ((f.safety ?? .3) - .3)) };
   }
   const total = c._plantLevel?.[f.sector] || p.plants[f.sector] || 1, input = Object.entries(RECIPE[f.sector]).reduce((a, [g, q]) => a + (c.prices?.[g] ?? 0) * q, 0);
-  return { units: (c._made?.[f.sector] || 0) * p.plants[f.sector] / total, margin: price - input - BASE_PRICE[f.sector] * .25 * (c.wageIndex / c.priceLevel) * (f.wage ?? 1) - BASE_PRICE[f.sector] * .04 * ((f.safety ?? .3) - .3) };
+  const part = p.cap && c._capAll?.[f.sector] > 0 ? (p.cap[f.sector] || 0) / c._capAll[f.sector] : p.plants[f.sector] / total;
+  return { units: (c._made?.[f.sector] || 0) * part, margin: price - input - BASE_PRICE[f.sector] * .25 * (c.wageIndex / c.priceLevel) * (f.wage ?? 1) - BASE_PRICE[f.sector] * .04 * ((f.safety ?? .3) - .3) };
 }
 
 export function firmStep(w) {
@@ -103,11 +113,12 @@ export function firmStep(w) {
     resolveOwner(w, f, c);
     // A works that stands still earns next to nothing, whoever else in the trade is busy.
     const idle = f.strike || f.lockout || f.halted > 0 ? .1 : 1, { units: full, margin } = unitProfit(c, f, p), units = full * idle, gross = units * f.stake * margin * SCALE, profit = gross > 0 ? gross * (1 - clamp(c.tax.business, 0, .7)) : gross;
-    f.lastProfit = +profit.toFixed(2); f.lastUnits = units * f.stake;
+    f.lastProfit = +profit.toFixed(2); f.lastUnits = units * f.stake; f.earn = +((f.earn ?? profit) * .75 + profit * .25).toFixed(3);
     f.bad = profit < 0 ? f.bad + 1 : 0;
     if (profit > 0) {
-      const dividend = profit * .4; f.cash += profit - dividend;
-      const owner = w.characters[f.owner];
+      // Two fifths of a profit is paid out to whoever owns the company. One held in small parcels by people the story cannot name has nobody to pay:
+      // its directors keep the whole in the till, and it goes into the works when they next build. No money leaves the world by that door.
+      const owner = w.characters[f.owner], dividend = f.owner === STATE || owner ? profit * .4 : 0; f.cash += profit - dividend;
       if (f.owner === STATE) { c.treasury += dividend * (c.rate || 1); c._stateProfit = (c._stateProfit || 0) + dividend * (c.rate || 1); }
       else if (owner) {
         owner.wealth += dividend;

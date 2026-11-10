@@ -11,10 +11,12 @@ export function prosecute(w, c, actor, ch, op) {
   if (ch.trial) return { ok: false, msg: `${ch.name} is already before the court.` };
   const file = actor.dossiers?.[ch.id], facts = [...(file?.facts ?? [])], forged = (file?.forged ?? []).filter(f => facts.includes(f));
   const charge = String(op.charge || 'offences against the state').slice(0, 160), penalty = op.penalty === 'death' ? 'death' : 'prison';
-  ch.trial = { by: actor.id, country: c.id, charge, penalty, turn: w.turn, facts, forged };
+  // Whoever is already held stays held until the bench has spoken; an acquittal then opens the cell.
+  const held = ch.status === 'imprisoned';
+  ch.trial = { by: actor.id, country: c.id, charge, penalty, turn: w.turn, facts, forged, held };
   news(w, `${c.name}: ${ch.name} has been charged with ${charge} and will stand trial.`, { kind: 'politics', countries: [c.id] });
-  say(w, ch, 'The court', `You are charged with ${charge} on the motion of ${actor.name}; the prosecution asks for ${penalty === 'death' ? 'death' : 'prison'}. The court rules next quarter. Laid before it: ${facts.length ? facts.join(' ') : 'no documents, only the charge'}. The bench here is ${c.courts >= 65 ? 'its own master' : c.courts >= 35 ? 'open to pressure' : 'the government\'s creature'}. You are at liberty until it rules.`);
-  return { ok: true, msg: `${ch.name} is charged and will be tried next quarter on ${facts.length ? `${facts.length} document${facts.length > 1 ? 's' : ''} from your file` : 'no evidence but your word'}. The court here is ${c.courts >= 65 ? 'independent: it will want proof' : c.courts >= 35 ? 'open to pressure' : 'yours'}. Until then ${ch.name} is free.` };
+  say(w, ch, 'The court', `You are charged with ${charge} on the motion of ${actor.name}; the prosecution asks for ${penalty === 'death' ? 'death' : 'prison'}. The court rules next quarter. Laid before it: ${facts.length ? facts.join(' ') : 'no documents, only the charge'}. The bench here is ${c.courts >= 65 ? 'its own master' : c.courts >= 35 ? 'open to pressure' : 'the government\'s creature'}. ${held ? 'You stay in your cell until it rules; if it acquits, you go free.' : 'You are at liberty until it rules.'}`);
+  return { ok: true, msg: `${ch.name} is charged and will be tried next quarter on ${facts.length ? `${facts.length} document${facts.length > 1 ? 's' : ''} from your file` : 'no evidence but your word'}. The court here is ${c.courts >= 65 ? 'independent: it will want proof' : c.courts >= 35 ? 'open to pressure' : 'yours'}. Until then ${ch.name} ${held ? 'stays in custody; an acquittal would set them free' : 'is free'}.` };
 }
 
 export function justiceStep(w) {
@@ -32,19 +34,22 @@ export function justiceStep(w) {
     if (exposed) {
       news(w, `${c.name}: the court found that documents laid against ${ch.name} were forged, and acquitted. The prosecution was brought by ${by?.name ?? 'the government'}.`, { kind: 'politics', countries: [c.id] });
       ch.power = clamp(ch.power + 12, 0, 100); if (by) { trace(w, by, `Laid forged documents before the court against ${ch.name}.`); if (by.id === c.leader) c.legitimacy = clamp(c.legitimacy - 6 * (.4 + c.pressFreedom / 100), 0, 100); else by.power = clamp(by.power - 10, 0, 100); }
+      if (ch.status === 'imprisoned') { ch.status = 'free'; ch.sentence = null; ch.outSince = w.turn; }
       say(w, ch, 'The court', 'The court found the documents against you forged and has acquitted you.'); say(w, by, 'The court', `The court found the documents against ${ch.name} forged. ${ch.name} is acquitted, and the country knows who brought the case.`); continue;
     }
     if (rand(w) < free * proof + (1 - free) * .95) {
       const sound = proof >= .44 && free >= .5, death = t.penalty === 'death' && (free < .5 || proof >= .8);
       // A conviction on proof before a free court costs the state nothing. A sentence from a tame bench on thin papers is seen for what it is.
       if (sound) c.legitimacy = clamp(c.legitimacy + 1, 0, 100); else { c.legitimacy = clamp(c.legitimacy - (1 + 4 * c.pressFreedom / 100), 0, 100); c.mods.push({ key: 'unrest', delta: clamp(ch.power / 20, .5, 4) * (.3 + c.pressFreedom / 100), turns: 3, label: `The trial of ${ch.name}` }); }
-      if (death) { news(w, `${c.name}: ${ch.name} was found guilty of ${t.charge} and executed.`, { kind: 'politics', countries: [c.id] }); trace(w, by, `Had ${ch.name} tried and put to death.`); die(w, ch, 'was executed after a trial', { quiet: true }); say(w, by, 'The court', `${ch.name} was found guilty and the sentence of death has been carried out.`); continue; }
+      // A death sentence nobody believes was the court's own is blood on the state's hands like any other.
+      if (death) { if (!sound) c.blood = (c.blood || 0) + 1.5; news(w, `${c.name}: ${ch.name} was found guilty of ${t.charge} and executed.`, { kind: 'politics', countries: [c.id] }); trace(w, by, `Had ${ch.name} tried and put to death.`); die(w, ch, 'was executed after a trial', { quiet: true }); say(w, by, 'The court', `${ch.name} was found guilty and the sentence of death has been carried out.`); continue; }
       const years = Math.round(2 + proof * 6 + (1 - free) * 4);
       news(w, `${c.name}: ${ch.name} was found guilty of ${t.charge} and sentenced to ${years} years.`, { kind: 'politics', countries: [c.id] });
       neutralize(w, ch, 'imprisoned'); ch.sentence = { until: w.turn + years * 4, charge: t.charge };
       say(w, ch, 'The court', `Guilty of ${t.charge}: ${years} years. ${sound ? 'The country takes the verdict for just.' : 'Few believe the verdict was the court\'s own.'}`); say(w, by, 'The court', `${ch.name} was found guilty of ${t.charge} and sentenced to ${years} years${t.penalty === 'death' ? '; the court would not give death on what was laid before it' : ''}.`);
     } else {
-      news(w, `${c.name}: the court acquitted ${ch.name} of ${t.charge}.`, { kind: 'politics', countries: [c.id] });
+      const freed = ch.status === 'imprisoned'; if (freed) { ch.status = 'free'; ch.sentence = null; ch.outSince = w.turn; }
+      news(w, `${c.name}: the court acquitted ${ch.name} of ${t.charge}${freed ? ' and ordered their release' : ''}.`, { kind: 'politics', countries: [c.id] });
       ch.power = clamp(ch.power + 8, 0, 100); if (by?.id === c.leader) c.legitimacy = clamp(c.legitimacy - 2, 0, 100);
       say(w, ch, 'The court', `You are acquitted of ${t.charge}.`); say(w, by, 'The court', `The court acquitted ${ch.name}: what was laid before it did not carry the charge.`);
     }

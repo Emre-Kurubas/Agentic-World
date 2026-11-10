@@ -60,22 +60,33 @@ export function contractStep(w) {
     const A = w.characters[k.a], B = w.characters[k.b];
     if (!A?.alive || !B?.alive) { k.status = 'void'; k.closedAt = w.turn; continue; }
     if (w.turn >= k.until) { k.status = 'finished'; k.closedAt = w.turn; continue; }
+    // Goods first: the buyer pays for what was delivered, not for what was promised.
+    let part = 1;
+    if (k.good && k.amount > 0) {
+      const seller = w.characters[k.seller], buyer = k.seller === k.a ? B : A, sc = stateOf(w, k, seller), from = sc ?? w.countries[seller.country], to = stateOf(w, k, buyer) ?? w.countries[buyer.country];
+      const route = from.id === to.id ? { cost: 1 } : w.routes[from.id < to.id ? `${from.id}|${to.id}` : `${to.id}|${from.id}`];
+      let q = 0, why = '';
+      if (!route) why = `No route is open between ${from.name} and ${to.name}; nothing could be delivered.`;
+      // A state sells out of the country's stores, whatever raised them. A private seller delivers what his own works turn out, and no more.
+      else if (sc) { q = Math.min(Math.max(from.stock[k.good] || 0, 0), k.amount); why = `The stores of ${from.name} held only ${Math.round(q * 10) / 10} of the ${Math.round(k.amount * 10) / 10} ${GOOD_LABEL[k.good]} due.`; }
+      else if (!sellerFirm(w, k)) why = `${seller.name} owns no works producing ${GOOD_LABEL[k.good]}; nothing was delivered.`;
+      else { const output = works(w, k).filter(f => f.country === from.id).reduce((a, f) => a + (f.lastUnits || 0), 0); q = Math.min(Math.max(from.stock[k.good] || 0, 0), k.amount, output); why = `${seller.name}'s works delivered ${Math.round(q * 10) / 10} of the ${Math.round(k.amount * 10) / 10} ${GOOD_LABEL[k.good]} due.`; }
+      if (q > 0) { from.stock[k.good] -= q; to.stock[k.good] = (to.stock[k.good] || 0) + q / route.cost; }
+      part = q / k.amount; k.lastDelivered = q;
+      if (q < k.amount * .95) breach(w, k, seller.id, why);
+    }
     if (k.pay > 0 && k.payer) {
       const payer = w.characters[k.payer], payee = k.payer === k.a ? B : A, from = stateOf(w, k, payer), to = stateOf(w, k, payee);
-      const m = from ? treasuryPays(from, k.pay) : Math.min(payer.wealth, k.pay);
+      // Payment for goods follows the goods. Money a treasury pays a private person for nothing that can be weighed is a grant under another name:
+      // it comes out of the same allowance as any other payment to persons, it is in the books, and both know what it was.
+      // A price far above the market is a grant in a merchant's coat: what a treasury pays a private seller beyond three times the world price of what was delivered counts as one.
+      const forGoods = k.good && k.amount > 0 && k.payer !== k.seller, due = k.pay * (forGoods ? Math.min(part, 1) : 1), fair = forGoods ? (k.lastDelivered || 0) * (w.globalPrice?.[k.good] ?? 0) * 3 * (from?.rate || 1) : 0;
+      const gifted = from && !to ? Math.max(0, due - fair) : 0, gift = gifted > .01;
+      const room = gift ? Math.max(0, from.gdp * .005 - (from._grants?.turn === w.turn ? from._grants.paid : 0)) : Infinity;
+      const m = from ? treasuryPays(from, due - gifted + Math.min(gifted, room)) : Math.min(payer.wealth, due), given = Math.max(0, m - (due - gifted));
+      if (gift && given > 0) { from._grants = { turn: w.turn, paid: (from._grants?.turn === w.turn ? from._grants.paid : 0) + given }; (from._outlay ||= {}).persons = (from._outlay.persons || 0) + given; if (given >= from.gdp * .001 && !k.onRecord) { k.onRecord = true; for (const x of [payer, payee]) { (x.secrets ||= []).push({ turn: w.turn, text: `${payee.name} draws ${Math.round(k.pay)} a quarter from the treasury of ${from.name} under a private contract signed by ${payer.name}.` }); x.secrets = x.secrets.slice(-12); } } }
       if (!from) payer.wealth -= m; if (to) to.treasury += m; else payee.wealth += m;
-      if (m < k.pay * .95) breach(w, k, payer.id, from ? `The treasury of ${from.name} could not pay in full.` : `${payer.name} could not pay in full.`);
-    }
-    if (k.good && k.amount > 0) {
-      const seller = w.characters[k.seller], buyer = k.seller === k.a ? B : A, from = w.countries[seller.country], to = w.countries[buyer.country];
-      if (!sellerFirm(w, k)) { breach(w, k, seller.id, stateOf(w, k, seller) ? `The state of ${from.name} has no works of its own producing ${GOOD_LABEL[k.good]}.` : `${seller.name} no longer owns a company producing ${GOOD_LABEL[k.good]}.`); continue; }
-      const route = from.id === to.id ? { cost: 1 } : w.routes[from.id < to.id ? `${from.id}|${to.id}` : `${to.id}|${from.id}`];
-      if (!route) continue;
-      // A seller delivers what their own works turn out, not the country's stores.
-      const output = works(w, k).filter(f => f.country === from.id).reduce((a, f) => a + (f.lastUnits || 0), 0);
-      const q = Math.min(from.stock[k.good] || 0, k.amount, output);
-      from.stock[k.good] -= q; to.stock[k.good] = (to.stock[k.good] || 0) + q / route.cost;
-      if (q < k.amount * .95) breach(w, k, seller.id, `${seller.name} delivered short on ${GOOD_LABEL[k.good]}.`);
+      if (m < due * .95) breach(w, k, payer.id, from ? (gift && room < gifted ? `The treasury of ${from.name} pays out only so much to private persons in a quarter beyond the worth of what it receives; ${Math.round(m * 10) / 10} of the ${Math.round(due * 10) / 10} due was paid.` : `The treasury of ${from.name} could not pay in full.`) : `${payer.name} could not pay in full.`);
     }
   }
   w.contracts = w.contracts.filter(k => ['proposed', 'active'].includes(k.status) ? w.turn - k.turn <= 120 : w.turn - (k.closedAt ?? w.turn) <= 40);
