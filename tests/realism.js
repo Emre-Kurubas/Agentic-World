@@ -1093,4 +1093,27 @@ chain('A famine burns out instead of feeding on itself, and tolls move gold with
   const x = fresh(); for (const p of Object.values(x.provinces)) if (p.deposits.gold) p.deposits.gold.mine = 0; for (const s of x.strategic) if (s.type === 'strait') { const o = x.countries[s.controller]; if (o) (o.straitPolicy ||= {})[s.id] = { closed: false, toll: .6 }; }
   const goldOf = () => aliveCountries(x).reduce((s, o) => s + o.reserves, 0), before = goldOf(); run(x, 8); assert.ok(goldOf() <= before + 1, `gold in the world ${before} -> ${goldOf()}`);
 });
+import { pathStep as routeStep } from '../engine/military.js';
+import { uprisingStep as risingStep } from '../engine/politics.js';
+chain('An order for part of a unit touches only that part: discharge, detachment and joining keep the count of men, and a token garrison does not hold an occupied people', () => {
+  const w = fresh(), c = w.countries.U1, boss = ld(w, c), gen = w.characters[c.general], home = w.provinces[c.capital];
+  for (const u of Object.values(w.units)) if (u.country === 'U1') delete w.units[u.id];
+  const u = makeUnit(w, 'U1', home.id, 100), workers = home.pops.workers.n, cost = upkeepCost(w, c);
+  let r = applyOp(w, boss, { op: 'disband', unit: u.id, men: 25 });
+  assert.ok(r.ok && w.units[u.id] && Math.abs(u.men - 75) < 1e-6, r.msg); assert.ok(Math.abs(home.pops.workers.n - workers - 25) < 1e-6, 'the discharged go back to work'); assert.ok(upkeepCost(w, c) < cost, 'and are no longer paid');
+  assert.equal(applyOp(w, gen, { op: 'disband', unit: u.id, men: 5 }).ok, false, 'the chief of staff cannot send men home');
+  const to = home.neighbors.find(id => w.provinces[id].controller === 'U1' && routeStep(w, home.id, id, 'U1')); assert.ok(to, 'a neighbouring province of our own');
+  const paid = upkeepCost(w, c); r = applyOp(w, gen, { op: 'move', unit: u.id, to, men: 20 }); assert.ok(r.ok, r.msg);
+  const d = Object.values(w.units).find(x => x.country === 'U1' && x.id !== u.id); assert.ok(d && Math.abs(d.men - 20) < 1e-6 && d.target === to, 'the detachment marches');
+  assert.ok(Math.abs(u.men - 55) < 1e-6 && !u.target && u.province === home.id, 'the rest stays'); assert.ok(Math.abs(upkeepCost(w, c) - paid) < 1e-6, 'splitting a unit does not change what the army costs');
+  assert.equal(d.loyalty, u.loyalty); assert.equal(d.kind, u.kind);
+  const guns = makeUnit(w, 'U1', home.id, 5, 1, 70, 'artillery'); assert.equal(applyOp(w, gen, { op: 'merge_units', unit: guns.id, into: u.id }).ok, false, 'guns and foot stay apart');
+  d.loyalty = 40; u.loyalty = 80; r = applyOp(w, gen, { op: 'merge_units', unit: d.id, into: u.id }); assert.ok(r.ok && !w.units[d.id] && Math.abs(u.men - 75) < 1e-6, r.msg);
+  assert.ok(Math.abs(u.loyalty - (40 * 20 + 80 * 55) / 75) < 1e-6, 'the joined unit is as loyal as its men were');
+  r = applyOp(w, boss, { op: 'disband', unit: u.id }); assert.ok(r.ok && !w.units[u.id], 'with no number the whole unit goes home');
+  // The same occupied province, held once by two hundred men and once by a real garrison.
+  const held = n => { const x = fresh(), p = countryProvinces(x, 'U2')[0]; for (const v of Object.values(x.units)) if (v.province === p.id) delete x.units[v.id];
+    p.controller = 'U1'; makeUnit(x, 'U1', p.id, n); for (let i = 0; i < 40 && p.controller === 'U1'; i++) { p.unrest = 90; risingStep(x); } return p.controller === 'U1'; };
+  assert.equal(held(.2), false, 'two hundred men among a whole people are thrown out'); assert.equal(held(60), true, 'a garrison holds');
+});
 console.log('All checks passed.');

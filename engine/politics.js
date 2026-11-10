@@ -347,9 +347,9 @@ export function uprisingStep(w) {
   for (const c of aliveCountries(w)) {
     const provs = countryProvinces(w, c.id), people = sum(provs, provincePop) || 1, hot = provs.filter(p => p.unrest > 62);
     for (const p of hot) if (rand(w) < .3) {
-      // Under occupation, a rising in a province with no garrison throws the occupier out.
+      // Under occupation, a rising throws the occupier out of a province he holds with no garrison, or with a handful of men among a whole people.
       const owner = w.countries[p.owner];
-      if (p.controller !== p.owner && owner?.alive && !Object.values(w.units).some(u => u.province === p.id && u.country === c.id)) {
+      if (p.controller !== p.owner && owner?.alive && garrisonHold(sum(Object.values(w.units).filter(u => u.province === p.id && u.country === c.id), u => u.men), provincePop(p)) < 1) {
         p.controller = p.owner; p.unrest = clamp(p.unrest - 25, 0, 100);
         news(w, `${p.name} rose against ${c.name} and went back to ${owner.name}.`, { kind: 'war', countries: [c.id, owner.id], province: p.id });
         continue;

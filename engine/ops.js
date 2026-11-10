@@ -23,7 +23,7 @@ const PERMISSIONS = {
 const PRIVATE = ['propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'fund_plot', 'bribe', 'custom', 'propaganda', 'noop'];
 PERMISSIONS.private = new Set(PRIVATE);
 // The chief of staff directs where the army's units and squadrons stand and who commands them. Raising and disbanding troops, war and peace stay with the ruler.
-for (const op of ['move', 'move_army', 'move_fleet', 'appoint_commander']) PERMISSIONS.general.add(op);
+for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'appoint_commander']) PERMISSIONS.general.add(op);
 for (const seat of ['general', 'opposition', 'oligarch']) PERMISSIONS[seat].add('noop');
 PERMISSIONS.exiled = new Set(PRIVATE.filter(x => !['found_party', 'execute_plot', 'gather_dossier'].includes(x)));
 PERMISSIONS.imprisoned = new Set(['accept_contract', 'cancel_contract', 'repay_debt', 'forgive_debt', 'join_plot', 'betray_plot', 'bribe', 'custom', 'noop']);
@@ -47,6 +47,7 @@ const TREATY = ['alliance', 'nonaggression', 'trade', 'military_access', 'peace'
 const LAW_TITLE = { nationalize_company: 'Company nationalization', set_tax: 'Tax regulation', set_budget: 'Budget amendment', set_tariff: 'Customs tariff', borrow: 'Borrowing authority', declare_war: 'Declaration of war', ban_party: 'Party ban', land_reform: 'Land reform', nationalize: 'Nationalization', privatize: 'Privatization' };
 
 const num = (v, a, b, d = a) => clamp(Number.isFinite(Number(v)) ? Number(v) : d, a, b);
+const menText = men => men < 1 ? `${Math.round(men * 1000)} men` : `${Math.round(men * 10) / 10} thousand men`;
 const alive = (w, id) => { const c = w.countries[id]; return c?.alive ? c : null; };
 // A character's real traces that can be found: dossiers are made of these.
 const leaveTrace = (w, ch, text) => { (ch.secrets ||= []).push({ turn: w.turn, text }); ch.secrets = ch.secrets.slice(-12); };
@@ -239,8 +240,35 @@ export function applyOp(w, actor, op) {
       queueProject(w, c, { kind: 'unit', province: p.id, men, unitKind: kind, label: `${men}k ${kind}` });
       return { ok: true, msg: `${men < 1 ? `${Math.round(men * 1000)} men` : `${men} thousand men`} in training, ready in ${durationOf('unit', kind)} quarters.${men < 2 ? ' So small a body can guard a palace but counts for little in the field.' : ''} Every man kept under arms has to be paid from the military budget each quarter.${note}` };
     }
-    case 'disband': { const u = w.units[op.unit]; if (!u || u.country !== c.id) return fail('No such unit.'); const here = w.provinces[u.province], home = here.controller === c.id && here.owner === c.id ? here : w.provinces[c.capital]; if (home) home.pops.workers.n += u.men; delete w.units[u.id]; return { ok: true, msg: `${Math.round(u.men)} thousand men went home.` }; }
-    case 'move': { const u = w.units[op.unit]; if (!u || u.country !== c.id || !w.provinces[op.to]) return fail('Invalid movement order.'); return applyOrder(w, c, u, op.to); }
+    case 'disband': {
+      const u = w.units[op.unit]; if (!u || u.country !== c.id) return fail('No such unit.');
+      const here = w.provinces[u.province], home = here && here.controller === c.id && here.owner === c.id ? here : w.provinces[c.capital];
+      // A number discharges that many and the unit stays in being; with no number the whole unit goes home.
+      const asked = Number(op.men), part = Number.isFinite(asked) && asked > 0 && asked < u.men - .05, men = part ? Math.round(asked * 10) / 10 : u.men;
+      const count = menText(men);
+      if (home) home.pops.workers.n += men;
+      if (!part) { delete w.units[u.id]; return { ok: true, msg: `${count} went home and ${u.id} is dissolved.` }; }
+      u.men -= men;
+      return { ok: true, msg: `${count} went home. ${u.id} keeps ${menText(u.men)} under arms.` };
+    }
+    case 'move': {
+      const u = w.units[op.unit]; if (!u || u.country !== c.id || !w.provinces[op.to]) return fail('Invalid movement order.');
+      // A number sends a detachment and leaves the rest of the unit where it stands.
+      const asked = Number(op.men); if (!(Number.isFinite(asked) && asked >= .1 && asked < u.men - .05)) return applyOrder(w, c, u, op.to);
+      if (u.province === op.to) return fail('Already there.'); if (!pathStep(w, u.province, op.to, c.id)) return fail('No route.');
+      const men = Math.round(asked * 10) / 10, d = makeUnit(w, c.id, u.province, men, u.quality, u.loyalty, u.kind);
+      d.morale = u.morale; d.equip = u.equip; if (u.bond != null) d.bond = u.bond; u.men -= men; d.target = op.to;
+      return { ok: true, msg: `${d.id}, ${menText(men)}, was detached from ${u.id} and ordered to ${w.provinces[op.to].name}. ${u.id} keeps ${menText(u.men)}.` };
+    }
+    case 'merge_units': {
+      const a = w.units[op.unit], b = w.units[op.into]; if (!a || !b || a === b || a.country !== c.id || b.country !== c.id) return fail('No such units.');
+      if (a.province !== b.province) return fail(`${a.id} and ${b.id} must stand in the same province to be joined.`);
+      if (a.kind !== b.kind) return fail(`${a.id} is ${a.kind} and ${b.id} is ${b.kind}; different arms stay separate units.`);
+      // The joined body is as good, as loyal and as well armed as its men were on average.
+      const n = a.men + b.men; for (const k of ['quality', 'morale', 'equip', 'loyalty', 'bond']) if (a[k] != null || b[k] != null) b[k] = ((a[k] ?? b[k]) * a.men + (b[k] ?? a[k]) * b.men) / n;
+      b.men = n; b.dug = Math.min(a.dug || 0, b.dug || 0); delete w.units[a.id];
+      return { ok: true, msg: `${a.id} was joined to ${b.id}, which now musters ${menText(n)}.` };
+    }
     case 'move_army': { if (!w.provinces[op.to]) return fail('No such target province.'); let n = 0; const us = Object.values(w.units).filter(u => u.country === c.id).sort((a, b) => b.men - a.men); const share = Math.ceil(us.length * num(op.share, .1, 1, .6)); for (const u of us.slice(0, share)) if (applyOrder(w, c, u, op.to).ok) n++; return n ? ok() : fail('Your units have no route to this target.'); }
     case 'declare_war': {
       if (!target || atWar(w, c.id, target.id)) return fail('War cannot be declared.');

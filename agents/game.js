@@ -315,7 +315,8 @@ export class Game {
       const home = w.countries[m.from.country], warden = w.characters[home?.leader];
       if (m.from.status === 'imprisoned' && target?.alive && warden?.alive && warden.id !== target.id && rand(w) < clamp(.25 + home.intelligence / 150, .25, .85)) { warden.inbox.push({ turn: w.turn, from: 'Prison censor', text: `Letter from the prisoner ${m.from.name} to ${target.name}: ${m.text}` }); m.intercepted = true; }
     }
-    return { trace, rulings, system: (this.sysLog ||= []).splice(0), messages: outgoing.map(m => { const target = recipient(w, m.to); return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, intercepted: !!m.intercepted, read: !!m.read, round: m.round ?? 0 }; }) };
+    // Notes the engine's keeper left in the world file (a fault found and corrected, a save repaired) go into the record once, with the quarter they were read in.
+    return { trace, rulings, system: [...(w.engineNotes || []).splice(0), ...(this.sysLog ||= []).splice(0)], messages: outgoing.map(m => { const target = recipient(w, m.to); return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, intercepted: !!m.intercepted, read: !!m.read, round: m.round ?? 0 }; }) };
   }
 
   applyRuling(ch, { narrative, prob, public: pub, ops, source, decision, decisionText }) {
