@@ -298,6 +298,15 @@ export function applyOp(w, actor, op) {
     // A disputed succession: declaring for the one who holds the palace or for the one who claims it, or giving the claim up.
     case 'back_claim': { const d = c.dispute; if (!d) return fail('No succession is in dispute here.'); if ([d.holder, d.claimant].includes(actor.id)) return fail('You are one of the two; the others declare for you or against.'); const side = op.character === d.claimant ? 'claimant' : op.character === d.holder ? 'holder' : null; if (!side) return fail('Declare for one of the two.'); d.backers[actor.id] = side; const whom = w.characters[side === 'claimant' ? d.claimant : d.holder]; tell(w, whom, actor.name, `${actor.name} has declared for you in the disputed succession.`); news(w, `${c.name}: ${actor.name} has declared for ${whom.name} in the disputed succession.`, { kind: 'politics', countries: [c.id] }); return { ok: true, msg: `You have declared for ${whom.name}. It will count when the matter is settled.` }; }
     case 'renounce_claim': { const d = c.dispute; if (!d || d.claimant !== actor.id) return fail('No claim is being made in your name.'); d.renounced = true; return { ok: true, msg: 'You have let it be known that you make no claim. The country will settle.' }; }
+    // Putting someone else in one of the two great offices. The one who is put out does not thank the government for it.
+    case 'appoint_minister': {
+      const post = ['treasury', 'police'].includes(op.post) ? op.post : null; if (!post) return fail('The post is treasury or police.'); if (!governs(w, c, actor)) return fail('Only whoever governs fills these offices.');
+      const ch = personFor(w, c, op, 'official'); if (!ch?.alive || ch.country !== c.id || ch.status !== 'free' || ROLES.some(r => c[r] === ch.id)) return fail(noPerson('No such person for the post.'));
+      const old = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === post && x.id !== ch.id);
+      if (old) { old.post = null; old.loyalty = clamp(old.loyalty - 25, 0, 100); tell(w, old, c.name, `You are relieved of your office; ${ch.name} takes it.`); }
+      ch.post = post; tell(w, ch, c.name, post === 'treasury' ? 'You are appointed keeper of the treasury.' : 'You are appointed chief of police.');
+      return { ok: true, msg: `${ch.name} (${ch.id}) now ${post === 'treasury' ? 'keeps the treasury' : 'heads the police'}${old ? `; ${old.name}, who held the office, is out and resents it` : ''}.` };
+    }
     case 'accept_offer': { const r = takeOffer(w, actor, op.id); return r ?? fail('No such offer is waiting for you.'); }
     case 'decline_offer': { const r = refuseOffer(w, actor, op.id, governs(w, c, actor)); return r ?? fail('No such offer.'); }
     // A gift of one's own money to a person or to an institution, at home or abroad. Nothing is owed for it and it leaves no mark of a bribe.

@@ -15,7 +15,7 @@ import { honourOf, honourWord, guaranteesOf } from '../engine/diplomacy.js';
 import { papersOf } from '../engine/press.js';
 import { bondsOf, holdersOf, marketPrice } from '../engine/bonds.js';
 import { season } from '../engine/military.js';
-import { quarterLabel } from '../engine/util.js';
+import { quarterLabel, clamp } from '../engine/util.js';
 
 const menIn = (w, p) => Object.values(w.units).filter(u => u.province === p.id && u.country === p.controller).reduce((a, u) => a + u.men, 0);
 // Where the money came from and where it went, from the same figures the engine settled the quarter with.
@@ -54,7 +54,7 @@ The map: map (the known world at a glance), map:mine (your provinces: where they
 Your country: economy, money, budget, trade, stocks, production, resources, press (newspapers, who owns them, how widely they are read), labour (strikes, lockouts, how the men at each works stand), population, mood (what each class is content or bitter about, and why), unrest, provinces, army, fleet, blocs, parties, parliament, institutions, people, person:K12, plots, technology
 World: history, world, rates, country:U3, market, treaties, wars, news
 Defence and building: projects, fortifications. Peoples: culture. Government: governors. Army: commanders. Private deals: contracts.
-Law: justice (the courts, who stands trial, who is in prison and for how long).
+Law: justice (the courts, who stands trial, who is in prison and for how long). Government: ministers (who keeps the treasury, who heads the police, who governs the provinces, and how good they are).
 Yours alone: my_secrets (what there is to be found out about you, and your kin), dossiers (what you have gathered on others, and letters copied in the post if you govern), informants (who reports to you in secret), debts (debts you gave and took), my_companies
 Country companies: companies`;
 
@@ -136,7 +136,11 @@ export function answer(w, ch, raw) {
   const q = String(raw || '').trim(), [topic, arg] = q.split(':').map(s => s?.trim());
   const c = w.countries[ch.country], provs = countryProvinces(w, c.id), office = inOffice(w, ch);
   const regent = c.leader !== ch.id && governs(w, c, ch);
-  const can = (_, t) => (office && (INSIDE[ch.role] || []).includes(t)) || (regent && INSIDE.leader.includes(t)), show = (_, t, v) => can(_, t) ? Math.round(v) : fuzzy(v);
+  // What a state knows of its own country is what its offices can count. Money in the till, men on the rolls and goods in store are counted;
+  // output, population and the temper of the people are estimated, and a thin administration estimates badly. The error is steady within a quarter.
+  const blur = w.friction ? clamp((70 - c.bureaucracy) / 100 * .35, 0, .2) : 0, noise = key => { let h = 7; for (const x of `${c.id}|${w.turn}|${key}`) h = (h * 31 + x.codePointAt(0)) >>> 0; return (h % 2001) / 1000 - 1; };
+  const est = (v, t) => blur && ['economy', 'blocs'].includes(t) ? v * (1 + blur * noise(`${t}|${Math.round(v)}`)) : v;
+  const can = (_, t) => (office && (INSIDE[ch.role] || []).includes(t)) || (regent && INSIDE.leader.includes(t)), show = (_, t, v) => can(_, t) ? Math.round(est(v, t)) : fuzzy(v);
   const T = {
     map: () => arg ? countryMap(w, ch, arg) : worldMap(w, ch),
     population: () => {
@@ -203,6 +207,7 @@ export function answer(w, ch, raw) {
     people: () => Object.values(w.characters).filter(x => x.country === c.id && x.alive && x.id !== ch.id).map(x => `${x.id} ${x.name}, ${c[x.role] === x.id ? x.role : isMinor(x) ? `${x.role}${postOf(w, x) ? `, ${postOf(w, x)}` : ''}` : `no office (once ${x.role.replace('_', ' ')})`}, age ${x.age}, ${x.status}${seenHealth(x)}`).join('; ') + (() => { const guests = Object.values(w.characters).filter(x => x.alive && x.status === 'exiled' && x.host === c.id); return guests.length ? `\nForeign exiles living here: ${guests.map(x => `${x.id} ${x.name}, driven out of ${w.countries[x.country]?.name}${(x.recognisedBy || []).includes(c.id) ? ', recognised by this country as that country\'s rightful government' : ''}`).join('; ')}` : ''; })() + `\nAmong states ${honourWord(honourOf(c))} (${Math.round(honourOf(c))} of 100)${(c.honourLog || []).length ? `; lately: ${c.honourLog.slice(-3).map(x => x.why).join('; ')}` : ''}.`,
     justice: () => { const here = Object.values(w.characters).filter(x => x.alive && x.country === c.id), tried = here.filter(x => x.trial), held = here.filter(x => x.status === 'imprisoned'); return `The courts are ${c.courts >= 65 ? 'independent' : c.courts >= 35 ? 'open to pressure' : 'in the government\'s hand'} (${Math.round(c.courts)} of 100).\nBefore the court: ${tried.map(x => `${x.name} (${x.id}), charged with ${x.trial.charge} by ${w.characters[x.trial.by]?.name}, verdict next quarter`).join('; ') || 'no one'}.\nIn prison: ${held.map(x => `${x.name} (${x.id})${x.sentence ? `, serving a sentence for ${x.sentence.charge} until ${quarterLabel(x.sentence.until)}` : ', held by order, without a sentence'}`).join('; ') || 'no one of note'}.${c.labourLaw ? `\nFactory law: every works must spend at least ${c.labourLaw.safety} of 1 on safety and pay at least ${c.labourLaw.wage} of the going wage.` : ''}`; },
     my_secrets: () => { const mine = (ch.secrets || []).filter(s => !s.published).map(s => `- ${s.text}`), kin = (ch.kinfolk || []).map(id => w.characters[id]).filter(k => k?.alive).map(k => `- your ${k.tie} ${k.name} (${k.id}), ${k.status}${postOf(w, k) ? `, ${postOf(w, k)}` : ''}`); return `What could be found out about you by someone who went looking (a dossier, an audit, an informant, a letter opened):\n${mine.join('\n') || '- nothing on record'}${kin.length ? `\nYour kin, whom others can reach:\n${kin.join('\n')}` : ''}`; },
+    ministers: () => { const who = post => Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === post && x.status === 'free'), line = (post, what) => { const m = who(post); return m ? `${m.name} (${m.id}) ${what}: ${m.skill >= 1.15 ? 'able' : m.skill >= .95 ? 'competent' : 'a poor hand at it'}${can(ch, 'budget') ? `, ${m.loyalty >= 65 ? 'loyal' : m.loyalty >= 40 ? 'wavering' : 'has lost faith in the government'}` : ''}` : `nobody ${what}`; }; return `${line('treasury', 'keeps the treasury')}. An able keeper gets more of the taxes in; a faithless one keeps some.\n${line('police', 'heads the police')}. An able chief makes the police count for more; a faithless one looks away and gives warning.\nWhoever governs can put someone else in either post (appoint_minister).\nGovernors: ${provs.filter(p => w.characters[p.governor]?.alive).map(p => `${p.name}: ${w.characters[p.governor].name} (${p.governor})`).join('; ') || 'none appointed'}.`; },
     informants: () => { const mine = Object.values(w.characters).filter(x => x.alive && x.handler === ch.id); return mine.map(x => `${x.id} ${x.name}, ${w.countries[x.country]?.name}${postOf(w, x) ? `, ${postOf(w, x)}` : ''}; in your pay since ${quarterLabel(x.boughtAt ?? w.turn)}`).join('\n') || 'No one reports to you in secret. An officer, an official, a governor or a banker, at home or abroad, can be bought to do so.'; },
     person: () => { const x = w.characters[arg]; if (!x) return `Person not found: ${arg}`; const home = w.countries[x.country], kin = x.name.split(' ').at(-1) === ch.name.split(' ').at(-1) ? ' May be from the same family as you.' : ''; return `${x.name}, ${home?.[x.role] === x.id ? x.role : `no office (once ${x.role.replace('_', ' ')})`}, ${home?.name}, age ${x.age}, ${x.alive ? `status ${x.status}${seenHealth(x)}` : `dead${x.death ? `: ${x.death.how}` : ''}`}. What is said of them: ${x.publicFace || 'nothing in particular'}.${ch.dossiers[x.id] ? ` You hold a dossier on them; wealth ${Math.round(x.wealth)}. In the dossier: ${ch.dossiers[x.id].facts?.join(' ') || 'nothing incriminating'}` : ''}${kin}`; },
     plots: () => w.plots.filter(p => p.active && ([p.leader, ...p.members].includes(ch.id) || (p.country === c.id && c.leader === ch.id && p.exposed))).map(p => `${p.id} ${p.kind}${p.target && w.characters[p.target] ? ` against ${w.characters[p.target].name}` : ''}, progress ${Math.round(p.progress)}, ${p.exposed ? 'leaked' : 'secret'}, members ${p.members.length + 1}`).join('; ') || 'You know of no plots.',
@@ -220,7 +225,9 @@ export function answer(w, ch, raw) {
     dossiers: () => Object.entries(ch.dossiers).map(([id, d]) => `${id} ${d.about}: ${d.facts?.join(' ') || 'nothing incriminating found'}`).join('\n') || 'You hold no dossiers.',
     debts: () => (bondsOf(w, ch.id).length ? `${bondsOf(w, ch.id).map(b => `You hold ${Math.round(b.amount * 10) / 10} of the state paper of ${w.countries[b.country]?.name}; it pays ${round((w.countries[b.country]?.interestRate ?? .01) * 100, 1)}% a quarter and would fetch about ${Math.round(marketPrice(w.countries[b.country]) * 100)} in the hundred if sold.`).join('\n')}\n` : '') + (w.debts || []).filter(d => ['open', 'overdue'].includes(d.status) && [d.creditor, d.debtor].includes(ch.id)).map(d => d.debtor === ch.id ? `${d.id}: you owe ${w.characters[d.creditor]?.name} ${Math.round(d.owed)}, due turn ${d.due}${d.status === 'overdue' ? ' (OVERDUE)' : ''}. ${d.terms}` : `${d.id}: ${w.characters[d.debtor]?.name} owes you ${Math.round(d.owed)}, due turn ${d.due}${d.status === 'overdue' ? ' (OVERDUE)' : ''}. ${d.terms}`).join('\n') || 'You have no open debts or claims.'
   };
-  return T[topic] ? T[topic]() : `No information on "${q}". ${CATALOG}`;
+  if (!T[topic]) return `No information on "${q}". ${CATALOG}`;
+  const said = T[topic]();
+  return blur > .02 && ['economy', 'population', 'mood', 'unrest', 'blocs'].includes(topic) && (can(ch, 'economy') || can(ch, 'blocs')) ? `${said}\nThese are the statistical office's estimates, and it is a thin office: figures of this kind may be off by about ${Math.round(blur * 100)}% either way. A stronger bureaucracy counts better.` : said;
 }
 
 export const alarms = (w, ch) => {

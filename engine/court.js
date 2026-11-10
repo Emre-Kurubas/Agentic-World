@@ -21,7 +21,12 @@ export function postOf(w, ch) {
   const p = Object.values(w.provinces).find(x => x.governor === ch.id); if (p) return `governor of ${p.name}`;
   return POSTS[ch.post] ?? (ch.office ? `holds ${ch.office}` : '');
 }
-export function seatCourt(w) { for (const c of aliveCountries(w)) fillPosts(w, c); }
+export function seatCourt(w) { for (const c of aliveCountries(w)) { fillPosts(w, c); serve(w, c); } }
+// How well the two great offices are served: an able and faithful keeper gets the taxes in, an able and faithful chief makes the police count.
+function serve(w, c) {
+  const served = post => { const m = minorsOf(w, c).find(x => x.post === post && x.status === 'free'); return m ? clamp(.92 + ((m.skill ?? 1) - 1) * .3, .82, 1.08) * (m.loyalty < 30 ? .85 : 1) : .88; };
+  c.service = w.friction ? { treasury: served('treasury'), police: served('police') } : null;
+}
 
 // ---- The post ----
 // A letter passes through the hands of the state it is sent from and the state it is sent to. How much of the mail a state opens depends on
@@ -54,6 +59,11 @@ function fillPosts(w, c) {
   for (const post of Object.keys(POSTS)) if (!mine.some(x => x.post === post && x.status === 'free') && room()) {
     const ch = spawnCharacter(w, c.id, post === 'house' ? 'financier' : 'official', c.axes, { power: post === 'house' ? 36 : 28 }); ch.post = post;
     if (post === 'house') { ch.wealth = Math.round(70 + rand(w) * 130); (w.bonds ||= []).push({ id: nextId(w, 'O'), holder: ch.id, country: c.id, amount: Math.round(ch.wealth * .8), turn: w.turn }); } mine.push(ch);
+  }
+  // The largest provinces away from the capital have a governor: where the ruler has named none, the service sends one.
+  if (w.friction) for (const p of Object.values(w.provinces).filter(p => p.controller === c.id && p.owner === c.id && p.id !== c.capital).sort((a, b) => Object.values(b.pops).reduce((s, x) => s + x.n, 0) - Object.values(a.pops).reduce((s, x) => s + x.n, 0)).slice(0, 3)) {
+    const cur = w.characters[p.governor]; if (cur?.alive && cur.status === 'free' && cur.country === c.id) continue;
+    if (!room()) break; const ch = spawnCharacter(w, c.id, 'governor', c.axes, { power: 30 }); p.governor = ch.id; mine.push(ch);
   }
   for (const u of unitsOf(w, c).filter(u => u.men >= 10).sort((a, b) => b.men - a.men).slice(0, 4)) {
     const cur = w.characters[u.commander]; if (cur?.alive && cur.status === 'free' && cur.country === c.id) continue;
@@ -264,6 +274,7 @@ export function courtStep(w, applyOp) {
       const p = Object.values(w.provinces).find(x => x.governor === ch.id && x.controller === c.id); if (p) governor(w, c, ch, p);
     }
     c._leaseDrain = 0; payLeases(w, c); duns(w, c); answers(w, c); tempt(w, c);
+    serve(w, c);
   }
   // Said once, where everyone hears it: the mails are not safe.
   if (!w.postTold) { w.postTold = true; for (const ch of Object.values(w.characters)) if (ch.alive && ROLES.includes(ch.role)) say(w, ch, 'Common knowledge', 'It is said in every capital that letters are opened in the post. Where a state keeps watch on the mails, some letters are copied before they are delivered, more often when they cross a border, and nobody can tell which. Those around the great (officers, officials, bankers) have ambitions and prices of their own.'); }

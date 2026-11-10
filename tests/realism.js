@@ -702,7 +702,8 @@ ok('An inherited state left alone for three years neither soars nor collapses, a
     const w = inherited(seed), start = Object.fromEntries(aliveCountries(w).map(c => [c.id, c.legitimacy])); run(w, 12);
     for (const c of aliveCountries(w)) { assert.ok(Math.abs(c.legitimacy - start[c.id]) < 22, `${c.archetype} ${start[c.id]} -> ${c.legitimacy}`); balances.push(c.lastBalance / c.gdp); }
   }
-  assert.ok(balances.some(b => b > 0) && balances.some(b => b < -.03), `balances ${balances.map(b => b.toFixed(3)).join(' ')}`);
+  // Some lay money by, some live beyond their means; none starts with a hole that empties the treasury within the year.
+  assert.ok(balances.some(b => b > .003) && balances.some(b => b < -.012) && balances.every(b => b > -.035), `balances ${balances.map(b => b.toFixed(3)).join(' ')}`);
 });
 chain('A deficit is borrowed and the debt grows; a surplus fills the treasury; a heavier debt costs a higher rate', () => {
   const w = fresh(), a = w.countries.U1, b = w.countries.U2;
@@ -1364,6 +1365,11 @@ chain('An order is carried out as far as the state has the offices and the loyal
   if (to) { col.loyalty = 5; let delays = 0; for (let i = 0; i < 40; i++) { u.target = null; if (!applyOp(x, b, { op: 'move', unit: u.id, to }).ok) delays++; } assert.ok(delays > 6 && delays < 30, `he obeys when it suits him: ${delays} of 40 orders delayed`); col.loyalty = 90; u.target = null; assert.ok(applyOp(x, b, { op: 'move', unit: u.id, to }).ok, 'a loyal one marches'); }
   const chief = Object.values(x.characters).find(v => v.country === 'U1' && v.post === 'police'), opp = x.characters[k.opposition]; chief.loyalty = 5; k.courts = 0; opp.inbox = []; let warned = 0; for (let i = 0; i < 40; i++) { opp.status = 'free'; const o = applyOp(x, b, { op: 'purge', character: opp.id, fate: 'imprisoned' }); if (/gave warning/.test(o.msg)) warned++; }
   assert.ok(warned >= 4 && warned < 36 && opp.inbox.some(m => /warned in time/.test(m.text)), 'a faithless police chief lets the quarry know');
+  // The two great offices: an able keeper gets more of the taxes in than a poor one, and the ruler can change him.
+  { const keeper = Object.values(x.characters).find(v => v.country === 'U1' && v.post === 'treasury'); keeper.loyalty = 90; keeper.skill = 1.35; courtOf(x, applyOp); const good = k.service.treasury; keeper.skill = .75; courtOf(x, applyOp); assert.ok(k.service.treasury < good - .1, `a poor hand at the treasury gets less in: ${good} -> ${k.service.treasury}`);
+    const r = applyOp(x, b, { op: 'appoint_minister', post: 'treasury', name: 'Aldous Wren' }); assert.ok(r.ok, r.msg); assert.equal(Object.values(x.characters).filter(v => v.alive && v.country === 'U1' && v.post === 'treasury').length, 1, 'one keeper at a time'); assert.ok(keeper.post == null && keeper.loyalty < 90, 'the one put out resents it');
+    assert.ok(Object.values(x.provinces).some(p => p.controller === 'U1' && x.characters[p.governor]?.role === 'governor'), 'the largest provinces have governors'); assert.ok(lookUp(x, b, 'ministers').includes('keeps the treasury'));
+    k.bureaucracy = 20; const thin = lookUp(x, b, 'economy'); assert.ok(/may be off by about/.test(thin), 'a thin state is told its own figures are rough'); k.bureaucracy = 90; assert.ok(!/may be off by about/.test(lookUp(x, b, 'economy')), 'a capable one counts well'); }
   const clerk = Object.values(x.characters).find(v => v.country === 'U1' && v.post === 'treasury'); clerk.loyalty = 5; clerk.greed = 90; k.treasury = 5000; k.lastRevenue = 1000; const had = clerk.wealth; courtOf(x, applyOp); assert.ok(k.treasury < 5000 && clerk.wealth > had && clerk.secrets.some(s => /Kept back money/.test(s.text)), 'a faithless treasurer keeps some back, and that can be found');
 });
 import { diplomacyStep as diplomacyOf, honourOf as honourIn } from '../engine/diplomacy.js';

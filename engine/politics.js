@@ -63,7 +63,7 @@ export function satisfactionStep(w) {
       const pp = provincePop(p);
       const meanSat = CLASSES.reduce((a, k) => a + p.pops[k].sat * p.pops[k].n, 0) / Math.max(pp, 1);
       // Police hold down open unrest far better where the press cannot report it. That is control, not consent: satisfaction is untouched.
-      const grip = c.police * (.1 + .2 * (1 - c.pressFreedom / 100));
+      const grip = c.police * (c.service?.police ?? 1) * (.1 + .2 * (1 - c.pressFreedom / 100));
       // A province does not forget what was done to it, for as long as those who did it still rule there.
       const scar = p.scar && p.scar.by === p.controller ? p.scar.weight * 40 * Math.max(0, 1 - (w.turn - p.scar.turn) / 80) : 0;
       const pressure = 88 - meanSat * 1.3 + (c.pressFreedom > 70 ? 3 : 0) - grip - garrisonHold(garrison[p.id] || 0, pp) - c.repress * .35 + modValue(c, 'unrest') + adminPressure(p) + scar;

@@ -12,6 +12,7 @@ import { issueCurrency } from './money.js';
 import { initFirms } from './firms.js';
 import { seatCourt } from './court.js';
 import { burdenAll } from './burdens.js';
+import { beginTurn, stepWorld } from './step.js';
 import { writeChronicles, writeLives } from './chronicle.js';
 import { updateStrategic, updateRoutes, costOfCapacity, costOfPolice } from './economy.js';
 
@@ -103,6 +104,24 @@ function makePast(w) {
 
 // An inherited state starts at rest. Its people already feel about it what its taxes, policies and police make them feel,
 // and whatever standing the regime has beyond that is carried as its own. The new ruler does not watch a slide they did not cause.
+// Where each kind of state stands with its books when it is handed over, as a share of a quarter's output: a merchant republic lays money by,
+// most states are near balance, a junta and a poor agrarian state live beyond their means. The taxes each inherited are set so that this is
+// where the first quarters actually come out, instead of leaving every state to find a hole in its accounts by the end of the first year.
+const BOOKS = { merchant: .010, republic: .003, federation: .001, monarchy: -.002, theocracy: -.003, revolutionary: -.007, agrarian: -.009, junta: -.016 };
+function balance(w, cs) {
+  // The books are read after a year and a half, when the first quarters' adjustments are over: that is the level the state lives at.
+  for (let pass = 0; pass < 1; pass++) {
+    const trial = structuredClone(w); trial.status = 'playing';
+    for (let i = 0; i < 6; i++) { beginTurn(trial); stepWorld(trial); }
+    for (const c of cs) {
+      const t = trial.countries[c.id]; if (!t?.alive || !(t.lastRevenue > 0)) continue;
+      const want = (BOOKS[c.archetype] ?? 0) * t.gdp, factor = clamp((t.lastRevenue + want - t.lastBalance) / t.lastRevenue, .6, 1.6);
+      for (const k of Object.keys(c.tax)) c.tax[k] = clamp(c.tax[k] * factor, .02, .6); c.tariff = clamp(c.tariff * factor, 0, .6);
+    }
+  }
+  // The people have lived under these taxes for years: their temper is where such taxes leave it.
+  settle(w, cs);
+}
 function settle(w, cs) {
   const held = cs.map(c => c.legitimacy), rest = n => { for (let i = 0; i < n; i++) { satisfactionStep(w); cs.forEach((c, k) => { c.legitimacy = held[k]; }); } };
   rest(16);
@@ -127,13 +146,16 @@ export function inheritStates(w) {
   initFirms(w);
   // Routes are known from the start so shipment and credit decisions can be made in the first quarter too.
   updateStrategic(w); updateRoutes(w);
+  // The people around the seats are there from the first day, and the state's offices work as they are staffed.
+  w.burdens = true; w.friction = true; seatCourt(w);
   settle(w, cs);
+  balance(w, cs);
   for (let i = 0; i < 8; i++) partyStep(w);
   for (const c of cs) {
     const a = ARCHETYPES.find(x => x.key === c.archetype);
     if (c.elections) makeParliament(c, a.key === 'merchant' ? 'Merchants\' Assembly' : 'Parliament');
     else if (a.advisory) makeParliament(c, a.advisory, false);
   }
-  // The people around the seats are there from the first day, and those in the seats do not arrive with clean hands and empty pockets.
-  w.burdens = true; w.friction = true; seatCourt(w); burdenAll(w);
+  // Those in the seats do not arrive with clean hands and empty pockets.
+  burdenAll(w);
 }

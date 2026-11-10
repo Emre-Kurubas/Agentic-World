@@ -260,7 +260,7 @@ function consume(w, c, prev) {
 }
 
 function fiscal(w, c) {
-  const eff = clamp((.4 + c.bureaucracy / 120) * (1 - c.corruption / 130) * (1 - (c.unrest ?? 0) / 400) * (c._adminFactor ?? 1), .2, 1);
+  const eff = clamp((.4 + c.bureaucracy / 120) * (1 - c.corruption / 130) * (1 - (c.unrest ?? 0) / 400) * (c._adminFactor ?? 1) * (c.service?.treasury ?? 1), .2, 1);
   const land = c._raw.grain * 10 * c.priceLevel * c.tax.land, business = (sum(RAW.filter(g => g !== 'grain'), g => c._raw[g] * BASE_PRICE[g]) + sum(Object.keys(RECIPE), g => (c._made[g] || 0) * BASE_PRICE[g] * .45)) * c.priceLevel * c.tax.business;
   const revenue = (c.gdp * .45 * c.tax.income + land + business + (c._imports || 0) * c.priceLevel * c.tariff) * eff + (c._tolls || 0) * c.priceLevel;
   const b = c.budget, programs = (b.military + b.welfare + b.infrastructure + b.education + b.police + b.administration) * c.gdp;
@@ -279,11 +279,15 @@ function fiscal(w, c) {
   c.extArrears = extDue > 0 && extPaid < extDue * .5 ? (c.extArrears || 0) + 1 : Math.max(0, (c.extArrears || 0) - 1);
   if (c.extArrears >= 4) declareDefault(w, c, 'declared it cannot pay its external debt');
   const need = programs + agencies + interest; let cash = c.treasury + revenue, paid = 1, borrowed = 0;
+  // A treasury keeps a working balance of some days' spending. A deficit is met first from the cash above that, then from lenders; the last
+  // cash in the till is touched only when lenders refuse. So an empty treasury means the state can no longer borrow, not merely that it runs a deficit.
+  const till = Math.min(need * .12, Math.max(c.treasury, 0));
+  if (cash - need < till) { borrowed = Math.max(0, Math.min(till - (cash - need), need - revenue, creditLeft(c))); c.debt += borrowed; cash += borrowed; c._taken = (c._taken || 0) + borrowed; }
   if (cash >= need) cash -= need;
   else {
-    // A deficit is covered by borrowing for as long as lenders agree; after that wages and bills go unpaid.
-    borrowed = Math.min(need - cash, creditLeft(c));
-    c.debt += borrowed; cash += borrowed; c._taken = (c._taken || 0) + borrowed;
+    // What lenders would not cover is taken from what cash is left; after that wages and bills go unpaid.
+    const more = Math.min(need - cash, Math.max(0, creditLeft(c)));
+    borrowed += more; c.debt += more; cash += more; c._taken = (c._taken || 0) + more;
     if (cash < need - 1e-9) {
       paid = need > 0 ? clamp(cash / need, 0, 1) : 1; cash = 0; c.arrears = clamp(c.arrears + (1 - paid), 0, 6);
       if (paid < .55 && c.debt > c.gdp * 4 * .9) declareDefault(w, c, 'declared it cannot pay its debts');
