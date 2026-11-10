@@ -6,7 +6,7 @@ import { SUCCESSION, SUCCESSION_TEXT, successionRule } from '../engine/politics.
 import { groupsOf } from '../engine/culture.js';
 import { creditLeft } from '../engine/money.js';
 import { offersFor } from '../engine/contracts.js';
-import { offersTo, postOf } from '../engine/court.js';
+import { offersTo, postOf, mannerOf } from '../engine/court.js';
 import { burdensText } from '../engine/burdens.js';
 import { healthText, incapacitated } from '../engine/health.js';
 import { upkeepCost } from '../engine/military.js';
@@ -117,6 +117,23 @@ A law can set taxes, budgets, tariffs, money, debt, war, parties, the regime, in
 Several things can only be done so far in one quarter and a repeated order adds nothing: printing money, devaluing, borrowing, nationalising and privatising, raising men from one province, embezzling. privatize_company makes an offer that the buyer must take with buy_company. A landing (amphibious) needs the unit on a coast, a sea route, and a surface fleet with ships enough holding the water off the target.
 A blockade is a fleet moved to a sea next to the enemy's ports. Technology keys: ${Object.keys(TECHS).join(',')}.
 Authority: the ruler may order anything. The chief of staff may move units and fleets, detach and join them, appoint their commanders and gather intelligence abroad (move, move_army, move_fleet, merge_units, merge_fleets, appoint_commander, spy with kind intel), but not raise or disband them, make war, or order sabotage. The chief of staff, the opposition leader and the oligarch may deal, lend, bribe, plot, speak and use their own specialist operations, but not the state's (taxes, war, recruiting, purges) unless an institution delegates them. Someone out of office, imprisoned or exiled can do less still. The engine itself refuses what an actor may not do, so translate the decision as it was meant.`;
+
+// Letters written to people nobody plays (officers, officials, bankers, kin) are answered for them, from what the engine knows of each.
+export function courtPrompt(w, c, letters) {
+  const people = [...new Set(letters.map(l => l.to.id))].map(id => w.characters[id]);
+  return `You speak for people of the fictional country ${c.name} who are played by no one: officers, officials, bankers, relatives of the great. Letters reached them this quarter. Each answers in their own voice and in a few sentences, as the facts below make them: a loyal servant of the ruler may refuse, evade or say he must report the matter; one who has lost faith may listen and hint; one fond of money may name what he wants; a frightened one says little. They know their own post and what passes through it, and nothing beyond that.
+Rules: invent no events and no facts about the world. Do not accept or refuse a contract or an offer of money in a letter (the notary answers those separately); a writer may say he will think on it. Do not have anyone confess a secret unasked. Do not write for anyone who is not listed. One reply to each letter, addressed to its writer.
+
+The people you speak for:
+${people.map(p => `${p.id} ${p.name}: ${p.role}${postOf(w, p) ? `, ${postOf(w, p)}` : ''}, age ${p.age}; ${mannerOf(w, p)}.`).join('\n')}
+The ruler is ${w.characters[c.leader]?.name}. Date: ${w.date || 'Start'}.
+
+The letters:
+${letters.map((l, i) => `${i + 1}. From ${l.from.id} ${l.from.name} (${l.from.role}${l.from.country !== c.id ? ` of ${w.countries[l.from.country]?.name}` : ''}) to ${l.to.id} ${l.to.name}: "${String(l.text).slice(0, 1500)}"`).join('\n')}
+
+Respond with only this JSON.
+{"replies":[{"from":"K200","to":"K30","text":"the reply"}]}`;
+}
 
 export function refereePrompt(w, c, entries) {
   const nm = id => w.countries[id]?.name ?? id, P = id => `${id}=${w.provinces[id]?.name}`, cut = (s, n) => String(s ?? '').replace(/\s+/g, ' ').slice(0, n);

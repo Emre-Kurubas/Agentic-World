@@ -3,10 +3,10 @@ import { aliveCountries, ROLES, countryProvinces } from '../engine/world.js';
 import { beginTurn, stepWorld } from '../engine/step.js';
 import { applyOp } from '../engine/ops.js';
 import { news, rand, clamp, quarterLabel } from '../engine/util.js';
-import { openPost } from '../engine/court.js';
+import { openPost, isMinor } from '../engine/court.js';
 import { burden } from '../engine/burdens.js';
 import { npcDecide } from './npc.js';
-import { actorPrompt, refereePrompt, lookupReply, talkText } from './prompts.js';
+import { actorPrompt, refereePrompt, courtPrompt, lookupReply, talkText } from './prompts.js';
 import { answer } from './queries.js';
 import { LimitError, SessionLostError } from './backend.js';
 import { snapshotState, buildEntries } from './ledger.js';
@@ -263,6 +263,20 @@ export class Game {
       this.pending.referee[cid] = r;
       this.store.savePending(this.pending);
     }));
+    // Letters to people nobody plays are answered for them, country by country, from what the engine knows of each.
+    if (this.backend.kind === 'mock') return;
+    const mail = {};
+    for (const ch of actors) for (const m of this.pending.actors[ch.id]?.messages ?? []) { const to = recipient(w, m.to); if (to?.alive && to.status === 'free' && isMinor(to) && !to.aiControlled && to.id !== ch.id) (mail[to.country] ||= []).push({ from: ch, to, text: m.text }); }
+    const posts = Object.entries(mail).filter(([cid]) => w.countries[cid]?.alive && !this.pending.replies?.[cid]);
+    if (!posts.length) return;
+    this.setStatus('referee judging', `answering ${posts.reduce((a, [, l]) => a + l.length, 0)} letters to people around the seats`);
+    await this.withRetry(() => pool(posts, cfg.concurrency, async ([cid, letters]) => {
+      let r;
+      try { r = await this.backend.ask(courtPrompt(w, w.countries[cid], letters.slice(0, 24)), cfg.models.referee); }
+      catch (e) { if (e instanceof LimitError) throw e; this.report(null, `No replies written for the people of ${w.countries[cid]?.name}: ${e.message}`); r = { replies: [] }; }
+      (this.pending.replies ||= {})[cid] = (Array.isArray(r?.replies) ? r.replies : []).filter(x => x && typeof x.text === 'string').slice(0, 24).map(x => ({ from: String(x.from), to: String(x.to), text: x.text.slice(0, 3000) }));
+      this.store.savePending(this.pending);
+    }));
   }
 
   execute(actors) {
@@ -308,6 +322,8 @@ export class Game {
     }
     // Those who never read their mail (rule-based players, sleepers) do not keep every letter for ever.
     for (const ch of Object.values(w.characters)) if (ch.inbox.length > 40) ch.inbox = ch.inbox.slice(-40);
+    // What the people around the seats wrote back goes by the same post as everyone's letters.
+    for (const rs of Object.values(this.pending.replies || {})) for (const r of rs) { const from = w.characters[r.from], to = w.characters[r.to]; if (from?.alive && from.status === 'free' && isMinor(from) && !from.aiControlled && to?.alive) outgoing.push({ from, to: to.id, text: r.text, npc: true }); }
     for (const m of outgoing) {
       const target = recipient(w, m.to);
       if (target) m.to = target.id === w.countries[m.to]?.leader ? m.to : target.id;
@@ -320,7 +336,7 @@ export class Game {
       else if (target?.alive) { const readers = openPost(w, m.from, target, m.text); if (readers.length) { m.intercepted = true; m.readBy = readers; } }
     }
     // Notes the engine's keeper left in the world file (a fault found and corrected, a save repaired) go into the record once, with the quarter they were read in.
-    return { trace, rulings, system: [...(w.engineNotes || []).splice(0), ...(this.sysLog ||= []).splice(0)], messages: outgoing.map(m => { const target = recipient(w, m.to); return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, intercepted: !!m.intercepted, readBy: m.readBy ?? [], read: !!m.read, round: m.round ?? 0 }; }) };
+    return { trace, rulings, system: [...(w.engineNotes || []).splice(0), ...(this.sysLog ||= []).splice(0)], messages: outgoing.map(m => { const target = recipient(w, m.to); return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, intercepted: !!m.intercepted, readBy: m.readBy ?? [], npc: !!m.npc, read: !!m.read, round: m.round ?? 0 }; }) };
   }
 
   applyRuling(ch, { narrative, prob, public: pub, ops, source, decision, decisionText }) {

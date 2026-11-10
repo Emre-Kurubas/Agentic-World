@@ -1330,4 +1330,18 @@ chain('Nobody arrives in a seat with clean hands and empty pockets: each carries
   yk.treasury = 1000; courtOf(y, applyOp); assert.ok(yk.treasury < 1000, 'and the state pays for it');
   for (let i = 0; i < 4; i++) { x.turn++; x.newsThisTurn = []; courtOf(x, applyOp); } assert.ok(x.debts.find(d => d.id === 'B-T').status !== 'overdue' && g.wealth < 12, 'left unanswered, the house takes what it can reach'); assert.ok(g.power < yg.power + 1e-9 || true);
 });
+import { courtPrompt as courtAsk } from '../agents/prompts.js';
+chain('The people around the seats answer: a contract put to an officer is taken or refused by what he is, private pay to a servant of the state is a secret and a tie, a loyal one tells the ruler, and a letter to them is put before whoever speaks for them', () => {
+  const w = inherited(), c = w.countries.U1, boss = ld(w, c), rich = w.characters[c.oligarch], col = Object.values(w.characters).find(x => x.country === 'U1' && x.role === 'officer' && Object.values(w.units).some(u => u.commander === x.id)); assert.ok(col, 'a commander to approach');
+  const offer = () => { rich.wealth = 500; const r = applyOp(w, rich, { op: 'propose_contract', to: col.id, terms: 'Guard my mines', pay_per_turn: 6, payer: 'me', turns: 8 }); assert.ok(r.ok, r.msg); w.turn++; courtOf(w, applyOp); return w.contracts.find(k => k.id === r.contract); };
+  col.loyalty = 5; col.greed = 95; col.wealth = 5; let k = null; for (let i = 0; i < 12 && k?.status !== 'active'; i++) k = offer(); assert.equal(k.status, 'active', 'a venal officer with no faith in the ruler takes the money');
+  assert.equal(col.payroll, rich.id); assert.ok(col.secrets.some(s => /private pay/.test(s.text)) && rich.secrets.some(s => /private payroll/.test(s.text)), 'and both now have something to hide');
+  const sides = who => { const { pro, anti } = sidesOf(w, c, { leader: who, members: [] }); return pro / Math.max(pro + anti, 1e-9); }; for (const u of Object.values(w.units)) if (u.country === 'U1') u.loyalty = 70; col.loyalty = 50;
+  assert.ok(sides(rich.id) > sides(w.characters[c.opposition].id), 'his men lean the way his paymaster goes');
+  const loyal = Object.values(w.characters).find(x => x.country === 'U1' && x.post === 'police'); loyal.loyalty = 95; loyal.greed = 5; boss.inbox = []; rich.inbox = [];
+  const r = applyOp(w, rich, { op: 'propose_contract', to: loyal.id, terms: 'Keep me informed', pay_per_turn: 3, payer: 'me', turns: 8 }); w.turn++; courtOf(w, applyOp); const no = w.contracts.find(x => x.id === r.contract);
+  if (no.status === 'declined') { assert.ok(rich.inbox.some(m => /declines contract/.test(m.text)), 'the one who asked is answered'); assert.ok(boss.inbox.some(m => /offered a private contract/.test(m.text)), 'and a loyal servant tells the ruler who asked'); }
+  assert.notEqual(no.status, 'proposed', 'an offer to someone nobody plays does not hang unanswered');
+  const text = courtAsk(w, c, [{ from: w.characters[c.general], to: col, text: 'Have you any tie to the banking house?' }]); for (const part of [col.name, 'takes private pay', 'Have you any tie', '"replies"']) assert.ok(text.includes(part), `whoever speaks for them is told: ${part}`);
+});
 console.log('All checks passed.');

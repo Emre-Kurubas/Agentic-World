@@ -267,7 +267,8 @@ export function armySides(w, c, pl) {
     if (u.country !== c.id) continue;
     // Men follow the officer who commands them: a commander in the plot brings most of his unit with him, and one who stands by the government holds his together.
     const chief = w.characters[u.commander], led = chief?.alive && chief.status === 'free' && chief.country === c.id;
-    const lean = (100 - u.loyalty) + (generalIn ? 22 : 0) + (led ? (inPlot.has(chief.id) ? 45 : chief.id !== c.general && (chief.loyalty ?? 50) >= 55 ? -15 : 0) : 0) - 40;
+    // An officer on a plotter's private payroll leans the way his paymaster goes.
+    const lean = (100 - u.loyalty) + (generalIn ? 22 : 0) + (led ? (inPlot.has(chief.id) ? 45 : inPlot.has(chief.payroll) ? 28 : chief.id !== c.general && (chief.loyalty ?? 50) >= 55 ? -15 : 0) : 0) - 40;
     if (lean > 0) pro += u.men * lean / 50; else anti += u.men * (-lean) / 50;
   }
   return { pro, anti };

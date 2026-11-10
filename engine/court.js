@@ -178,6 +178,33 @@ function duns(w, c) {
     }
   }
 }
+// What a minor person is like, in words, for whoever has to speak for them.
+export function mannerOf(w, ch) {
+  const c = w.countries[ch.country], ruler = w.characters[c?.leader], kin = w.characters[ch.kin];
+  return [ch.loyalty >= 65 ? `loyal to ${ruler?.name ?? 'the ruler'}` : ch.loyalty >= 40 ? `wavering toward ${ruler?.name ?? 'the ruler'}` : `has lost faith in ${ruler?.name ?? 'the ruler'}`, ch.ambition >= 65 ? 'ambitious' : ch.ambition <= 35 ? 'content with their place' : '', ch.greed >= 65 ? 'fond of money' : ch.greed <= 35 ? 'not to be bought cheaply' : '', ch.ruthless >= 70 ? 'hard' : '',
+    kin ? `the ${ch.tie} of ${kin.name}` : '', ch.payroll && w.characters[ch.payroll]?.alive ? `takes private pay from ${w.characters[ch.payroll].name}` : '', ch.handler ? 'has something to hide' : ''].filter(Boolean).join(', ');
+}
+// A contract put to a minor person is answered by what they are: what the money means to them, and whether a servant of the state may take it.
+function answers(w, c) {
+  for (const k of w.contracts || []) {
+    if (k.status !== 'proposed' || w.turn <= k.turn) continue;
+    const ch = w.characters[k.b], from = w.characters[k.a]; if (!ch?.alive || ch.country !== c.id || !isMinor(ch) || ch.aiControlled || !from?.alive) continue;
+    const ruler = w.characters[c.leader], gets = k.pay > 0 && k.payer && k.payer !== ch.id ? k.pay * Math.min(k.turns, 8) : 0, gives = k.pay > 0 && k.payer === ch.id ? k.pay * Math.min(k.turns, 8) : 0;
+    const servant = !!postOf(w, ch) && ch.post !== 'house', private_ = !k.purse?.[from.id];
+    // Private pay to someone in the state's service is a matter of conscience and of fear: the loyal refuse it, and may say who asked.
+    const p = clamp(.25 + gets / (ch.wealth + 30) * .7 + ch.greed / 220 - gives / (ch.wealth + 10) - (servant && private_ ? ch.loyalty / 130 : 0), .03, .95);
+    if (ch.status === 'free' && rand(w) < p) {
+      k.status = 'active'; k.until = w.turn + k.turns; say(w, from, ch.name, `${ch.name} accepts contract ${k.id}.`);
+      if (servant && private_ && gets > 0) { ch.payroll = from.id; trace(w, ch, `Took private pay from ${from.name} while in the state's service.`); trace(w, from, `Put ${ch.name}, who serves the state, on a private payroll.`); }
+    } else {
+      k.status = 'declined'; k.closedAt = w.turn; const told = servant && private_ && ch.loyalty > 58 && ruler?.alive && ruler.id !== from.id;
+      say(w, from, ch.name, `${ch.name} declines contract ${k.id}${servant && private_ ? ': someone in the service of the state does not take private pay' : ''}.`);
+      if (told) say(w, ruler, ch.name, `${ch.name} reports that ${from.name} offered a private contract (${k.terms.slice(0, 160)}) and that it was refused.`);
+    }
+  }
+  // A paymaster who stops paying, or dies, is no longer one.
+  for (const ch of minorsOf(w, c)) if (ch.payroll && !(w.contracts || []).some(k => k.status === 'active' && k.b === ch.id && k.a === ch.payroll)) ch.payroll = null;
+}
 export const leaseDrain = (w, c) => (w.offers || []).filter(o => o.status === 'running' && o.country === c.id).reduce((a, o) => a + o.drain, 0);
 
 // ---- Informants ----
@@ -226,7 +253,7 @@ export function courtStep(w, applyOp) {
       if (ch.role === 'officer' || commandOf(w, ch)) officer(w, c, ch, applyOp);
       const p = Object.values(w.provinces).find(x => x.governor === ch.id && x.controller === c.id); if (p) governor(w, c, ch, p);
     }
-    c._leaseDrain = 0; payLeases(w, c); duns(w, c); tempt(w, c);
+    c._leaseDrain = 0; payLeases(w, c); duns(w, c); answers(w, c); tempt(w, c);
   }
   // Said once, where everyone hears it: the mails are not safe.
   if (!w.postTold) { w.postTold = true; for (const ch of Object.values(w.characters)) if (ch.alive && ROLES.includes(ch.role)) say(w, ch, 'Common knowledge', 'It is said in every capital that letters are opened in the post. Where a state keeps watch on the mails, some letters are copied before they are delivered, more often when they cross a border, and nobody can tell which. Those around the great (officers, officials, bankers) have ambitions and prices of their own.'); }
