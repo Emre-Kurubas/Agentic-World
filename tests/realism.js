@@ -2130,4 +2130,16 @@ chain('A new world is handed over at rest: every army is an army that has been p
     if (hard) { for (const p of countryProvinces(w, hard.id)) p.pops.workers.sat = Math.min(26, hard.workBase - 6); delete hard.strikeRest; run(w, 1); assert.ok(hard.strike, `${seed} ${hard.archetype}: a lot much worse than the one they knew brings them out`); }
   }
 });
+chain('In a war already declared the chief of staff orders the landings, and a government that went to war without saying why can say it afterwards, once a quarter, without declaring a second war', () => {
+  const w = fresh(), c = w.countries.U1, foe = w.countries.U2, l = ld(w, c), g = w.characters[c.general], u = Object.values(w.units).find(v => v.country === 'U1'), coast = countryProvinces(w, 'U2').find(p => p.coast) ?? countryProvinces(w, 'U2')[0];
+  const before = applyOp(w, g, { op: 'amphibious', unit: u.id, to: coast.id }); assert.ok(!before.ok && !/not authorized/.test(before.msg), `in peace the staff's order fails on the peace, not on his office: ${before.msg}`);
+  assert.equal(applyOp(w, g, { op: 'declare_war', target: 'U2' }).ok, false, 'war and peace stay with the ruler');
+  assert.ok(applyOp(w, l, { op: 'declare_war', target: 'U2', _law: true }).ok); const wars = w.wars.filter(x => x.active).length, war = w.wars.at(-1); assert.ok(!war.aims?.U1, 'declared without aims');
+  const landing = applyOp(w, g, { op: 'amphibious', unit: u.id, to: coast.id }); assert.ok(!/not authorized/.test(landing.msg), `at war the landing is his to order (whether the sea allows it is another matter): ${landing.msg}`);
+  assert.equal(applyOp(w, l, { op: 'declare_war', target: 'U2', _law: true }).ok, false, 'a second declaration with nothing to say is refused');
+  const p = countryProvinces(w, 'U2')[0], said = applyOp(w, l, { op: 'declare_war', target: 'U2', aims: { provinces: [p.id] }, _law: true }); assert.ok(said.ok && said.msg.includes(p.name), said.msg);
+  assert.equal(w.wars.filter(x => x.active).length, wars, 'no second war'); assert.deepEqual(war.aims.U1.provinces, [p.id]); assert.ok(w.newsThisTurn.some(n => /has stated its aims/.test(n.text)), 'and the world is told');
+  assert.equal(applyOp(w, l, { op: 'declare_war', target: 'U2', aims: { regime: true }, _law: true }).ok, false, 'once a quarter'); w.turn++; const rel = w.countries.U3.relations.U1 ?? 0;
+  assert.ok(applyOp(w, l, { op: 'declare_war', target: 'U2', aims: { regime: true }, _law: true }).ok); assert.ok((w.countries.U3.relations.U1 ?? 0) < rel, 'aims changed in mid-war make the others uneasy');
+});
 console.log('All checks passed.');

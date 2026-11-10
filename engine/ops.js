@@ -32,7 +32,7 @@ const LABOUR_OPS = new Set(['set_wages', 'set_safety', 'lockout', 'agitate', 'ar
 const PRIVATE = ['capital_flight', 'repatriate', 'draw_institution', 'buy_bonds', 'sell_bonds', 'back_claim', 'renounce_claim', 'fund_party', 'found_paper', 'fund_paper', 'close_paper', 'forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution', 'propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'fund_plot', 'bribe', 'custom', 'propaganda', 'noop'];
 PERMISSIONS.private = new Set(PRIVATE);
 // The chief of staff directs where the army's units and squadrons stand and who commands them. Raising and disbanding troops, war and peace stay with the ruler.
-for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'appoint_commander', 'spy', 'build', 'set_posture']) PERMISSIONS.general.add(op);
+for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'appoint_commander', 'spy', 'build', 'set_posture', 'amphibious']) PERMISSIONS.general.add(op);
 for (const seat of ['general', 'opposition', 'oligarch']) for (const op of ['capital_flight', 'repatriate', 'draw_institution', 'buy_bonds', 'sell_bonds', 'back_claim', 'renounce_claim', 'fund_party', 'found_paper', 'fund_paper', 'close_paper', 'forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'noop', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution']) PERMISSIONS[seat].add(op);
 PERMISSIONS.exiled = new Set(PRIVATE.filter(x => !['found_party', 'execute_plot', 'gather_dossier'].includes(x)));
 for (const k of ['general', 'opposition', 'oligarch', 'private', 'exiled']) PERMISSIONS[k].add('publish_treaty');
@@ -189,10 +189,14 @@ function weighAims(w, x, y, fought, paid) {
 }
 // A declaration may say what the war is for. Aims that are named and limited are easier to follow at home and frighten bystanders less than a
 // war nobody can see the end of; a demand for the enemy ruler's head rallies the enemy to him and alarms every other government.
-function stateAims(w, c, target, op) {
-  const war = w.wars.at(-1), raw = op.aims && typeof op.aims === 'object' ? op.aims : null;
+// What a government says a war is for, read from the order: only what the engine can later measure counts as an aim.
+function readAims(w, target, op) {
+  const raw = op.aims && typeof op.aims === 'object' ? op.aims : null;
   const aim = raw ? { against: target.id, provinces: [...new Set(Array.isArray(raw.provinces) ? raw.provinces : [])].filter(pid => w.provinces[pid] && [w.provinces[pid].owner, w.provinces[pid].controller].includes(target.id)).slice(0, 24), reparations: num(raw.reparations, 0, .3, 0), regime: raw.regime === true, treaty: w.treaties.some(t => t.id === raw.treaty && t.active && t.parties.includes(target.id)) ? raw.treaty : null, text: String(raw.text || '').slice(0, 200), rulerThen: target.leader, turn: w.turn } : null;
-  const stated = aim && (aim.provinces.length || aim.reparations > 0 || aim.regime || aim.treaty) ? aim : null; if (stated) (war.aims ||= {})[c.id] = stated;
+  return aim && (aim.provinces.length || aim.reparations > 0 || aim.regime || aim.treaty) ? aim : null;
+}
+function stateAims(w, c, target, op) {
+  const war = w.wars.at(-1), stated = readAims(w, target, op); if (stated) (war.aims ||= {})[c.id] = stated;
   const what = stated ? aimsText(w, stated) : '';
   for (const o of aliveCountries(w)) if (o.id !== c.id && o.id !== target.id) o.relations[c.id] = clampRel((o.relations[c.id] ?? 0) - (!stated ? 6 : stated.regime ? 8 : 2));
   if (stated && !stated.regime) c.legitimacy = clamp(c.legitimacy + 1, 0, 100);
@@ -744,7 +748,19 @@ export function applyOp(w, actor, op) {
       return { ok: true, msg: `${went.length} unit${went.length > 1 ? 's' : ''} (${went.map(u => u.id).join(', ')}) ordered to ${w.provinces[op.to].name}${slow ? `; the last should be there in about ${slow} quarter${slow > 1 ? 's' : ''} as the ground, the roads and the seasons stand` : ''}.${held}` }; }
     case 'set_posture': return setPosture(w, c, op);
     case 'declare_war': {
-      if (!target || atWar(w, c.id, target.id)) return fail('War cannot be declared.');
+      if (!target) return fail('War cannot be declared: no such country.');
+      // Against a country one is already at war with, a declaration can only say what the war is for. Aims named late are measured from the day they are named.
+      if (atWar(w, c.id, target.id)) {
+        const war = w.wars.find(x => x.active && ((x.a.includes(c.id) && x.b.includes(target.id)) || (x.b.includes(c.id) && x.a.includes(target.id)))), stated = war ? readAims(w, target, op) : null;
+        if (!stated) return fail(`${c.name} is already at war with ${target.name}. To say what that war is for, name what can be measured: provinces of theirs, an indemnity, the fall of their ruler, or the end of a treaty.`);
+        if (allowance(w, c, `aims:${target.id}`, 1, 1) <= 0) return fail('The aims of this war have been stated once this quarter already.');
+        const changed = !!war.aims?.[c.id], what = aimsText(w, stated); (war.aims ||= {})[c.id] = stated;
+        // Aims that grow in mid-war make every other government wonder where they will stop.
+        if (changed) for (const o of aliveCountries(w)) if (o.id !== c.id && o.id !== target.id) o.relations[c.id] = clampRel((o.relations[c.id] ?? 0) - 3);
+        news(w, `${c.name} has ${changed ? 'restated' : 'stated'} its aims in the war with ${target.name}: ${what}.`, { kind: 'war', countries: [c.id, target.id] });
+        tell(w, w.characters[target.leader], c.name, `${c.name} has ${changed ? 'restated' : 'stated'} what it is fighting us for: ${what}.`);
+        return { ok: true, msg: `The aims of the war with ${target.name} are now on record: ${what}. From today the peace is measured against them at home and abroad${changed ? '; other governments have noted that the aims were changed in mid-war' : ''}.` };
+      }
       { const lord = protectorOf(w, c); if (lord?.alive && lord.id !== target.id) return fail(`Under the treaty of protection with ${lord.name} this state does not make war on its own. The treaty would have to be broken first.`); }
       // Whatever was signed with them is torn up. Breaking a peace that is still fresh costs most, at home and with everyone who watches.
       for (const t of w.treaties.filter(x => x.active && x.parties.includes(c.id) && x.parties.includes(target.id))) { t.active = false; if (['peace', 'nonaggression', 'alliance'].includes(t.kind)) { t.brokenBy = c.id; t.brokenAt = w.turn; } c.legitimacy = clamp(c.legitimacy - (t.kind === 'peace' ? 8 : 3), 0, 100); if (t.kind === 'peace') for (const o of aliveCountries(w)) if (o.id !== c.id) o.relations[c.id] = clampRel((o.relations[c.id] ?? 0) - 6); }
