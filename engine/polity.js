@@ -12,7 +12,8 @@ export const DELEGABLE = new Set(['appoint_governor', 'appoint_commander', 'set_
 export const GATED = new Set(['set_culture_policy', 'nationalize_company', 'set_tax', 'set_budget', 'set_tariff', 'borrow', 'print_money', 'default_debt', 'declare_war', 'ban_party', 'land_reform', 'nationalize', 'privatize', 'set_regime']);
 // What a law can do. A legislature makes rules and votes money; it does not arrest people, name heirs or move regiments. Those are acts of the executive.
 export const LEGISLATIVE = new Set([...GATED, 'create_institution', 'fund_institution', 'dissolve_institution', 'set_institutions', 'hold_election', 'concession', 'set_arms_share', 'set_capital_controls', 'set_fx_regime', 'release', 'repay_state_debt']);
-const MAX_OPEN_BILLS = 6, MAX_INSTITUTIONS = 30, MAX_PRIVATE_EACH = 3;
+const MAX_OPEN_BILLS = 16, MAX_INSTITUTIONS = 40, MAX_PRIVATE_EACH = 5;
+export const institutionRoom = (w, c, actor) => activeInstitutions(c).length >= MAX_INSTITUTIONS ? 'The register of institutions is full; one must be dissolved first.' : !governs(w, c, actor) && activeInstitutions(c).filter(i => i.sponsor === actor.id).length >= MAX_PRIVATE_EACH ? `You already keep up ${MAX_PRIVATE_EACH} bodies of your own; close or hand over one before founding another.` : '';
 // Whoever governs today: the ruler, or the person governing in the ruler's name while the ruler lies too ill.
 export const governs = (w, c, actor) => !!actor && (actor.id === c.leader || ((c.regent ?? c.heir) === actor.id && actor.status === 'free' && incapacitated(w.characters[c.leader])));
 // One institution's share of GDP per quarter. Around 1900 a whole government spent a tenth of GDP; a single agency is a small slice of that.
@@ -105,7 +106,11 @@ export function institutionStep(w) {
     const size = inst.sponsor ? clamp(need / 15, 0, 1.2) : clamp(inst.budget / Math.max(.003 * Math.max(inst.powers.length, 1), .001), 0, 1.2);
     const target = clamp(inst.funding * size * (.45 + (inst.head ? .35 : 0) + Math.min(inst.members.length + (inst.seats || 0), 4) * .05), 0, 1.2);
     inst.strength += (target - inst.strength) * .3;
-    for (const p of inst.powers) applyPower(w, c, inst, p, inst.strength);
+  }
+  // Two bodies doing the same work do not do twice as much: after the strongest, each further one adds half of what the one before it added.
+  for (const c of aliveCountries(w)) {
+    const rank = {};
+    for (const inst of [...activeInstitutions(c)].sort((a, b) => b.strength - a.strength)) for (const p of inst.powers) { const n = rank[p] = (rank[p] ?? 0) + 1; applyPower(w, c, inst, p, inst.strength * .5 ** (n - 1)); }
   }
 }
 
