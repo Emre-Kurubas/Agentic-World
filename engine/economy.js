@@ -264,7 +264,7 @@ function fiscal(w, c) {
   const revenue = (c.gdp * .45 * c.tax.income + land + business + (c._imports || 0) * c.priceLevel * c.tariff) * eff + (c._tolls || 0) * c.priceLevel;
   const b = c.budget, programs = (b.military + b.welfare + b.infrastructure + b.education + b.police + b.administration) * c.gdp;
   // Standing institutions are part of the budget: a state that founds many of them pays for them every quarter.
-  const agencies = sum((c.institutions || []).filter(i => i.id && !i.sponsor), i => i.budget || 0) * c.gdp;
+  const agencies = sum((c.institutions || []).filter(i => i.id), i => i.sponsor ? i.grant || 0 : i.budget || 0) * c.gdp;
   // Lenders price in the inflation they have come to expect, not one quarter's jump.
   c.inflTrend = (c.inflTrend ?? Math.max(0, c.inflation)) * .8 + Math.max(0, c.inflation) * .2;
   c.interestRate = sovereignRate(c);

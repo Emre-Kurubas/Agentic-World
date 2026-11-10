@@ -40,6 +40,13 @@ export function acceptContract(w, actor, id, from, forState) {
   return k;
 }
 
+// Whoever governs can put their own side of a contract they signed, or an offer they made, on the state's account afterwards.
+export function toStateAccount(w, actor, id) {
+  const k = (w.contracts || []).find(x => x.id === id && [x.a, x.b].includes(actor.id) && (open(x) || x.status === 'proposed')), sc = k && signsForState(w, actor, true); if (!sc || k.purse?.[actor.id]) return null;
+  (k.purse ||= {})[actor.id] = sc.id; say(w, w.characters[k.a === actor.id ? k.b : k.a], actor.name, `Contract ${k.id}: ${actor.name}'s side now stands on the account of the treasury of ${sc.name}.`);
+  return k;
+}
+
 function breach(w, k, who, text) {
   if (w.turn - (k.lastBreach ?? -99) < 4) return;
   k.lastBreach = w.turn; (k.breaches ||= []).push({ turn: w.turn, who, text });

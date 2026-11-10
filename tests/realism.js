@@ -1156,6 +1156,12 @@ chain('Whoever governs can read where the deficit comes from: the books add up t
   beginTurn(w); assert.ok(applyOp(w, boss, { op: 'print_money', pct_gdp: .05 }).ok); stepWorld(w);
   const parts = Object.entries(c.lastPrices).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])); assert.equal(parts[0][0], 'money', 'after the press has run, new money is the first cause of rising prices');
   assert.ok(lookUp(w, boss, 'economy').includes('What moved prices'), 'and the ruler is told so');
+  // A private body is its founder's to fund and to close; the state can add a grant from the budget, and the grant is a budget line.
+  const rich = w.characters[c.oligarch]; rich.wealth = 100; const fund = applyOp(w, rich, { op: 'create_institution', name: 'Miners Relief Fund', description: 'Relief', amount: 3, powers: ['welfare'] }); assert.ok(fund.ok, fund.msg);
+  const body = c.institutions.at(-1); assert.equal(body.sponsor, rich.id); assert.equal(applyOp(w, w.characters[c.general], { op: 'dissolve_institution', id: body.id }).ok, false, 'a stranger cannot close it');
+  assert.ok(applyOp(w, boss, { op: 'fund_institution', id: body.id, budget_pct_gdp: .0004 }).ok); assert.ok(Math.abs(body.grant - .0004) < 1e-9); assert.ok(applyOp(w, rich, { op: 'fund_institution', id: body.id, amount: 5 }).ok); assert.equal(body.amount, 5);
+  const agenciesBefore = c.lastBooks.agencies; run(w, 1); assert.ok(c.lastBooks.agencies > agenciesBefore - 1e-9 && c.lastBooks.agencies >= .0004 * c.gdp * .9, 'the grant is paid from the budget');
+  const standing = c.legitimacy; assert.ok(applyOp(w, rich, { op: 'dissolve_institution', id: body.id }).ok, 'its founder can close it'); assert.equal(c.legitimacy, standing, 'and the state loses no standing by that');
   // A commission is filled with ordinary members without filling the country with named people; a named member is a person.
   const people = () => Object.values(w.characters).filter(x => x.alive && x.country === 'U1').length, made = applyOp(w, boss, { op: 'create_institution', name: 'School Commission', description: 'Plans the schools', budget_pct_gdp: .002, powers: [] }); assert.ok(made.ok, made.msg);
   const inst = c.institutions.at(-1), n = people(); for (let i = 0; i < 7; i++) assert.ok(applyOp(w, boss, { op: 'appoint_institution', id: inst.id, role: 'member' }).ok);

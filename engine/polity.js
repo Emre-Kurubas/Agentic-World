@@ -92,8 +92,10 @@ export function institutionStep(w) {
     inst.members = inst.members.filter(id => w.characters[id]?.alive && w.characters[id].country === c.id);
     let paid = 0, need;
     if (inst.sponsor) {
-      const sp = w.characters[inst.sponsor]; need = inst.amount;
-      if (sp?.alive && need > 0) { const m = Math.min(sp.wealth, need); sp.wealth -= m; paid = m / need; } else if (need <= 0) paid = 0;
+      // A private body lives on its founder's purse and on whatever grant the state adds from the budget.
+      const sp = w.characters[inst.sponsor], grant = (inst.grant || 0) * Math.max(c.gdp, 1); let got = grant * (c.paidRatio ?? 1); need = inst.amount + grant;
+      if (sp?.alive && inst.amount > 0) { const m = Math.min(sp.wealth, inst.amount); sp.wealth -= m; got += m; }
+      paid = need > 0 ? got / need : 0;
     } else {
       // State institutions are budget lines: they are paid as well as the rest of the state was paid this quarter.
       need = inst.budget * Math.max(c.gdp, 1);
