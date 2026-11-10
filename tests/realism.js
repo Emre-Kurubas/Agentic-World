@@ -903,6 +903,13 @@ ok('The opening text gives every character an ego and every freedom, and no numb
   assert.ok(first.includes('You have an ego') && first.includes('no score or ledger'), 'the ego is theirs and so are their feelings about others');
   assert.ok(first.includes('And you feel.') && first.includes('part of how a person decides') && first.includes('both are open to you, and neither is the rule'), 'they are told that what they feel bears on what they decide, and that mastering it is open to them too');
   assert.ok(later.includes('wants and feels') && !later.includes('And you feel.'), 'each morning recalls it in a word; the passage itself is said once');
+  // The mind of the age about war, a check on habitual caution, the country's standing questions and what the seat stands to gain: said once, as facts.
+  assert.ok(first.includes('war is an ordinary instrument of policy') && first.includes('habit of prudence') && first.includes('You may still hold war a folly'), 'they are told how their age thinks of war, and that caution can be a habit; holding war a folly stays open');
+  assert.ok(first.includes('The questions the country was handed down with') && /an army of about \d+ thousand against about \d+ thousand of ours/.test(first), 'the neighbours and the old questions are put before them as facts');
+  assert.ok(first.includes('What your seat has to win and lose by war') && first.includes('adds a province'), 'and what a ruler\'s seat wins and loses by war');
+  { const g = w.characters[w.countries[l.country].general], gen = actorPrompt(w, g, [], true, { intro: true }); assert.ok(gen.includes('A soldier\'s name is made in war') && !gen.includes('adds a province'), 'each seat is told its own stake'); }
+  { const x = inherited(), cx = aliveCountries(x)[0], other = aliveCountries(x)[1], p = countryProvinces(x, other.id)[0]; p.lostBy = cx.id; p.lostIn = 1887; const txt = actorPrompt(x, ld(x, cx), [], true, { intro: true }); assert.ok(txt.includes(`${p.name} (${p.id}), held by ${other.name} since 1887`), 'land lost and never given up is named, with who holds it and since when'); }
+  assert.ok(!later.includes('ordinary instrument of policy') && !later.includes('handed down with'), 'none of it is repeated every morning');
   assert.ok(first.includes('massacres are as open to you as peace'), 'nothing is forbidden, in either direction');
   assert.ok(!later.includes('You have an ego'), 'said once, at the start of their life');
   assert.ok(!/\b(loyalty|ambition|greed|relations?|power) -?\d/i.test(first), 'no relationship is handed over as a number');
