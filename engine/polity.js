@@ -96,6 +96,8 @@ export function institutionStep(w) {
       // A private body lives on its founder's purse and on whatever grant the state adds from the budget.
       const sp = w.characters[inst.sponsor], grant = (inst.grant || 0) * Math.max(c.gdp, 1); let got = grant * (c.paidRatio ?? 1); need = inst.amount + grant;
       if (sp?.alive && inst.amount > 0) { const m = Math.min(sp.wealth, inst.amount); sp.wealth -= m; got += m; }
+      // Gifts it was given are spent a tenth a quarter, on top of what its founder and the state put in.
+      if (inst.endowment > .01) { const gift = inst.endowment * .1; inst.endowment -= gift; need += gift; got += gift; }
       paid = need > 0 ? got / need : 0;
     } else {
       // State institutions are budget lines: they are paid as well as the rest of the state was paid this quarter.

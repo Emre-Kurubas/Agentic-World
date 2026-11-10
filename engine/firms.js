@@ -157,10 +157,24 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
       if (!firm || !isOpen(firm)) return fail('No such company.');
       const state = firm.owner === STATE && isHead;
       if (firm.owner !== actor.id && !state) return fail('This company is not yours.');
+      // A company can build out of what it has in its own till, as well as out of its owner's purse or the treasury.
+      if (op.from_cash === true) {
+        const own = Math.min(num(op.amount, 0, 1e9, 0), Math.max(firm.cash, 0)); if (!(own > 0)) return fail(`${firm.name} has no cash of its own to spend.`);
+        const no = expand(w, w.countries[firm.country], firm, own, fail); if (no) return no; firm.cash -= own;
+        return { ok: true, msg: `${firm.name} spends ${Math.round(own * 10) / 10} of its own cash; the extension will stand in ${durationOf(firm.sector)} quarters.` };
+      }
       const amount = Math.min(num(op.amount, 0, 1e9, 0), state ? Math.max(c.treasury, 0) : actor.wealth); if (!(amount > 0)) return fail('No money.');
       const refused = expand(w, w.countries[firm.country], firm, state ? amount / Math.max(c.priceLevel, .01) : amount, fail); if (refused) return refused;
       if (state) c.treasury -= amount; else actor.wealth -= amount;
       return { ok: true, msg: `The extension will stand in ${durationOf(firm.sector)} quarters.` };
+    }
+    // The owner takes money out of the company's till: a salary, a special dividend. A state company pays into the treasury.
+    case 'draw_company': {
+      if (!firm || !isOpen(firm)) return fail('No such company.');
+      const state = firm.owner === STATE && isHead && firm.country === c.id; if (firm.owner !== actor.id && !state) return fail('This company is not yours.');
+      const m = Math.min(num(op.amount, 0, 1e9, 0), Math.max(firm.cash, 0)); if (!(m > .01)) return fail(`${firm.name} has no cash to take.`);
+      firm.cash -= m; if (state) c.treasury += m * (c.rate || 1); else actor.wealth += m;
+      return { ok: true, msg: `${Math.round(m * 10) / 10} was taken out of ${firm.name}${state ? ' into the treasury' : ''}; it keeps ${Math.round(firm.cash * 10) / 10}.` };
     }
     case 'sell_company': {
       if (!firm || !isOpen(firm) || firm.owner !== actor.id) return fail('This company is not yours.');
