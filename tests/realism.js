@@ -1904,4 +1904,39 @@ chain('Papers share their readers; a paper is known by its name; and a man who w
   clerk.loyalty = 96; clerk.greed = 5; clerk.handler = null; x.turn++; const no = applyOp(x, rich, { op: 'recruit_informant', character: clerk.id, amount: 2 }); assert.ok(!no.ok && /not the sum/.test(no.msg), no.msg);
   assert.ok(/this quarter/.test(applyOp(x, rich, { op: 'recruit_informant', character: clerk.id, amount: 30 }).msg), 'and he is not asked twice in a quarter');
 });
+chain('What a country buys abroad follows a usual order that its ruler can change: short of gold it buys bread before anything else unless told otherwise; a good can be given its own duty, a quota or a prohibition, and an export can be forbidden; the customs hold only as far as they reach', () => {
+  // A country short of bread and of steel, with gold for one of them and neighbours who have both to sell.
+  const poor = order => {
+    const w = fresh(), c = w.countries.U1, l = ld(w, c);
+    for (const p of countryProvinces(w, 'U1')) p.fertility = .05; c.stock.grain = 0; c.stock.steel = 0; c.lastExportGold = 0; for (const g of Object.keys(c.stock)) if (!['grain', 'steel'].includes(g)) c.stock[g] = Math.max(c.stock[g], (c._need[g] || 0) * 3);
+    for (const o of aliveCountries(w)) if (o.id !== 'U1') { o.stock.grain = Math.max(o.stock.grain, 4000); o.stock.steel = Math.max(o.stock.steel, 800); }
+    c.reserves = c._need.grain * w.globalPrice.grain * .7;
+    if (order) { const r = applyOp(w, l, { op: 'set_import_priority', goods: order }); assert.ok(r.ok && r.msg.includes('steel'), r.msg); }
+    run(w, 1); return [w, c, l];
+  };
+  const [, bread] = poor(null), [w2, iron, l2] = poor(['steel']);
+  assert.ok((bread.lastBought.grain || 0) > (bread.lastBought.steel || 0) * 5 && (bread.lastBought.grain || 0) > 10, `left alone, scarce gold goes for bread: grain ${bread.lastBought.grain}, steel ${bread.lastBought.steel}`);
+  assert.ok((iron.lastBought.steel || 0) > (bread.lastBought.steel || 0) + 3 && (iron.lastBought.grain || 0) < (bread.lastBought.grain || 0) * .8, `a ruler who puts steel first gets steel and less bread: grain ${iron.lastBought.grain} against ${bread.lastBought.grain}, steel ${iron.lastBought.steel} against ${bread.lastBought.steel}`);
+  assert.ok(/set by the government: steel, grain/.test(answer(w2, l2, 'trade')), 'and the order in force can be looked up');
+  assert.ok(applyOp(w2, l2, { op: 'set_import_priority', goods: [] }).msg.includes('usual order'), 'an empty list puts the usual order back'); assert.ok(/the usual one: grain/.test(answer(w2, l2, 'trade')));
+  // A rich country that wants for consumer goods: free, forbidden, limited, and dutied.
+  const shop = (rule, world = fresh) => { const w = world(), c = w.countries.U1, l = ld(w, c); w.status = 'playing'; if (!c._need) run(w, 1); c.reserves = 20000; c.stock.goods = 0; for (const o of aliveCountries(w)) if (o.id !== 'U1') o.stock.goods = Math.max(o.stock.goods, 3000); if (rule) { const r = applyOp(w, l, { op: 'set_import', good: 'goods', ...rule, _law: true }); assert.ok(r.ok, r.msg); } run(w, 1); return [w, c, l]; };
+  const gold = w => aliveCountries(w).reduce((s, c) => s + c.reserves, 0);
+  const [wf, free] = shop(null), [wb, banned, lb] = shop({ ban: true }), [, capped] = shop({ quota: 7 }), [, taxed] = shop({ tariff: .9 });
+  assert.ok(free.lastBought.goods > 30, `left alone the shops are filled from abroad: ${free.lastBought.goods}`); assert.ok(!(banned.lastBought.goods > .01), `a prohibition a strong customs service can keep stops it: ${banned.lastBought.goods}`);
+  assert.ok(capped.lastBought.goods > 5 && capped.lastBought.goods <= 7.01, `a quota lets in so much and no more: ${capped.lastBought.goods}`);
+  assert.ok(taxed.lastBooks.customs > free.lastBooks.customs * 1.5, `a duty on the one good is paid on that good: customs ${free.lastBooks.customs} -> ${taxed.lastBooks.customs}`);
+  assert.ok(banned.goodsRatio < free.goodsRatio - .1, 'and the shops are the emptier for a prohibition'); assert.ok(Math.abs(gold(wf) - gold(wb)) < 1e-6 * gold(wf), 'no gold is made or lost by a rule');
+  assert.ok(/consumer goods may not be imported/.test(answer(wb, lb, 'trade')), 'the rule in force can be looked up'); assert.equal(applyOp(wb, wb.characters[banned.general], { op: 'set_import', good: 'goods', clear: true }).ok, false, 'the frontier is the government\'s to rule');
+  assert.ok(applyOp(wb, lb, { op: 'set_import', good: 'goods', clear: true, _law: true }).ok); run(wb, 1); assert.ok(banned.lastBought.goods > 30, 'the rule lifted, the trade comes back');
+  // The same prohibition in a state whose customs men are few and for sale: most of it comes in anyway, and pays nothing.
+  const weak = rule => shop(rule, () => { const w = inherited(), c = w.countries.U1; c.bureaucracy = 15; c.corruption = 80; return w; });
+  const [, open] = weak(null), [wl, leaky, ll] = weak({ ban: true });
+  assert.ok(leaky.lastBought.goods > open.lastBought.goods * .3 && leaky.lastBought.goods < open.lastBought.goods * .95, `a thin and venal customs service stops only part of it: ${leaky.lastBought.goods} of ${open.lastBought.goods}`);
+  assert.ok(leaky.lastBooks.customs < open.lastBooks.customs, 'and what is smuggled pays no duty'); assert.ok(/smuggled/.test(answer(wl, ll, 'trade')), 'the ruler is told how far the customs can be trusted');
+  // Bread kept at home: an export forbidden does not leave, and the neighbours who wanted it go without.
+  const granary = ban => { const w = fresh(), c = w.countries.U1, l = ld(w, c); c.stock.grain = 6000; for (const o of aliveCountries(w)) if (o.id !== 'U1') { o.stock.grain = 0; o.reserves = Math.max(o.reserves, 5000); for (const p of countryProvinces(w, o.id)) p.fertility = .05; } if (ban) assert.ok(applyOp(w, l, { op: 'set_export', good: 'grain', ban: true, _law: true }).ok); run(w, 1); return [w, c]; };
+  const [, sells] = granary(false), [, keeps] = granary(true);
+  assert.ok(sells.lastSold.grain > 100, `left alone the surplus is sold: ${sells.lastSold.grain}`); assert.ok(!(keeps.lastSold.grain > .01) && keeps.stock.grain > sells.stock.grain + 100, `forbidden, it stays in the granaries: sold ${keeps.lastSold.grain}`);
+});
 console.log('All checks passed.');

@@ -161,19 +161,40 @@ function needs(w, c) {
   localPrices(w, c);
 }
 
+// What a country's gold is spent on first when there is not enough of it for everything it would buy abroad. Left alone, merchants and millers see to
+// bread first, then what the works need, and consumer goods last; whoever governs can set another order (c.imports.order), and goods it does not name follow in the usual one.
+export const usualOrder = () => ['grain', ...GOODS.filter(g => g !== 'grain' && g !== 'goods'), 'goods'];
+export const importOrder = c => { const set = (c.imports?.order || []).filter(g => GOODS.includes(g)); return [...set, ...usualOrder().filter(g => !set.includes(g))]; };
+// A rule at the frontier holds as far as the customs service does. What a thin or venal service cannot stop comes in or goes out by other roads, and pays no duty.
+export const sealOf = (w, c) => w.friction ? clamp(.3 + c.bureaucracy / 100, .35, 1) * (1 - c.corruption / 200) : 1;
+// The duty one good pays coming in: what a treaty fixed with that seller, else the government's own rule for the good, else the general tariff.
+const dutyOn = (c, g, from) => c.tariffDeals?.[from] ?? c.imports?.rules?.[g]?.tariff ?? c.tariff;
+
 function trade(w, cs) {
   w.tradeFlows = {};
   const key = routeKey;
   for (const c of cs) { c.lastSold = {}; c.lastBought = {}; c.lastOrders = []; }
+  // What merchants would bring in of a good, and how much of that the law lets through: a prohibition or a quota cuts it, and the part the customs cannot hold back is smuggled.
+  const wantOf = (c, g) => { const usual = Math.max(0, c._need[g] + c._reserve[g] * .5 - c.stock[g]) + displacedDemand(c, g), r = c.imports?.rules?.[g]; if (!r || (!r.ban && r.quota == null)) return { usual, legal: usual }; const legal = r.ban ? 0 : Math.min(usual, r.quota); return { usual: legal + (usual - legal) * (1 - sealOf(w, c)), legal }; };
+  const stateOrder = (c, g) => { const o = c.orders?.[g]; return o && (!(o.limit > 0) || w.globalPrice[g] <= o.limit) ? o.amount : 0; };
+  // The gold a country has to spend abroad this quarter is what lies in its reserve beyond the debt service, and about what its exports brought in the quarter before.
+  // It is shared out among the goods in the order of priority: each good may draw on its own share, and on whatever no good has claimed.
+  for (const c of cs) {
+    let left = Math.max(0, c.reserves - (c._debtService || 0)) + (c.lastExportGold || 0); c._alloc = {};
+    for (const g of importOrder(c)) { const cost = (wantOf(c, g).usual + stateOrder(c, g)) * w.globalPrice[g] * 1.1, part = Math.min(cost, left); c._alloc[g] = part; left -= part; }
+    c._spare = left; c._exportGold = 0; c._duty = 0;
+  }
   // Markets sit in an order: first the materials and wares a country sells for gold, then bread, and consumer goods last. A poor country spends what
   // its coal and timber earned that quarter on grain before it spends it on cloth and boots.
   for (const g of [...GOODS.filter(x => x !== 'grain' && x !== 'goods'), 'grain', 'goods']) {
     // A government can also go to the foreign markets itself for one quarter: an order to buy beyond what the country's trade brings in of its own accord,
     // or an offer of goods out of its stores beyond what merchants would let go. Either holds only while the price stays inside the limit it was given.
     const price = w.globalPrice[g], wants = c => { const o = c.orders?.[g]; return o && (!(o.limit > 0) || price <= o.limit) ? o.amount : 0; }, offers = c => { const o = c.sales?.[g]; return o && (!(o.limit > 0) || price >= o.limit) ? Math.min(o.amount, Math.max(0, c.stock[g] || 0)) : 0; };
-    const sellers = cs.map(c => ({ c, s: Math.max(0, c.stock[g] - c._need[g] - c._reserve[g], offers(c)) })).filter(x => x.s > 0);
-    const buyers = cs.map(c => { const usual = Math.max(0, c._need[g] + c._reserve[g] * .5 - c.stock[g]) + displacedDemand(c, g); return { c, usual, d: usual + wants(c) }; }).filter(x => x.d > 0);
-    const spare = Object.fromEntries(sellers.map(x => [x.c.id, Math.max(0, x.c.stock[g] - x.c._need[g] - x.c._reserve[g])])); // Only a want with gold behind it is demand: a hungry country with an empty reserve does not bid the world price up.
+    // What merchants may send out: all they can spare, unless the government has forbidden the export or set a quota on it (and then what slips past the customs still goes).
+    const mayGo = c => { const all = Math.max(0, c.stock[g] - c._need[g] - c._reserve[g]), r = c.exports?.[g]; if (!r || (!r.ban && r.quota == null)) return all; const legal = r.ban ? 0 : Math.min(all, r.quota); return legal + (all - legal) * (1 - sealOf(w, c)); };
+    const sellers = cs.map(c => ({ c, s: Math.max(mayGo(c), offers(c)) })).filter(x => x.s > 0);
+    const buyers = cs.map(c => { const { usual, legal } = wantOf(c, g), state = wants(c); return { c, usual, d: usual + state, taxed: usual + state > 0 ? (legal + state) / (usual + state) : 1 }; }).filter(x => x.d > 0);
+    const spare = Object.fromEntries(sellers.map(x => [x.c.id, mayGo(x.c)])); // Only a want with gold behind it is demand: a hungry country with an empty reserve does not bid the world price up.
     let wanted = sum(buyers, b => Math.min(b.d, Math.max(0, b.c.reserves - (b.c._debtService || 0)) / Math.max(price, .01))), moved = 0; const offered = sum(sellers, s => s.s);
     for (let pass = 0; pass < 2; pass++) for (const b of buyers) {
       if (b.d <= 0) continue;
@@ -181,13 +202,17 @@ function trade(w, cs) {
       const wgt = a => a.x.s / a.r.cost * (hasTreaty(w, b.c.id, a.x.c.id, 'trade') ? 1.5 : 1) * exportEdge(a.x.c), tot = sum(acc, wgt);
       if (!tot) continue;
       for (const a of acc) {
-        const landed = price * a.r.cost * (1 + (b.c.tariffDeals?.[a.x.c.id] ?? b.c.tariff) * .3);
+        const duty = dutyOn(b.c, g, a.x.c.id), landed = price * a.r.cost * (1 + duty * .3);
         // Gold owed to foreign creditors this quarter is not spent on imports: the debt is served first, and imports shrink instead.
-        const q = Math.min(a.x.s, b.d * wgt(a) / tot, Math.max(0, b.c.reserves - (b.c._debtService || 0)) / landed);
+        // And a good draws only on its own share of the quarter's gold and on what no other good has claimed.
+        const q = Math.min(a.x.s, b.d * wgt(a) / tot, Math.max(0, b.c.reserves - (b.c._debtService || 0)) / landed, ((b.c._alloc?.[g] ?? Infinity) + (b.c._spare ?? 0)) / (price * a.r.cost));
         if (q <= 0) continue;
         const v = q * price; a.x.s -= q; b.d -= q; moved += q; a.x.c.lastSold[g] = (a.x.c.lastSold[g] || 0) + q;
         // Freight goes to the exporter, customs to the buyer's own treasury: gold does not vanish from the world.
         const gold = v * a.r.cost; a.x.c.stock[g] -= q; b.c.stock[g] += q; a.x.c.reserves += gold; b.c.reserves -= gold;
+        if (b.c._alloc) { const own = Math.min(b.c._alloc[g] ?? 0, gold); b.c._alloc[g] = (b.c._alloc[g] ?? 0) - own; b.c._spare = Math.max(0, (b.c._spare ?? 0) - (gold - own)); }
+        // Duty is paid on what came through the customs house, at the rate that good pays; smuggled goods pay none.
+        a.x.c._exportGold = (a.x.c._exportGold || 0) + gold; b.c._duty = (b.c._duty || 0) + v * duty * b.taxed;
         a.x.c._exports = (a.x.c._exports || 0) + v; b.c._imports = (b.c._imports || 0) + v;
         a.x.c._rawExp = (a.x.c._rawExp || 0) + (RAW.includes(g) && g !== 'grain' ? v : 0);
         // The toll is part of what the buyer paid; it is passed on to whoever holds the strait, not minted anew.
@@ -213,6 +238,7 @@ function trade(w, cs) {
     w.globalPrice[g] = clamp(before + (target - before) * .4, BASE_PRICE[g] * .3, BASE_PRICE[g] * 9);
     if (w.globalPrice[g] > before * 1.5 && before > BASE_PRICE[g]) news(w, `World ${GOOD_LABEL[g]} price rose sharply.`, { kind: 'economy' });
   }
+  for (const c of cs) { c.lastExportGold = c._exportGold || 0; delete c._alloc; delete c._spare; delete c._exportGold; }
 }
 
 function factories(w, c) {
@@ -244,7 +270,7 @@ export function economyStep(w) {
     factories(w, c);
     consume(w, c, prevReal[c.id]);
     fiscal(w, c); currencyStep(w, c); demography(w, c); investment(w, c); research(w, c);
-    for (const k of ['_exports', '_imports', '_rawExp', '_tolls']) delete c[k];
+    for (const k of ['_exports', '_imports', '_rawExp', '_tolls', '_duty']) delete c[k];
   }
   epidemicStep(w);
 }
@@ -306,7 +332,9 @@ function consume(w, c, prev) {
 function fiscal(w, c) {
   const eff = clamp((.4 + c.bureaucracy / 120) * (1 - c.corruption / 130) * (1 - (c.unrest ?? 0) / 400) * (c._adminFactor ?? 1) * (c.service?.treasury ?? 1), .2, 1);
   const land = c._raw.grain * 10 * c.priceLevel * c.tax.land, business = (sum(RAW.filter(g => g !== 'grain'), g => c._raw[g] * BASE_PRICE[g]) + sum(Object.keys(RECIPE), g => (c._made[g] || 0) * BASE_PRICE[g] * .45)) * c.priceLevel * c.tax.business;
-  const revenue = (c.gdp * .45 * c.tax.income + land + business + (c._imports || 0) * c.priceLevel * c.tariff) * eff + (c._tolls || 0) * c.priceLevel;
+  // Customs are what each good paid at the rate set for it; goods that came in past the customs house paid nothing.
+  const customs = (c._duty ?? (c._imports || 0) * c.tariff) * c.priceLevel;
+  const revenue = (c.gdp * .45 * c.tax.income + land + business + customs) * eff + (c._tolls || 0) * c.priceLevel;
   const b = c.budget, programs = (b.military + b.welfare + b.infrastructure + b.education + b.police + b.administration) * c.gdp;
   // Standing institutions are part of the budget: a state that founds many of them pays for them every quarter.
   const agencies = sum((c.institutions || []).filter(i => i.id), i => i.sponsor ? i.grant || 0 : i.budget || 0) * c.gdp;
@@ -345,7 +373,7 @@ function fiscal(w, c) {
   creditStanding(w, c, paid === 1 && !short);
   // The quarter's books in their parts: which tax brought what, what was lost in the collecting, where the money went, and how it stood the quarter before.
   c.lastBooks = { eff, collect: clamp(.4 + c.bureaucracy / 120, 0, 1), graft: c.corruption / 130, unrest: (c.unrest ?? 0) / 400, reach: c._adminFactor ?? 1,
-    income: c.gdp * .45 * c.tax.income * eff, land: land * eff, business: business * eff, customs: (c._imports || 0) * c.priceLevel * c.tariff * eff, tolls: (c._tolls || 0) * c.priceLevel, works: c._stateProfit || 0,
+    income: c.gdp * .45 * c.tax.income * eff, land: land * eff, business: business * eff, customs: customs * eff, tolls: (c._tolls || 0) * c.priceLevel, works: c._stateProfit || 0,
     programs: Object.fromEntries(Object.keys(b).map(k => [k, b[k] * c.gdp])), agencies, interest, abroad: extPaid * (c.rate || 1), outlay: c._outlay || {},
     before: c.lastRevenue != null ? { revenue: c.lastRevenue, due: c.lastRevenue - (c.lastBalance ?? 0) } : null };
   c._stateProfit = 0; c._outlay = {};

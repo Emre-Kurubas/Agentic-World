@@ -3,7 +3,7 @@ import { CLASSES, GOODS, countryProvinces, atWar, hasTreaty, makeUnit, aliveCoun
 import { executePlot, neutralize, die, SUCCESSION, distance } from './politics.js';
 import { capture, pathStep, upkeepCost, settleOccupations } from './military.js';
 import { makeFleet, TECHS, PLANTS, DEPOSITS, GOOD_LABEL, ROLES, spawnCharacter, bfsSea } from './world.js';
-import { hasTech } from './economy.js';
+import { hasTech, sealOf, importOrder } from './economy.js';
 import { FX_REGIMES, foreignRate, externalDebt, creditLeft, declareDefault, treasuryPays } from './money.js';
 import { firmOp, seizeFirm, STATE } from './firms.js';
 import { queueProject, durationOf, WORKS, quote, ground, projectYield, wasteOf } from './projects.js';
@@ -55,7 +55,7 @@ const BUDGET = ['military', 'welfare', 'infrastructure', 'education', 'police', 
 const TREATY = ['alliance', 'nonaggression', 'trade', 'military_access', 'peace', 'protection', 'armistice'];
 // A state under another's protection has signed away its own wars and alliances for as long as the treaty stands.
 const protectorOf = (w, c) => { const t = w.treaties.find(x => x.active && x.kind === 'protection' && x.parties.includes(c.id) && x.protector !== c.id); return t ? w.countries[t.protector] : null; };
-const LAW_TITLE = { nationalize_company: 'Company nationalization', set_tax: 'Tax regulation', set_budget: 'Budget amendment', set_tariff: 'Customs tariff', borrow: 'Borrowing authority', declare_war: 'Declaration of war', ban_party: 'Party ban', land_reform: 'Land reform', nationalize: 'Nationalization', privatize: 'Privatization' };
+const LAW_TITLE = { nationalize_company: 'Company nationalization', set_tax: 'Tax regulation', set_budget: 'Budget amendment', set_tariff: 'Customs tariff', set_import: 'Import regulation', set_export: 'Export regulation', borrow: 'Borrowing authority', declare_war: 'Declaration of war', ban_party: 'Party ban', land_reform: 'Land reform', nationalize: 'Nationalization', privatize: 'Privatization' };
 
 const num = (v, a, b, d = a) => clamp(Number.isFinite(Number(v)) ? Number(v) : d, a, b);
 // How much of an order the state's offices carry out at once. A bare test world has none of this friction.
@@ -404,6 +404,25 @@ export function applyOp(w, actor, op) {
     // A person pays money into the treasury of their own country: a tax settled, a levy, a gift.
     case 'pay_state': { const m = Math.min(Math.max(actor.wealth, 0), num(op.amount, 0, 1e9, 0)); if (!(m > .01)) return fail('No money to pay with.'); actor.wealth -= m; c.treasury += m; tell(w, w.characters[c.leader], 'Treasury', `${actor.name} paid ${Math.round(m * 10) / 10} into the treasury${op.reason ? `: ${String(op.reason).slice(0, 120)}` : ''}.`); return { ok: true, msg: `${Math.round(m * 10) / 10} was paid into the treasury of ${c.name}.` }; }
     case 'cancel_contract': { const msg = cancelContract(w, actor, op.id, op.from ?? op.to), old = !msg && (w.contracts || []).find(x => x.id === op.id && [x.a, x.b].includes(actor.id)); return msg ? { ok: true, msg } : fail(old ? `${old.id} is closed already (${old.status}).` : 'No such contract or offer of yours.'); }
+    // The frontier, good by good. Left alone, every good comes in under the general tariff and goes out as merchants can spare it. Whoever governs can give one good
+    // a duty of its own, a quota or a prohibition, forbid or limit its export, and say what the country's gold is spent on first when it is short.
+    case 'set_import': case 'set_export': {
+      if (!GOODS.includes(op.good)) return fail('No such good.');
+      const inward = op.op === 'set_import', book = inward ? ((c.imports ||= {}).rules ||= {}) : (c.exports ||= {}), name = GOOD_LABEL[op.good], was = book[op.good];
+      if (op.clear === true) { delete book[op.good]; return { ok: true, msg: inward ? `${name} comes in again under the general tariff of ${pc(c.tariff)}, as much as merchants care to bring.` : `${name} goes out again as merchants can spare it.` }; }
+      const r = { ...(was || {}) };
+      if (op.ban === true) { r.ban = true; delete r.quota; } else if (op.ban === false) delete r.ban;
+      if (op.quota != null) { r.quota = num(op.quota, 0, 1e6, 0); delete r.ban; }
+      if (inward && op.tariff != null) r.tariff = num(op.tariff, 0, 1);
+      if (!r.ban && r.quota == null && r.tariff == null) return fail(inward ? 'Name a duty, a quota or a prohibition for it, or clear the rule.' : 'Name a quota or a prohibition for it, or clear the rule.');
+      book[op.good] = r; const seal = sealOf(w, c), what = [r.ban ? (inward ? 'may not be brought in' : 'may not be sent out') : r.quota != null ? `${inward ? 'comes in' : 'goes out'} up to ${r1(r.quota)} a quarter` : '', r.tariff != null ? `pays a duty of ${pc(r.tariff)}` : ''].filter(Boolean).join(' and ');
+      if (r.ban !== was?.ban || r.quota !== was?.quota) news(w, `${c.name}: ${name} ${r.ban ? (inward ? 'may no longer be imported' : 'may no longer be exported') : r.quota != null ? `${inward ? 'imports' : 'exports'} are limited to ${r1(r.quota)} a quarter` : `${inward ? 'imports' : 'exports'} are free again`}.`, { kind: 'economy', countries: [c.id] });
+      return { ok: true, msg: `From now on ${name} ${what}.${(r.ban || r.quota != null) && seal < .97 ? ` The customs service can hold back about ${Math.round(seal * 100)} in the hundred of what the rule forbids; the rest ${inward ? 'comes in' : 'goes out'} by other roads and pays nothing.` : ''}` };
+    }
+    case 'set_import_priority': {
+      const goods = [...new Set((Array.isArray(op.goods) ? op.goods : []).filter(g => GOODS.includes(g)))]; (c.imports ||= {}).order = goods;
+      return { ok: true, msg: goods.length ? `When gold is short it is now spent abroad in this order: ${importOrder(c).map(g => GOOD_LABEL[g]).join(', ')}.` : 'The usual order stands again: bread first, then what the works need, consumer goods last.' };
+    }
     // An order on the foreign markets for this quarter. It moves nothing by itself: the quarter's trade fills it as far as sellers, routes and gold allow, and reports back.
     case 'buy_goods': case 'sell_goods': {
       if (!GOODS.includes(op.good)) return fail('No such good.');
