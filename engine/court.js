@@ -42,7 +42,8 @@ export function openPost(w, from, to, text) {
   return readers;
 }
 // The share of ordinary letters a state's black cabinet opens.
-export const watch = c => clamp((c.intelligence - 15) / 260, 0, .3) * (1 - c.courts / 250);
+// A state that has made the secrecy of the mails law opens none.
+export const watch = c => c.postalSecrecy ? 0 : clamp((c.intelligence - 15) / 260, 0, .3) * (1 - c.courts / 250);
 
 // ---- Standing posts ----
 // Every state has someone who keeps its treasury and someone who heads its police, every country a leading banking house, and every large

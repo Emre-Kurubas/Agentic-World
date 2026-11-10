@@ -1192,6 +1192,7 @@ chain('The post is read where the state watches it: copies reach the ruler and t
   const pub = applyOp(w, boss, { op: 'publish_dossier', character: opp.id }); assert.ok(pub.ok, 'a copied letter can be published');
   c.intelligence = 12; boss.inbox = []; for (let i = 0; i < 200; i++) openPost(w, opp, rich, 'x'); assert.equal(copies(), 0, 'a state with no secret service opens nothing');
   c.intelligence = 95; boss.inbox = []; for (let i = 0; i < 100; i++) { openPost(w, boss, rich, 'x'); openPost(w, rich, boss, 'x'); } assert.equal(copies(), 0, 'the ruler is not sent copies of his own letters');
+  assert.ok(applyOp(w, boss, { op: 'set_institutions', postal_secrecy: true }).ok); boss.inbox = []; for (let i = 0; i < 200; i++) openPost(w, opp, rich, 'x'); assert.equal(copies(), 0, 'a state that makes the secrecy of the mails law opens none'); applyOp(w, boss, { op: 'set_institutions', postal_secrecy: false });
   const far = w.countries.U2, other = ld(w, far); far.intelligence = 95; far.courts = 0; other.inbox = []; let abroad = 0; for (let i = 0; i < 200; i++) abroad += openPost(w, opp, w.characters[far.oligarch], 'x').includes('U2') ? 1 : 0;
   assert.ok(abroad > read * .9, `a letter across a border passes two services and is read more closely: ${abroad} against ${read}`);
 });
