@@ -113,11 +113,17 @@ function governor(w, c, ch, p) {
 const OFFER_LIFE = 4;
 function tempt(w, c) {
   const banker = minorsOf(w, c).find(x => x.post === 'house' && x.status === 'free'); if (!banker) return;
-  c.nextOffer ??= w.turn + 2 + hash(c.id) % 5; if (w.turn < c.nextOffer) return;
-  c.nextOffer = w.turn + 5 + Math.floor(rand(w) * 6);
-  const kinds = [['leader', 'lease'], ['general', 'supply'], ['opposition', 'purse']].filter(([r]) => w.characters[c[r]]?.alive && w.characters[c[r]].status === 'free'); if (!kinds.length) return;
-  const [role, kind] = kinds[(c.offerSeq = (c.offerSeq ?? -1) + 1) % kinds.length], to = w.characters[c[role]], g = Math.max(c.gdp, 1);
-  if ((w.offers ||= []).some(o => o.status === 'open' && o.to === to.id)) return;
+  // The house does not come round by the calendar. It comes when there is an opening: a state short of ready money, an army that is buying,
+  // a vote or a law that touches its business, or a person in a seat who is known to be pressed for money. Someone who has shown it the door is left alone for years.
+  const g = Math.max(c.gdp, 1), pressed = ch => ch.wealth < 15 || (w.debts || []).some(d => d.debtor === ch.id && ['open', 'overdue'].includes(d.status));
+  const open = ch => ch?.alive && ch.status === 'free' && w.turn - (ch.houseAsked ?? -99) >= 8 && w.turn - (ch.houseRefused ?? -99) >= 16 && !(w.offers ||= []).some(o => o.status === 'open' && o.to === ch.id);
+  const ruler = w.characters[c.leader], gen = w.characters[c.general], opp = w.characters[c.opposition], mine = unitsOf(w, c), kit = mine.length ? mine.reduce((a, u) => a + (u.equip ?? .8) * u.men, 0) / Math.max(mine.reduce((a, u) => a + u.men, 0), 1e-9) : 1;
+  const openings = [];
+  if (open(ruler) && ((c.treasury < g * .01 && (c.lastBalance ?? 0) < 0) || pressed(ruler))) openings.push([ruler, 'lease']);
+  if (open(gen) && gen.id !== c.leader && ((w.projects || []).some(x => x.country === c.id && !x.status && x.kind === 'unit') || kit < .75 || pressed(gen))) openings.push([gen, 'supply']);
+  if (open(opp) && opp.id !== c.leader && ((c.elections && c.nextElection >= w.turn && c.nextElection - w.turn <= 4) || (c.bills || []).some(b => b.status === 'pending' && (b.ops || []).some(o => ['nationalize', 'nationalize_company', 'set_tax', 'set_labour_law'].includes(o?.op))) || pressed(opp))) openings.push([opp, 'purse']);
+  const pick = openings.find(() => rand(w) < .12 + banker.greed / 400); if (!pick) return;
+  const [to, kind] = pick; to.houseAsked = w.turn;
   const amount = Math.round(10 + banker.greed / 5 + rand(w) * 12), o = { id: nextId(w, 'OF'), kind, from: banker.id, to: to.id, country: c.id, amount, turn: w.turn, status: 'open' };
   if (kind === 'lease') { o.drain = g * .0012; o.turns = 12; o.text = `${amount} paid quietly into your own purse, if the collection of the customs is leased to the banking house of ${banker.name} for three years. The house would keep about ${Math.round(o.drain)} a quarter of what the treasury now receives`; }
   else if (kind === 'supply') { o.drain = g * .0008; o.turns = 8; o.shoddy = true; o.text = `${amount} paid quietly into your own purse, if for two years the army's boots, cloth and rifles are bought from the suppliers the banking house of ${banker.name} stands behind. The army would pay about ${Math.round(o.drain)} a quarter more than it does now, and the goods are not the best`; }
@@ -140,7 +146,7 @@ export function takeOffer(w, actor, id) {
 // Refusing an offer, or, for whoever governs, ending an arrangement that is already running at the state's cost.
 export function refuseOffer(w, actor, id, governs) {
   const mine = (w.offers || []).find(x => x.id === id && x.status === 'open' && x.to === actor.id) ?? (offersTo(w, actor).length === 1 && !id ? offersTo(w, actor)[0] : null);
-  if (mine) { mine.status = 'declined'; return { ok: true, msg: `Offer ${mine.id} was refused.` }; }
+  if (mine) { mine.status = 'declined'; actor.houseRefused = w.turn; return { ok: true, msg: `Offer ${mine.id} was refused.` }; }
   const run = (w.offers || []).find(x => x.id === id && x.status === 'running' && x.country === actor.country);
   if (run && governs) { run.status = 'ended'; const banker = w.characters[run.from]; if (banker) banker.loyalty = clamp(banker.loyalty - 20, 0, 100); return { ok: true, msg: `The arrangement ${run.id} with the house of ${banker?.name ?? 'the bankers'} was ended; the money stays with the state from now on.` }; }
   return null;

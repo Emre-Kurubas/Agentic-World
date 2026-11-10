@@ -105,7 +105,8 @@ function updateBlocs(w, c, inWar) {
 }
 
 export function canSplit(w, c) {
-  return countryProvinces(w, c.id).length >= 4 && w.turn >= (c.noSplitUntil ?? 0) && !w.wars.some(x => x.active && x.civil && (x.a.includes(c.id) || x.b.includes(c.id)));
+  // There has to be land of its own, outside the capital, for a rising to hold.
+  return countryProvinces(w, c.id).some(p => p.owner === c.id && p.id !== c.capital) && countryProvinces(w, c.id).length >= 4 && w.turn >= (c.noSplitUntil ?? 0) && !w.wars.some(x => x.active && x.civil && (x.a.includes(c.id) || x.b.includes(c.id)));
 }
 
 const familyOf = ch => ch.name.split(' ').at(-1);
@@ -186,7 +187,7 @@ export function disputeStep(w) {
     const backed = side => sum(Object.entries(d.backers).filter(([, s]) => s === side).map(([id]) => w.characters[id]).filter(live), x => claimOf(w, c, x) * .5);
     const a = holdOf(w, c, holder) + backed('holder'), b = claimOf(w, c, rival) + backed('claimant') + between(w, -8, 8); c.dispute = null;
     if (b > a * 1.1) { news(w, `${c.name}: ${rival.name} has prevailed in the disputed succession; ${holder.name} has fled.`, { kind: 'politics', countries: [c.id] }); sideline(w, holder, 'exiled'); installLeader(w, c, rival); rival.rise = `Took power in ${w.date ?? 'the first days'} when the succession was disputed and the country came over.`; c.legitimacy = clamp(c.legitimacy - 4, 0, 100); }
-    else if (b > a * .9 && canSplit(w, c)) startCivilWar(w, c, rival, 'Claimant\'s Party');
+    else if (b > a * .9 && canSplit(w, c) && startCivilWar(w, c, rival, 'Claimant\'s Party')) { /* settled by arms */ }
     else { rival.power = clamp(rival.power - 12, 0, 100); c.legitimacy = clamp(c.legitimacy + 5, 0, 100); news(w, `${c.name}: the claim made for ${rival.name} has collapsed; ${holder.name} holds the state.`, { kind: 'politics', countries: [c.id] }); }
   }
 }
@@ -239,6 +240,8 @@ export function die(w, ch, how = 'died', { quiet = false, shock = 0 } = {}) {
 }
 
 export function startCivilWar(w, c, leaderCh, label, seedProvinces = []) {
+  // No land to stand on, no rising: nothing is created and the caller is told so.
+  if (!countryProvinces(w, c.id).some(p => p.owner === c.id && p.id !== c.capital)) return null;
   const id = nextId(w, 'U');
   const f = makeCountry(w, id, {
     name: `${label} (${c.rootName || c.name})`, rootName: c.rootName || c.name, noSplitUntil: w.turn + 16, adj: '', ideology: leaderCh.role === 'general' ? 'Military revolution' : 'Opposition front', regime: 'Revolutionary council', motto: 'The order will fall.',
