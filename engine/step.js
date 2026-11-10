@@ -11,6 +11,8 @@ import { applyOp } from './ops.js';
 import { courtStep } from './court.js';
 import { labourStep, labourEnd } from './labour.js';
 import { undergroundStep } from './underground.js';
+import { frontierStep } from './frontier.js';
+import { justiceStep } from './justice.js';
 import { countryProvinces, aliveCountries, provincePop } from './world.js';
 import { sum, quarterLabel } from './util.js';
 import { openCredit } from './money.js';
@@ -26,6 +28,7 @@ export function stepWorld(w) {
   firmStep(w);
   contractStep(w);
   militaryStep(w);
+  frontierStep(w);
   institutionStep(w);
   cultureStep(w);
   satisfactionStep(w);
@@ -36,6 +39,7 @@ export function stepWorld(w) {
   uprisingStep(w);
   electionStep(w);
   billStep(w, applyOp);
+  justiceStep(w);
   lifeStep(w);
   debtStep(w);
   collapseStep(w);

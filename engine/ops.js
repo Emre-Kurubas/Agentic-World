@@ -1,6 +1,6 @@
 import { clamp, news, rand, nextId, pick, sum } from './util.js';
 import { CLASSES, GOODS, countryProvinces, atWar, hasTreaty, makeUnit, aliveCountries, clampRel, provincePop } from './world.js';
-import { executePlot, neutralize, die, SUCCESSION } from './politics.js';
+import { executePlot, neutralize, die, SUCCESSION, distance } from './politics.js';
 import { capture, pathStep, upkeepCost, settleOccupations } from './military.js';
 import { makeFleet, TECHS, PLANTS, DEPOSITS, GOOD_LABEL, ROLES, spawnCharacter, bfsSea } from './world.js';
 import { hasTech } from './economy.js';
@@ -12,8 +12,10 @@ import { incapacitated } from './health.js';
 import { isMinor, recruitInformant, takeOffer, refuseOffer } from './court.js';
 import { labourOp } from './labour.js';
 import { fundUnderground } from './underground.js';
+import { mobilize, demobilize } from './frontier.js';
+import { prosecute, forge, forgeryFound } from './justice.js';
 import { proposeContract, acceptContract, cancelContract, toStateAccount } from './contracts.js';
-import { institutionRoom, delegated, vetoedBy, makeInstitution, mustPassParliament, createBill, parliamentOpen, makeParliament, leadsParties, enactLaw, normalizeClauses, activateClauses, allocateSeats, clauseText, MAX_AGENCY_BUDGET, governs } from './polity.js';
+import { governmentSeats, institutionRoom, delegated, vetoedBy, makeInstitution, mustPassParliament, createBill, parliamentOpen, makeParliament, leadsParties, enactLaw, normalizeClauses, activateClauses, allocateSeats, clauseText, MAX_AGENCY_BUDGET, governs } from './polity.js';
 
 const FIRM_OPS = new Set(['found_company', 'invest_company', 'draw_company', 'sell_company', 'buy_company', 'nationalize_company', 'privatize_company']);
 const PERMISSIONS = {
@@ -24,11 +26,11 @@ const PERMISSIONS = {
 };
 // What anyone may do whatever their office: deal, lend, scheme, speak.
 const LABOUR_OPS = new Set(['set_wages', 'set_safety', 'lockout', 'agitate', 'arbitrate_strike', 'break_strike']);
-const PRIVATE = ['fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution', 'propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'fund_plot', 'bribe', 'custom', 'propaganda', 'noop'];
+const PRIVATE = ['forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution', 'propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'fund_plot', 'bribe', 'custom', 'propaganda', 'noop'];
 PERMISSIONS.private = new Set(PRIVATE);
 // The chief of staff directs where the army's units and squadrons stand and who commands them. Raising and disbanding troops, war and peace stay with the ruler.
 for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'appoint_commander', 'spy']) PERMISSIONS.general.add(op);
-for (const seat of ['general', 'opposition', 'oligarch']) for (const op of ['fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'noop', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution']) PERMISSIONS[seat].add(op);
+for (const seat of ['general', 'opposition', 'oligarch']) for (const op of ['forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'noop', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution']) PERMISSIONS[seat].add(op);
 PERMISSIONS.exiled = new Set(PRIVATE.filter(x => !['found_party', 'execute_plot', 'gather_dossier'].includes(x)));
 PERMISSIONS.imprisoned = new Set(['accept_contract', 'cancel_contract', 'repay_debt', 'forgive_debt', 'join_plot', 'betray_plot', 'bribe', 'custom', 'noop']);
 // The office is the seat, not the title: a deposed or jailed leader keeps only what any private person has.
@@ -211,6 +213,54 @@ export function applyOp(w, actor, op) {
     }
     // Money for the armed underground, at home or (with target) in another country. From the actor's own purse.
     case 'fund_underground': { const where = target ?? c, m = Math.min(Math.max(actor.wealth, 0), num(op.amount, 0, 1e6, 0)); if (!(m >= 1)) return fail('No money to give them.'); actor.wealth -= m; return fundUnderground(w, actor, where, m, leaveTrace); }
+    // The lawful road against a person: a charge, a court, a verdict next quarter. Brought by whoever governs, on what is in their file.
+    case 'prosecute': {
+      const ch = has(w.characters, op.character) ? w.characters[op.character] : null; if (!ch?.alive || ch.country !== c.id || ch.id === actor.id) return fail('No such person here to charge.');
+      if (!op._law && !governs(w, c, actor)) return fail('Only the government brings a prosecution.');
+      if (ch.id === c.leader) return fail('The head of the government is not charged by their own prosecutors.'); if (ch.status !== 'free') return fail(`${ch.name} is ${ch.status}.`);
+      const r = prosecute(w, c, actor, ch, op); return r.ok ? r : fail(r.msg);
+    }
+    case 'forge_dossier': {
+      const ch = has(w.characters, op.character) ? w.characters[op.character] : null, claim = String(op.claim ?? '').trim(); if (!ch?.alive || ch.id === actor.id) return fail('No such person.'); if (!claim) return fail('A forged paper has to say something.');
+      const state = governs(w, c, actor) && c.intelligence >= 30; if (!state) { if (actor.wealth < 4) return fail('A forger has to be paid.'); actor.wealth -= 4; }
+      return forge(w, actor, ch, claim);
+    }
+    // A floor under pay and safety at every works in the country.
+    case 'set_labour_law': {
+      const safety = num(op.min_safety, 0, 1, c.labourLaw?.safety ?? 0), wage = num(op.min_wage, 0, 1, c.labourLaw?.wage ?? 0), was = c.labourLaw ?? { safety: 0, wage: 0 };
+      c.labourLaw = safety > 0 || wage > 0 ? { safety, wage } : null;
+      const harder = (safety - was.safety) * 5 + (wage - was.wage) * 6; if (Math.abs(harder) > .05) { c.mods.push({ key: 'sat.capital', delta: -harder, turns: 6, label: 'The factory law' }); c.mods.push({ key: 'sat.workers', delta: harder * .8, turns: 6, label: 'The factory law' }); }
+      news(w, `${c.name}: ${c.labourLaw ? `a factory law sets a floor under ${[safety > 0 ? 'safety' : '', wage > 0 ? 'wages' : ''].filter(Boolean).join(' and ')} at every works` : 'the factory law was repealed'}.`, { kind: 'economy', countries: [c.id] });
+      return { ok: true, msg: c.labourLaw ? `Every works must now spend at least ${safety} of 1 on safety and pay at least ${wage} of the going wage. Owners keep to it as far as officials and inspectors make them.` : 'There is no longer a floor under pay or safety.' };
+    }
+    case 'no_confidence': {
+      if (!(parliamentOpen(w, c) && c.parliament.legislative)) return fail('There is no legislature in session to put the motion to.');
+      if (governs(w, c, actor)) return fail('A government does not move no confidence in itself.');
+      const led = leadsParties(w, c, actor)[0], ruler = w.characters[c.leader]; if (!led || !(c.parliament.seats[led.id] > 0)) return fail('Only the leader of a party with seats in the house can move it.');
+      if ((c.bills || []).some(b => b.confidence && b.status === 'pending')) return fail('A motion of no confidence is already before the house.');
+      if (w.turn - (c.lastMotion ?? -99) < 4) return fail('The house voted on the government within the year and will not be asked again so soon.');
+      const bill = createBill(w, c, actor, { title: `Motion of no confidence in ${ruler?.name ?? 'the government'}`, text: String(op.text || `That this house has no confidence in the government of ${ruler?.name}.`), ops: [], axes: actor.axes }); if (!bill) return fail('The parliamentary agenda is full.');
+      bill.confidence = true; news(w, `${c.name}: ${actor.name} has moved a vote of no confidence in the government of ${ruler?.name}.`, { kind: 'politics', countries: [c.id] });
+      return { ok: true, msg: `The motion (${bill.id}) is voted next quarter. The government counts on ${governmentSeats(c)} of ${Object.values(c.parliament.seats).reduce((a, n) => a + n, 0)} seats; parties vote as their leaders direct (vote_bill) or as they judge, and deputies can be lobbied (lobby_bill). If it carries, you form the government.` };
+    }
+    // Joining or leaving the government's benches, or inviting a party onto them.
+    case 'coalition': {
+      if (!c.parliament) return fail('There is no parliament to sit in.');
+      const mine = leadsParties(w, c, actor), ruling = governs(w, c, actor), party = c.parties.find(p => p.id === op.party && !p.banned) ?? (!ruling ? mine[0] : null), list = c.coalition ||= [];
+      if (!party || party.id === c.rulingParty) return fail('No such party to bring in.');
+      if (op.join === false) { if (!list.includes(party.id)) return fail(`${party.name} is not on the government's benches.`); if (!ruling && !mine.includes(party)) return fail('That party is not yours to take out.'); c.coalition = list.filter(x => x !== party.id); news(w, `${c.name}: ${party.name} has left the government's benches.`, { kind: 'politics', countries: [c.id] }); return { ok: true, msg: `${party.name} no longer supports the government. It counts on ${governmentSeats(c)} seats.` }; }
+      if (list.includes(party.id)) return fail(`${party.name} already sits with the government.`);
+      if (!ruling) { if (!mine.includes(party)) return fail('That party is not yours to lead in.'); list.push(party.id); }
+      else {
+        // A party with a leader of its own answers through that leader; one without is won if it stands near enough to the government's course.
+        const head = [w.characters[party.founder], w.characters[c.opposition]].find(x => x?.alive && x.aiControlled && x.id !== actor.id && leadsParties(w, c, x).includes(party));
+        if (head) { tell(w, head, actor.name, `${actor.name} invites ${party.name} onto the government's benches. Joining is yours to decide (coalition with join true).`); return { ok: true, msg: `The invitation has gone to ${head.name}, who leads ${party.name}.` }; }
+        if (distance(party.axes, c.axes) > 55) return fail(`${party.name} stands too far from the government's course to join it.`);
+        list.push(party.id);
+      }
+      news(w, `${c.name}: ${party.name} has joined the government's benches.`, { kind: 'politics', countries: [c.id] });
+      return { ok: true, msg: `${party.name} now supports the government, which counts on ${governmentSeats(c)} of ${Object.values(c.parliament.seats).reduce((a, n) => a + n, 0)} seats.` };
+    }
     case 'accept_offer': { const r = takeOffer(w, actor, op.id); return r ?? fail('No such offer is waiting for you.'); }
     case 'decline_offer': { const r = refuseOffer(w, actor, op.id, governs(w, c, actor)); return r ?? fail('No such offer.'); }
     // A gift of one's own money to a person or to an institution, at home or abroad. Nothing is owed for it and it leaves no mark of a bribe.
@@ -266,7 +316,9 @@ export function applyOp(w, actor, op) {
     case 'set_institutions': { const notes = []; if (op.courts !== undefined) c.courts = eased(c.courts, num(op.courts, 0, 100), 'Court independence', notes); if (op.press_freedom !== undefined) { const was = c.pressFreedom; c.pressFreedom = eased(was, num(op.press_freedom, 0, 100), 'Press freedom', notes); if (Math.abs(c.pressFreedom - was) >= 5) news(w, `${c.name} ${c.pressFreedom > was ? 'loosened' : 'tightened'} its hold on the press.`, { kind: 'politics', countries: [c.id] }); } if (typeof op.unions === 'boolean') c.unions = op.unions; if (op.ruling_party && c.parties.some(p => p.id === op.ruling_party)) c.rulingParty = op.ruling_party; return { ok: true, msg: notes.length ? `Applied. ${notes.join('; ')}.` : 'Applied.' }; }
     case 'gather_dossier': { const ch = w.characters[op.character]; if (!ch?.alive) return fail('No such target.'); if (rand(w) > clamp(.25 + c.intelligence / 200, .1, .8)) return fail('No evidence could be found for a dossier.'); const facts = (ch.secrets || []).filter(s => !s.published).slice(-5).map(s => s.text); actor.dossiers[ch.id] = { turn: w.turn, about: ch.name, facts }; return { ok: true, msg: facts.length ? `Dossier opened, ${facts.length} facts found.` : 'Dossier opened, but nothing that is not already known came up.' }; }
     case 'blackmail': { const ch = w.characters[op.character], file = actor.dossiers[ch?.id]; if (!ch?.alive || !file) return fail('You hold no dossier.'); if (!file.facts?.length) return fail('There is nothing usable in the dossier.'); tell(w, ch, actor.name, `I have a dossier on you: ${file.facts.join(' ')} I expect you to do this: ${String(op.demand || 'Support me.').slice(0, 300)}`); leaveTrace(w, actor, `Blackmailed ${ch.name}.`); if (!ch.aiControlled) ch.loyalty = clamp(ch.loyalty - 5, 0, 100); return ok(); }
-    case 'publish_dossier': { const ch = w.characters[op.character], file = actor.dossiers[ch?.id]; if (!ch?.alive || !file?.facts?.length) return fail('No dossier to publish.'); const home = w.countries[ch.country], n = file.facts.length; news(w, `Leaked documents: about ${ch.name}: ${file.facts.join(' ')}`, { kind: 'plot', countries: [ch.country] }); if (home?.leader === ch.id) home.legitimacy = clamp(home.legitimacy - (2 + n * 1.5) * (.4 + home.pressFreedom / 100), 0, 100); else ch.power = clamp(ch.power - (6 + n * 2), 0, 100); for (const s of ch.secrets || []) if (file.facts.includes(s.text)) s.published = true; delete actor.dossiers[ch.id]; return ok(); }
+    case 'publish_dossier': { const ch = w.characters[op.character], file = actor.dossiers[ch?.id]; if (!ch?.alive || !file?.facts?.length) return fail('No dossier to publish.'); const home = w.countries[ch.country], n = file.facts.length;
+      // Forged pages in the file may be recognised once they are in print, and then it is the publisher who pays.
+      if (home && forgeryFound(w, home, file)) { news(w, `${home.name}: papers published against ${ch.name} were shown to be forgeries. They came from ${actor.name}.`, { kind: 'plot', countries: [...new Set([ch.country, actor.country])] }); ch.power = clamp(ch.power + 8, 0, 100); if (c.leader === actor.id) c.legitimacy = clamp(c.legitimacy - 5 * (.4 + c.pressFreedom / 100), 0, 100); else actor.power = clamp(actor.power - 10, 0, 100); leaveTrace(w, actor, `Published forged papers against ${ch.name}.`); delete actor.dossiers[ch.id]; return { ok: true, msg: `The papers were printed, and within weeks shown to be forgeries. It is you the country talks about now, not ${ch.name}.` }; } news(w, `Leaked documents: about ${ch.name}: ${file.facts.join(' ')}`, { kind: 'plot', countries: [ch.country] }); if (home?.leader === ch.id) home.legitimacy = clamp(home.legitimacy - (2 + n * 1.5) * (.4 + home.pressFreedom / 100), 0, 100); else ch.power = clamp(ch.power - (6 + n * 2), 0, 100); for (const s of ch.secrets || []) if (file.facts.includes(s.text)) s.published = true; delete actor.dossiers[ch.id]; return ok(); }
     case 'lend_private': { const ch = w.characters[op.character]; if (!ch?.alive || ch.id === actor.id) return fail('No such target.'); const m = num(op.amount, 0, actor.wealth); if (m <= 0) return fail('No money to give.'); const d = { id: nextId(w, 'B-'), creditor: actor.id, debtor: ch.id, amount: m, owed: m * (1 + num(op.interest, 0, 1, 0)), due: w.turn + Math.round(num(op.due_turns, 1, 80, 8)), terms: String(op.terms || '').slice(0, 240), status: 'open', turn: w.turn }; actor.wealth -= m; ch.wealth += m; (w.debts ||= []).push(d); tell(w, ch, actor.name, `Debt ${d.id}: lent you ${Math.round(m)}, expects ${Math.round(d.owed)} back, due turn ${d.due}. ${d.terms}`); return { ok: true, msg: `Debt recorded: ${d.id}`, debt: d.id }; }
     case 'repay_debt': { const d = openDebt(w, op.debt); if (!d || d.debtor !== actor.id) return fail('You have no such debt.'); const m = Math.min(actor.wealth, d.owed, num(op.amount, 0, 1e12, d.owed)); if (m <= 0) return fail('No money to pay with.'); actor.wealth -= m; d.owed -= m; const cr = w.characters[d.creditor]; if (cr) cr.wealth += m; if (d.owed < .01) { d.status = 'paid'; d.closedAt = w.turn; } tell(w, cr, actor.name, `Debt ${d.id}: paid ${Math.round(m)}${d.status === 'paid' ? ', the debt is closed.' : `, ${Math.round(d.owed)} remaining.`}`); return ok(); }
     case 'forgive_debt': { const d = openDebt(w, op.debt); if (!d || d.creditor !== actor.id) return fail('You have no such claim.'); d.status = 'forgiven'; d.closedAt = w.turn; tell(w, w.characters[d.debtor], actor.name, `Debt ${d.id} was forgiven.`); return ok(); }
@@ -319,11 +371,14 @@ export function applyOp(w, actor, op) {
       // A number discharges that many and the unit stays in being; with no number the whole unit goes home.
       const asked = Number(op.men), part = Number.isFinite(asked) && asked > 0 && asked < u.men - .05, men = part ? Math.round(asked * 10) / 10 : u.men;
       const count = menText(men);
-      if (home) home.pops.workers.n += men;
+      // The discharged are trained men: they go on the reserve roll, and their rifles go back to the arsenal.
+      if (home) home.pops.workers.n += men; c.reserve = (c.reserve || 0) + men; c.stock.arms = (c.stock.arms || 0) + men * (u.kind === 'artillery' ? .12 : .05) * clamp(u.equip ?? .8, 0, 1);
       if (!part) { delete w.units[u.id]; return { ok: true, msg: `${count} went home and ${u.id} is dissolved.` }; }
       u.men -= men;
       return { ok: true, msg: `${count} went home. ${u.id} keeps ${menText(u.men)} under arms.` };
     }
+    case 'mobilize': return mobilize(w, c, num(op.share, .05, 1, 1), pay, fail);
+    case 'demobilize': return demobilize(w, c) ?? fail('No reservists are under arms.');
     case 'move': {
       const u = w.units[op.unit]; if (!u || u.country !== c.id || !w.provinces[op.to]) return fail('Invalid movement order.');
       // A number sends a detachment and leaves the rest of the unit where it stands.
@@ -348,6 +403,8 @@ export function applyOp(w, actor, op) {
       // Whatever was signed with them is torn up. Breaking a peace that is still fresh costs most, at home and with everyone who watches.
       for (const t of w.treaties.filter(x => x.active && x.parties.includes(c.id) && x.parties.includes(target.id))) { t.active = false; c.legitimacy = clamp(c.legitimacy - (t.kind === 'peace' ? 8 : 3), 0, 100); if (t.kind === 'peace') for (const o of aliveCountries(w)) if (o.id !== c.id) o.relations[c.id] = clampRel((o.relations[c.id] ?? 0) - 6); }
       w.wars.push({ id: nextId(w, 'S'), a: [c.id], b: [target.id], civil: false, active: true, start: w.turn, name: `${c.name} - ${target.name} War` }); c.embargo = c.embargo.filter(x => x !== target.id); c.relations[target.id] = -90; target.relations[c.id] = -90;
+      // A people that has been wronged by the enemy stands behind the declaration, for a while.
+      { const g = c.grudges?.[target.id]; if (g) c.legitimacy = clamp(c.legitimacy + Math.min(6, g.incident * .1 + g.kin * .15), 0, 100); }
       news(w, `${c.name} declared war on ${target.name}.`, { kind: 'war', countries: [c.id, target.id] });
       for (const a of aliveCountries(w)) if (a.id !== c.id && a.id !== target.id && hasTreaty(w, a.id, target.id, 'alliance')) tell(w, w.characters[a.leader], 'Foreign Ministry', `Your ally ${target.name} was attacked by ${c.name}. Help is expected under the alliance.`);
       return ok();

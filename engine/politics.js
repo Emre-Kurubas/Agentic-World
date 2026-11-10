@@ -30,6 +30,7 @@ export function moodParts(c, p, k, realWage = c.wageIndex / c.priceLevel) {
     ['the distance between what the state stands for and what they want', -distance(c.axes, CLASS_AXES[k]) * .32],
     ['the ruin of their province', -p.devastation * 28],
     ['weariness of war', -c.warExhaustion * .22],
+    ['wrongs done by neighbours and left unanswered', -(c.grief ?? 0) * (k === 'elite' ? .5 : 1)],
     ['the standing of the government', (c.legitimacy - 50) * .14],
     ['the state of the press', k === 'middle' ? (c.pressFreedom - 50) * .12 : 0],
     ['state ownership of industry', k === 'elite' ? -c.ownership * 30 : 0],

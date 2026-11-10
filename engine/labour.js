@@ -61,6 +61,8 @@ export function labourStep(w) {
   for (const f of firms) {
     const c = w.countries[f.country], p = w.provinces[f.province]; if (!c?.alive || !p || p.controller !== c.id) continue;
     f.wage ??= 1; f.safety ??= .3; f.temper ??= 30;
+    // A factory law sets a floor under pay and safety at every works. It is kept as far as there are officials and inspectors to make owners keep it.
+    if (c.labourLaw) { const kept = clamp(.3 + c.bureaucracy / 200 + inspectors(c) * .4, .2, 1); f.safety = Math.max(f.safety, r2(c.labourLaw.safety * kept)); f.wage = Math.max(f.wage, r2(Math.min(c.labourLaw.wage, 1) * (kept * .5 + .5))); }
     const watchdog = inspectors(c), real = c.wageIndex / Math.max(c.priceLevel, .01), others = firms.filter(o => o !== f && o.province === f.province);
     if (rand(w) < .009 * (DANGER[f.sector] ?? .2) * (1.7 - f.safety * 1.5) * (1 - watchdog * .35)) disaster(w, c, p, f);
     // Where the temper of the men settles: pay against the going rate, what wages buy, how the workers of the province feel in general, a fresh grave, how easily other work is found, and whether anyone listens.
