@@ -97,7 +97,7 @@ const inOffice = (w, ch) => w.countries[ch.country]?.[ch.role] === ch.id && ch.s
 // What reaches a reader. News of their own country comes first. Where the press is gagged, risings, famines and epidemics in the provinces are not printed:
 // at home only the ruler, the chief of staff and the opposition's own network hear of them; abroad they are known to neighbours and to states with eyes there.
 // A prisoner hears only what the jail lets in; an exile reads the foreign press.
-export function newsFor(w, ch, since = -1, limit = 30) {
+export function newsFor(w, ch, since = -1, limit = 80) {
   const c = w.countries[ch.country], away = ch.status === 'exiled', informed = !away && inOffice(w, ch) && ['leader', 'general', 'opposition'].includes(ch.role);
   const near = new Set(countryProvinces(w, c.id).flatMap(p => p.neighbors.map(n => w.provinces[n].controller)));
   const printed = id => { const o = w.countries[id]; return !o || o.pressFreedom >= 35; };

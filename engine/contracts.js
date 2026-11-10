@@ -20,7 +20,7 @@ export function proposeContract(w, actor, op, num) {
   const hasGoods = GOODS.includes(op.good);
   // A new offer to the same person replaces the one still lying unanswered on their desk.
   for (const old of w.contracts || []) if (old.status === 'proposed' && old.a === actor.id && old.b === other.id) { old.status = 'withdrawn'; old.closedAt = w.turn; }
-  const k = { id: nextId(w, 'CT'), a: actor.id, b: other.id, terms: String(op.terms || '').slice(0, 400), payer: op.payer === 'them' ? other.id : op.payer === 'none' ? null : actor.id, pay: num(op.pay_per_turn, 0, 1e6, 0), good: hasGoods ? op.good : null, amount: hasGoods ? num(op.amount, 0, 1e5, 0) : 0, seller: hasGoods ? (op.seller === 'them' ? other.id : actor.id) : null, turns: Math.round(num(op.turns, 1, 80, 8)), status: 'proposed', turn: w.turn };
+  const k = { id: nextId(w, 'CT'), a: actor.id, b: other.id, terms: String(op.terms || '').slice(0, 1500), payer: op.payer === 'them' ? other.id : op.payer === 'none' ? null : actor.id, pay: num(op.pay_per_turn, 0, 1e6, 0), good: hasGoods ? op.good : null, amount: hasGoods ? num(op.amount, 0, 1e5, 0) : 0, seller: hasGoods ? (op.seller === 'them' ? other.id : actor.id) : null, turns: Math.round(num(op.turns, 1, 80, 8)), status: 'proposed', turn: w.turn };
   const sc = signsForState(w, actor, op.state); if (sc) k.purse = { [actor.id]: sc.id };
   (w.contracts ||= []).push(k);
   say(w, other, actor.name, `Contract offer ${k.id}${sc ? `, made for the state of ${sc.name} and on its treasury's account` : ''}: ${k.terms}${k.pay ? ` Payment ${Math.round(k.pay)} per quarter.` : ''}${k.good ? ` Delivery ${Math.round(k.amount)} ${GOOD_LABEL[k.good]} per quarter.` : ''} Runs ${k.turns} quarters. Accept with accept_contract.`);

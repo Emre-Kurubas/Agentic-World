@@ -15,19 +15,19 @@
   "countryAgentRoles": {},
   "models": {
     "leader": "sonnet",
-    "referee": "sonnet",
+    "referee": "opus",
     "secondary": "haiku",
     "cast": ["opus", "sonnet", "haiku"],
     "assign": {}
   },
-  "concurrency": 4,
-  "wakeEvery": 2,
+  "concurrency": 6,
+  "wakeEvery": 1,
   "wakeTension": 45,
-  "maxMessagesPerActor": 6,
-  "maxDecisionsPerActor": 8,
+  "maxMessagesPerActor": 20,
+  "maxDecisionsPerActor": 20,
   "turnDelayMs": 0,
   "limitRetryMinutes": 10,
   "saveDir": "",
-  "maxLookupRounds": 4,
-  "negotiationRounds": 2
+  "maxLookupRounds": 12,
+  "negotiationRounds": 4
 }

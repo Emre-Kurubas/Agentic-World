@@ -4,7 +4,7 @@
 
 import { TECHS } from '../engine/world.js';
 
-const MAX_TEXT = 2000, MAX_ANSWER = 1500;
+const MAX_TEXT = 12000, MAX_ANSWER = 8000;
 const cut = (s, n = MAX_TEXT) => { const t = String(s ?? ''); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
 export const fold = s => String(s ?? '').replace(/[İIı]/g, 'i').replace(/[Şş]/g, 's').replace(/[Ğğ]/g, 'g').replace(/[Üü]/g, 'u').replace(/[Öö]/g, 'o').replace(/[Çç]/g, 'c').replace(/[Ââ]/g, 'a').replace(/[Ûû]/g, 'u').replace(/[Îî]/g, 'i').toLowerCase();
@@ -190,18 +190,18 @@ const NEWS_IMP = { atrocity: 3, plot: 2, disaster: 1, war: 1 };
 export function buildEntries(w, log, before, lookups = {}) {
   const out = [];
   for (const x of log.trace || []) {
-    out.push({ k: 'thought', s: x.ai ? 'agent' : 'rule', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, text: cut(x.monologue), x: { persona: cut(x.persona, 900), publicFace: x.publicFace || '', decisions: x.decisions || [], lookups: x.lookups || [], ai: x.ai, model: x.model ?? null, standing: x.standing ?? null, health: x.health ?? null, notes: x.notes || '' } });
+    out.push({ k: 'thought', s: x.ai ? 'agent' : 'rule', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, text: cut(x.monologue), x: { persona: cut(x.persona, 6000), publicFace: x.publicFace || '', decisions: x.decisions || [], lookups: x.lookups || [], ai: x.ai, model: x.model ?? null, standing: x.standing ?? null, health: x.health ?? null, notes: x.notes || '' } });
     for (const q of lookups[x.actor] || []) out.push({ k: 'query', s: 'agent', n: x.name, r: x.role, c: [x.country], a: [x.actor], imp: 0, q: q.q, text: cut(q.a, MAX_ANSWER) });
   }
   for (const m of log.messages || []) out.push({ k: 'message', s: 'agent', n: m.fromName, to: m.toName, c: [m.fromCountry, m.toCountry].filter(Boolean), a: [m.from, m.toActor].filter(Boolean), imp: 0, ok: !m.undelivered, text: cut(m.text), x: { read: !!m.read, round: m.round ?? 0, intercepted: !!m.intercepted, secret: true } });
   // What the world itself told people this quarter: reports, warnings, notices, offers. A letter between characters is a message, not a notice.
-  for (const ch of Object.values(w.characters)) for (const m of ch.inbox || []) if (m.turn === w.turn - 1 && !m.letter && !m.logged) { m.logged = true; out.push({ k: 'notice', s: 'engine', n: ch.name, r: ch.role, c: [ch.country], a: [ch.id], imp: 0, text: cut(`[${m.from}] ${m.text}`, 700), x: { from: m.from, secret: true } }); }
+  for (const ch of Object.values(w.characters)) for (const m of ch.inbox || []) if (m.turn === w.turn - 1 && !m.letter && !m.logged) { m.logged = true; out.push({ k: 'notice', s: 'engine', n: ch.name, r: ch.role, c: [ch.country], a: [ch.id], imp: 0, text: cut(`[${m.from}] ${m.text}`, 3000), x: { from: m.from, secret: true } }); }
   for (const r of log.rulings || []) {
     const failed = (r.results || []).filter(y => y.ok === false), ok = !!r.success && !failed.length, detail = (r.results || []).map(y => y.msg).filter(Boolean).join('; ');
-    out.push({ k: r.source === 'referee' ? 'ruling' : 'rule', s: r.source, n: r.name, r: r.role, c: [r.country], a: [r.actor], imp: 0, ok, text: cut(r.source === 'referee' ? r.narrative : `${r.narrative}${detail ? `: ${detail}` : ''}`), x: { narrative: cut(r.narrative, 400), probability: r.probability, success: r.success, results: r.results || [], ops: r.ops || [], decision: r.decision, decisionText: r.decisionText ?? '' } });
+    out.push({ k: r.source === 'referee' ? 'ruling' : 'rule', s: r.source, n: r.name, r: r.role, c: [r.country], a: [r.actor], imp: 0, ok, text: cut(r.source === 'referee' ? r.narrative : `${r.narrative}${detail ? `: ${detail}` : ''}`), x: { narrative: cut(r.narrative, 1500), probability: r.probability, success: r.success, results: r.results || [], ops: r.ops || [], decision: r.decision, decisionText: r.decisionText ?? '' } });
   }
   for (const b of w.battles || []) out.push({ k: 'battle', s: 'engine', c: [b.attacker, b.defender], p: b.province, imp: 1, text: `Battle of ${w.provinces[b.province]?.name ?? b.province}: ${w.countries[b.attackerWon ? b.attacker : b.defender]?.name} prevailed. Losses: attacker ${b.lossA}k, defender ${b.lossD}k.`, x: { ...b } });
-  for (const y of log.system || []) out.push({ k: 'system', s: 'engine', c: [], n: y.name, imp: 0, text: cut(y.text, 500) });
+  for (const y of log.system || []) out.push({ k: 'system', s: 'engine', c: [], n: y.name, imp: 0, text: cut(y.text, 3000) });
   for (const n of w.newsThisTurn || []) out.push({ k: 'news', s: 'engine', c: n.countries || [], ...(n.province ? { p: n.province } : {}), ...(n.people?.length ? { a: n.people } : {}), imp: n.secret ? 0 : NEWS_IMP[n.kind] ?? 0, text: cut(n.text), x: { kind: n.kind, secret: !!n.secret, ...(n.hush ? { hush: true } : {}) } });
   if (before) out.push(...stateChanges(w, before));
   const t = w.turn, d = w.date || 'Start';

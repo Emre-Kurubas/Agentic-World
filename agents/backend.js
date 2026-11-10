@@ -33,7 +33,7 @@ const ART_SYSTEM = 'You are a person living in a fictional game world and you pa
 const ACTOR_SYSTEM_FILE = 'ajan-sistem.txt';
 
 // With a session the character's own session continues; without one (referee, connection check) the call leaves no trace.
-function callClaude(prompt, model, { timeoutMs = 300000, session = null, cwd = null, frame = false } = {}) {
+function callClaude(prompt, model, { timeoutMs = 900000, session = null, cwd = null, frame = false } = {}) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
     // Usage is billed to the Claude subscription, not the API.

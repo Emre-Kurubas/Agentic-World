@@ -50,7 +50,7 @@ export function shouldWake(w, cfg, ch) {
   const c = w.countries[ch.country];
   if (!isAI(cfg, c, ch)) return false;
   // Out of office, a person is woken by letters and otherwise lives at a slower pace.
-  if (!seated(w, ch)) return ch.inbox.length > 0 || w.turn - ch.lastWake >= cfg.wakeEvery * 2;
+  if (!seated(w, ch)) return ch.inbox.length > 0 || w.turn - ch.lastWake >= cfg.wakeEvery;
   if (ch.role === 'leader') return true;
   if ((c.tension ?? 0) >= cfg.wakeTension) return true;
   if (ch.inbox.length) return true;
@@ -176,7 +176,7 @@ export class Game {
             r = await this.askAs(ch, build, modelFor(cfg, ch));
             retry = false;
             if (final || !Array.isArray(r?.lookup) || !r.lookup.length) break;
-            for (const q of r.lookup.slice(0, 6)) answers.push({ q: String(q).slice(0, 40), a: answer(w, ch, q), round: used });
+            for (const q of r.lookup.slice(0, 16)) answers.push({ q: String(q).slice(0, 40), a: answer(w, ch, q), round: used });
             this.store.savePending(this.pending);
           }
         }
@@ -278,7 +278,7 @@ export class Game {
         ch.lastWake = w.turn;
         if (r.identity) ch.persona = r.identity;
         if (r.publicFace) ch.publicFace = r.publicFace;
-        if (r.notes) { ch.diary.push(`${w.date || 'Start'}: ${r.notes}`); ch.diary = ch.diary.slice(-16); }
+        if (r.notes) { ch.diary.push(`${w.date || 'Start'}: ${r.notes}`); ch.diary = ch.diary.slice(-60); }
         for (const m of r.messages) outgoing.push({ from: ch, ...m });
         trace.push({ actor: ch.id, country: c.id, role: ch.role, name: ch.name, ai, model: ai ? ch.model ?? null : null, standing: seated(w, ch) ? 'in office' : ch.status === 'free' ? 'out of office' : ch.status, health: ch.condition ? { kind: ch.condition.kind, severity: ch.condition.severity } : null, publicFace: ch.publicFace ?? '', persona: ch.persona, lookups: (this.pending.lookups?.[ch.id] || []).map(a => a.q), monologue: r.monologue, decisions: r.decisions, messages: r.messages, notes: r.notes });
         if (r._ops) for (const op of r._ops) rulings.push(this.applyRuling(ch, { narrative: describe(op), prob: 1, public: false, ops: [op], source: 'mock' }));
@@ -292,7 +292,7 @@ export class Game {
       for (const h of Array.isArray(r?.rulings) ? r.rulings : []) {
         const ch = w.characters[h.actor];
         if (!ch || !actors.some(a => a.id === ch.id)) continue;
-        rulings.push(this.applyRuling(ch, { narrative: String(h.narrative || '').slice(0, 400), prob: clamp(Number(h.probability ?? .5), 0, 1), public: !!h.public, ops: Array.isArray(h.operations) ? h.operations.slice(0, 6) : [], decision: h.decision, decisionText: this.pending.actors[ch.id]?.decisions?.[h.decision], source: 'referee' }));
+        rulings.push(this.applyRuling(ch, { narrative: String(h.narrative || '').slice(0, 1500), prob: clamp(Number(h.probability ?? .5), 0, 1), public: !!h.public, ops: Array.isArray(h.operations) ? h.operations.slice(0, 16) : [], decision: h.decision, decisionText: this.pending.actors[ch.id]?.decisions?.[h.decision], source: 'referee' }));
       }
     }
     // What the referee still left without a ruling is written down and told to the person who decided it.
@@ -301,7 +301,7 @@ export class Game {
       if (!mine?.decisions?.length || mine._ops || mine.fallback || !ruled) continue;
       for (const { decisions, indices } of unruled([{ actor: ch, decisions: mine.decisions }], ruled)) decisions.forEach((d, k) => {
         this.report(ch, `The referee gave no ruling on decision ${indices[k]}: ${d.slice(0, 160)}`);
-        ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: Not carried out, no ruling was given: ${d.slice(0, 200)}`); ch.outcomes = ch.outcomes.slice(-16); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
+        ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: Not carried out, no ruling was given: ${d.slice(0, 200)}`); ch.outcomes = ch.outcomes.slice(-60); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
       });
     }
     // Those who never read their mail (rule-based players, sleepers) do not keep every letter for ever.
@@ -330,7 +330,7 @@ export class Game {
     if (source === 'referee' && narrative) {
       const plain = m => m && !['Applied.', 'Recorded.'].includes(m), said = results.filter(r => plain(r.msg)).map(r => `${r.ok ? '' : `${r.op} was NOT carried out: `}${r.msg}`).join(' ');
       const verdict = !success ? 'Failed' : !refused.length ? 'Succeeded' : refused.length < results.length ? 'Only partly carried out' : 'Not carried out';
-      ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: ${verdict}: ${narrative}${said ? ` [${said.slice(0, 500)}]` : ''}`); ch.outcomes = ch.outcomes.slice(-16); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
+      ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: ${verdict}: ${narrative}${said ? ` [${said.slice(0, 1500)}]` : ''}`); ch.outcomes = ch.outcomes.slice(-60); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
     }
     return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, probability: prob, success, results, source, decision, decisionText, ops };
   }
@@ -388,8 +388,9 @@ function safeApply(w, ch, op) { try { const { _law, _decree, ...plain } = op ?? 
 
 function sanitize(r, cfg) {
   if (!r || r.fallback) return { fallback: true };
-  const messages = (Array.isArray(r.messages) ? r.messages : []).slice(0, cfg.maxMessagesPerActor).map(m => ({ to: String(m.to || ''), text: String(m.text || '').slice(0, 800) })).filter(m => m.to && m.text);
-  const out = { identity: String(r.identity || '').slice(0, 900), publicFace: String(r.public_face || '').slice(0, 240), monologue: String(r.inner_voice || '').slice(0, 1200), decisions: (Array.isArray(r.decisions) ? r.decisions : []).slice(0, cfg.maxDecisionsPerActor).map(x => String(x).slice(0, 700)), messages, notes: String(r.notes || '').slice(0, 1500) };
+  const messages = (Array.isArray(r.messages) ? r.messages : []).slice(0, cfg.maxMessagesPerActor).map(m => ({ to: String(m.to || ''), text: String(m.text || '').slice(0, 6000) })).filter(m => m.to && m.text);
+  // The cuts below only stop a runaway answer; nobody is asked to be brief.
+  const out = { identity: String(r.identity || '').slice(0, 6000), publicFace: String(r.public_face || '').slice(0, 600), monologue: String(r.inner_voice || '').slice(0, 12000), decisions: (Array.isArray(r.decisions) ? r.decisions : []).slice(0, cfg.maxDecisionsPerActor).map(x => String(x).slice(0, 3000)), messages, notes: String(r.notes || '').slice(0, 6000) };
   if (r._ops) out._ops = r._ops;
   return out;
 }
