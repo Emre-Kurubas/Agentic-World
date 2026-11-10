@@ -1111,6 +1111,9 @@ chain('An order for part of a unit touches only that part: discharge, detachment
   d.loyalty = 40; u.loyalty = 80; r = applyOp(w, gen, { op: 'merge_units', unit: d.id, into: u.id }); assert.ok(r.ok && !w.units[d.id] && Math.abs(u.men - 75) < 1e-6, r.msg);
   assert.ok(Math.abs(u.loyalty - (40 * 20 + 80 * 55) / 75) < 1e-6, 'the joined unit is as loyal as its men were');
   r = applyOp(w, boss, { op: 'disband', unit: u.id }); assert.ok(r.ok && !w.units[u.id], 'with no number the whole unit goes home');
+  const seaId = Object.keys(w.seas)[0], other = Object.keys(w.seas)[1], fl = makeFleet(w, 'U1', seaId, 12); r = applyOp(w, gen, { op: 'move_fleet', fleet: fl.id, to: other, ships: 4 }); assert.ok(r.ok, r.msg);
+  const sq = Object.values(w.fleets).find(x => x.country === 'U1' && x.id !== fl.id && x.target === other && x.ships === 4); assert.ok(sq && fl.ships === 8 && !fl.target, 'a squadron sails and the fleet stays on station');
+  r = applyOp(w, gen, { op: 'merge_fleets', fleet: sq.id, into: fl.id }); assert.ok(r.ok && fl.ships === 12 && !w.fleets[sq.id], r.msg);
   // The same occupied province, held once by two hundred men and once by a real garrison.
   const held = n => { const x = fresh(), p = countryProvinces(x, 'U2')[0]; for (const v of Object.values(x.units)) if (v.province === p.id) delete x.units[v.id];
     p.controller = 'U1'; makeUnit(x, 'U1', p.id, n); for (let i = 0; i < 40 && p.controller === 'U1'; i++) { p.unrest = 90; risingStep(x); } return p.controller === 'U1'; };
