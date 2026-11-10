@@ -93,12 +93,19 @@ export function labourOp(w, actor, c, op, { fail, num, governs, tell, allowance 
   if (!f || !isOpen(f) || !home?.alive) return fail('No such company.');
   const mine = f.owner === actor.id || (f.owner === STATE && home.id === c.id && governs);
   switch (op.op) {
-    case 'set_wages': {
+    case 'set_wages': case 'set_safety': if (!mine && governs && home.id === c.id) {
+      // An order from the government to one works: a floor, kept as far as officials and inspectors can make the owner keep it.
+      const kept = clamp(.3 + c.bureaucracy / 200 + inspectors(c) * .4, .2, 1), wages = op.op === 'set_wages', was = wages ? f.wage ?? 1 : f.safety ?? .3, to = wages ? r2(Math.max(was, Math.min(num(op.level, .5, 1.6, was), 1.3) * (kept * .4 + .6))) : r2(Math.max(was, num(op.level, 0, 1, was) * kept));
+      if (to <= was + .001) return { ok: true, msg: `${f.name} already ${wages ? `pays ${was} of the going wage` : `spends ${was} of 1 on safety`}; the order changes nothing there.` };
+      if (wages) f.wage = to; else f.safety = to; home.mods.push({ key: 'sat.capital', delta: -.6, turns: 4, label: `The order to ${f.name}` });
+      const boss = bossOf(w, home, f); if (boss && boss.id !== actor.id) tell(w, boss, home.name, `By order of the government ${f.name} is to ${wages ? `pay at least ${r2(num(op.level, .5, 1.6, was))} of the going wage` : `spend at least ${r2(num(op.level, 0, 1, was))} of 1 on safety`}. The inspectors have brought it to ${to}.`);
+      return { ok: true, msg: `The order went to ${f.name}, which belongs to ${boss?.name ?? 'no one in particular'}: ${wages ? 'wages' : 'safety spending'} there now stand at ${to} (they were ${was}). An owner keeps such an order as far as officials and inspectors make him.` };
+    }
+    if (op.op === 'set_wages') {
       if (!mine) return fail('This company is not yours.');
       const was = f.wage ?? 1; f.wage = r2(num(op.level, .5, 1.6, was));
       return { ok: true, msg: `${f.name} now pays ${f.wage} of the going wage (it paid ${r2(was)}). ${f.wage > was ? 'It costs the company part of its profit and the men are easier for it.' : f.wage < was ? 'The company keeps more of what it earns and the men will feel it.' : ''}` };
-    }
-    case 'set_safety': {
+    } else {
       if (!mine) return fail('This company is not yours.');
       const was = f.safety ?? .3; f.safety = r2(num(op.level, 0, 1, was));
       return { ok: true, msg: `Safety spending at ${f.name} is now ${f.safety} of 1 (it was ${r2(was)}). At 0 nothing is renewed; at 1 the works are as safe as the age knows how to make them, and it eats into profit.` };
@@ -112,7 +119,7 @@ export function labourOp(w, actor, c, op, { fail, num, governs, tell, allowance 
     }
     case 'agitate': {
       if (home.id !== c.id) return fail('You have no standing among those workers.');
-      const push = allowance(w, actor, 'agitate', 18, 18); if (push <= 0) return fail('You have said what there was to say to them this quarter.');
+      const push = allowance(w, actor, `agitate:${f.id}`, 18, 18); if (push <= 0) return fail('You have said what there was to say to the men of this works this quarter.');
       f.stir = (f.stir || 0) + push; if (!home.unions) trace(w, actor, `Stirred up the workers of ${f.name} where unions are banned.`);
       return { ok: true, msg: `Your people have been among the men of ${f.name}, who are ${temperWord(f.temper + push)}.` };
     }
