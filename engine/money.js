@@ -55,7 +55,8 @@ export const externalDebt = c => sum(Object.values(c.creditors), x => x);
 // What lenders ask of a state: little from a sound one, more as the debt burden grows, with inflation, after a default and while the banks are sick.
 export function sovereignRate(c) {
   const burden = c.debt / Math.max(c.gdp * 4, 1);
-  return clamp(.0075 + .02 * Math.max(0, burden - .6) ** 1.5 + Math.max(0, c.inflTrend ?? c.inflation) * .6 + (c.defaulted ? .02 : 0) + (c.bankHealth < 30 ? .01 : 0), .005, .35);
+  // Lenders also price a state's word: one that breaks treaties and threatens emptily pays more for money.
+  return clamp(.0075 + .02 * Math.max(0, burden - .6) ** 1.5 + Math.max(0, c.inflTrend ?? c.inflation) * .6 + (c.defaulted ? .02 : 0) + (c.bankHealth < 30 ? .01 : 0) + Math.max(0, 50 - (c.honour ?? 60)) * .0003, .005, .35);
 }
 // Lenders shut out a defaulter, but not forever: some years of paying in full and the market deals with the state again.
 // A state already in default cannot default again; it simply goes on not paying.
