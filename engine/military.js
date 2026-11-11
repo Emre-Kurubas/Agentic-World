@@ -1,6 +1,7 @@
 import { clamp, sum, news, between, rand } from './util.js';
 import { CLASSES, atWar, hasTreaty, countryProvinces, aliveCountries, provincePop, makeUnit } from './world.js';
 import { hasTech } from './economy.js';
+import { drillOf } from './frontier.js';
 import { die, garrisonHold } from './politics.js';
 import { afflict, incapacitated } from './health.js';
 import { navalStep, portFalls, shipGuns, enemyHolds, SHIPS, kindOf, iced } from './navy.js';
@@ -308,7 +309,7 @@ function upkeep(w, c) {
   for (const u of us) {
     u.morale = clamp(u.morale + (spirit - u.morale) * .2, 0, 100);
     // Drill brings raw men up to the army's standard in a couple of years, and the edge of veterans wears off as they go home.
-    u.quality += (1 - u.quality) * .08;
+    u.quality += (drillOf(c) - u.quality) * .08;
     // An army in the field loses men to sickness every quarter it stays there: most in marsh and in summer heat, in siege lines and on foreign
     // soil; a medical service that knows what it is doing loses half as many.
     if (field) { const p = w.provinces[u.province], sick = u.men * (.004 + (p.terrain === 'marsh' ? .012 : 0) + (season(w) === 'summer' && ['marsh', 'desert'].includes(p.terrain) ? .006 : 0) + (p.siege ? .008 : 0) + (p.controller !== u.country ? .004 : 0)) * (hasTech(c, 'antibiotics') ? .5 : 1); u.men -= sick; c._sick += sick; }

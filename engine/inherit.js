@@ -114,8 +114,27 @@ function makePast(w) {
 // Where each kind of state stands with its books when it is handed over, as a share of a quarter's output: a merchant republic lays money by,
 // most states are near balance, a junta and a poor agrarian state live beyond their means. The taxes each inherited are set so that this is
 // where the first quarters actually come out, instead of leaving every state to find a hole in its accounts by the end of the first year.
+// What each kind of state lives by. A country of fields feeds others and buys their wares; a country of workshops and counting-houses buys part
+// of its bread abroad and pays for it in manufactures. The lean is measured against the world the state finds itself in. The world grows a little
+// more bread than it eats (SPARE), every state with grain to spare has a share of the market for it, and what each such state lacks in wares is
+// what its share of that market will buy (grain being cheap when there is plenty of it: TERMS), so that no state's gold drains away to the
+// others in the ordinary course of trade.
+const LEAN = { merchant: -.45, republic: -.25, federation: -.12, revolutionary: .03, theocracy: .1, monarchy: .12, junta: .12, agrarian: .3 }, SPARE = .04, TERMS = .8;
+function specialise(w, cs) {
+  for (let pass = 0; pass < 3; pass++) {
+    const trial = structuredClone(w), got = {}; trial.status = 'playing';
+    for (let i = 0; i < 4; i++) { beginTurn(trial); stepWorld(trial); for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive || !t._need) continue; const a = (got[c.id] ||= { grain: 0, eaten: 0, cap: 0, made: 0, used: 0 }); a.grain += t._raw.grain; a.eaten += t._need.grain; a.cap += t._capAll.goods; a.made += t._made?.goods || 0; a.used += t._need.goods; } }
+    const live = cs.filter(c => got[c.id]?.eaten > 0 && got[c.id].used > 0), size = c => got[c.id].eaten, all = live.reduce((s, c) => s + size(c), 0) || 1, mean = live.reduce((s, c) => s + (LEAN[c.archetype] ?? 0) * size(c), 0) / all;
+    const leanOf = c => (LEAN[c.archetype] ?? 0) - mean, short = c => Math.max(0, -leanOf(c) - SPARE) * size(c), over = c => Math.max(0, SPARE + leanOf(c)) * size(c), bread = live.reduce((s, c) => s + short(c), 0), spare = live.reduce((s, c) => s + over(c), 0) || 1;
+    for (const c of live) { const a = got[c.id], lean = leanOf(c), ps = countryProvinces(w, c.id);
+      const f = clamp((1 + SPARE + lean) / Math.max(a.grain / a.eaten, .05), .6, 1.6); for (const p of ps) p.fertility *= f;
+      // A state that buys bread has works to spare for the wares that pay for it; any other makes less than it uses by what its grain will buy.
+      const buysBread = short(c) > 0, now = (buysBread ? a.cap : a.made) / a.used, want = buysBread ? Math.max(now, 1.15 - lean) : 1 - TERMS * bread * (over(c) / spare) / size(c), k = clamp(Math.pow(want / Math.max(now, .05), .8), .5, 2); for (const p of ps) p.plants.goods *= k; }
+  }
+}
 const BOOKS = { merchant: .010, republic: .003, federation: .001, monarchy: -.002, theocracy: -.003, revolutionary: -.007, agrarian: -.009, junta: -.016 };
 function balance(w, cs) {
+  specialise(w, cs);
   // A country that has stood for years has its warehouses at their usual depth, its prices where its trade has settled them and its people in such work
   // as there is. Three years are run on a copy and the stores, the market and the labour market are taken from it, so that the first year anyone
   // governs is an ordinary year and not the year the stores fill up.

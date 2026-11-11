@@ -13,6 +13,11 @@ const menAt = (w, cid, pid) => sum(Object.values(w.units).filter(u => u.country 
 // Troops told to hold their fire, by an order to the unit or by a standing order for everything that faces that neighbour.
 // Trained men at home for every man under arms, where a state has been left to itself.
 export const RESERVE = 1.5;
+// How long men serve with the colours is the government's to say (set_service; three years where nothing else was ever decided). Short service
+// sends more trained men home every year, so the reserve settles larger, and leaves those under arms rawer; long service does the reverse.
+export const serviceOf = c => clamp(c.term ?? 3, 1, 12);
+export const reserveAt = years => RESERVE * 3 / clamp(years, 1, 12);
+export const drillOf = c => clamp(.82 + serviceOf(c) * .06, .85, 1.12);
 export const holdsFire = (c, u, toward) => !!(u.holdFire || c.holdFire?.[toward]);
 const heldAt = (w, c, pid, toward) => sum(Object.values(w.units).filter(u => u.country === c.id && u.province === pid && holdsFire(c, u, toward)), u => u.men);
 const grudge = (c, id) => (c.grudges ||= {})[id] ||= { incident: 0, kin: 0 };
@@ -63,7 +68,7 @@ export function frontierStep(w) {
     // A reserve of trained men: each year some of the standing army goes home with its training, and the oldest reservists pass out of reach.
     // Short service fills it: a country keeps about one and a half times its standing army in men who have served and can be called.
     const army = sum(Object.values(w.units).filter(u => u.country === c.id && !u.called), u => u.men);
-    c.reserve = Math.max(0, (c.reserve ?? army * RESERVE) * .97 + army * RESERVE * .03);
+    c.reserve = Math.max(0, (c.reserve ?? army * reserveAt(serviceOf(c))) * .97 + army * reserveAt(serviceOf(c)) * .03);
   }
 }
 

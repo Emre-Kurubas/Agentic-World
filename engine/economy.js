@@ -15,7 +15,11 @@ export const hasTech = (c, t) => !!c.techs?.[t];
 // How far an invention has come into use. What a state inherited is long since in every works; what it has just learned spreads as works are
 // wired and farmers persuaded, over the quarters given here, and does its work in that measure.
 export const SPREAD = { electricity: 24, chemical_fertilizer: 12 };
-export const inUse = (w, c, t) => !c.techs?.[t] ? 0 : c.adopting?.[t] == null || !SPREAD[t] ? 1 : clamp((w.turn - c.adopting[t]) / SPREAD[t], 0, 1);
+export const inUse = (w, c, t) => !c.techs?.[t] ? 0 : clamp(c.adopting?.[t] ?? 1, 0, 1);
+// How much of the way a new thing goes in a quarter. The quarters in SPREAD are the pace of a country that spends on its roads and public works
+// what it always has; a government that spends more wires its works sooner, one that starves them waits half a generation. Fertilizer is taken
+// up by farmers who can read what is printed on the sack.
+export const paceOf = (c, t) => (t === 'electricity' ? clamp(1 + (c.budget.infrastructure * (c.paidRatio ?? 1) - (c.roadShare ?? c.budget.infrastructure)) * 60, .4, 2.5) : t === 'chemical_fertilizer' ? clamp(.5 + c.literacy / 100, .5, 1.5) : 1) / (SPREAD[t] || 1);
 
 // Rule: goods move only if a route exists. War, a closed strait and an enemy fleet cut the route.
 // A sea is closed to two countries' trade when an enemy of either holds it in strength; held thinly, runners still get through, at a price.
@@ -188,6 +192,9 @@ export const sealOf = (w, c) => w.friction ? clamp(.3 + c.bureaucracy / 100, .35
 // The duty one good pays coming in: what a treaty fixed with that seller, else a duty the government has aimed at that country's goods, else
 // its own rule for the good, else the general tariff.
 const usualDuty = (c, g) => c.imports?.rules?.[g]?.tariff ?? c.tariff;
+// What part of the country's ordinary buying abroad still comes in over its own duty on the good.
+const SHY = { grain: .5, goods: 1.2 };
+export const wallOf = (c, g) => 1 - clamp((usualDuty(c, g) || 0) * (SHY[g] ?? .8), 0, .8);
 const dutyOn = (c, g, from) => c.tariffDeals?.[from] ?? c.aimed?.[from] ?? usualDuty(c, g);
 // A duty aimed at one seller sends merchants to the others and, the dearer it is, keeps the goods out: of what would have come from there, this much still does.
 const aimedTrade = (c, g, from) => c.tariffDeals?.[from] != null || c.aimed?.[from] == null ? 1 : clamp(1 - Math.max(0, c.aimed[from] - usualDuty(c, g)) * 1.2, .1, 1);
@@ -199,16 +206,23 @@ function trade(w, cs) {
   const key = routeKey;
   for (const c of cs) { c.lastSold = {}; c.lastBought = {}; c.lastOrders = []; }
   // What merchants would bring in of a good, and how much of that the law lets through: a prohibition or a quota cuts it, and the part the customs cannot hold back is smuggled.
-  const wantOf = (c, g) => { const usual = Math.max(0, c._need[g] + c._reserve[g] * .5 - c.stock[g]) + displacedDemand(c, g), r = c.imports?.rules?.[g]; if (!r || (!r.ban && r.quota == null)) return { usual, legal: usual }; const legal = r.ban ? 0 : Math.min(usual, r.quota); return { usual: legal + (usual - legal) * (1 - sealOf(w, c)), legal }; };
+  // A duty makes the foreign thing dearer at home and fewer people buy it: wares fall off fastest, bread least (people must eat).
+  const wantOf = (c, g) => { const usual = Math.max(0, c._need[g] + c._reserve[g] * .5 - c.stock[g]) * wallOf(c, g) + displacedDemand(c, g), r = c.imports?.rules?.[g]; if (!r || (!r.ban && r.quota == null)) return { usual, legal: usual }; const legal = r.ban ? 0 : Math.min(usual, r.quota); return { usual: legal + (usual - legal) * (1 - sealOf(w, c)), legal }; };
   // The state's own order abroad is the treasury's purchase: it reaches as far as the cash above the working balance and what lenders will add, at the day's price and exchange.
   const affords = (c, g) => (Math.max(0, c.treasury - (c.till || 0)) + Math.max(0, creditLeft(c))) / Math.max(w.globalPrice[g] * (c.rate || 1) * 1.05, .01);
   const stateOrder = (c, g) => { const o = c.orders?.[g]; return o && (!(o.limit > 0) || w.globalPrice[g] <= o.limit) ? Math.min(o.amount, affords(c, g)) : 0; };
   // The gold a country has to spend abroad this quarter is what lies in its reserve beyond the debt service, and about what its exports brought in the quarter before.
   // It is shared out among the goods in the order of priority: each good may draw on its own share, and on whatever no good has claimed.
   for (const c of cs) {
-    let left = Math.max(0, c.reserves - (c._debtService || 0)) + (c.lastExportGold || 0); c._alloc = {};
-    for (const g of importOrder(c)) { const cost = (wantOf(c, g).usual + stateOrder(c, g)) * w.globalPrice[g] * 1.1, part = Math.min(cost, left); c._alloc[g] = part; left -= part; }
-    c._spare = left; c._exportGold = 0; c._duty = 0;
+    // Merchants pay for what they bring in with the exchange the country's own sales earn. The gold reserve stands behind that: freely for bread,
+    // for whatever the government has put first in the order of imports, and for whatever it orders abroad itself; for the rest only while it
+    // lies above the floor the banks are told to keep (c.goldFloor), and then a quarter of the excess at a time. Where no government has said
+    // otherwise the floor is three fifths of what the country was used to holding, so that a country that sells little buys little and is not
+    // emptied of its gold by cloth and boots; a government may open the reserve altogether or shut it up (set_gold_floor), and answers for either.
+    c.goldFloor ??= Math.max(0, c.reserves) * .6;
+    let left = Math.max(0, c.reserves - (c._debtService || 0)) + (c.lastExportGold || 0), rest = Math.min(left, (c.lastExportGold || 0) + Math.max(0, c.reserves - (c._debtService || 0) - c.goldFloor) * .25); c._alloc = {};
+    for (const g of importOrder(c)) { const own = stateOrder(c, g), free = g === 'grain' || own > 0 || (c.imports?.order || []).includes(g), cost = (wantOf(c, g).usual + own) * w.globalPrice[g] * 1.1, part = Math.min(cost, free ? left : rest); c._alloc[g] = part; left -= part; rest = Math.min(left, free ? rest : rest - part); }
+    c._spare = Math.max(0, rest); c._exportGold = 0; c._duty = 0;
   }
   // Markets sit in an order: first the materials and wares a country sells for gold, then bread, and consumer goods last. A poor country spends what
   // its coal and timber earned that quarter on grain before it spends it on cloth and boots.
@@ -266,7 +280,8 @@ function trade(w, cs) {
     }
     const unmet = wanted > 0 ? clamp((wanted - moved) / wanted, 0, 1) : 0;
     // Durable goods are held in deeper stores everywhere, so a world with years of machinery in hand is not a world glutted with it.
-    const before = w.globalPrice[g], D = sum(cs, c => c._need[g]) + 1, S = (sum(cs, c => c.stock[g]) + moved * .2) / ((USUAL_COVER[g] ?? 2) / 2) + 1;
+    // (The stores are read as they stood before this quarter's wares came out of the mills, which is how the usual depths were measured.)
+    const before = w.globalPrice[g], D = sum(cs, c => c._need[g]) + 1, S = (sum(cs, c => Math.max(0, c.stock[g] - (c._made?.[g] || 0))) + moved * .2) / ((USUAL_COVER[g] ?? 2) / 2) + 1;
     const target = BASE_PRICE[g] * clamp(Math.pow(D / S * 1.6, .8), .4, 5) * (1 + unmet * .9);
     w.globalPrice[g] = clamp(before + (target - before) * .4, BASE_PRICE[g] * .3, BASE_PRICE[g] * 9);
     if (w.globalPrice[g] > before * 1.5 && before > BASE_PRICE[g]) news(w, `World ${GOOD_LABEL[g]} price rose sharply.`, { kind: 'economy' });
@@ -296,12 +311,13 @@ function factories(w, c) {
 export function economyStep(w) {
   updateStrategic(w); updateRoutes(w); updateRer(w); weatherStep(w);
   const cs = aliveCountries(w), prevReal = Object.fromEntries(cs.map(c => [c.id, c.realGdp]));
-  for (const c of cs) { extract(w, c); needs(w, c); }
+  // The mills run before the market meets: what a country's works turned out this quarter is on the quay when the merchants deal. (When the
+  // market met first, no maker ever had wares to spare, and no country that made its own could tell that it did.)
+  for (const c of cs) { extract(w, c); needs(w, c); factories(w, c); }
   trade(w, cs);
   w.priceHistory.push(Object.fromEntries(GOODS.map(g => [g, Math.round(w.globalPrice[g] * 10) / 10])));
   if (w.priceHistory.length > 200) w.priceHistory.shift();
   for (const c of cs) {
-    factories(w, c);
     consume(w, c, prevReal[c.id]);
     fiscal(w, c); currencyStep(w, c); demography(w, c); investment(w, c); research(w, c);
     for (const k of ['_exports', '_imports', '_rawExp', '_tolls', '_duty']) delete c[k];
@@ -435,7 +451,7 @@ function fiscal(w, c) {
 export function settleBases(w) {
   for (const c of aliveCountries(w)) {
     c.graftBase ??= c.corruption + c.pressFreedom * .3 + c.courts * .35; c.intelBase ??= c.intelligence - c.police * .5; c.roadShare ??= c.budget.infrastructure;
-    c.profitBase = 1 - (c.taxTarget?.business ?? c.tax.business); c.upkeep = 1;
+    c.profitBase = 1 - (c.taxTarget?.business ?? c.tax.business); c.upkeep = 1; c.goldFloor = Math.max(0, c.reserves) * .6;
     { const ps = countryProvinces(w, c.id), n = sum(ps, p => p.pops.workers.n); if (n > 0) c.workBase ??= sum(ps, p => p.pops.workers.sat * p.pops.workers.n) / n; }
     for (const p of countryProvinces(w, c.id)) p.infraBase ??= p.infra;
   }
@@ -491,6 +507,7 @@ function investment(w, c) {
   c.profitBase ??= 1 - c.tax.business; c.upkeep ??= 1;
   c.upkeep += (upkeepAt(c) - c.upkeep) * .04;
   prospectors(w, c);
+  for (const t of Object.keys(c.adopting || {})) { c.adopting[t] += paceOf(c, t); if (c.adopting[t] >= 1) delete c.adopting[t]; }
   // When a new technology arrives, the private sector builds the first plants itself; expansion is left to the state or capital.
   const cap = w.provinces[c.capital];
   if (cap && hasTech(c, 'oil_prospecting') && !sum(countryProvinces(w, c.id), p => p.plants.fuel)) cap.plants.fuel = .4;
@@ -510,7 +527,9 @@ export function prospectors(w, c) {
     for (const [k, d] of Object.entries(p.deposits)) {
       if (!BASE_PRICE[k] || d.mine > 0 || !(d.amount > 0)) continue;
       const dear = (w.globalPrice?.[k] ?? BASE_PRICE[k]) / BASE_PRICE[k]; if (dear < 2.5) continue;
-      if (!d.known) { if ((k === 'oil' && !hasTech(c, 'oil_prospecting')) || (k === 'rare' && !hasTech(c, 'electricity')) || rand(w) >= .04 * Math.min(dear - 1.5, 4)) continue; d.known = true; }
+      // Where the state owns the works there is little private capital to go looking.
+      if (c.ownership >= .85) continue;
+      if (!d.known) { if ((k === 'oil' && !hasTech(c, 'oil_prospecting')) || (k === 'rare' && !hasTech(c, 'electricity')) || rand(w) >= .04 * Math.min(dear - 1.5, 4) * (1 - c.ownership)) continue; d.known = true; }
       d.mine = .3; news(w, `${c.name}: with ${GOOD_LABEL[k]} selling at ${Math.round(dear)} times its usual price, private capital has opened the deposit at ${p.name}.`, { kind: 'economy', countries: [c.id], province: p.id });
     } }
 }
@@ -524,7 +543,7 @@ function research(w, c) {
   const known = aliveCountries(w).filter(o => o.techs[t]).length;
   c.research.progress += points * (1 + known * .15);
   if (c.research.progress >= TECHS[t].cost) {
-    c.techs[t] = Math.max(1, w.turn); (c.adopting ||= {})[t] = w.turn; c.research = { target: null, progress: 0 };
+    c.techs[t] = Math.max(1, w.turn); if (SPREAD[t]) (c.adopting ||= {})[t] = 0; c.research = { target: null, progress: 0 };
     news(w, `${c.name}: ${TECHS[t].name} has been put into practice.`, { kind: 'economy', countries: [c.id] });
     if (t === 'oil_prospecting') for (const p of countryProvinces(w, c.id)) if (p.deposits.oil && rand(w) < .35) p.deposits.oil.known = true;
   }
