@@ -37,6 +37,21 @@ export function seatOp(w, actor, c, op, { fail, num, governs, personFor }) {
       if (first) trace(w, actor, `Was asked in ${quarterLabel(w.turn)} to lead a rising of the provinces, refused, and told the government nothing.`);
       return { ok: true, msg: `You have refused. They will rise in the coming quarter under a man of their own, and you stay what you are. ${r.warned ? 'The government has your warning already.' : 'You told the government nothing: that you knew and kept silent is a thing that can be found out.'}` };
     }
+    // Withdrawing from public life. Somebody who holds no office (dismissed, fallen, in a cell, abroad) may say that he is done: he is then one of
+    // the people around the seats, who can be written to and who answer as such people do, and is no longer one of those who are woken every
+    // morning. It is his own decision and nobody else's, and it is final unless a government gives him an office again. (World 16: a chief of
+    // staff who held the office for one quarter was still being woken every morning with nothing in his hands; the owner asked that whoever
+    // wants to leave the stage may, and that nobody be made to.)
+    case 'retire': {
+      const seat = seatOf(c, actor); if (seat) return fail(`You are ${SEAT[seat]}: an office is laid down first (resign), and a private person may then withdraw from public life.`);
+      if (actor.retired != null && !actor.everAI) return fail('You have withdrawn from public life already.');
+      const words = op.words || op.reason ? `, with the words: "${String(op.words ?? op.reason).slice(0, 300)}"` : '', where = actor.status === 'imprisoned' ? ' from his cell' : actor.status === 'exiled' ? ' from abroad' : '';
+      // What he led without an office ends with him; what he owns stays his.
+      for (const pl of w.plots || []) { if (!pl.active) continue; if (pl.leader === actor.id) pl.active = false; else pl.members = (pl.members || []).filter(id => id !== actor.id); }
+      actor.retired = w.turn; actor.everAI = false; actor.power = Math.min(actor.power ?? 0, 15);
+      news(w, `${c.name}: ${actor.name}, once ${SEAT[actor.role] ?? 'in public life'}, has let it be known${where} that he withdraws from public life${words}.`, { kind: 'politics', countries: [c.id] });
+      return { ok: true, msg: 'You have withdrawn from public life. This was your last morning at the centre of things: you are not called on again unless a government gives you an office. What you own is still yours, and letters still reach you.' };
+    }
     // Laying down an office.
     case 'resign': {
       const seat = seatOf(c, actor); if (!seat) return fail('You hold no seat to lay down.');

@@ -3539,6 +3539,27 @@ chain('Reservists put into a regiment can still be sent home from it, and a unit
   assert.ok(!w.units[cadre.id] && Math.abs(line.men - 32) < .3 && /has come up to .* and joined/.test(f.said()), `it marched there and joined: ${line.men}; ${f.said().slice(-160)}`);
 });
 
+chain('Whoever holds no office may leave the stage of his own will, and only of his own will: he is told so, he is no longer woken, he stays in the world, and an office brings him back', () => {
+  // World 16: after a failed coup one country had seven played characters for four seats, among them a chief of staff of one quarter with nothing
+  // left in his hands. The owner: "only whoever wants to withdraw withdraws"; nobody is retired by rule.
+  const w = fresh(), c = w.countries.U1, L = ld(w, c), old = w.characters[c.general], game = new Game({ world: w, cfg: base, backend: { kind: 'mock' }, store: nullStore() }); old.everAI = true;
+  assert.ok(!applyOp(w, old, { op: 'retire' }).ok && /an office is laid down first \(resign\)/.test(applyOp(w, old, { op: 'retire' }).msg), 'the holder of a seat lays it down first');
+  assert.ok(applyOp(w, L, { op: 'dismiss' }).ok && c.general !== old.id && isAI(base, c, old), 'dismissed, he is still one of the played');
+  const told = actorPrompt(w, old, [], true, { intro: false }); assert.ok(/You hold no office now\.[^\n]*You may go on as you are, or withdraw from public life for good: say so plainly in a decision\. It is final; nobody will call on you again unless a government gives you an office\./.test(told), 'he is told that leaving is his to choose');
+  assert.ok(!/withdraw from public life/.test(actorPrompt(w, L, [], true, { intro: false })), 'the holder of a seat is told nothing of the kind');
+  w.plots.push({ id: 'K-own', country: 'U1', kind: 'coup', leader: old.id, members: [], progress: 10, secrecy: .9, active: true, start: w.turn }); w.newsThisTurn = [];
+  const r = game.applyRuling(old, { narrative: 'He is done.', prob: 1, public: true, source: 'referee', ops: [{ op: 'retire', words: 'I have served; let others quarrel.' }] });
+  assert.ok(r.success && r.results[0].ok && old.retired === w.turn && !old.everAI && !isAI(base, c, old) && old.alive && w.characters[old.id], `he has left the stage and is still in the world: ${r.results[0].msg}`);
+  assert.ok(!shouldWake(w, base, old) && !w.plots.find(p => p.id === 'K-own').active && w.newsThisTurn.some(e => /has let it be known that he withdraws from public life, with the words: "I have served/.test(e.text)), 'he is not woken again, what he led ends with him, and the papers say that he went');
+  assert.ok(!applyOp(w, old, { op: 'retire' }).ok, 'it is done once');
+  // A prisoner may; and nobody is retired for him.
+  const o = w.characters[c.opposition]; o.everAI = true; assert.ok(applyOp(w, L, { op: 'purge', character: o.id, fate: 'imprisoned' }).ok && o.status === 'imprisoned'); for (let i = 0; i < 6; i++) run(w, 1);
+  assert.ok(o.everAI && !o.retired, 'years in a cell retire nobody'); assert.ok(/withdraw from public life for good/.test(actorPrompt(w, o, [], true, { intro: false })) && applyOp(w, o, { op: 'retire' }).ok && !o.everAI, 'a prisoner may withdraw too');
+  // An office brings him back.
+  const now = w.characters[c.general]; assert.ok(applyOp(w, L, { op: 'dismiss', character: now.id, successor: old.id }).ok && c.general === old.id && isAI(base, c, old), 'given an office again, he is one of the played again');
+  assert.ok(/retire\{words\?\}/.test(fs.readFileSync(new URL('../agents/prompts.js', import.meta.url), 'utf8')), 'the referee knows the order');
+});
+
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
   // The same fight, the same dice, the enemy warned both times: only the man in command differs.
   const hurt = skill => { const f = duel({ dug: 5, ground: { trench: 2 }, rng: 99, seen: true }); f.gen.skill = skill; const [b] = quarter(f.w); assert.ok(b, 'a battle'); assert.ok(!b.prisoners, 'nobody was routed'); return f.D - f.def.men; };
