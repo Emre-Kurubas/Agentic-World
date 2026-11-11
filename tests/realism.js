@@ -13,7 +13,7 @@ import { GOODS, BASE_PRICE } from '../engine/world.js';
 import { glutFactor, USUAL_COVER } from '../engine/money.js';
 import { firmValue } from '../engine/firms.js';
 import { holdOf as holdOfHouses } from '../engine/firms.js';
-import { quote } from '../engine/projects.js';
+import { quote, projectStep } from '../engine/projects.js';
 import { updateRoutes } from '../engine/economy.js';
 import { militaryStep } from '../engine/military.js';
 import { culturePenalty, cultureStep, migrate, leaderForeignness, yokeOn, votersOf, armedOf, originPull, privilege } from '../engine/culture.js';
@@ -3279,6 +3279,27 @@ chain('A people can be held to forced labour or moved from its province by force
   // Settlers of the state's own people go willingly, for land and a grant: it costs money and nobody dies of it.
   const s = mixedLand(), own = s.c.majorityEth, maj = p => p.groups.filter(g => g.eth === own).reduce((a, g) => a + g.share, 0); s.c.treasury = s.c.gdp; const cash = s.c.treasury, share0 = maj(s.border), pop = () => countryProvinces(s.w, 'U1').reduce((a, p) => a + Object.values(p.pops).reduce((b, x) => b + x.n, 0), 0), all0 = pop();
   const col = applyOp(s.w, s.L, { op: 'resettle', from: s.pure.id, to: s.border.id, people: own, share: .08 }); assert.ok(col.ok && maj(s.border) > share0 && s.c.treasury < cash && Math.abs(pop() - all0) < 1e-6 && !(s.c.atrocities || []).length, col.msg);
+});
+chain('The law of peoples reaches the treasury, the building yards and the ranks: a levy on a people is collected like any tax, a gang at forced labour makes the state\'s earthworks cheaper there, and a regiment is of the people it was raised among and brings its grievance to the colours', () => {
+  // The levy: the same world with and without it, one quarter of the whole engine.
+  const taxed = mixedLand(), plain = mixedLand(); assert.ok(applyOp(taxed.w, taxed.L, { op: 'set_status', people: taxed.X, levy: .04 }).ok);
+  for (const t of [taxed, plain]) { beginTurn(t.w); stepWorld(t.w); }
+  assert.ok(taxed.c.lastBooks.levy > 0 && !(plain.c.lastBooks.levy > 0) && /the levy on peoples under disabilities \d/.test(lookUp(taxed.w, taxed.L, 'budget')), `the levy is in the books: ${taxed.c.lastBooks.levy}`);
+  assert.ok(taxed.c.lastBooks.levy < taxed.c.lastBooks.income * .2, 'it is a tax on some of the people, small beside the taxes on all of them');
+  // Forced labour and the engineers' estimates.
+  const t = mixedLand(), { w, c, X, L, border } = t; soldier(w, 'U1', border.id, 30); const rail = quote(w, c, border, 'railway').price, mill = quote(w, c, border, 'steel').price;
+  assert.ok(applyOp(w, L, { op: 'forced_labour', province: border.id, people: X, share: .5 }).ok); const cheap = quote(w, c, border, 'railway');
+  assert.ok(cheap.price < rail * .95 && cheap.price > rail * .6 && cheap.forced > 0 && Math.abs(quote(w, c, border, 'steel').price - mill) < 1e-9, `a railway there costs ${Math.round(cheap.price)} against ${Math.round(rail)}; a mill is built by skilled hands and costs what it did`);
+  assert.ok(/cheaper for the forced labour held here/.test(lookUp(w, L, `building:${border.id}`)), 'the engineers say why');
+  // A regiment raised where another people is the larger part is of that people; under disabilities it comes to the colours with less faith.
+  const raise = law => { const m = mixedLand(), p = m.border; p.groups = [{ eth: m.X, rel: m.kin.majorityRel, share: .7 }, { eth: m.c.majorityEth, rel: m.c.majorityRel, share: .3 }]; p.eth = m.X; m.c.stock.arms = 5000; m.c.treasury = m.c.gdp * 4; if (law) assert.ok(applyOp(m.w, m.L, { op: 'set_status', people: m.X, ...law }).ok);
+    const had = new Set(Object.keys(m.w.units)), r = applyOp(m.w, m.L, { op: 'recruit', province: p.id, men: 10 }); assert.ok(r.ok, r.msg); for (let i = 0; i < 6 && Object.keys(m.w.units).every(id => had.has(id)); i++) { projectStep(m.w); m.w.turn++; }
+    return { ...m, u: Object.values(m.w.units).find(u => !had.has(u.id)) }; };
+  const equal = raise(null), marked = raise({ vote: false, office: false }), barred = raise({ arms: false });
+  assert.ok(equal.u?.eth === equal.X && marked.u?.eth === marked.X, 'the regiment is of the people of the province');
+  assert.ok(marked.u.loyalty < equal.u.loyalty - 5, `raised among a people the law bears down on, it has less faith from the first day: ${Math.round(marked.u.loyalty)} against ${Math.round(equal.u.loyalty)}`);
+  assert.ok(barred.u && !barred.u.eth, 'where that people may not bear arms the regiment is raised from the others');
+  assert.ok(new RegExp(`raised among the ${equal.X}`).test(lookUp(equal.w, equal.w.characters[equal.c.general], 'army')), 'the army list says whom a regiment was raised among');
 });
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
   // The same fight, the same dice, the enemy warned both times: only the man in command differs.

@@ -93,7 +93,7 @@ const weightOf = f => (f.ships + (f.damaged || 0)) * ({ dreadnought: 7, battlesh
 // troops in good heart keep men loyal; each also has a bent of his own, and ambition wears loyalty thin. Favours raise it for a while.
 function settle(w, c, ch) {
   const u = commandOf(w, ch), lean = hash(ch.id) % 31 - 15;
-  const paid = u ? ((c.militaryFunding ?? 1) >= .95 ? 8 : -16) + ((u.morale ?? 60) - 60) * .2 : (c.paidRatio ?? 1) < 1 ? -12 : 4;
+  const paid = u ? ((u.paid ?? c.militaryFunding ?? 1) >= .95 ? 8 : -16) + ((u.morale ?? 60) - 60) * .2 : (c.paidRatio ?? 1) < 1 ? -12 : 4;
   // Blood counts: the ruler's own kin stand by the ruler, and the kin of a ruler's rival do not.
   const blood = ch.kin === c.leader ? 30 : ch.kin && ROLES.some(r => r !== 'leader' && c[r] === ch.kin) ? -8 : 0;
   ch.loyalty += (clamp(18 + c.legitimacy * .55 + paid + lean + blood - Math.max(0, ch.ambition - 60) * .25, 4, 96) - ch.loyalty) * .12;

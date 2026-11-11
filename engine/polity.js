@@ -188,12 +188,16 @@ function billLean(c, b, p) {
 }
 
 // A government falls when its own benches and its partners stop holding it up. The parties outside it want it gone the more the country has turned against it.
+// How a party leans on a motion or a bill before the day's luck: above nought it votes yes. The whips count from the same figure (whipCount).
+function confidenceLean(c, b, p) {
+  const slide = 50 - c.legitimacy, bought = (b.lobby[p.id] || 0) * .4;
+  if (p.id === c.rulingParty) return -55 + slide * .9 + bought;
+  if ((c.coalition || []).includes(p.id)) return -22 + slide * .9 + distance(p.axes, c.axes) * .2 + bought;
+  return 18 + slide * .6 + distance(p.axes, c.axes) * .25 + bought;
+}
 function confidenceVote(w, c, b, p) {
   if (b.votes[p.id]) return b.votes[p.id] === 'yes';
-  const slide = 50 - c.legitimacy, bought = (b.lobby[p.id] || 0) * .4, luck = rand(w) * 16 - 8;
-  if (p.id === c.rulingParty) return -55 + slide * .9 + bought + luck > 0;
-  if ((c.coalition || []).includes(p.id)) return -22 + slide * .9 + distance(p.axes, c.axes) * .2 + bought + luck > 0;
-  return 18 + slide * .6 + distance(p.axes, c.axes) * .25 + bought + luck > 0;
+  return confidenceLean(c, b, p) + rand(w) * 16 - 8 > 0;
 }
 function governmentFalls(w, c, b, yes, no) {
   const old = w.characters[c.leader], next = w.characters[b.proposer], fit = next?.alive && next.status === 'free' && next.country === c.id && next.id !== old?.id;
@@ -212,16 +216,28 @@ function governmentFalls(w, c, b, yes, no) {
 // The benches a government can count on: its own party and the partners that have joined it.
 export const governmentSeats = c => (c.parties || []).filter(p => !p.banned && (p.id === c.rulingParty || (c.coalition || []).includes(p.id))).reduce((a, p) => a + (c.parliament?.seats?.[p.id] || 0), 0);
 
-function partyVotes(w, c, b, p) {
-  if (b.confidence) return confidenceVote(w, c, b, p);
-  if (b.votes[p.id]) return b.votes[p.id] === 'yes';
-  let s = 30 - distance(p.axes, b.axes) * .5 + (b.lobby[p.id] || 0) * .4 + rand(w) * 16 - 8;
+function leanOf(c, b, p) {
+  if (b.confidence) return confidenceLean(c, b, p);
+  let s = 30 - distance(p.axes, b.axes) * .5 + (b.lobby[p.id] || 0) * .4;
   if (b.party === p.id) s += 35;
   s += billLean(c, b, p);
   if (b.byGov) s += p.id === c.rulingParty ? 30 : (c.coalition || []).includes(p.id) ? 18 : -10;
   // The government's own benches do not carry the opposition's bills unless something moves them.
   else if (p.id === c.rulingParty && b.party !== p.id) s -= 28;
-  return s > 0;
+  return s;
+}
+// The whips' count on a pending bill: seats sure for it, sure against, abstaining, and those whose party stands so near the line that the day
+// will decide (the vote itself adds eight points either way to each party's leaning).
+export function whipCount(c, b) {
+  const seats = c.parliament?.seats || {}, out = { yes: 0, no: 0, abstain: 0, doubtful: 0 };
+  for (const p of c.parties || []) { const n = seats[p.id] || 0; if (!n || p.banned) continue; const v = b.votes[p.id];
+    if (v === 'abstain') out.abstain += n; else if (v) out[v === 'yes' ? 'yes' : 'no'] += n; else { const s = leanOf(c, b, p); if (s > 8) out.yes += n; else if (s < -8) out.no += n; else out.doubtful += n; } }
+  return out;
+}
+function partyVotes(w, c, b, p) {
+  if (b.confidence) return confidenceVote(w, c, b, p);
+  if (b.votes[p.id]) return b.votes[p.id] === 'yes';
+  return leanOf(c, b, p) + rand(w) * 16 - 8 > 0;
 }
 
 export function enactLaw(w, c, bill, apply, via) {

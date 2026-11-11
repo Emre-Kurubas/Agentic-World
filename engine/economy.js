@@ -2,7 +2,7 @@ import { clamp, sum, news, between, rand } from './util.js';
 import { hungerOf } from './politics.js';
 import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_LABEL, PLANTS, TECHS, countryProvinces, provincePop, aliveCountries, atWar, hasTreaty } from './world.js';
 import { dealsWith, tieOf } from './diplomacy.js';
-import { migrate } from './culture.js';
+import { migrate, levyShare } from './culture.js';
 import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding, USUAL_COVER, treasuryPays } from './money.js';
 import { blockadeOf, merchantStep, iced } from './navy.js';
 import { upkeepCost } from './military.js';
@@ -445,7 +445,9 @@ function fiscal(w, c) {
   const land = c._raw.grain * 10 * c.priceLevel * c.tax.land, business = (sum(RAW.filter(g => g !== 'grain'), g => c._raw[g] * BASE_PRICE[g]) + sum(Object.keys(RECIPE), g => (c._made[g] || 0) * BASE_PRICE[g] * .45)) * c.priceLevel * c.tax.business;
   // Customs are what each good paid at the rate set for it; goods that came in past the customs house paid nothing.
   const customs = (c._duty ?? (c._imports || 0) * c.tariff) * c.priceLevel;
-  const revenue = (c.gdp * .45 * c.tax.income + land + business + customs) * eff + (c._tolls || 0) * c.priceLevel;
+  // A levy laid by law on some peoples or faiths alone is collected like any other tax, by the same offices and with the same losses.
+  const levy = c.status ? c.gdp * .45 * levyShare(w, c) : 0;
+  const revenue = (c.gdp * .45 * c.tax.income + land + business + customs + levy) * eff + (c._tolls || 0) * c.priceLevel;
   // Capital that is taxed past what it is used to does not all stay to be taxed. For every two the treasury takes beyond the accustomed rate, one
   // leaves the country in gold for the safest state that will have it, unless the movement of capital is controlled (and then only what slips
   // past the controls). The gold is not lost to the world; it is lost to this reserve, and the currency and the import trade rest on that.
@@ -494,7 +496,7 @@ function fiscal(w, c) {
   creditStanding(w, c, paid === 1 && !short);
   // The quarter's books in their parts: which tax brought what, what was lost in the collecting, where the money went, and how it stood the quarter before.
   c.lastBooks = { eff, collect: clamp(.4 + c.bureaucracy / 120, 0, 1), graft: c.corruption / 130, unrest: (c.unrest ?? 0) / 400, reach: c._adminFactor ?? 1,
-    income: c.gdp * .45 * c.tax.income * eff, land: land * eff, business: business * eff, customs: customs * eff, tolls: (c._tolls || 0) * c.priceLevel, works: c._stateProfit || 0,
+    income: c.gdp * .45 * c.tax.income * eff, land: land * eff, business: business * eff, customs: customs * eff, levy: levy * eff, tolls: (c._tolls || 0) * c.priceLevel, works: c._stateProfit || 0,
     programs: Object.fromEntries(Object.keys(b).map(k => [k, k === 'military' ? drawn : b[k] * c.gdp])), forces: { voted, usable, drawn }, agencies, interest, abroad: extPaid * (c.rate || 1), outlay: c._outlay || {},
     before: c.lastRevenue != null ? { revenue: c.lastRevenue, due: c.lastRevenue - (c.lastBalance ?? 0) } : null };
   c._stateProfit = 0; c._outlay = {};

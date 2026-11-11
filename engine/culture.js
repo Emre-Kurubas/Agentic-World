@@ -143,6 +143,14 @@ export function privilege(w, c) {
   let all = 0, under = 0; for (const p of countryProvinces(w, c.id)) { const n = provincePop(p); all += n; for (const g of groupsOf(p)) under += n * g.share * burdenOf(c, g); }
   return under / Math.max(all, 1);
 }
+// What a levy laid on some peoples alone brings in, as a share of all that the country's people earn: each group's numbers times the rate the law sets on it.
+export function levyShare(w, c) {
+  if (!c.status) return 0; let all = 0, due = 0;
+  for (const p of countryProvinces(w, c.id)) { const n = provincePop(p); all += n; for (const g of groupsOf(p)) due += n * g.share * statusOf(c, g).levy; }
+  return due / Math.max(all, 1);
+}
+// How much cheaper earthworks come to the state where a gang is held to forced labour: by the size of the gang against the province, up to a third.
+export const gangDiscount = p => { if (!p?.forced) return 0; const held = groupsOf(p).filter(g => hits(p.forced.key, g)).reduce((a, g) => a + g.share, 0) * p.forced.share; return clamp(held * 2, 0, .35); };
 // The share of a province's people who have the vote, and who may be taken for the army.
 export const votersOf = (c, p) => c.status ? groupsOf(p).reduce((a, g) => a + (statusOf(c, g).vote ? g.share : 0), 0) : 1;
 export const armedOf = (c, p) => c.status ? groupsOf(p).reduce((a, g) => a + (statusOf(c, g).arms ? g.share : 0), 0) : 1;

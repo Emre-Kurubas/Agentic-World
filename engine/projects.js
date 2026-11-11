@@ -3,6 +3,7 @@ import { clamp, news, nextId } from './util.js';
 import { PLANTS, GOOD_LABEL, makeUnit, makeFleet, aliveCountries, provincePop } from './world.js';
 import { restake } from './firms.js';
 import { MERCHANT } from './navy.js';
+import { groupsOf, statusOf, originPull, gangDiscount } from './culture.js';
 
 const TURNS = { mine: 3, railway: 4, port: 4, dam: 6, farming: 2, forestry: 2, infrastructure: 2, fort: 5, battery: 4, trench: 2, administration: 3, unit: 1, ship: 3, canal: 12 };
 const UNIT_TURNS = { infantry: 1, artillery: 2, armor: 2, air: 3, cavalry: 2 }, SHIP_TURNS = { cruiser: 3, battleship: 6, submarine: 3, torpedo: 2, merchant: 3, dreadnought: 7 };
@@ -25,7 +26,14 @@ export const plantPrice = p => .92 * hands(p), minePrice = p => 1.85 * hands(p),
 const fertileMax = p => p.fertileMax ?? p.fertility * 1.5, timberMax = p => p.timberMax ?? p.timber * 1.5;
 
 // The engineer's estimate for one kind of work in one province: what it is, its price, what it takes, how much more of it the place can hold, or why it cannot be built.
+// Earthworks come cheaper to the state where a gang is held to forced labour: the price the engineers give is that much lower (and says so).
+const NAVVY = new Set(['railway', 'port', 'dam', 'fort', 'battery', 'trench', 'infrastructure', 'farming', 'forestry', 'mine']);
 export function quote(w, c, p, kind, resource) {
+  const q = quoteFree(w, c, p, kind, resource), off = NAVVY.has(kind) && p?.forced?.by === c.id ? gangDiscount(p) : 0;
+  if (off > 0 && q && !q.no && q.price > 0) { q.price *= 1 - off; q.forced = off; }
+  return q;
+}
+function quoteFree(w, c, p, kind, resource) {
   const tech = t => !!c.techs?.[t];
   if (Object.hasOwn(PLANTS, kind)) return { what: PLANTS[kind].toLowerCase(), price: plantPrice(p), machines: machinesFor(p), room: MAX_PLANT - p.plants[kind], has: p.plants[kind], usual: 1, unit: 'level' };
   if (kind === 'mine') {
@@ -79,7 +87,9 @@ function finish(w, c, x) {
   // Offices, courts and the wire are the state's standing presence in a province: its reach settles that much higher for good.
   else if (k === 'administration') { const add = Math.min(x.add ?? 0, MAX_SEAT - (p.seat || 0)); if (add > 0) { p.seat = (p.seat || 0) + add; p.admin = clamp((p.admin ?? .5) + add, 0, 1); } }
   else if (k === 'fort' || k === 'battery' || k === 'trench') p[k] = Math.min(MAX_DEFENSE[k], (p[k] || 0) + 1);
-  else if (k === 'unit') makeUnit(w, c.id, p.id, x.men, .8, 60 + c.legitimacy * .3, x.unitKind);
+  else if (k === 'unit') { const u = makeUnit(w, c.id, p.id, x.men, .8, 60 + c.legitimacy * .3, x.unitKind), g = [...groupsOf(p)].filter(y => statusOf(c, y).arms).sort((a, b) => b.share - a.share)[0];
+    // A regiment is of the people it was raised among, and brings to the colours what that people thinks of the state.
+    if (g && g.eth !== c.majorityEth) { u.eth = g.eth; u.rel = g.rel; u.loyalty = clamp(u.loyalty - originPull(w, c, u), 0, 100); } }
   // Merchant ships join the country's tonnage; warships form a squadron in the harbour that built them.
   else if (k === 'ship' && x.shipKind === 'merchant') { c.shipBuilt = (c.shipBuilt || 0) + x.ships * MERCHANT; c.shipping = (c.shipping || 0) + x.ships * MERCHANT; }
   else if (k === 'ship') { const f = makeFleet(w, c.id, p.seas[0], x.ships, x.shipKind); f.port = f.home = p.id; }
