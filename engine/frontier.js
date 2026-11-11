@@ -4,7 +4,7 @@
 // gone home: calling them back is quick, large, costly to the fields and the works, and seen by every neighbour.
 import { clamp, rand, news, sum } from './util.js';
 import { aliveCountries, countryProvinces, atWar, hasTreaty, provincePop, makeUnit, goHome } from './world.js';
-import { groupsOf } from './culture.js';
+import { groupsOf, yokeOn } from './culture.js';
 import { fighting, upkeepCost, inTheField } from './military.js';
 import { answered, tieOf } from './diplomacy.js';
 
@@ -23,8 +23,6 @@ const heldAt = (w, c, pid, toward) => sum(Object.values(w.units).filter(u => u.c
 const grudge = (c, id) => (c.grudges ||= {})[id] ||= { incident: 0, kin: 0 };
 export const grudgeWord = v => v >= 30 ? 'a fury' : v >= 15 ? 'strong' : v >= 6 ? 'felt' : 'faint';
 
-// How hard a state bears on the people of another nation who live under it.
-const yoke = c => c.languagePolicy === 'assimilate' ? 1 : c.languagePolicy === 'autonomy' ? 0 : .35;
 
 export function frontierStep(w) {
   const cs = aliveCountries(w);
@@ -57,7 +55,7 @@ export function frontierStep(w) {
   // A people watches how its kin fare across the border, and how hard the state they live under bears on them.
   for (const c of cs) {
     for (const o of cs) { if (o.id === c.id) continue; const g = grudge(c, o.id); let v = 0;
-      for (const p of countryProvinces(w, o.id)) { const share = sum(groupsOf(p).filter(x => x.eth === c.majorityEth), x => x.share); if (o.majorityEth === c.majorityEth || share < .2) continue; v += share * (yoke(o) * (.5 + p.unrest / 100) + (p.scar?.by === o.id ? p.scar.weight * 3 * Math.max(0, 1 - (w.turn - p.scar.turn) / 40) : 0)); }
+      for (const p of countryProvinces(w, o.id)) { const share = sum(groupsOf(p).filter(x => x.eth === c.majorityEth), x => x.share); if (o.majorityEth === c.majorityEth || share < .2) continue; v += share * (yokeOn(o, p, c.majorityEth) * (.5 + p.unrest / 100) + (p.scar?.by === o.id ? p.scar.weight * 3 * Math.max(0, 1 - (w.turn - p.scar.turn) / 40) : 0)); }
       g.kinBase ??= clamp(v * 10, 0, 40); if (g.kin === 0 && g.kinBase > 0 && !g.seeded) { g.kin = g.kinBase; g.seeded = true; } g.kin += (clamp(v * 10, 0, 40) - g.kin) * .25; }
     // What weighs on the government: wrongs that have not been answered. A war against the offender answers them.
     const nat = clamp(.6 + (c.axes?.nation ?? 0) / 100, .3, 1.4);

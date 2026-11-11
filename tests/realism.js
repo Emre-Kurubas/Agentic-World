@@ -15,7 +15,7 @@ import { firmValue } from '../engine/firms.js';
 import { quote } from '../engine/projects.js';
 import { updateRoutes } from '../engine/economy.js';
 import { militaryStep } from '../engine/military.js';
-import { culturePenalty, cultureStep, migrate, leaderForeignness } from '../engine/culture.js';
+import { culturePenalty, cultureStep, migrate, leaderForeignness, yokeOn, votersOf, armedOf, originPull, privilege } from '../engine/culture.js';
 import { initAdmin, adminStep, adminPressure } from '../engine/admin.js';
 import { contractStep } from '../engine/contracts.js';
 import { makeUnit, makeFleet } from '../engine/world.js';
@@ -3156,6 +3156,78 @@ chain('Prisoners of war go home at a peace, or sooner if whoever holds them choo
   const before = pop(), part = applyOp(w, L, { op: 'release_prisoners', target: 'U2', men: 5 }); assert.ok(part.ok && Math.abs(a.captives.U2 - 7) < 1e-9 && Math.abs(b.reserve - 55) < 1e-9 && pop() > before + 4.9 && b.grudges.U1.incident < 10 && b.relations.U1 > -40, part.msg);
   assert.ok(/7 thousand are still held/.test(part.msg) && ld(w, b).inbox.some(m => /sent home 5 thousand of our men/.test(m.text)) && /we hold 7 thousand of/.test(lookUp(w, L, 'wars')), 'both governments know how it stands');
   const rest = applyOp(w, L, { op: 'release_prisoners', target: 'U2' }); assert.ok(rest.ok && !a.captives.U2 && Math.abs(b.reserve - 62) < 1e-9); assert.ok(!applyOp(w, L, { op: 'release_prisoners', target: 'U2' }).ok, 'there is nobody left to send');
+});
+// A country with a people X living as a minority in two of its provinces, one of them beside X's own nation, and one province with no minority at all.
+const mixedLand = () => { const w = fresh(), c = w.countries.U1, kin = w.countries.U2, X = kin.majorityEth, provs = countryProvinces(w, 'U1'), L = ld(w, c);
+  const border = provs.find(p => p.id !== c.capital && p.neighbors.some(n => w.provinces[n].controller === 'U2')), inner = provs.find(p => p.id !== c.capital && p !== border && !p.neighbors.some(n => w.provinces[n].controller !== 'U1')) ?? provs.find(p => p.id !== c.capital && p !== border), pure = w.provinces[c.capital];
+  const mix = (p, share) => { p.groups = [{ eth: c.majorityEth, rel: c.majorityRel, share: 1 - share }, { eth: X, rel: kin.majorityRel, share }]; p.eth = c.majorityEth; p.rel = c.majorityRel; p.unrest = 20; delete p.hate; };
+  mix(border, .3); mix(inner, .3); pure.groups = [{ eth: c.majorityEth, rel: c.majorityRel, share: 1 }]; c.languagePolicy = 'tolerate'; c.faithPolicy = 'tolerate'; c.axes.nation = 20; c.axes.faith = 0; c.police = 40; w.wars = [];
+  const xIn = p => (p.groups || []).filter(g => g.eth === X).reduce((a, g) => a + g.share, 0) * Object.values(p.pops).reduce((a, x) => a + x.n, 0), step = n => { for (let i = 0; i < n; i++) { cultureStep(w); w.turn++; } };
+  return { w, c, kin, X, L, border, inner, pure, xIn, step }; };
+chain('A policy toward peoples is one for the country or a rule of its own for a province, a people, or a people in one province: only those it names feel it, the nearest rule goes first, and their kin across the frontier see what is done to them', () => {
+  const t = mixedLand(), { w, c, X, L, border, inner } = t, base = culturePenalty(c, border);
+  assert.ok(Math.abs(base - culturePenalty(c, inner)) < 1e-9 && Math.abs(yokeOn(c, border, X) - .35) < 1e-9, 'with no rule the country\'s policy holds everywhere, as it always did');
+  const r = applyOp(w, L, { op: 'set_culture_policy', language: 'assimilate', province: border.id }); assert.ok(r.ok && /goes before/.test(r.msg), r.msg);
+  assert.ok(culturePenalty(c, border) > base * 1.3 && Math.abs(culturePenalty(c, inner) - base) < 1e-9 && yokeOn(c, border, X) === 1 && c.languagePolicy === 'tolerate', 'the rule for one province bears on that province only');
+  assert.ok(applyOp(w, L, { op: 'set_culture_policy', language: 'autonomy', people: X }).ok); assert.ok(culturePenalty(c, inner) < base && yokeOn(c, inner, X) === 0 && yokeOn(c, border, X) === 0, 'a rule for a people goes before a rule for a province');
+  assert.ok(applyOp(w, L, { op: 'set_culture_policy', language: 'assimilate', province: border.id, people: X }).ok && yokeOn(c, border, X) === 1 && yokeOn(c, inner, X) === 0, 'and a rule for that people in that province before both');
+  // What the school does over the years: assimilation turns them, autonomy does not.
+  const was = { b: t.xIn(border), i: t.xIn(inner) }; t.step(12); assert.ok(t.xIn(border) < was.b * .99 && t.xIn(inner) >= was.i * .995 && t.xIn(border) / was.b < t.xIn(inner) / was.i - .01, `${X} under assimilation dwindle, under autonomy they do not: ${(t.xIn(border) / was.b).toFixed(3)} and ${(t.xIn(inner) / was.i).toFixed(3)}`);
+  assert.ok(applyOp(w, L, { op: 'set_culture_policy', province: border.id, people: X, clear: true }).ok && yokeOn(c, border, X) === 0 && c.cultureRules.length === 2);
+  assert.ok(!applyOp(w, L, { op: 'set_culture_policy', language: 'assimilate', people: 'Nobodies' }).ok && !applyOp(w, L, { op: 'set_culture_policy', language: 'assimilate', province: countryProvinces(w, 'U2')[0].id }).ok);
+  assert.ok(new RegExp(`rules of their own: [^.]*the ${X}: language autonomy`).test(lookUp(w, L, 'culture')) && /forced_labour/.test(lookUp(w, L, 'culture')), 'the report on peoples gives the rules in force and says what can be done and what follows');
+});
+chain('The law can lay disabilities on a people: struck from the rolls they weigh nothing at the polls, barred from arms they are not taken for the army, they resent it and leave for their own nation, a regiment raised among them is the less to be trusted, and a country that wants the nation first approves; lifted, all is as before', () => {
+  const t = mixedLand(), { w, c, kin, X, L, border, inner, pure } = t, base = { b: culturePenalty(c, border), p: culturePenalty(c, pure) }, other = mixedLand();
+  assert.ok(!applyOp(w, w.characters[c.general], { op: 'set_status', people: X, vote: false }).ok, 'it is the ruler\'s to order'); assert.ok(!applyOp(w, L, { op: 'set_status', people: c.majorityEth, vote: false }).ok, 'not against the state\'s own people'); assert.ok(!applyOp(w, L, { op: 'set_status', people: 'Nobodies', vote: false }).ok);
+  const r = applyOp(w, L, { op: 'set_status', people: X, vote: false, arms: false, office: false }); assert.ok(r.ok && /have no vote, may hold no office, may not bear arms/.test(r.msg), r.msg);
+  assert.ok(!applyOp(w, L, { op: 'set_status', people: X, vote: false }).ok, 'the same order again changes nothing and says so');
+  assert.ok(Math.abs(votersOf(c, border) - .7) < 1e-9 && Math.abs(armedOf(c, border) - .7) < 1e-9 && votersOf(c, pure) === 1, 'three in ten of that province no longer vote or serve');
+  assert.ok(culturePenalty(c, border) > base.b + 2 && Math.abs(culturePenalty(c, pure) - base.p) < .3, `they resent it where they live: ${culturePenalty(c, border).toFixed(1)} against ${base.b.toFixed(1)}`);
+  // A country that wants the nation first approves of it in the provinces of the majority; one that does not, does not.
+  c.axes.nation = 85; assert.ok(culturePenalty(c, pure) < base.p - .2, `where the nation comes first the majority approves: ${culturePenalty(c, pure).toFixed(2)} against ${base.p.toFixed(2)}`); c.axes.nation = 20;
+  // The army: the levy of a province shrinks by those barred, and a regiment of that people is the less to be relied on, most of all against its own nation.
+  const hands = p => Math.min(Object.values(p.pops).reduce((a, x) => a + x.n, 0) * .08, p.pops.peasants.n + p.pops.workers.n - 2); c.stock.arms = 5000; c.treasury = c.gdp * 4;
+  const got = applyOp(w, L, { op: 'recruit', province: border.id, men: 1e5 }), free = applyOp(other.w, other.L, (other.c.stock.arms = 5000, other.c.treasury = other.c.gdp * 4, { op: 'recruit', province: other.border.id, men: 1e5 }));
+  const taken = x => +(/([\d.]+) ?(k|thousand)/.exec(x.msg)?.[1] ?? NaN); assert.ok(got.ok && free.ok && taken(got) < taken(free) * .75, `fewer men can be raised there: ${got.msg.slice(0, 90)} | ${free.msg.slice(0, 90)}`);
+  const u = soldier(w, 'U1', border.id, 20); u.eth = X; assert.ok(originPull(w, c, u) > 10 && originPull(other.w, other.c, { eth: X }) === 0, 'a regiment raised among them has less faith in the state that did this');
+  const peace = originPull(w, c, u); w.wars.push({ id: 'S-x', a: ['U1'], b: ['U2'], civil: false, active: true, start: w.turn, name: 'x' }); assert.ok(originPull(w, c, u) > peace + 10, 'and less again against its own nation'); w.wars = [];
+  const loyal = soldier(w, 'U1', pure.id, 20); u.bond = loyal.bond = 72; c.paidRatio = 1; c.budget.military = upkeepCost(w, c) / c.gdp; for (let i = 0; i < 8; i++) quarter(w); assert.ok(u.loyalty < loyal.loyalty - 8, `its faith settles lower than a regiment of the majority: ${Math.round(u.loyalty)} against ${Math.round(loyal.loyalty)}`);
+  // They leave when they can: more of them from the province beside their own nation than without the law.
+  const x0 = t.xIn(border), y0 = other.xIn(other.border); t.step(12); other.step(12); assert.ok(t.xIn(border) / x0 < other.xIn(other.border) / y0 - .01, `some go over the frontier: ${(t.xIn(border) / x0).toFixed(3)} against ${(other.xIn(other.border) / y0).toFixed(3)}`);
+  assert.ok(/Before the law the [^.]* have no vote/.test(lookUp(w, L, 'culture')) && /Before the law the [^.]* have no vote/.test(lookUp(w, w.characters[kin.oligarch], 'country:U1')), 'it is public law: their own report and every yearbook print it');
+  // Lifted, the law is equal again.
+  assert.ok(applyOp(w, L, { op: 'set_status', people: X, equal: true }).ok && !c.status && votersOf(c, border) === 1 && privilege(w, c) === 0);
+  // Where a chamber makes the laws this is a law, and parties vote on it by what they stand for.
+  const p = parliamentWorld(), q = p.c, folk = countryProvinces(p.w, 'U1').flatMap(x => x.groups || []).find(g => g.eth !== q.majorityEth); if (folk) { const b = applyOp(p.w, p.l, { op: 'set_status', people: folk.eth, vote: false }); assert.ok(b.bill, `in a state with a legislature it goes to the house: ${b.msg}`); }
+});
+chain('Feeling against a minority settles where agitation, the law\'s own mark, hard times and the police put it: with nobody pointing a finger hard times harm no one; stirred far enough a mob turns on its neighbours, their nation is told and the ruler is told what fed it; police who protect hold it down, and police told to look away do not', () => {
+  const riot = (o = {}) => { const t = mixedLand(), { w, c, X, border } = t, O = w.characters[c.opposition]; O.wealth = 200; c.police = o.police ?? 25; border.unrest = 65; c.unemployment = .18; if (o.away) assert.ok(applyOp(w, t.L, { op: 'set_status', people: X, protect: false }).ok);
+    const before = t.xIn(border); let said = null; for (let i = 0; i < (o.quarters ?? 8); i++) { if (o.stir) { said = applyOp(w, O, { op: 'incite', people: X, province: border.id, amount: 6 }); assert.ok(said.ok, said.msg); border.unrest = 65; } cultureStep(w); w.turn++; }
+    return { ...t, O, before, said, mob: (c.atrocities || []).find(a => a.method === 'pogrom') }; };
+  const quiet = riot(); assert.ok(!quiet.mob && !(quiet.border.hate?.[quiet.X] > 1), 'hard times alone, with nobody pointing at anyone, harm no one');
+  const stirred = riot({ stir: true }), { w, c, kin, X, border, O } = stirred; assert.ok(stirred.mob && stirred.mob.by === O.id && stirred.mob.dead >= 0 && stirred.xIn(border) < stirred.before * .97, `stirred quarter after quarter, a mob turns on them: ${JSON.stringify(stirred.mob)?.slice(0, 200)}`);
+  assert.ok(ld(w, kin).inbox.some(m => /a mob has turned on our/.test(m.text)) && (kin.grudges?.U1?.incident ?? 0) > 3, 'their nation across the frontier is told, and holds it against this state');
+  assert.ok(ld(w, c).inbox.some(m => /What fed it: [^.]*agitation/.test(m.text)) && /it is said in the open/i.test(stirred.said.msg), 'the ruler is told what fed it, and everyone knows who stirred it');
+  applyOp(w, O, { op: 'incite', people: X, province: border.id, amount: 6 }); const again = applyOp(w, O, { op: 'incite', people: X, province: border.id, amount: 6 }); assert.ok(!again.ok && /this quarter/.test(again.msg), 'said twice in a quarter it carries no further');
+  assert.ok(!riot({ stir: true, police: 95 }).mob, 'police enough, and willing, hold it down');
+  const away = riot({ stir: true, police: 95, away: true }); assert.ok(away.mob && (away.c.honourLog || []).some(x => /stood by/.test(x.why)), 'the same police told to look away do not, and the world reads that they stood by');
+});
+chain('A people can be held to forced labour or moved from its province by force, and the state\'s own people planted as settlers: it needs force on the spot, some die at it and on the road and more in winter, the gangs dig for nothing, and it is on the record when it comes out', () => {
+  const t = mixedLand(), { w, c, X, L, border, inner } = t; c.treasury = c.gdp; c.pressFreedom = 80;
+  assert.ok(/no force/.test(applyOp(w, L, { op: 'forced_labour', province: border.id, people: X, share: .3 }).msg), 'with nobody to guard them nobody is held'); const guard = soldier(w, 'U1', border.id, 30); guard.loyalty = 95;
+  const f = applyOp(w, L, { op: 'forced_labour', province: border.id, people: X, share: .3 }); assert.ok(f.ok && border.forced && /dig field works/.test(f.msg), f.msg); const since = border.forced.since, x0 = t.xIn(border), pen = culturePenalty(c, border), works = border.trench || 0;
+  t.step(6); assert.ok(t.xIn(border) < x0 * .97 && (border.trench || 0) > works && border.forced.dead > 0 && yokeOn(c, border, X) > 1, `the gangs dig, die and run: ${(t.xIn(border) / x0).toFixed(3)} of them left, works ${works} to ${border.trench}`);
+  assert.ok(culturePenalty(c, border) > 0 && (c.atrocities || []).some(a => a.method === 'labour') && (c.honourLog || []).some(x => /forced labour/.test(x.why)), 'in a country with a free press it comes out, and the world thinks the less of the state');
+  assert.ok(applyOp(w, L, { op: 'forced_labour', province: border.id, people: X, share: .2 }).ok && border.forced.since === since, 'ordered again it changes its terms, not its day'); assert.ok(applyOp(w, L, { op: 'forced_labour', province: border.id, on: false }).ok && !border.forced);
+  // Moved by force to the interior: fewer arrive than set out, and fewer still in winter.
+  const move = turn => { const m = mixedLand(); m.w.turn = turn; m.w.rng = 99; const g = soldier(m.w, 'U1', m.border.id, 40); g.loyalty = 100; m.c.axes.auth = 100; const all = () => countryProvinces(m.w, 'U1').reduce((a, p) => a + m.xIn(p), 0), before = all(), there = m.xIn(m.inner), r = applyOp(m.w, m.L, { op: 'resettle', from: m.border.id, to: m.inner.id, people: m.X, share: .5 }); return { ...m, r, lost: before - all(), arrived: m.xIn(m.inner) - there, before }; };
+  const summer = move(42), winter = move(44); assert.ok(summer.r.ok && summer.arrived > 0 && summer.lost > 0 && summer.xIn(summer.border) < summer.before, summer.r.msg);
+  assert.ok(winter.r.ok && winter.lost > summer.lost * 1.3, `more die on the road in winter: ${winter.lost.toFixed(1)} against ${summer.lost.toFixed(1)} thousand`);
+  assert.ok((summer.c.atrocities || []).some(a => a.method === 'deport' && a.dead > 0) && /moved under guard/.test(summer.r.msg) && !applyOp(summer.w, summer.L, { op: 'resettle', from: summer.border.id, to: summer.inner.id, people: summer.X, share: .5 }).ok, 'it is on the record, and a province is emptied only so far in one quarter');
+  // Settlers of the state's own people go willingly, for land and a grant: it costs money and nobody dies of it.
+  const s = mixedLand(), own = s.c.majorityEth, maj = p => p.groups.filter(g => g.eth === own).reduce((a, g) => a + g.share, 0); s.c.treasury = s.c.gdp; const cash = s.c.treasury, share0 = maj(s.border), pop = () => countryProvinces(s.w, 'U1').reduce((a, p) => a + Object.values(p.pops).reduce((b, x) => b + x.n, 0), 0), all0 = pop();
+  const col = applyOp(s.w, s.L, { op: 'resettle', from: s.pure.id, to: s.border.id, people: own, share: .08 }); assert.ok(col.ok && maj(s.border) > share0 && s.c.treasury < cash && Math.abs(pop() - all0) < 1e-6 && !(s.c.atrocities || []).length, col.msg);
 });
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
   // The same fight, the same dice, the enemy warned both times: only the man in command differs.

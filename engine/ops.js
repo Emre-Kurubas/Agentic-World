@@ -7,7 +7,7 @@ import { hasTech, sealOf, importOrder, SPREAD } from './economy.js';
 import { FX_REGIMES, foreignRate, externalDebt, creditLeft, declareDefault, treasuryPays } from './money.js';
 import { firmOp, seizeFirm, STATE } from './firms.js';
 import { queueProject, durationOf, WORKS, quote, ground, projectYield, wasteOf } from './projects.js';
-import { LANGUAGE_POLICY, FAITH_POLICY, groupsOf, removePeople, settlePeople } from './culture.js';
+import { LANGUAGE_POLICY, FAITH_POLICY, groupsOf, removePeople, settlePeople, PEOPLE_OPS, peopleOp, hits, armedOf, privilege } from './culture.js';
 import { incapacitated } from './health.js';
 import { isMinor, recruitInformant, takeOffer, refuseOffer, standing } from './court.js';
 import { approach, openTo } from './deeds.js';
@@ -55,7 +55,7 @@ const NOTE_OPS = new Set(['buy_debt', 'sell_debt', 'ask_terms', 'borrow_private'
 const SEAT_OPS = new Set(['lead_rising', 'resign', 'go_abroad', 'return_home', 'name_deputy']);
 PRIVATE.push('denounce'); PERMISSIONS.general.add('stage_incident'); for (const seat of ['general', 'opposition', 'oligarch']) PERMISSIONS[seat].add('denounce');
 QUIET.add('denounce').add('stage_incident').add('turn_informant');
-const OWN = ['set_paper', ...NOTE_OPS, ...SEAT_OPS];
+const OWN = ['set_paper', 'incite', ...NOTE_OPS, ...SEAT_OPS];
 QUIET.add('lead_rising').add('name_deputy');
 for (const op of NOTE_OPS) QUIET.add(op);
 PRIVATE.push(...OWN);
@@ -433,6 +433,7 @@ export function applyOp(w, actor, op) {
   const gdp = Math.max(c.gdp, 1);
   if (FIRM_OPS.has(op.op)) return firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num);
   if (LABOUR_OPS.has(op.op)) return labourOp(w, actor, c, op, { fail, num, governs: governs(w, c, actor), tell, allowance });
+  if (PEOPLE_OPS.has(op.op)) { const r = peopleOp(w, actor, c, op, { fail, num, pay, allowance, rules: governs(w, c, actor), leads: leadsParties(w, c, actor), leaveTrace, NO_FUNDS }); c._privilege = privilege(w, c); return r; }
   if (NOTE_OPS.has(op.op)) return noteOp(w, actor, c, op, { fail, num, governs: governs(w, c, actor), allowance });
   if (SEAT_OPS.has(op.op)) return seatOp(w, actor, c, op, { fail, num, governs: governs(w, c, actor), personFor });
   switch (op.op) {
@@ -472,7 +473,20 @@ export function applyOp(w, actor, op) {
       return { ok: true, msg: `${Math.round(amt)} gold borrowed, interest ${Math.round(foreignRate(c, externalDebt(c)) * 1000) / 10}%.` };
     }
     case 'repay_foreign': { const l = target; if (!l || !c.creditors[l.id]) return fail('You owe this country nothing.'); const m = Math.min(Math.max(c.reserves, 0), c.creditors[l.id], num(op.amount, 0, 1e12, c.creditors[l.id])); if (m <= 0) return fail('No reserves.'); c.reserves -= m; l.reserves += m; c.creditors[l.id] -= m; return ok(); }
-    case 'set_culture_policy': { if (op.language) { if (!LANGUAGE_POLICY.includes(op.language)) return fail('Unknown language policy.'); c.languagePolicy = op.language; } if (op.faith) { if (!FAITH_POLICY.includes(op.faith)) return fail('Unknown faith policy.'); c.faithPolicy = op.faith; } news(w, `${c.name} changed its policy toward peoples and faiths.`, { kind: 'politics', countries: [c.id] }); return ok(); }
+    case 'set_culture_policy': {
+      if (op.language && !LANGUAGE_POLICY.includes(op.language)) return fail('Unknown language policy.'); if (op.faith && !FAITH_POLICY.includes(op.faith)) return fail('Unknown faith policy.');
+      const prov = op.province ? w.provinces[op.province] : null, people = String(op.people ?? '').trim(); if (op.province && prov?.controller !== c.id) return fail('That province is not under your control.');
+      if (people && !countryProvinces(w, c.id).some(p => groupsOf(p).some(g => hits(people, g)))) return fail(`No people or faith of that name lives in the country: ${people}.`);
+      // With neither a province nor a people named it is the country's policy, as before; with either it is a rule of its own, and clear:true takes that rule away.
+      if (!prov && !people) { if (!op.language && !op.faith) return fail('Say which policy: language (assimilate, tolerate, autonomy) or faith (state, tolerate, secular).'); if (op.language) c.languagePolicy = op.language; if (op.faith) c.faithPolicy = op.faith; news(w, `${c.name} changed its policy toward peoples and faiths.`, { kind: 'politics', countries: [c.id] }); return { ok: true, msg: `The country's policy: language ${c.languagePolicy}, faith ${c.faithPolicy}. Rules made for single provinces or peoples stand beside it.` }; }
+      const rules = (c.cultureRules ||= []), at = rules.findIndex(r => (r.province ?? null) === (prov?.id ?? null) && String(r.people ?? '').toLowerCase() === people.toLowerCase()), scope = `${people ? `the ${people}` : 'everyone'}${prov ? ` in ${prov.name}` : ' throughout the country'}`;
+      if (op.clear === true) { if (at < 0) return fail(`There is no rule of its own for ${scope}.`); rules.splice(at, 1); if (!rules.length) delete c.cultureRules; return { ok: true, msg: `The rule for ${scope} is withdrawn; the country's policy applies there again.` }; }
+      if (!op.language && !op.faith) return fail('Say which policy the rule sets: language (assimilate, tolerate, autonomy) or faith (state, tolerate, secular).');
+      if (at < 0 && rules.length >= 24) return fail('The statute book holds as many such rules as officials can keep apart; one would have to be withdrawn first.');
+      const rule = at >= 0 ? rules[at] : { ...(prov ? { province: prov.id } : {}), ...(people ? { people } : {}) }; if (op.language) rule.language = op.language; if (op.faith) rule.faith = op.faith; if (at < 0) rules.push(rule);
+      news(w, `${c.name} made a rule of its own for ${scope}: ${[rule.language ? `language ${rule.language}` : '', rule.faith ? `faith ${rule.faith}` : ''].filter(Boolean).join(', ')}.`, { kind: 'politics', countries: [c.id], ...(prov ? { province: prov.id } : {}) });
+      return { ok: true, msg: `For ${scope}: ${[rule.language ? `language ${rule.language}` : '', rule.faith ? `faith ${rule.faith}` : ''].filter(Boolean).join(', ')}. Where a rule names both a province and a people it goes before one that names only the people, that before one for the province, and all of them before the country's policy (language ${c.languagePolicy}, faith ${c.faithPolicy}).` };
+    }
     case 'appoint_governor': { const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('Province not yours.'); if (op.remove) { tell(w, w.characters[p.governor], c.name, `You are removed as governor of ${p.name}.`); p.governor = null; return ok(); } const ch = personFor(w, c, op, 'governor'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); p.governor = ch.id; tell(w, ch, c.name, `You are appointed governor of ${p.name}.`); return { ok: true, msg: `${ch.name} (${ch.id}) governs ${p.name}.` }; }
     case 'appoint_commander': { if (op.fleet) { const f = w.fleets[op.fleet]; if (!f || f.country !== c.id) return fail('No such fleet of yours.'); const ch = personFor(w, c, op, 'officer'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); f.commander = ch.id; tell(w, ch, c.name, `You now command the squadron ${f.id}.`); return { ok: true, msg: `${ch.name} (${ch.id}) commands the squadron ${f.id}.` }; }
       const u = w.units[op.unit]; if (!u || u.country !== c.id) return fail('No such unit.'); const ch = personFor(w, c, op, 'officer'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); u.commander = ch.id; tell(w, ch, c.name, `You now command unit ${u.id}.`); return { ok: true, msg: `${ch.name} (${ch.id}) commands ${u.id}.` }; }
@@ -940,8 +954,8 @@ export function applyOp(w, actor, op) {
       if (p.owner !== c.id) return fail('Troops cannot be raised from an occupied people.');
       const kind = ['artillery', 'armor', 'air', 'cavalry'].includes(op.unit_kind) ? op.unit_kind : 'infantry', hands = p.pops.peasants.n + p.pops.workers.n;
       // A province gives so many men in a quarter, however many orders are written.
-      const men = Math.round(Math.min(num(op.men, .1, 1e6), Math.max(0, Math.min(provincePop(p) * .08, hands - 2) - used(w, p, 'levy'))) * 10) / 10;
-      if (men < .1) return fail(`${p.name} has given all the men it can this quarter.`);
+      const may = armedOf(c, p), men = Math.round(Math.min(num(op.men, .1, 1e6), Math.max(0, Math.min(provincePop(p) * .08, hands - 2) * may - used(w, p, 'levy'))) * 10) / 10;
+      if (men < .1) return fail(may < .98 ? `${p.name} has given all the men it can this quarter: ${Math.round((1 - may) * 100)} in the hundred of its people are barred by law from bearing arms.` : `${p.name} has given all the men it can this quarter.`);
       if (kind === 'armor' && !hasTech(c, 'armor')) return fail('You lack armor technology.'); if (kind === 'air' && !hasTech(c, 'aviation')) return fail('You lack aviation technology.');
       if (['armor', 'air'].includes(kind) && (c.stock.steel < men * .2 || c.stock.fuel < men * .05)) return fail('Not enough steel or fuel.');
       const arms = men * (kind === 'artillery' ? .12 : .05); if (c.stock.arms < arms) return fail('Not enough arms in stock.');
@@ -972,7 +986,7 @@ export function applyOp(w, actor, op) {
       // A number sends a detachment and leaves the rest of the unit where it stands.
       const asked = Number(op.men); if (!(Number.isFinite(asked) && asked >= .1 && asked < u.men - .05)) return applyOrder(w, c, u, op.to, true);
       const stays = u.province === op.to; if (!stays && !pathStep(w, u.province, op.to, c.id)) return fail('No route.');
-      const men = Math.round(asked * 10) / 10, d = makeUnit(w, c.id, u.province, men, u.quality, u.loyalty, u.kind);
+      const men = Math.round(asked * 10) / 10, d = makeUnit(w, c.id, u.province, men, u.quality, u.loyalty, u.kind); if (u.eth) { d.eth = u.eth; d.rel = u.rel; }
       d.morale = u.morale; d.equip = u.equip; if (u.bond != null) d.bond = u.bond; u.men -= men;
       // Picked men formed into a body of their own where they stand: a guard, a garrison, a cadre.
       if (stays) return { ok: true, msg: `${d.id}, ${menText(men)}, was formed out of ${u.id} and stays at ${w.provinces[op.to].name}. ${u.id} keeps ${menText(u.men)}.` };

@@ -3,7 +3,7 @@ import { CLASSES, ROLES, countryProvinces, provincePop, aliveCountries, makeCoun
 import { voiceOf } from './press.js';
 import { allocateSeats, onBenches, rivalParty, seatGovernment, makeParliament } from './polity.js';
 import { issueCurrency } from './money.js';
-import { culturePenalty, leaderForeignness, minorityShare } from './culture.js';
+import { culturePenalty, leaderForeignness, minorityShare, votersOf } from './culture.js';
 import { adminPressure } from './admin.js';
 import { afflict, healthStep, incapacitated } from './health.js';
 import { shut } from './underground.js';
@@ -534,7 +534,8 @@ export function partyStep(w) {
         const fit = Math.max(4, 100 - distance(p.axes, CLASS_AXES[k]) * 1.1) * (p.base === k ? 1.6 : 1);
         // Whoever sits on the government's benches answers for it with it: content keeps their voters, discontent sends them to the parties outside.
         const grievance = onBenches(c, p) ? pr.pops[k].sat / 50 : (100 - pr.pops[k].sat + 25) / 75;
-        s += pr.pops[k].n * fit * grievance; n += pr.pops[k].n;
+        // Only those the law lets vote are counted: a people struck off the rolls weighs nothing at the polls, whatever it feels.
+        const voters = pr.pops[k].n * votersOf(c, pr); s += voters * fit * grievance; n += voters;
       }
       // Committees and newspapers turn sympathy into a following.
       return [p, s / Math.max(n, 1) * (1 + (p.organization || 0) / 100 + voiceOf(w, c, p) / 100)];

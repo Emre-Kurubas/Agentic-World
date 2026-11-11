@@ -2,6 +2,7 @@ import { clamp, sum, news, between, rand } from './util.js';
 import { CLASSES, atWar, hasTreaty, countryProvinces, aliveCountries, provincePop, makeUnit, goHome } from './world.js';
 import { hasTech } from './economy.js';
 import { drillOf } from './frontier.js';
+import { originPull } from './culture.js';
 import { die, garrisonHold } from './politics.js';
 import { afflict, incapacitated } from './health.js';
 import { navalStep, portFalls, shipGuns, enemyHolds, SHIPS, kindOf, iced } from './navy.js';
@@ -337,7 +338,8 @@ function upkeep(w, c) {
     u.equip = clamp(u.equip + (c.stock.arms > 0 ? .02 : -.05) * (got > .6 ? 1 : .3), .2, 1.4);
     { const s = supplyOf(w, u); if (!s.linked) { u.men *= .92; u.morale = clamp(u.morale - 6, 0, 100); } else if (s.depth > 4.5) { u.men *= .98; u.morale = clamp(u.morale - 2, 0, 100); } }
     // Loyalty settles where pay and the government's standing put it, around the bond the unit already had; a shock fades, it does not add up for ever.
-    const pull = (got - .85) * 40 - c.arrears * 6 + (c.legitimacy - 50) * .25;
+    // A regiment raised among a people the law bears down on, or sent to fight that people's own nation, has that much less faith in the state.
+    const pull = (got - .85) * 40 - c.arrears * 6 + (c.legitimacy - 50) * .25 - originPull(w, c, u);
     u.bond ??= u.loyalty - pull;
     u.loyalty = clamp(u.loyalty + (clamp(u.bond + pull, 0, 100) - u.loyalty) * .12, 0, 100);
   }

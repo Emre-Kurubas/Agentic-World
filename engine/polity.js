@@ -10,7 +10,7 @@ export const num = (v, a, b, d = a) => clamp(Number.isFinite(Number(v)) ? Number
 export const STATE_POWERS = ['audit', 'judiciary', 'security', 'intelligence', 'bureaucracy', 'bank', 'army'];
 export const CIVIL_POWERS = ['education', 'welfare', 'propaganda', 'clergy', 'capital', 'farming', 'industry', 'research'];
 export const DELEGABLE = new Set(['appoint_governor', 'appoint_commander', 'set_culture_policy', 'set_fx_regime', 'devalue', 'borrow_foreign', 'repay_foreign', 'set_capital_controls', 'ship_goods', 'buy_goods', 'sell_goods', 'set_import', 'set_export', 'set_import_priority', 'set_tax', 'set_budget', 'set_tariff', 'set_arms_share', 'print_money', 'borrow', 'embargo', 'build', 'survey', 'set_research', 'move', 'move_army', 'recruit', 'repress', 'concession', 'purge', 'ban_party', 'set_institutions', 'propose_treaty', 'accept_treaty', 'spy', 'steal_tech', 'gather_dossier']);
-export const GATED = new Set(['set_labour_law', 'set_culture_policy', 'nationalize_company', 'set_tax', 'set_budget', 'set_tariff', 'set_import', 'set_export', 'borrow', 'print_money', 'default_debt', 'declare_war', 'ban_party', 'land_reform', 'nationalize', 'privatize', 'set_regime']);
+export const GATED = new Set(['set_labour_law', 'set_culture_policy', 'set_status', 'nationalize_company', 'set_tax', 'set_budget', 'set_tariff', 'set_import', 'set_export', 'borrow', 'print_money', 'default_debt', 'declare_war', 'ban_party', 'land_reform', 'nationalize', 'privatize', 'set_regime']);
 // What a law can do. A legislature makes rules and votes money; it does not arrest people, name heirs or move regiments. Those are acts of the executive.
 export const LEGISLATIVE = new Set([...GATED, 'prosecute', 'create_institution', 'fund_institution', 'dissolve_institution', 'set_institutions', 'hold_election', 'concession', 'set_arms_share', 'set_capital_controls', 'set_fx_regime', 'release', 'repay_state_debt']);
 const MAX_OPEN_BILLS = 16, MAX_INSTITUTIONS = 40, MAX_PRIVATE_EACH = 5;
@@ -180,6 +180,8 @@ function billLean(c, b, p) {
     case 'nationalize': case 'nationalize_company': s += x.econ < -20 ? 18 : x.econ > 20 ? -30 : -5; break;
     case 'privatize': s += x.econ > 20 ? 15 : x.econ < -20 ? -20 : 0; break;
     case 'land_reform': s += p.base === 'peasants' ? 30 : p.base === 'elite' ? -40 : x.econ < 0 ? 10 : -10; break;
+    // A law that puts a people or a faith under disabilities is voted by those who want the nation or the faith first and fought by the rest; lifting them, the other way.
+    case 'set_status': { const harsh = op.equal !== true && ([op.vote, op.office, op.arms, op.protect].includes(false) || op.levy > 0); s += (x.nation > 30 || x.faith > 30 ? 12 : -20) * (harsh ? 1 : -1); break; }
     case 'set_culture_policy': if (op.language === 'assimilate') s += x.nation > 30 ? 12 : -12; if (op.language === 'autonomy') s += x.nation > 30 ? -15 : 8; if (op.faith === 'state') s += x.faith > 30 ? 15 : -12; if (op.faith === 'secular') s += x.faith > 30 ? -20 : 10; break;
   }
   return s;
