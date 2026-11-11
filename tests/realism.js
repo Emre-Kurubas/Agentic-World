@@ -3852,6 +3852,47 @@ chain('The smaller means of a seat: relief for people nobody names, a province l
   assert.ok(/relieve_province/.test(String(answer(w, L, 'unrest'))) && /set_dues/.test(String(answer(w, O, 'parties'))) && /note:/.test(String(answer(w, L, 'diplomacy'))) && /post_person/.test(String(answer(w, L, 'ministers'))) && /destroy_evidence/.test(String(answer(w, M, 'my_secrets'))), 'and each seat can read of it where the matter is read');
 });
 
+import { frontierStep as frontierOf_ } from '../engine/frontier.js';
+import { treatyStep as treatiesOf_ } from '../engine/polity.js';
+import { electionStep as electionsOf_ } from '../engine/politics.js';
+chain('Between a letter and a war, and other things asked for in world 16: a commission over a frontier, a frontier thinned out and counted, a unit armed from the arsenal, watchers at the count, a prisoner asked out of the court', () => {
+  // World 16: a joint commission at Falklanda and a counted withdrawal at Waldenya were what ended two crises, and both were words; "issue rifles
+  // from the arsenal to B373", "post our watchers at every count" and "apply to the court for her release on surety" had no operation.
+  const w = inherited(); run(w, 1); const c = w.countries.U1, L = ld(w, c), G = w.characters[c.general], O = w.characters[c.opposition];
+  const nextDoor = [...new Set(Object.values(w.provinces).filter(p => p.controller === 'U1').flatMap(p => p.neighbors.map(n => w.provinces[n].controller)))].find(id => id && id !== 'U1'), d = w.countries[nextDoor], D = ld(w, d);
+  const over = Object.values(w.provinces).find(p => p.controller === d.id && p.neighbors.some(n => w.provinces[n].controller === 'U1')), mine = w.provinces[over.neighbors.find(n => w.provinces[n].controller === 'U1')];
+  for (const u of Object.values(w.units)) if ([over.id, mine.id].includes(u.province)) delete w.units[u.id]; soldier(w, d.id, over.id, 43); soldier(w, 'U1', mine.id, 30); c.intel[d.id] = 10; d.intel.U1 = 10;
+  // A commission, with a counted thinning of the frontier.
+  (c.grudges ||= {})[d.id] = { incident: 30, kin: 0 }; const before = answeredTo(w, c, d.id);
+  const sent = applyOp(w, L, { op: 'propose_treaty', target: d.id, kind: 'commission', terms: 'Officers of both states sit at the frontier.', clauses: [{ type: 'troop_limit', country: d.id, men: 45, provinces: [over.id] }, { type: 'troop_limit', country: 'U1', men: 35, provinces: [mine.id] }, { type: 'observers', provinces: [over.id, mine.id] }] }), id = /A\d+/.exec(sent.msg)[0];
+  assert.ok(sent.ok && !/43 thousand men/.test(String(answer(w, G, 'borders'))), 'before the paper is signed the staff has only round numbers');
+  assert.ok(applyOp(w, D, { op: 'accept_treaty', id }).ok); const t = w.treaties.find(x => x.id === id);
+  assert.ok(t.active && t.expires === w.turn + 8 && t.clauses.length === 3 && answeredTo(w, c, d.id) > before, 'a commission sits for two years and answers part of what the country holds against them');
+  assert.ok(new RegExp(`${over.name}[^\\n]*43 thousand men`).test(String(answer(w, G, 'borders'))), `with observers the staff counts their men there exactly: ${String(answer(w, G, 'borders')).split('\n').find(l => l.includes(over.name))?.slice(0, 200)}`);
+  treatiesOf_(w); assert.equal(t.breaches.length, 0, 'while both keep under their numbers there is no breach'); soldier(w, d.id, over.id, 10); treatiesOf_(w);
+  assert.ok(t.breaches.some(b => new RegExp(`exceeded its troop limit in ${over.name} \\(53k against 45k\\)`).test(b.text ?? b.note ?? JSON.stringify(b))), `ten thousand more is a breach, and recorded: ${JSON.stringify(t.breaches).slice(0, 200)}`);
+  let withC = 0, without = 0; for (let i = 0; i < 300; i++) { const a = structuredClone(w); a.rng = 11 + i * 7919; a.newsThisTurn = []; for (const u of Object.values(a.units)) delete u.posture; const dead0 = JSON.stringify(a.countries.U1.grudges); frontierOf_(a); if ((a.countries.U1.grudges[d.id]?.at ?? -1) === a.turn) withC++;
+    const b = structuredClone(w); b.rng = 11 + i * 7919; b.newsThisTurn = []; for (const u of Object.values(b.units)) delete u.posture; b.treaties.find(x => x.id === id).active = false; frontierOf_(b); if ((b.countries.U1.grudges[d.id]?.at ?? -1) === b.turn) without++; }
+  assert.ok(without > 0 && withC < without * .8, `while the commission sits patrols clash less often (${withC} against ${without} in 300 quarters)`);
+  // A unit armed from the arsenal.
+  const u = Object.values(w.units).find(x => x.country === 'U1' && x.province === mine.id); u.equip = .5; c.stock.arms = 10; c.arsenalReserve = 9.8;
+  assert.ok(/kept back from any such draft/.test(applyOp(w, G, { op: 'equip', unit: u.id }).msg) || u.equip > .5, 'what is kept back is kept back'); u.equip = .5; c.stock.arms = 10; delete c.arsenalReserve;
+  const eq = applyOp(w, G, { op: 'equip', unit: u.id }); assert.ok(eq.ok && Math.abs(u.equip - 1) < 1e-9 && Math.abs(c.stock.arms - (10 - .5 * 30 * .05)) < 1e-6 && /is equipped to 100 in the hundred/.test(eq.msg), `the arsenal makes a unit's equipment good: ${eq.msg}`);
+  assert.ok(!applyOp(w, G, { op: 'equip', unit: u.id }).ok && !applyOp(w, O, { op: 'equip', unit: u.id }).ok, 'a full unit takes no more, and it is the staff\'s to order');
+  // Watchers at the count.
+  c.elections = true; c.nextElection = w.turn; const party = leadsOf(w, c, O)[0]; party.funds = 5; c.pressFreedom = 30; c.courts = 30; c.bureaucracy = 60; c.police = 60;
+  const run1 = eyes => { let found = 0; for (let i = 0; i < 80; i++) { const x = structuredClone(w); x.rng = 31 + i * 7919; const cx = x.countries.U1; cx.rigging = 15; if (eyes) assert.ok(applyOp(x, x.characters[O.id], { op: 'watch_polls' }).ok); x.newsThisTurn = []; electionsOf_(x); if (x.newsThisTurn.some(e => /rigg|arranged|fraud|falsif/i.test(e.text))) found++; } return found; };
+  const blind = run1(false), seen = run1(true); assert.ok(seen > blind + 10, `a count arranged under a party's eyes comes out far more often (${seen} against ${blind} in 80)`);
+  assert.ok(/You lead no|lead none/.test(applyOp(w, G, { op: 'watch_polls' }).msg), 'watchers are a party\'s to send');
+  // A prisoner asked out of the court.
+  assert.ok(applyOp(w, L, { op: 'purge', character: O.id, fate: 'imprisoned' }).ok && O.status === 'imprisoned'); O.heldSince = w.turn - 5; const M = w.characters[c.oligarch]; M.wealth = 100;
+  c.courts = 20; const tame = applyOp(w, M, { op: 'petition_release', character: O.id, surety: 20 }); assert.ok(!tame.ok && /does not sit against the government/.test(tame.msg) && O.status === 'imprisoned' && M.wealth === 100, tame.msg);
+  c.courts = 80; let out = 0; for (let i = 0; i < 40; i++) { const x = structuredClone(w); x.rng = 71 + i * 7919; x.countries.U1._quarter = {}; const r = applyOp(x, x.characters[M.id], { op: 'petition_release', character: O.id, surety: 20 }); if (r.ok) { out++; assert.ok(x.characters[O.id].status === 'free' && x.characters[M.id].wealth === 80, 'he is out and the surety is paid into court'); } }
+  assert.ok(out >= 28 && out < 40, `a court that is its own lets out, on surety, somebody held five quarters untried, mostly (${out} of 40)`);
+  O.sentence = { until: w.turn + 8, charge: 'x' }; assert.ok(/serving a sentence/.test(applyOp(w, O, { op: 'petition_release' }).msg), 'a sentence is not ended on surety; and a prisoner may petition for himself');
+  const doc = fs.readFileSync(new URL('../agents/prompts.js', import.meta.url), 'utf8'); for (const k of ['guarantee|commission', 'type:"observers"', 'equip{unit', 'watch_polls{}', 'petition_release{character']) assert.ok(doc.includes(k), `the referee knows ${k}`);
+});
+
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
   // The same fight, the same dice, the enemy warned both times: only the man in command differs.
   const hurt = skill => { const f = duel({ dug: 5, ground: { trench: 2 }, rng: 99, seen: true }); f.gen.skill = skill; const [b] = quarter(f.w); assert.ok(b, 'a battle'); assert.ok(!b.prisoners, 'nobody was routed'); return f.D - f.def.men; };

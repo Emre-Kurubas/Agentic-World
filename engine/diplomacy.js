@@ -66,7 +66,7 @@ const RANK = { normal: 0, recalled: 1, broken: 2 }, TIES = ['normal', 'recalled'
 export const stanceOf = (c, id) => TIES[RANK[c?.stance?.[id]] ?? 0];
 export const tieOf = (w, a, b) => TIES[Math.max(RANK[stanceOf(w.countries[a], b)], RANK[stanceOf(w.countries[b], a)])];
 export const tieWord = t => t === 'broken' ? 'relations broken off' : t === 'recalled' ? 'envoys recalled' : 'envoys at their posts';
-export const maySign = (w, a, b, kind, carried = false) => { const tie = tieOf(w, a, b); return tie === 'normal' || carried || ['peace', 'armistice'].includes(kind) || (tie === 'recalled' && kind === 'nonaggression'); };
+export const maySign = (w, a, b, kind, carried = false) => { const tie = tieOf(w, a, b); return tie === 'normal' || carried || ['peace', 'armistice'].includes(kind) || (tie === 'recalled' && ['nonaggression', 'commission'].includes(kind)); };
 
 // ---- Recognition ----
 // A state born of a rising is a state to those who say so. The states the world began with are recognised by all. Until a government
@@ -84,6 +84,8 @@ export function answered(w, c, id) {
   if ((c.aimed?.[id] ?? -1) >= (c.tariff ?? 0) + .1) left *= .85;
   if ((c.embargo || []).includes(id)) left *= .55; else if (c.bans?.[id] && (c.bans[id].sell.length || c.bans[id].buy.length)) left *= .8;
   if (c.casus?.[id] != null || w.treaties.some(t => t.pending && t.ultimatum && t.proposer === c.id && t.parties.includes(id))) left *= .8;
+  // A commission of both states' officers sitting over the frontier is an answer while it sits.
+  if (w.treaties.some(t => t.active && t.kind === 'commission' && t.parties.includes(c.id) && t.parties.includes(id))) left *= .75;
   // A note of protest within the year is the least of answers, and still one.
   if (w.turn - (c.noted?.[id] ?? -99) <= 3) left *= .92;
   // A squadron shown off their coast within the year is an answer of a kind too.

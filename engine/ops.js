@@ -58,7 +58,7 @@ const NOTE_OPS = new Set(['buy_debt', 'sell_debt', 'ask_terms', 'borrow_private'
 const SEAT_OPS = new Set(['lead_rising', 'resign', 'go_abroad', 'return_home', 'name_deputy', 'retire']);
 // A watch, an order that waits for its day: open to every seat and to private people (each within what its own hands reach); leaving a power in
 // another's hands is the ruler's alone.
-const OPEN_STANDING = ['watch', 'standing_order', 'cancel_order', 'inquire', 'relief', 'set_dues', 'destroy_evidence'];
+const OPEN_STANDING = ['watch', 'standing_order', 'cancel_order', 'inquire', 'relief', 'set_dues', 'destroy_evidence', 'watch_polls', 'petition_release'];
 QUIET.add('destroy_evidence');
 QUIET.add('inquire').add('inspect');
 PRIVATE.push('denounce'); PERMISSIONS.general.add('stage_incident'); for (const seat of ['general', 'opposition', 'oligarch']) PERMISSIONS[seat].add('denounce');
@@ -72,7 +72,7 @@ PERMISSIONS.private = new Set(PRIVATE);
 for (const seat of ['general', 'opposition', 'oligarch']) for (const op of [...OWN, ...OPEN_STANDING]) PERMISSIONS[seat].add(op);
 // The chief of staff also says who is paid first when the vote is short and how much of the arsenal an attack may not touch.
 for (const op of ['set_pay_priority', 'set_arsenal_reserve']) { PERMISSIONS.general.add(op); QUIET.add(op); }
-PERMISSIONS.general.add('post_person');
+PERMISSIONS.general.add('post_person'); PERMISSIONS.general.add('equip'); QUIET.add('equip');
 // The chief of staff directs where the army's units and squadrons stand and who commands them. Raising and disbanding troops, war and peace stay with the ruler.
 for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'appoint_commander', 'spy', 'build', 'set_posture', 'amphibious', 'offensive', 'fleet_orders', 'bombard', 'lay_mines', 'prepare_plan', 'leak_plan']) PERMISSIONS.general.add(op);
 for (const seat of ['general', 'opposition', 'oligarch']) for (const op of ['capital_flight', 'repatriate', 'draw_institution', 'buy_bonds', 'sell_bonds', 'back_claim', 'renounce_claim', 'fund_party', 'found_paper', 'fund_paper', 'close_paper', 'forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'noop', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution']) PERMISSIONS[seat].add(op);
@@ -81,6 +81,8 @@ for (const k of ['general', 'opposition', 'oligarch', 'private', 'exiled']) PERM
 PERMISSIONS.imprisoned = new Set(['accept_contract', 'cancel_contract', 'repay_debt', 'forgive_debt', 'join_plot', 'betray_plot', 'bribe', 'custom', 'noop', 'retire']);
 // A prisoner has little left to trade but what he knows of others.
 PERMISSIONS.imprisoned.add('denounce');
+// And may ask the court to let him out.
+PERMISSIONS.imprisoned.add('petition_release');
 // The office is the seat, not the title: a deposed or jailed leader keeps only what any private person has.
 export function permissionsOf(c, actor, w) {
   if (actor.status === 'imprisoned' || actor.status === 'exiled') return PERMISSIONS[actor.status];
@@ -97,7 +99,9 @@ function eased(now, want, what, notes) {
   return now + 15;
 }
 const BUDGET = ['military', 'welfare', 'infrastructure', 'education', 'police', 'administration'];
-const TREATY = ['alliance', 'nonaggression', 'trade', 'military_access', 'peace', 'protection', 'armistice'];
+// A commission: officers of both states sit over what happened on the frontier, for two years unless a term is named. While it sits, patrols
+// fire less readily and what each country holds against the other for the dead is being answered.
+const TREATY = ['alliance', 'nonaggression', 'trade', 'military_access', 'peace', 'protection', 'armistice', 'commission'];
 // A state under another's protection has signed away its own wars and alliances for as long as the treaty stands.
 const protectorOf = (w, c) => { const t = w.treaties.find(x => x.active && x.kind === 'protection' && x.parties.includes(c.id) && x.protector !== c.id); return t ? w.countries[t.protector] : null; };
 const LAW_TITLE = { nationalize_company: 'Company nationalization', set_tax: 'Tax regulation', set_budget: 'Budget amendment', set_tariff: 'Customs tariff', set_import: 'Import regulation', set_export: 'Export regulation', borrow: 'Borrowing authority', declare_war: 'Declaration of war', ban_party: 'Party ban', land_reform: 'Land reform', nationalize: 'Nationalization', privatize: 'Privatization' };
@@ -385,7 +389,7 @@ function settleTerms(w, t, fresh) {
 // A treaty among several comes into force when as many have signed as it was said to need. It binds those who signed; the others invited may still come in.
 function inForce(w, t, last) {
   t.pending = false; t.active = true; t.since = w.turn; t.parties = [...t.signed]; t.open = t.invited.filter(id => !t.signed.includes(id)); activateClauses(w, t);
-  const lasts = t.durationTurns ?? (t.kind === 'peace' ? 20 : t.kind === 'armistice' ? 4 : null); if (lasts) t.expires = w.turn + lasts;
+  const lasts = t.durationTurns ?? (t.kind === 'peace' ? 20 : t.kind === 'armistice' ? 4 : t.kind === 'commission' ? 8 : null); if (lasts) t.expires = w.turn + lasts;
   if (['alliance', 'guarantee', 'protection'].includes(t.kind)) for (let i = 0; i < t.parties.length; i++) for (let j = i + 1; j < t.parties.length; j++) { const a = w.countries[t.parties[i]], b = w.countries[t.parties[j]]; if (a?.alive && b?.alive) { const said = bondSigned(w, a, b); if (said && w.characters[a.leader]?.alive) w.characters[a.leader].inbox.push({ turn: w.turn, from: 'The capital', text: said.trim() }); } }
   const notes = settleTerms(w, t, t.parties), names = t.parties.map(id => cname(w, id)).join(', '), med = w.countries[t.mediator], cf = (w.conferences || []).find(x => x.id === t.conference), host = w.countries[cf?.host];
   for (const x of t.parties) for (const y of t.parties) if (x !== y) w.countries[x].relations[y] = clampRel((w.countries[x].relations[y] ?? 0) + 8);
@@ -908,6 +912,12 @@ export function applyOp(w, actor, op) {
       return { ok: true, msg: list.length ? `When the vote for the forces falls short, these are paid and supplied in full first: ${list.join(', ')} (navy is every squadron, army every unit, capital the troops standing in the capital); the rest share what is left, and waste, sour and lose faith the faster for it. At the last reckoning the vote covered about ${cover} in the hundred of what the forces cost${cover >= 100 ? ', so that for now nobody goes short' : ''}. The order stands until changed; an empty list ends it.${unknown}` : 'No body of troops and no squadron is paid before another: when the vote falls short all are short alike.' };
     }
     // A reserve of arms and ammunition that no attack may draw on. Default: none.
+    // Arms issued from the arsenal to one body of troops, to bring its equipment up now instead of waiting for the stores to reach it.
+    case 'equip': { const u = has(w.units, op.unit) ? w.units[op.unit] : null; if (!u || u.country !== c.id) return fail('No such unit of ours.'); const was = u.equip ?? 1, lack = Math.max(0, 1 - was); if (lack < .02) return fail(`${u.id} is fully equipped already.`);
+      const want = lack * u.men * .05, free = Math.max(0, (c.stock.arms || 0) - (op.from_reserve === true ? 0 : c.arsenalReserve || 0)), give = Math.min(want, free);
+      if (!(give > .01)) return fail(`The arsenal holds ${Math.round(c.stock.arms || 0)}${c.arsenalReserve ? `, of which ${Math.round(c.arsenalReserve)} is kept back from any such draft (from_reserve:true breaks into it)` : ''}: nothing can be issued to ${u.id}.`);
+      c.stock.arms -= give; u.equip = Math.min(1, was + give / (u.men * .05));
+      return { ok: true, msg: `${Math.round(give * 10) / 10} of arms and ammunition was issued from the arsenal to ${u.id}: it is equipped to ${Math.round(u.equip * 100)} in the hundred of its establishment (it was ${Math.round(was * 100)}). The arsenal holds ${Math.round(c.stock.arms)}.` }; }
     case 'set_arsenal_reserve': {
       const n = num(op.amount, 0, 1e6, 0), have = Math.round(c.stock.arms || 0); if (n > 0) c.arsenalReserve = n; else delete c.arsenalReserve;
       return { ok: true, msg: n > 0 ? `${Math.round(n)} of arms and ammunition is kept back in the arsenal (it holds ${have}): no attack draws on it, and an attack that wants more than what lies above it fires the less. Troops attacked on their own ground and men called to the colours still draw on it. The order stands until changed; 0 ends it.` : 'Nothing in the arsenal is kept back from an attack.' };
@@ -1264,7 +1274,7 @@ export function applyOp(w, actor, op) {
       if (['peace', 'armistice'].includes(t.kind) && !atWar(w, c.id, other.id)) { t.pending = false; return fail(`There is no war between you to ${t.kind === 'peace' ? 'end' : 'halt'}.`); }
       const owned = id => sum(Object.values(w.provinces).filter(p => p.owner === id), provincePop), had = { [c.id]: owned(c.id), [other.id]: owned(other.id) };
       // A peace is a treaty in force like any other: for some years, breaking it is breaking one's word. An armistice runs a year unless a term was named.
-      t.pending = false; t.active = true; activateClauses(w, t); const lasts = t.durationTurns ?? (t.kind === 'peace' ? 20 : t.kind === 'armistice' ? 4 : null); if (lasts) t.expires = w.turn + lasts;
+      t.pending = false; t.active = true; activateClauses(w, t); const lasts = t.durationTurns ?? (t.kind === 'peace' ? 20 : t.kind === 'armistice' ? 4 : t.kind === 'commission' ? 8 : null); if (lasts) t.expires = w.turn + lasts;
       // Giving way to a demand with a date on it is seen at home for what it is, and remembered against the one who made it.
       if (t.ultimatum) { c.legitimacy = clamp(c.legitimacy - 4, 0, 100); other.legitimacy = clamp(other.legitimacy + 2, 0, 100); const g = (c.grudges ||= {})[other.id] ||= { incident: 0, kin: 0 }; g.incident += 15; news(w, `${c.name} has accepted the ultimatum of ${other.name}.`, { kind: 'diplomacy', countries: [c.id, other.id] }); }
       const fought = warsBetween(w, c.id, other.id), land = settlementText(w, t); t.since = w.turn;
@@ -1349,6 +1359,15 @@ export function applyOp(w, actor, op) {
         return { ok: true, msg: `The troops were paid a bonus of ${Math.round(cost)}.${note}` };
       }
       if (!CLASSES.includes(k)) return fail('No such class.'); const cost = gdp * num(op.pct_gdp, 0, .15), note = pay(c, cost); if (note === null) return fail(NO_FUNDS); for (const p of countryProvinces(w, c.id)) p.pops[k].sat = clamp(p.pops[k].sat + cost / gdp * 110, 0, 100); return { ok: true, msg: `Applied.${note}` }; }
+    // Somebody held without a sentence can be asked out of the court: on surety, by anybody, himself included.
+    case 'petition_release': { const ch = op.character == null && actor.status === 'imprisoned' ? actor : has(w.characters, op.character) ? w.characters[op.character] : null; if (!ch?.alive || ch.status !== 'imprisoned' || ch.country !== c.id) return fail('Nobody of that name is held here.');
+      if (ch.sentence) return fail(`${ch.name} is serving a sentence of the court. A sentence is ended by whoever governs (release, amnesty), not on surety.`);
+      if (allowance(w, c, `petition:${ch.id}`, 1, 1) <= 0) return fail('The court has heard a petition for that prisoner this quarter; it hears another in the next.');
+      const surety = Math.min(Math.max(actor.wealth, 0), num(op.surety, 0, 200, 0)), held = w.turn - (ch.heldSince ?? w.turn), ruler = w.characters[c.leader], free = c.courts >= 45;
+      // A court that is its own lets an untried prisoner go the more readily the longer he has sat without a charge and the more is put up for him; a court in the government's hand sends the paper to the palace.
+      if (!free || rand(w) >= clamp(.2 + held * .12 + surety / 60 - (ch.trial ? .15 : 0), .1, .9)) { tell(w, ruler, 'The court', `${actor.id === ch.id ? `${ch.name}, held since ${quarterLabel(ch.heldSince ?? w.turn)},` : `${actor.name}`} has petitioned for ${actor.id === ch.id ? 'release' : `the release of ${ch.name}`} on surety${free ? '; the court refused it this time' : '. The court does not sit against the government: the petition lies with you'}.`); return fail(free ? `The court heard the petition and refused it this time (${ch.name} has been held ${held} quarter${held === 1 ? '' : 's'}${ch.trial ? ' and stands charged' : ' without a charge'}). It can be asked again next quarter; the longer he sits untried and the more is put up for him, the likelier it grants it.` : 'The court here does not sit against the government: it has sent the petition to the palace, where it lies. Only whoever governs lets that prisoner go (release).'); }
+      actor.wealth -= surety; c.treasury += surety * (c.rate || 1); ch.status = 'free'; ch.outSince = w.turn; news(w, `${c.name}: a court has released ${ch.name} on surety, pending ${ch.trial ? 'trial' : 'any charge'}.`, { kind: 'politics', countries: [c.id] }); tell(w, ch, 'The court', `You are released on surety${actor.id !== ch.id ? `, on the petition of ${actor.name}` : ''}.`); tell(w, ruler, 'The court', `The court has released ${ch.name} on surety, on the petition of ${actor.name}.`);
+      return { ok: true, msg: `The court has released ${ch.name} on surety${surety > .5 ? ` (${Math.round(surety)} paid into court)` : ''}${ch.trial ? '; the charge still stands and will be tried' : ''}.` }; }
     case 'purge': {
       const ch = w.characters[op.character]; if (!ch || ch.country !== c.id || !ch.alive || ch.id === actor.id) return fail('No such target.');
       if (ch.id === c.leader) return fail('The ruler is not arrested by an order of their own government; that takes a coup.');
@@ -1396,6 +1415,10 @@ export function applyOp(w, actor, op) {
     case 'set_regime': { if (op.regime) c.regime = String(op.regime).slice(0, 60); if (op.ideology) c.ideology = String(op.ideology).slice(0, 80); if (SUCCESSION.includes(op.succession) && op.succession !== c.succession) { c.succession = op.succession; c.legitBase = (c.legitBase ?? 0) * .7; } if (typeof op.elections === 'boolean') { c.elections = op.elections; if (op.elections && c.nextElection <= w.turn) c.nextElection = w.turn + 8; if (op.elections && !c.parliament) makeParliament(c, 'Parliament'); } if (op.press_freedom !== undefined) c.pressFreedom = eased(c.pressFreedom, num(op.press_freedom, 0, 100), 'Press freedom', []); if (op.axes) for (const a of ['econ', 'auth', 'nation', 'faith']) if (op.axes[a] !== undefined) c.axes[a] = num(op.axes[a], -100, 100, c.axes[a]); c.legitimacy = clamp(c.legitimacy - 4, 0, 100); news(w, `${c.name} changed its regime: ${c.regime}.`, { kind: 'politics', countries: [c.id] }); return ok(); }
     case 'hold_election': c.elections = true; c.nextElection = w.turn; if (!c.parliament) makeParliament(c, 'Parliament'); return ok();
     // Arranging the count. Nothing shows until the vote is held: then officials and police deliver as much of it as they reach, and a free press or an honest bench may find it out.
+    // A party's own people at the polls and at the counts.
+    case 'watch_polls': { if (!c.elections) return fail('No election is held here.'); const p = leadsParties(w, c, actor).find(x => !x.banned); if (!p) return fail('Watchers at the polls are a party\'s to send, and you lead none.'); if (p.watchers === c.nextElection) return { ok: true, msg: 'Your watchers are named for this election already.' };
+      if ((p.funds || 0) < 2) return fail(`Watchers at every station and every count cost about 2, and the chest of the ${p.name} holds ${Math.round(p.funds || 0)}.`); p.funds -= 2; p.watchers = c.nextElection;
+      return { ok: true, msg: `The ${p.name} will have its own people at the polling stations and at every count in the election due in ${quarterLabel(c.nextElection)}. A count arranged under their eyes delivers less of what was ordered and is far likelier to come out.` }; }
     case 'rig_election': { const was = c.rigging || 0; c.rigging = num(op.amount, 0, 25, 10); if (c.rigging > was) c.legitimacy = clamp(c.legitimacy - (c.rigging - was) * .15, 0, 100); if (!(actor.secrets || []).some(s => /returns of the election/.test(s.text) && !s.published && w.turn - s.turn < 16)) leaveTrace(w, actor, 'Ordered the returns of the election to be arranged.');
       return { ok: true, msg: `The count will be arranged by about ${Math.round(c.rigging)} points, as far as officials and police can deliver it (${Math.round(clamp((c.bureaucracy + c.police) / 110, .35, 1) * 100)}% of what is ordered, with the offices as they are). ${c.pressFreedom >= 50 || c.courts >= 50 ? 'With the press and the courts as free as they are here, it may well come out' : 'Few here are in a position to prove it'}. If it comes out, the vote will count for nothing and your name will be on it.` }; }
     case 'start_plot': { const kind = ['coup', 'assassination', 'uprising'].includes(op.kind) ? op.kind : 'coup'; if (w.plots.some(x => x.active && x.leader === actor.id)) return fail('You already have a plot.'); if (actor.id === c.leader && kind !== 'assassination') return fail('A ruler does not plot against their own government.'); const mark = kind === 'assassination' ? (op.character ? w.characters[op.character] : w.characters[c.leader]) : null; if (kind === 'assassination' && (!mark?.alive || mark.id === actor.id)) return fail('There is no such person to strike at.'); const id = nextId(w, 'K-'); w.plots.push({ id, country: c.id, kind, leader: actor.id, members: [], target: mark?.id ?? null, progress: 5, secrecy: num(op.secrecy, 0, 1, .5), exposed: false, active: true, start: w.turn }); leaveTrace(w, actor, mark ? `Secretly began preparing the killing of ${mark.name}.` : `Secretly began preparing a plot (${kind}).`); return { ok: true, msg: `Plot started: ${id}${mark ? `, against ${mark.name}` : ''}. It gains ground each quarter; execute_plot carries it out.`, plot: id }; }

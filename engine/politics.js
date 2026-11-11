@@ -562,7 +562,9 @@ export function electionStep(w) {
     const rulingSupport = (ruling?.support ?? 30) + sum(partners, p => p.support), rival = Math.max(1, (rivalP?.support ?? 0) + sum(drift, p => p.support) * .5);
     // Stuffed boxes are delivered by officials and policemen, so a state gets only as many as its offices reach; and the more of them there are,
     // the likelier a free press or an honest bench is to find them.
-    const ordered = c.rigging || 0, rig = ordered * clamp((c.bureaucracy + c.police) / 110, .35, 1), found = ordered > 0 && rand(w) < clamp(ordered / 25 * (.1 + c.pressFreedom / 180 + c.courts / 300), 0, .8);
+    // Where a party outside the government has its own people at the stations and the counts, an arranged count delivers less and comes out far more easily.
+    const eyes = c.parties.some(p => !p.banned && p.id !== c.rulingParty && p.watchers != null && Math.abs(p.watchers - w.turn) <= 1);
+    const ordered = c.rigging || 0, rig = ordered * clamp((c.bureaucracy + c.police) / 110, .35, 1) * (eyes ? .6 : 1), found = ordered > 0 && rand(w) < clamp(ordered / 25 * (.1 + c.pressFreedom / 180 + c.courts / 300) + (eyes ? .3 : 0), 0, .9);
     const share = clamp(rulingSupport / (rulingSupport + rival) * 100 + (1 - fairness) * 12 + rig + between(w, -4, 4), 2, 98);
     c.rigging = 0;
     if (c.parliament) c.parliament.seats = allocateSeats(c);

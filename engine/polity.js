@@ -290,12 +290,17 @@ export function normalizeClauses(w, raw, parties) {
     else if (c?.type === 'delivery' && isParty(c.from) && GOODS.includes(c.good)) out.push({ type: 'delivery', from: c.from, ...(isParty(c.to) && c.to !== c.from ? { to: c.to } : {}), good: c.good, amount: num(c.amount, 0, 1e5, 0), turns: turns(c.turns) });
     else if (c?.type === 'tariff') out.push({ type: 'tariff', rate: num(c.rate, 0, 1, 0) });
     else if (c?.type === 'demilitarized_zone' && Array.isArray(c.provinces)) out.push({ type: 'demilitarized_zone', country: isParty(c.country) ? c.country : null, provinces: c.provinces.filter(p => w.provinces[p]).slice(0, 12) });
-    else if (c?.type === 'troop_limit' && isParty(c.country)) out.push({ type: 'troop_limit', country: c.country, men: num(c.men, 0, 1e6, 0) });
+    // A limit on a state's troops: on all of them, or on those it keeps in named provinces (a frontier thinned out on both sides).
+    else if (c?.type === 'troop_limit' && isParty(c.country)) { const ps = (Array.isArray(c.provinces) ? c.provinces : []).filter(p => typeof p === 'string' && Object.hasOwn(w.provinces, p)).slice(0, 12); out.push({ type: 'troop_limit', country: c.country, men: num(c.men, 0, 1e6, 0), ...(ps.length ? { provinces: ps } : {}) }); }
+    // Officers of each party count the other's troops in named provinces: what stands there is known to both, exactly.
+    else if (c?.type === 'observers' && Array.isArray(c.provinces)) { const ps = c.provinces.filter(p => typeof p === 'string' && Object.hasOwn(w.provinces, p)).slice(0, 12); if (ps.length) out.push({ type: 'observers', provinces: ps }); }
     else if (c?.type === 'mutual_defense') out.push({ type: 'mutual_defense', called: {} });
   }
   return out;
 }
 
+// Do a's officers count b's troops in that province, under a paper in force between them?
+export const observes = (w, a, b, province) => w.treaties.some(t => t.active && t.parties.includes(a) && t.parties.includes(b) && (t.clauses || []).some(cl => cl.type === 'observers' && cl.provinces.includes(province)));
 export function clauseText(w, cl) {
   const n = id => w.countries[id]?.name ?? id;
   switch (cl.type) {
@@ -303,7 +308,8 @@ export function clauseText(w, cl) {
     case 'delivery': return `${n(cl.from)} delivers ${cl.to ? `to ${n(cl.to)} ` : ''}${Math.round(cl.amount)} ${GOOD_LABEL[cl.good]} each turn${cl.until != null ? `, until the end of turn ${cl.until}` : ''}`;
     case 'tariff': return `Mutual tariff of ${Math.round(cl.rate * 100)}%`;
     case 'demilitarized_zone': return `${cl.country ? n(cl.country) : 'The parties'} shall station no troops in: ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}`;
-    case 'troop_limit': return `${n(cl.country)} keeps at most ${Math.round(cl.men)}k troops`;
+    case 'troop_limit': return `${n(cl.country)} keeps at most ${Math.round(cl.men)}k troops${cl.provinces?.length ? ` in ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}` : ''}`;
+    case 'observers': return `Officers of each party count the other's troops in: ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}`;
     case 'mutual_defense': return 'Each party enters the war on the side of the party attacked';
     default: return cl.type;
   }
@@ -353,8 +359,8 @@ export function treatyStep(w) {
       } else if (cl.type === 'demilitarized_zone') {
         for (const u of Object.values(w.units)) if (cl.provinces.includes(u.province) && (cl.country ? u.country === cl.country : t.parties.includes(u.country))) { breach(w, t, cl, u.country, `${w.countries[u.country]?.name} moved troops into the demilitarized zone: ${w.provinces[u.province]?.name}.`); break; }
       } else if (cl.type === 'troop_limit') {
-        const men = sum(Object.values(w.units).filter(u => u.country === cl.country), u => u.men);
-        if (men > cl.men) breach(w, t, cl, cl.country, `${w.countries[cl.country]?.name} exceeded its troop limit (${Math.round(men)}k).`);
+        const men = sum(Object.values(w.units).filter(u => u.country === cl.country && (!cl.provinces?.length || cl.provinces.includes(u.province))), u => u.men);
+        if (men > cl.men + .5) breach(w, t, cl, cl.country, `${w.countries[cl.country]?.name} exceeded its troop limit${cl.provinces?.length ? ` in ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}` : ''} (${Math.round(men)}k against ${Math.round(cl.men)}k).`);
       } else if (cl.type === 'mutual_defense') {
         // Every other signatory owes its help to the one attacked.
         for (const x of t.parties) for (const ally of t.parties) for (const war of w.wars) {

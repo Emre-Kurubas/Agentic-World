@@ -38,7 +38,7 @@ export function frontierStep(w) {
   }
   for (const f of Object.values(facing)) {
     const { a, b } = f, force = Math.min(1, Math.sqrt(f.men[a.id] * f.men[b.id]) / 60), bad = Math.min(a.relations[b.id] ?? 0, b.relations[a.id] ?? 0);
-    const pact = (hasTreaty(w, a.id, b.id, 'alliance') ? .05 : hasTreaty(w, a.id, b.id, 'nonaggression') ? .3 : 1) * (tieOf(w, a.id, b.id) === 'broken' ? 1.3 : 1), heat = grudge(a, b.id).incident + grudge(b, a.id).incident + grudge(a, b.id).kin + grudge(b, a.id).kin;
+    const pact = (hasTreaty(w, a.id, b.id, 'alliance') ? .05 : hasTreaty(w, a.id, b.id, 'nonaggression') ? .3 : 1) * (tieOf(w, a.id, b.id) === 'broken' ? 1.3 : 1) * (hasTreaty(w, a.id, b.id, 'commission') ? .5 : 1), heat = grudge(a, b.id).incident + grudge(b, a.id).incident + grudge(a, b.id).kin + grudge(b, a.id).kin;
     // Someone has to fire first. Each side's patrols are half the danger; a side whose men are under orders not to fire first is all but out of
     // it (not quite: orders are not always obeyed, and a patrol fired on shoots back). Across an armistice line both sides are wary.
     const still = id => (f.quiet[id] || 0) / Math.max(f.all[id] || 0, 1e-9), calm = .5 * (1 - .85 * still(a.id)) + .5 * (1 - .85 * still(b.id)), truce = atWar(w, a.id, b.id);
