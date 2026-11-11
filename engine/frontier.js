@@ -5,7 +5,7 @@
 import { clamp, rand, news, sum } from './util.js';
 import { aliveCountries, countryProvinces, atWar, hasTreaty, provincePop, makeUnit, goHome } from './world.js';
 import { groupsOf, yokeOn } from './culture.js';
-import { fighting, upkeepCost, inTheField } from './military.js';
+import { fighting, upkeepCost, inTheField, calledIn } from './military.js';
 import { answered, tieOf } from './diplomacy.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
@@ -65,7 +65,7 @@ export function frontierStep(w) {
     c.grief = clamp(felt - old, 0, 12);
     // A reserve of trained men: each year some of the standing army goes home with its training, and the oldest reservists pass out of reach.
     // Short service fills it: a country keeps about one and a half times its standing army in men who have served and can be called.
-    const army = sum(Object.values(w.units).filter(u => u.country === c.id && !u.called), u => u.men);
+    const army = sum(Object.values(w.units).filter(u => u.country === c.id), u => u.men - calledIn(u));
     c.reserve = Math.max(0, (c.reserve ?? army * reserveAt(serviceOf(c))) * .97 + army * reserveAt(serviceOf(c)) * .03);
   }
 }
@@ -103,10 +103,11 @@ export function mobilize(w, c, op, pay, fail) {
 // Sending the reservists home again.
 // how: null stands every reservist down; a positive number is that many thousand men, a negative one that share of them; unit names one called-up body.
 export function demobilize(w, c, how = null, unit = null) {
-  const all = Object.values(w.units).filter(u => u.country === c.id && u.called), us = unit ? all.filter(u => u.id === unit) : all; if (!us.length) return null;
-  const under = sum(us, u => u.men), want = how == null ? under : how < 0 ? under * -how : Math.min(how, under), provs = countryProvinces(w, c.id).filter(p => p.owner === c.id), pop = sum(provs, provincePop) || 1;
+  // Reservists are sent home from wherever they serve: from the bodies formed of them, and from the regiments they were put into.
+  const all = Object.values(w.units).filter(u => u.country === c.id && calledIn(u) > .05), us = unit ? all.filter(u => u.id === unit) : all; if (!us.length) return null;
+  const under = sum(us, calledIn), want = how == null ? under : how < 0 ? under * -how : Math.min(how, under), provs = countryProvinces(w, c.id).filter(p => p.owner === c.id), pop = sum(provs, provincePop) || 1;
   let left = want, men = 0;
-  for (const u of us) { if (left <= 1e-9) break; const go = Math.min(u.men, left); c.stock.arms = (c.stock.arms || 0) + go * .05 * clamp(u.equip ?? .8, 0, 1); u.men -= go; left -= go; men += go; if (u.men < .05) delete w.units[u.id]; }
+  for (const u of us) { if (left <= 1e-9) break; const go = Math.min(calledIn(u), left); if (!u.called) u.calledMen = Math.max(0, (u.calledMen || 0) - go); c.stock.arms = (c.stock.arms || 0) + go * .05 * clamp(u.equip ?? .8, 0, 1); u.men -= go; left -= go; men += go; if (u.men < .05) delete w.units[u.id]; }
   goHome(provs, men); c.reserve = (c.reserve || 0) + men;
   news(w, `${c.name} has stood its reservists down: about ${Math.round(men)} thousand men are going home.`, { kind: 'war', countries: [c.id] });
   return { ok: true, msg: `About ${Math.round(men * 10) / 10} thousand reservists went home and their rifles are back in the arsenal${under - men > .05 ? `; ${Math.round((under - men) * 10) / 10} thousand called-up men stay under arms` : ''}.` };

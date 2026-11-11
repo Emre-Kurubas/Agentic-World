@@ -218,6 +218,11 @@ export function militaryStep(w, onStation = null, afterFight = null) {
     went.reached = u.province;
     if (u.digAt && u.province === u.digAt) { u.posture = 'defensive'; u.target = null; delete u.digAt; }
   }
+  // A unit ordered to join another when it comes up does so where the two stand together ("B402 returns to Kishukarir and rejoins B33").
+  for (const u of Object.values(w.units)) { if (!u.joinTo || !w.units[u.id]) continue; const t = w.units[u.joinTo];
+    if (!t || t.country !== u.country || t.kind !== u.kind) { delete u.joinTo; continue; }
+    if (t.province === u.province) { const name = w.provinces[u.province]?.name ?? u.province, n = joinUnits(w, u, t); mark(w, w.countries[t.country], `${u.id} has come up to ${name} and joined ${t.id}, which now musters ${Math.round(n * 10) / 10} thousand men.`); }
+    else if (!u.target) delete u.joinTo; }
   launch(w);
   navalStep(w);
   // What was ordered to wait for the squadrons (a landing, a bombardment, mines, a demonstration) is carried out now that they have sailed and fought.
@@ -424,6 +429,16 @@ const RATE = { probe: .012, assault: .05, all_out: .065 }, RATE_DEF = .03, SHELL
 export const shellsFor = (us, manner = 'assault', shelling = false) => sum(us, u => u.men * (RATE[manner] ?? RATE.assault) * (u.kind === 'artillery' ? 3 : 1) + (shelling ? u.men * (u.kind === 'artillery' ? 1 : FIELD_GUNS) * SHELLING : 0));
 export const abilityWord = ch => (ch?.skill ?? 1) >= 1.15 ? 'able' : (ch?.skill ?? 1) >= .95 ? 'competent' : 'a poor hand';
 const about = v => v >= 20 ? Math.round(v / 5) * 5 : v >= 2 ? Math.round(v) : Math.round(v * 10) / 10;
+// Two bodies of the same arm made one: as good, as loyal and as well armed as its men were on average. The reservists among them are still
+// reservists (u.calledMen where the body is not wholly of them), so that they can be sent home again from the regiment they were put into.
+export const calledIn = u => u.called ? u.men : Math.min(u.calledMen || 0, u.men);
+export function joinUnits(w, a, b) {
+  const n = a.men + b.men, res = calledIn(a) + calledIn(b);
+  for (const k of ['quality', 'morale', 'equip', 'loyalty', 'bond']) if (a[k] != null || b[k] != null) b[k] = ((a[k] ?? b[k]) * a.men + (b[k] ?? a[k]) * b.men) / n;
+  b.men = n; b.dug = Math.min(a.dug || 0, b.dug || 0);
+  if (res >= n - .05) { b.called = true; delete b.calledMen; } else { delete b.called; if (res > .05) b.calledMen = res; else delete b.calledMen; }
+  delete w.units[a.id]; return n;
+}
 const mark = (w, c, text) => { for (const ch of [w.characters[c.leader], w.characters[c.general]]) if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'General Staff', text }); };
 
 function resolve(w, pid, us) {

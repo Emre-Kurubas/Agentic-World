@@ -1,7 +1,7 @@
 import { clamp, news, rand, nextId, pick, sum, quarterLabel } from './util.js';
 import { CLASSES, GOODS, countryProvinces, atWar, hasTreaty, makeUnit, aliveCountries, clampRel, provincePop, goHome } from './world.js';
 import { executePlot, neutralize, die, SUCCESSION, distance } from './politics.js';
-import { capture, pathStep, roadTo, upkeepCost, PAY_FIRST, settleOccupations, marchQuarters, POSTURES, postureWords, MANNERS, commanderOf, supplyOf, shellsFor, abilityWord, closedNow, season } from './military.js';
+import { joinUnits, capture, pathStep, roadTo, upkeepCost, PAY_FIRST, settleOccupations, marchQuarters, POSTURES, postureWords, MANNERS, commanderOf, supplyOf, shellsFor, abilityWord, closedNow, season } from './military.js';
 import { makeFleet, TECHS, PLANTS, DEPOSITS, GOOD_LABEL, ROLES, spawnCharacter, bfsSea } from './world.js';
 import { hasTech, sealOf, importOrder, SPREAD } from './economy.js';
 import { FX_REGIMES, foreignRate, externalDebt, creditLeft, declareDefault, treasuryPays } from './money.js';
@@ -1069,11 +1069,13 @@ export function applyOp(w, actor, op) {
     }
     case 'merge_units': {
       const a = w.units[op.unit], b = w.units[op.into]; if (!a || !b || a === b || a.country !== c.id || b.country !== c.id) return fail('No such units.');
-      if (a.province !== b.province) return fail(`${a.id} and ${b.id} must stand in the same province to be joined.`);
       if (a.kind !== b.kind) return fail(`${a.id} is ${a.kind} and ${b.id} is ${b.kind}; different arms stay separate units.`);
-      // The joined body is as good, as loyal and as well armed as its men were on average.
-      const n = a.men + b.men; for (const k of ['quality', 'morale', 'equip', 'loyalty', 'bond']) if (a[k] != null || b[k] != null) b[k] = ((a[k] ?? b[k]) * a.men + (b[k] ?? a[k]) * b.men) / n;
-      b.men = n; b.dug = Math.min(a.dug || 0, b.dug || 0); delete w.units[a.id];
+      // A unit on the march to where the other stands (or bound for the same place as it) joins it when it comes up: "B402 returns to
+      // Kishukarir and rejoins B33" is a march and then a joining, and the joining waits for the march.
+      if (a.province !== b.province) { const bound = a.target && (a.target === b.province || (b.target && a.target === b.target));
+        if (!bound) return fail(`${a.id} and ${b.id} must stand in the same province to be joined. March ${a.id} to ${w.provinces[b.province]?.name ?? b.province} (move) and order the joining with the march: it then joins when it arrives.`);
+        a.joinTo = b.id; return { ok: true, msg: `${a.id} is on the march to ${w.provinces[a.target]?.name ?? a.target}: it joins ${b.id} when the two stand together there, and the staff reports it.` }; }
+      const n = joinUnits(w, a, b);
       return { ok: true, msg: `${a.id} was joined to ${b.id}, which now musters ${menText(n)}.` };
     }
     // A general order to the army moves the troops that are free to move. Units told to stand on the defensive stay where they are: only an order to
@@ -1636,7 +1638,7 @@ function applyOrder(w, c, u, to, named = true) {
   // A march order and an order to hold the ground cannot both stand. The one given to the unit by name, and last, is the one that does.
   let lifted = ''; if (u.posture === 'defensive') { delete u.posture; lifted = ` ${u.id} had been standing on the defensive: this order lifts that one, and it leaves its works.`; }
   const off = u.attack ? ` It leaves the offensive against ${w.provinces[u.attack.to]?.name ?? 'its objective'} it had been ordered into.` : ''; delete u.attack;
-  u.target = to; u.marchSince = w.turn; delete u.digAt; const q = marchQuarters(w, u, to), still = postureWords(u);
+  u.target = to; u.marchSince = w.turn; delete u.digAt; delete u.joinTo; const q = marchQuarters(w, u, to), still = postureWords(u);
   const road = roadTo(w, u.province, to, c.id) || [], foes = road.filter(id => { const o = w.provinces[id].controller; return o !== c.id && atWar(w, c.id, o); }), through = foes.filter(id => id !== to).map(id => w.provinces[id].name);
   const fight = foes.includes(to) ? ` ${w.provinces[to].name} is held by the enemy: the unit attacks it as it arrives, by itself${through.length ? `, after fighting its way through ${through.join(', ')}` : ''}. (An offensive order would have it form up, wait for the others and go in to a plan.)` : through.length ? ` No road leads there over ground we hold or may cross: the way runs through ${through.join(', ')}, which the enemy holds, and the unit will have to fight its way through.` : '';
   return { ok: true, ...(foes.includes(to) ? { takes: to } : {}), msg: `${u.id} marches for ${w.provinces[to].name}${q ? `: about ${q} quarter${q > 1 ? 's' : ''} as the ground, the roads and the seasons stand (the army report shows how far it got each quarter and what held it)` : ''}.${fight}${lifted}${off}${still ? ` Its standing orders go with it: ${still}.` : ''}` };

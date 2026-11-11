@@ -3522,6 +3522,23 @@ chain('An order reaches the troops it was meant for though they were formed or s
   const begun = applyOp(f.w, f.gen, { op: 'start_plot', kind: 'coup' }); assert.ok(begun.ok, begun.msg); const asked = applyOp(f.w, f.gen, { op: 'invite_plot', plot: 'new', character: who.id }); assert.ok(asked.ok || !/No such plot|You lead no plot/.test(asked.msg), `with one plot in hand, an invitation into "the new plot" is an invitation into that one: ${asked.msg}`);
 });
 
+chain('Reservists put into a regiment can still be sent home from it, and a unit ordered to join another does so when it comes up', () => {
+  // World 16: "demobilise the ten thousand reservists serving with B23" was answered "no reservists are under arms", because men joined to a
+  // regular unit were reservists no longer; and "B402 returns to Kishukarir and rejoins B33" tried the joining on the day and was refused.
+  const f = twoRoads(1), { w, a } = f, L = ld(w, a), at = f.e1; a.reserve = 100; a.stock.arms = 500; a.treasury = 5000; f.w.wars = [];
+  const line = soldier(w, 'U1', at.id, 30), r0 = a.reserve, call = applyOp(w, L, { op: 'mobilize', men: 10, at: [at.id] }), levy = Object.values(w.units).find(u => u.country === 'U1' && u.called && u.province === at.id); assert.ok(call.ok && levy, call.msg);
+  const joined = applyOp(w, L, { op: 'merge_units', unit: levy.id, into: line.id }); assert.ok(joined.ok && Math.abs(line.men - 40) < .05 && !line.called && Math.abs(line.calledMen - 10) < .05, `the reservists are in the regiment and are still counted: ${line.men} ${line.calledMen}`);
+  assert.ok(/besides 10 thousand reservists now under arms/.test(answer(w, f.gen, 'army')), 'the army report still counts them');
+  const home = applyOp(w, L, { op: 'demobilize', unit: line.id, men: 6 }); assert.ok(home.ok && Math.abs(line.men - 34) < .05 && Math.abs(line.calledMen - 4) < .05 && Math.abs(a.reserve - (r0 - 10 + 6)) < .05, `six thousand of them go home from the regiment: ${home.msg}`);
+  const rest = applyOp(w, L, { op: 'demobilize' }); assert.ok(rest.ok && Math.abs(line.men - 30) < .05 && !(line.calledMen > .05) && Math.abs(a.reserve - r0) < .05, 'and the rest with a general order; the regulars stay');
+  assert.ok(!applyOp(w, L, { op: 'demobilize', unit: line.id }).ok, 'a regiment with no reservists left has none to send home');
+  // joining on arrival
+  const cadre = soldier(w, 'U1', f.e2.id, 2), far = applyOp(w, f.gen, { op: 'merge_units', unit: cadre.id, into: line.id }); assert.ok(!far.ok && /order the joining with the march/.test(far.msg), far.msg);
+  assert.ok(applyOp(w, f.gen, { op: 'move', unit: cadre.id, to: at.id }).ok); const later = applyOp(w, f.gen, { op: 'merge_units', unit: cadre.id, into: line.id }); assert.ok(later.ok && cadre.joinTo === line.id && w.units[cadre.id], later.msg);
+  for (let i = 0; i < 4 && w.units[cadre.id]; i++) { w.battles = []; w.newsThisTurn = []; militaryStep(w); w.turn++; }
+  assert.ok(!w.units[cadre.id] && Math.abs(line.men - 32) < .3 && /has come up to .* and joined/.test(f.said()), `it marched there and joined: ${line.men}; ${f.said().slice(-160)}`);
+});
+
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
   // The same fight, the same dice, the enemy warned both times: only the man in command differs.
   const hurt = skill => { const f = duel({ dug: 5, ground: { trench: 2 }, rng: 99, seen: true }); f.gen.skill = skill; const [b] = quarter(f.w); assert.ok(b, 'a battle'); assert.ok(!b.prisoners, 'nobody was routed'); return f.D - f.def.men; };
