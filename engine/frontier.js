@@ -3,7 +3,7 @@
 // Both leave a grievance at home that weighs on whoever governs until it is answered or forgotten. A state also has men who have served and
 // gone home: calling them back is quick, large, costly to the fields and the works, and seen by every neighbour.
 import { clamp, rand, news, sum } from './util.js';
-import { aliveCountries, countryProvinces, atWar, hasTreaty, provincePop, makeUnit } from './world.js';
+import { aliveCountries, countryProvinces, atWar, hasTreaty, provincePop, makeUnit, goHome } from './world.js';
 import { groupsOf } from './culture.js';
 import { fighting } from './military.js';
 import { answered, tieOf } from './diplomacy.js';
@@ -94,7 +94,7 @@ export function demobilize(w, c) {
   const us = Object.values(w.units).filter(u => u.country === c.id && u.called); if (!us.length) return null;
   const men = sum(us, u => u.men), provs = countryProvinces(w, c.id).filter(p => p.owner === c.id), pop = sum(provs, provincePop) || 1;
   for (const u of us) { c.stock.arms = (c.stock.arms || 0) + u.men * .05 * clamp(u.equip ?? .8, 0, 1); delete w.units[u.id]; }
-  for (const p of provs) p.pops.workers.n += men * provincePop(p) / pop; c.reserve = (c.reserve || 0) + men;
+  goHome(provs, men); c.reserve = (c.reserve || 0) + men;
   news(w, `${c.name} has stood its reservists down: about ${Math.round(men)} thousand men are going home.`, { kind: 'war', countries: [c.id] });
   return { ok: true, msg: `About ${Math.round(men * 10) / 10} thousand reservists went home and their rifles are back in the arsenal.` };
 }

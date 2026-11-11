@@ -323,6 +323,9 @@ function bootEconomy(w, c) {
 }
 
 export const countryProvinces = (w, id) => Object.values(w.provinces).filter(p => p.controller === id);
+// A man who leaves the army goes back to what he was: to the land or to the works, in the proportion his province has of each. (When they all
+// came home as workers, a state could fill its factories by passing its villages through the barracks.)
+export function goHome(provs, men) { const hands = sum(provs, p => p.pops.peasants.n + p.pops.workers.n); if (!(men > 0) || !(hands > 0)) return; for (const p of provs) for (const k of ['peasants', 'workers']) p.pops[k].n += men * p.pops[k].n / hands; }
 export const provincePop = p => CLASSES.reduce((a, k) => a + (p.pops[k]?.n || 0), 0);
 export const atWar = (w, a, b) => w.wars.some(x => x.active && ((x.a.includes(a) && x.b.includes(b)) || (x.b.includes(a) && x.a.includes(b))));
 export const hasTreaty = (w, a, b, kind) => w.treaties.some(t => t.active && t.kind === kind && t.parties.includes(a) && t.parties.includes(b));

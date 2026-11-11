@@ -119,7 +119,7 @@ function makePast(w) {
 // more bread than it eats (SPARE), every state with grain to spare has a share of the market for it, and what each such state lacks in wares is
 // what its share of that market will buy (grain being cheap when there is plenty of it: TERMS), so that no state's gold drains away to the
 // others in the ordinary course of trade.
-const LEAN = { merchant: -.45, republic: -.25, federation: -.12, revolutionary: .03, theocracy: .1, monarchy: .12, junta: .12, agrarian: .3 }, SPARE = .04, TERMS = .8;
+const LEAN = { merchant: -.6, republic: -.36, federation: -.2, revolutionary: .03, theocracy: .1, monarchy: .12, junta: .12, agrarian: .3 }, SPARE = .1, TERMS = .8;
 function specialise(w, cs) {
   for (let pass = 0; pass < 3; pass++) {
     const trial = structuredClone(w), got = {}; trial.status = 'playing';

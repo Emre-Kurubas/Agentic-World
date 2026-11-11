@@ -219,7 +219,7 @@ function trade(w, cs) {
     // lies above the floor the banks are told to keep (c.goldFloor), and then a quarter of the excess at a time. Where no government has said
     // otherwise the floor is three fifths of what the country was used to holding, so that a country that sells little buys little and is not
     // emptied of its gold by cloth and boots; a government may open the reserve altogether or shut it up (set_gold_floor), and answers for either.
-    c.goldFloor ??= Math.max(0, c.reserves) * .6;
+    c.goldBase ??= Math.max(0, c.reserves); c.goldFloor ??= c.goldBase * .6;
     let left = Math.max(0, c.reserves - (c._debtService || 0)) + (c.lastExportGold || 0), rest = Math.min(left, (c.lastExportGold || 0) + Math.max(0, c.reserves - (c._debtService || 0) - c.goldFloor) * .25); c._alloc = {};
     for (const g of importOrder(c)) { const own = stateOrder(c, g), free = g === 'grain' || own > 0 || (c.imports?.order || []).includes(g), cost = (wantOf(c, g).usual + own) * w.globalPrice[g] * 1.1, part = Math.min(cost, free ? left : rest); c._alloc[g] = part; left -= part; rest = Math.min(left, free ? rest : rest - part); }
     c._spare = Math.max(0, rest); c._exportGold = 0; c._duty = 0;
@@ -387,6 +387,12 @@ function fiscal(w, c) {
   // Customs are what each good paid at the rate set for it; goods that came in past the customs house paid nothing.
   const customs = (c._duty ?? (c._imports || 0) * c.tariff) * c.priceLevel;
   const revenue = (c.gdp * .45 * c.tax.income + land + business + customs) * eff + (c._tolls || 0) * c.priceLevel;
+  // Capital that is taxed past what it is used to does not all stay to be taxed. For every two the treasury takes beyond the accustomed rate, one
+  // leaves the country in gold for the safest state that will have it, unless the movement of capital is controlled (and then only what slips
+  // past the controls). The gold is not lost to the world; it is lost to this reserve, and the currency and the import trade rest on that.
+  { const past = Math.max(0, c.tax.business - (1 - (c.profitBase ?? 1 - c.tax.business))), want = past > 0 ? business / Math.max(c.tax.business, .01) * past * .5 / (c.rate || 1) * (c.capitalClosed ? 1 - sealOf(w, c) : 1) : 0;
+    const haven = want > 0 ? aliveCountries(w).filter(o => o.id !== c.id && !o.capitalClosed).sort((a, b) => b.legitimacy - a.legitimacy)[0] : null, out = haven ? Math.min(Math.max(c.reserves, 0), want) : 0;
+    if (out > 0) { c.reserves -= out; haven.reserves += out; } c._flight = out; }
   const b = c.budget, programs = (b.military + b.welfare + b.infrastructure + b.education + b.police + b.administration) * c.gdp;
   // Standing institutions are part of the budget: a state that founds many of them pays for them every quarter.
   const agencies = sum((c.institutions || []).filter(i => i.id), i => i.sponsor ? i.grant || 0 : i.budget || 0) * c.gdp;
@@ -451,7 +457,7 @@ function fiscal(w, c) {
 export function settleBases(w) {
   for (const c of aliveCountries(w)) {
     c.graftBase ??= c.corruption + c.pressFreedom * .3 + c.courts * .35; c.intelBase ??= c.intelligence - c.police * .5; c.roadShare ??= c.budget.infrastructure;
-    c.profitBase = 1 - (c.taxTarget?.business ?? c.tax.business); c.upkeep = 1; c.goldFloor = Math.max(0, c.reserves) * .6;
+    c.profitBase = 1 - (c.taxTarget?.business ?? c.tax.business); c.upkeep = 1; c.goldBase = Math.max(0, c.reserves); c.goldFloor = c.goldBase * .6;
     { const ps = countryProvinces(w, c.id), n = sum(ps, p => p.pops.workers.n); if (n > 0) c.workBase ??= sum(ps, p => p.pops.workers.sat * p.pops.workers.n) / n; }
     for (const p of countryProvinces(w, c.id)) p.infraBase ??= p.infra;
   }

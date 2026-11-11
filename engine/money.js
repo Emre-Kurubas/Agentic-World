@@ -54,7 +54,10 @@ export function localPrices(w, c) {
 
 // An overvalued currency lets imports push local goods out of the market; that is how a surplus country's foreign exchange recirculates.
 // A tariff wall keeps part of them out.
-export const displacedDemand = (c, g) => clamp(((c.rer ?? 1) - 1) * 2, 0, .5) * (c._need?.[g] || 0) * (1 - clamp(c.imports?.rules?.[g]?.tariff ?? c.tariff ?? 0, 0, 1));
+// So does gold. A country whose vaults hold far more than it was ever used to (c.goldBase) spends some of it: its people buy abroad what they did
+// not before, and the gold that trade piled up in one country finds its way back to the countries that make things.
+export const flushWith = c => clamp(((c.reserves || 0) / Math.max(c.goldBase ?? c.reserves ?? 1, 1) - 1.5) * .12, 0, .4);
+export const displacedDemand = (c, g) => clamp(((c.rer ?? 1) - 1) * 2 + flushWith(c), 0, .5) * (c._need?.[g] || 0) * (1 - clamp(c.imports?.rules?.[g]?.tariff ?? c.tariff ?? 0, 0, 1));
 export const exportEdge = c => 1 / Math.max(c.rer ?? 1, .2) ** 2;
 
 export function foreignRate(c, external) {

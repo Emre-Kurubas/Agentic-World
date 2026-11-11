@@ -1,5 +1,5 @@
 import { clamp, sum, news, between, rand } from './util.js';
-import { CLASSES, atWar, hasTreaty, countryProvinces, aliveCountries, provincePop, makeUnit } from './world.js';
+import { CLASSES, atWar, hasTreaty, countryProvinces, aliveCountries, provincePop, makeUnit, goHome } from './world.js';
 import { hasTech } from './economy.js';
 import { drillOf } from './frontier.js';
 import { die, garrisonHold } from './politics.js';
@@ -324,7 +324,7 @@ function upkeep(w, c) {
   }
   if (c._sick > 0) c.warExhaustion = clamp(c.warExhaustion + c._sick / Math.max(c._pop || 10000, 1) * 2500, 0, 100);
   // And home is where they arrive: back among the working people of their own provinces, not out of the world.
-  if (gone > 0) { const provs = countryProvinces(w, c.id).filter(p => p.owner === c.id), pop = sum(provs, provincePop) || 1; for (const p of provs) p.pops.workers.n += gone * provincePop(p) / pop; }
+  if (gone > 0) goHome(countryProvinces(w, c.id).filter(p => p.owner === c.id), gone);
 }
 
 // An offensive. Units sent against one objective under one order form up in the provinces beside it and go in together: all of them once the

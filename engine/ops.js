@@ -1,5 +1,5 @@
 import { clamp, news, rand, nextId, pick, sum } from './util.js';
-import { CLASSES, GOODS, countryProvinces, atWar, hasTreaty, makeUnit, aliveCountries, clampRel, provincePop } from './world.js';
+import { CLASSES, GOODS, countryProvinces, atWar, hasTreaty, makeUnit, aliveCountries, clampRel, provincePop, goHome } from './world.js';
 import { executePlot, neutralize, die, SUCCESSION, distance } from './politics.js';
 import { capture, pathStep, roadTo, upkeepCost, settleOccupations, marchQuarters, POSTURES, postureWords, MANNERS, commanderOf, supplyOf, shellsFor, abilityWord, closedNow, season } from './military.js';
 import { makeFleet, TECHS, PLANTS, DEPOSITS, GOOD_LABEL, ROLES, spawnCharacter, bfsSea } from './world.js';
@@ -164,7 +164,7 @@ function endWar(w, a, b, annex) {
   for (const t of w.treaties) if (t.active && t.kind === 'armistice' && t.parties.includes(a) && t.parties.includes(b)) t.active = false;
   for (const [holder, home] of [[a, b], [b, a]]) {
     const h = w.countries[holder], c = w.countries[home], n = h?.captives?.[home] || 0; if (!(n > 0)) continue; delete h.captives[home]; if (!c?.alive) continue;
-    const provs = Object.values(w.provinces).filter(p => p.owner === home && p.controller === home), pop = sum(provs, provincePop) || 1; for (const p of provs) p.pops.workers.n += n * provincePop(p) / pop; c.reserve = (c.reserve || 0) + n;
+    const provs = Object.values(w.provinces).filter(p => p.owner === home && p.controller === home), pop = sum(provs, provincePop) || 1; goHome(provs, n); c.reserve = (c.reserve || 0) + n;
     news(w, `About ${n < 1 ? `${Math.max(1, Math.round(n * 10)) * 100}` : `${Math.round(n)} thousand`} prisoners of war held by ${h.name} have gone home to ${c.name}.`, { kind: 'war', countries: [holder, home] });
   }
   settleOccupations(w);
@@ -807,7 +807,7 @@ export function applyOp(w, actor, op) {
       const asked = Number(op.men), part = Number.isFinite(asked) && asked > 0 && asked < u.men - .05, men = part ? Math.round(asked * 10) / 10 : u.men;
       const count = menText(men);
       // The discharged are trained men: they go on the reserve roll, and their rifles go back to the arsenal.
-      if (home) home.pops.workers.n += men; c.reserve = (c.reserve || 0) + men; c.stock.arms = (c.stock.arms || 0) + men * (u.kind === 'artillery' ? .12 : .05) * clamp(u.equip ?? .8, 0, 1);
+      if (home) goHome([home], men); c.reserve = (c.reserve || 0) + men; c.stock.arms = (c.stock.arms || 0) + men * (u.kind === 'artillery' ? .12 : .05) * clamp(u.equip ?? .8, 0, 1);
       if (!part) { delete w.units[u.id]; return { ok: true, msg: `${count} went home and ${u.id} is dissolved.` }; }
       u.men -= men;
       return { ok: true, msg: `${count} went home. ${u.id} keeps ${menText(u.men)} under arms.` };

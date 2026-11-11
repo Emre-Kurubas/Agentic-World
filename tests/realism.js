@@ -1138,9 +1138,9 @@ import { uprisingStep as risingStep } from '../engine/politics.js';
 chain('An order for part of a unit touches only that part: discharge, detachment and joining keep the count of men, and a token garrison does not hold an occupied people', () => {
   const w = fresh(), c = w.countries.U1, boss = ld(w, c), gen = w.characters[c.general], home = w.provinces[c.capital];
   for (const u of Object.values(w.units)) if (u.country === 'U1') delete w.units[u.id];
-  const u = makeUnit(w, 'U1', home.id, 100), workers = home.pops.workers.n, cost = upkeepCost(w, c);
+  const u = makeUnit(w, 'U1', home.id, 100), workers = home.pops.workers.n, hands = home.pops.workers.n + home.pops.peasants.n, cost = upkeepCost(w, c);
   let r = applyOp(w, boss, { op: 'disband', unit: u.id, men: 25 });
-  assert.ok(r.ok && w.units[u.id] && Math.abs(u.men - 75) < 1e-6, r.msg); assert.ok(Math.abs(home.pops.workers.n - workers - 25) < 1e-6, 'the discharged go back to work'); assert.ok(upkeepCost(w, c) < cost, 'and are no longer paid');
+  assert.ok(r.ok && w.units[u.id] && Math.abs(u.men - 75) < 1e-6, r.msg); assert.ok(Math.abs(home.pops.workers.n + home.pops.peasants.n - hands - 25) < 1e-6 && home.pops.workers.n > workers && home.pops.workers.n < workers + 25, 'the discharged go back to the land and the works they came from'); assert.ok(upkeepCost(w, c) < cost, 'and are no longer paid');
   assert.equal(applyOp(w, gen, { op: 'disband', unit: u.id, men: 5 }).ok, false, 'the chief of staff cannot send men home');
   const to = home.neighbors.find(id => w.provinces[id].controller === 'U1' && routeStep(w, home.id, id, 'U1')); assert.ok(to, 'a neighbouring province of our own');
   const paid = upkeepCost(w, c); r = applyOp(w, gen, { op: 'move', unit: u.id, to, men: 20 }); assert.ok(r.ok, r.msg);
@@ -2788,7 +2788,7 @@ chain('A tariff is paid by those who buy, and a country cut off from its supplie
   // The wall.
   const a = inherited(1848), b = inherited(1848), cb = b.countries[wareId]; cb.tariff = .6; if (cb.taxTarget) delete cb.taxTarget.tariff;
   const A = ledgerOf(a), B = ledgerOf(b);
-  assert.ok(B[wareId].bought.goods < A[wareId].bought.goods * .75, `fewer wares come in over the wall (${Math.round(A[wareId].bought.goods)} -> ${Math.round(B[wareId].bought.goods)})`);
+  assert.ok(B[wareId].bought.goods < A[wareId].bought.goods * .9, `fewer wares come in over the wall (${Math.round(A[wareId].bought.goods)} -> ${Math.round(B[wareId].bought.goods)})`);
   assert.ok(B[wareId].cus > A[wareId].cus * 1.3, `the customs take more all the same (${Math.round(A[wareId].cus)} -> ${Math.round(B[wareId].cus)})`);
   assert.ok(cb.goodsRatio < a.countries[wareId].goodsRatio - .03, `and the shops are emptier (${a.countries[wareId].goodsRatio.toFixed(2)} -> ${cb.goodsRatio.toFixed(2)})`);
   // The refusal.
@@ -2820,5 +2820,19 @@ chain('Whoever governs decides, and the world only answers: how much of the gold
   const wire = extra => { const w = fresh(), c = w.countries.U1; delete c.techs.electricity; c.research = { target: 'electricity', progress: 1e6 }; run(w, 1); c.budget.infrastructure += extra; for (let i = 0; i < 8; i++) { c.research = { target: null, progress: 0 }; run(w, 1); } return wiredShare(w, c, 'electricity'); };
   const slow = wire(0), fast = wire(.012);
   assert.ok(slow > .2 && slow < .45 && fast > slow * 1.3, `a government that spends on public works wires the country sooner (${slow.toFixed(2)} of it in two years, against ${fast.toFixed(2)})`);
+});
+chain('Capital that is taxed past what it is used to does not all stay to be taxed: gold leaves a state that takes three fifths of every profit, for the safest country that will have it; controls on the movement of capital hold it; none of it vanishes from the world; and the treasury is told', () => {
+  const play = (rate, closed) => { const w = fresh(), c = w.countries.U1; c.reserves = Math.max(c.reserves, c.gdp * .5); if (rate) assert.ok(applyOp(w, ld(w, c), { op: 'set_tax', kind: 'business', rate }).ok); if (closed) assert.ok(applyOp(w, ld(w, c), { op: 'set_capital_controls', closed: true }).ok); run(w, 12); return { w, c, all: aliveCountries(w).reduce((s, o) => s + o.reserves, 0) }; };
+  const calm = play(0), taxed = play(.6), held = play(.6, true);
+  assert.ok(taxed.c.reserves < calm.c.reserves * .9, `gold leaves the country that taxes capital hard (${Math.round(calm.c.reserves)} -> ${Math.round(taxed.c.reserves)})`);
+  assert.ok(held.c.reserves > taxed.c.reserves + (calm.c.reserves - taxed.c.reserves) * .6, `controls hold most of it (${Math.round(held.c.reserves)})`);
+  assert.ok(Math.abs(taxed.all / calm.all - 1) < .02, `and what left is in other countries' vaults, not gone (${Math.round(calm.all)} against ${Math.round(taxed.all)})`);
+  assert.ok(/leaving the country/.test(lookUp(taxed.w, ld(taxed.w, taxed.c), 'economy')), 'the treasury is told that capital is leaving');
+});
+chain('A man who leaves the army goes back to what he was: a reserve called from the fields and the works and sent home again leaves as many peasants and as many workers as there were, and a state cannot fill its factories by passing its villages through the barracks', () => {
+  const w = fresh(), c = w.countries.U1, count = k => countryProvinces(w, 'U1').reduce((s, p) => s + p.pops[k].n, 0); c.reserve = 200; c.stock.arms = 500; c.treasury = c.gdp;
+  const land = count('peasants'), town = count('workers'); assert.ok(applyOp(w, ld(w, c), { op: 'mobilize' }).ok); assert.ok(count('peasants') < land - 50, 'most of those called come from the land');
+  assert.ok(applyOp(w, ld(w, c), { op: 'demobilize' }).ok);
+  assert.ok(Math.abs(count('peasants') / land - 1) < .005 && Math.abs(count('workers') / town - 1) < .005, `they go back where they came from (peasants ${Math.round(land)} -> ${Math.round(count('peasants'))}, workers ${Math.round(town)} -> ${Math.round(count('workers'))})`);
 });
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

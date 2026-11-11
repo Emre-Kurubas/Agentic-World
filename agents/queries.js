@@ -45,7 +45,7 @@ function pricesText(c) {
 function worksText(c) {
   const at = upkeepAt(c), now = c.upkeep ?? 1, was = Math.round((1 - (c.profitBase ?? 1 - c.tax.business)) * 100), pc = v => Math.round(v * 100);
   const moving = Math.abs(at - now) < .01 ? `they are kept up as they stand` : at < now ? `owners are letting them run down: they turn out ${pc(now)} in the hundred of what the same plant did, and at this rate will settle near ${pc(at)} over some years` : `owners are extending them: they turn out ${pc(now)} in the hundred of what the same plant did, and at this rate will settle near ${pc(at)} over some years`;
-  return ` Private mines and works: their owners renew and extend them out of what the tax on business leaves; the tax stands at ${pc(c.tax.business)}% where the country was used to ${was}%, and ${moving}.${c.ownership > .05 ? ` (What the state owns, about ${pc(c.ownership)} in the hundred, is kept up from the budget whatever the tax.)` : ''}`;
+  return ` Private mines and works: their owners renew and extend them out of what the tax on business leaves; the tax stands at ${pc(c.tax.business)}% where the country was used to ${was}%, and ${moving}.${c.ownership > .05 ? ` (What the state owns, about ${pc(c.ownership)} in the hundred, is kept up from the budget whatever the tax.)` : ''}${(c._flight ?? 0) > .5 ? ` Capital is leaving the country: about ${Math.round(c._flight)} of gold went abroad last quarter, as owners put what the tax leaves them out of its reach${c.capitalClosed ? ' past the controls' : ' (controls on the movement of capital would hold most of it)'}.` : ''}`;
 }
 function jobsText(c) {
   const k = c.lastJobs; if (!k) return '';
