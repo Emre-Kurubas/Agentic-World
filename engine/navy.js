@@ -5,7 +5,7 @@
 import { clamp, sum, news, between, rand } from './util.js';
 import { atWar, hasTreaty, countryProvinces, aliveCountries, makeFleet } from './world.js';
 import { hasTech } from './economy.js';
-import { fighting, commanderOf, season } from './military.js';
+import { fighting, commanderOf, season, leadOf } from './military.js';
 import { die } from './politics.js';
 
 // power: what one hull counts for in a line of battle, a cruiser being one. speed: who can decline a fight. coal: what a hull burns in a
@@ -44,10 +44,12 @@ export const readiness = (w, f, d = fromBase(w, f).d) => (.4 + .6 * (f.coaled ??
 export function strength(w, f) {
   const c = w.countries[f.country], k = SHIPS[kindOf(f)], d = fromBase(w, f).d;
   const oil = hasTech(c, 'combustion_engine') && (c.fuelRatio ?? 1) < .5 ? .4 : 1;
-  // Torpedo craft in their own waters come out at night and go home before morning; there they count for far more than their size.
-  const home = kindOf(f) === 'torpedo' && d <= 2 ? 2.5 : 1;
-  return f.ships * k.power * f.quality * (f.morale / 70) * c.tech.mil * readiness(w, f, d) * oil * home * (admiral(w, f)?.skill ?? 1) * (f.mutiny ? .2 : 1);
+  // Torpedo craft in their own waters come out at night and go home before morning; there they count for twice their size, unless the enemy
+  // has brought cruisers to keep them off (which a fight settles: see versus).
+  const home = kindOf(f) === 'torpedo' && d <= 2 ? HOME : 1;
+  return f.ships * k.power * f.quality * (f.morale / 70) * c.tech.mil * readiness(w, f, d) * oil * home * leadOf(admiral(w, f)) * (f.mutiny ? .2 : 1);
 }
+const HOME = 2;
 const atSea = f => !f.port && f.ships >= .5 && !f.mutiny;
 // A harbour on a northern coast freezes in winter: nothing sails from it or into it until the ice breaks.
 export const iced = (w, p) => !!p && p.port > 0 && p.terrain === 'tundra' && season(w) === 'winter';
@@ -205,7 +207,16 @@ function fight(w, sea, fs, beaten) {
     if (rand(w) < hunted) { f.slipped = w.turn; return false; } return true; });
   FA = slip(FA, FB); FB = slip(FB, FA);
   if (!FA.length || !FB.length) return;
-  const luckA = between(w, .8, 1.25), luckB = between(w, .8, 1.25), pA = weigh(FA) * luckA, pB = weigh(FB) * luckB, aWins = pA >= pB, r = Math.max(pA, pB) / Math.max(Math.min(pA, pB), 1e-9);
+  // Ships are not one currency. A heavier ship opens fire before a lighter one can answer and takes its hits on armour: whatever is lighter than
+  // part of the line it faces counts for less against that part (a cruiser against battleships for about three quarters, against dreadnoughts
+  // for three fifths; a battleship against dreadnoughts for five sixths). Torpedo craft are outside that sum: they attack by night, off their
+  // own coast, and what they are worth there depends on whether the enemy brought cruisers to meet them, weight for weight.
+  const tons = f => SHIPS[kindOf(f)].power * f.ships, boatsAtHome = xs => xs.filter(f => kindOf(f) === 'torpedo' && fromBase(w, f).d <= 2);
+  const screenOn = (mine, theirs) => { const boats = sum(boatsAtHome(mine), tons); return boats > 0 ? clamp(sum(theirs.filter(f => kindOf(f) === 'cruiser'), tons) / boats, 0, 1) : 0; };
+  const outranged = (f, theirs) => { const k = SHIPS[kindOf(f)].power; if (!surface(f) || kindOf(f) === 'torpedo') return 0; return sum(theirs.filter(e => surface(e) && kindOf(e) !== 'torpedo' && SHIPS[kindOf(e)].power > k), e => tons(e) * (1 - Math.pow(k / SHIPS[kindOf(e)].power, .25))) / Math.max(sum(theirs, tons), 1e-9); };
+  const versus = (mine, theirs) => { const screen = screenOn(mine, theirs); return sum(mine, f => strength(w, f) * (kindOf(f) === 'torpedo' ? (fromBase(w, f).d <= 2 ? (1 + (HOME - 1) * (1 - screen)) / HOME : 1) : 1 - outranged(f, theirs))); };
+  const shortOf = (mine, theirs) => sum(mine, f => tons(f) * outranged(f, theirs)) / Math.max(sum(mine, tons), 1e-9);
+  const luckA = between(w, .8, 1.25), luckB = between(w, .8, 1.25), pA = versus(FA, FB) * luckA, pB = versus(FB, FA) * luckB, aWins = pA >= pB, r = Math.max(pA, pB) / Math.max(Math.min(pA, pB), 1e-9);
   const lossL = clamp(.16 * Math.pow(r, .7), .12, .5), lossW = clamp(.09 / Math.pow(r, .9), .02, .15);
   const hull = f => SHIPS[kindOf(f)].power * (f.ships + 0), before = xs => sum(xs, hull), wasA = before(FA), wasB = before(FB), tally = { A: {}, B: {} };
   const apply = (xs, loss, won, key) => { for (const f of xs) { const hit = f.ships * loss, sunk = hit * (won ? .35 : .6); f.ships -= hit; f.damaged = (f.damaged || 0) + hit - sunk; f.morale = clamp(f.morale + (won ? 3 : -12), 5, 100); const t = (tally[key][f.country] ||= { sunk: {}, hurt: {} }); t.sunk[kindOf(f)] = (t.sunk[kindOf(f)] || 0) + sunk; t.hurt[kindOf(f)] = (t.hurt[kindOf(f)] || 0) + hit - sunk; } };
@@ -231,7 +242,8 @@ function fight(w, sea, fs, beaten) {
     const weight = (key === 'A' ? wasA : wasB) / Math.max(key === 'A' ? wasB : wasA, 1e-9), luck = (key === 'A' ? luckA / luckB : luckB / luckA), why = [];
     if (won ? weight > 1.15 : weight < .87) why.push(won ? 'we had the heavier line' : 'they had the heavier line');
     if (!won && rd < their - .08) why.push(coaled < .8 ? `our bunkers were ${Math.round(coaled * 100)} in the hundred full` : `we fought ${far} seas from our nearest base`); if (won && their < rd - .08) why.push('their ships were far from a base or short of coal');
-    if (theirs.some(f => kindOf(f) === 'torpedo' && fromBase(w, f).d <= 2) && !won) why.push('their torpedo craft came out from their own coast'); if (own.some(f => kindOf(f) === 'torpedo' && fromBase(w, f).d <= 2) && won) why.push('our torpedo craft fought in their own waters');
+    if (!won && shortOf(mine, theirs) > .08) why.push('their heavier ships outranged our lighter ones'); if (won && shortOf(theirs, mine) > .08) why.push('our heavier ships outranged their lighter ones');
+    if (boatsAtHome(theirs).length && !won) why.push(screenOn(theirs, mine) < .5 ? 'their torpedo craft came out from their own coast, and we had too few cruisers to keep them off the line' : 'their torpedo craft came out from their own coast'); if (boatsAtHome(theirs).length && won && screenOn(theirs, mine) >= .5) why.push('our cruisers kept their torpedo craft off the line'); if (boatsAtHome(own).length && won) why.push('our torpedo craft fought in their own waters');
     if (won ? luck > 1.12 : luck < .9) why.push('the day went ' + (won ? 'our' : 'their') + ' way'); if (!why.length) why.push(won ? 'ship for ship we shot and steamed the better' : 'ship for ship they shot and steamed the better');
     tell(w, c, `Battle in ${seaName(w, sea)} (${sea}): ${won ? 'we hold the water' : 'we were beaten'}. We had ${lineOf(own.map(f => ({ ...f, ships: f.ships / (1 - (won ? lossW : lossL)) })))} there. ${sunkText(t) !== 'nothing' ? `Sunk on our side: ${sunkText(t)}` : 'No ship of ours was sunk'}${hurtText(t) ? `; ${hurtText(t)} are badly damaged and fight no more until a dock has had them (a harbour mends about three cruisers' weight of ship a quarter for each size it has)` : sunkText(t) === 'nothing' ? `, but the squadron was knocked about: it is worth about ${Math.round((1 - (won ? lossW : lossL)) * 100)} in the hundred of what it was` : ''}. ${seen >= .5 ? `Of theirs about ${Math.round(seen)} ships were seen sunk or disabled` : 'No ship of theirs was seen to sink'}. What told: ${why.join('; ')}.${!won && ran[id] ? ` Our ships ran for ${ran[id]} and lie in harbour there.` : !won ? ' No harbour of ours could be reached: they are still at sea.' : ''}`);
   }
@@ -289,7 +301,10 @@ export const LIFT = 2, MERCHANT = 1;
 const harbours = (w, c) => sum(countryProvinces(w, c.id), p => p.port || 0);
 // What a country's own traffic asks of ships: its coasting trade, by the size of its harbours, and half of every cargo it sends or receives by sea.
 const traffic = (w, c, sea) => harbours(w, c) + sea / 2, fleetFor = (w, c) => (harbours(w, c) * 1.5 + (c._seaVol || 0)) * (AFFINITY[c.archetype] ?? 1);
-export const liftOf = c => Math.max(0, (c.shipping ?? 20) - (c._lifted || 0)) * LIFT;
+// An army goes aboard at a quay: a harbour embarks so many thousand men with their horses and stores in a quarter for each size it has, and
+// tonnage beyond that waits in the roads. (Asked without a world, the answer is what the ships alone could carry.)
+export const QUAY = 40;
+export const liftOf = (c, w) => Math.max(0, Math.min((c.shipping ?? 20) * LIFT, w ? sum(countryProvinces(w, c.id).filter(p => p.owner === c.id), p => p.port || 0) * QUAY : Infinity) - (c._lifted || 0) * LIFT);
 // carried: every shipment that went by sea this quarter, as [exporter, importer, quantity, freight paid]. Each end of a shipment carries half
 // of it if it has the ships; what neither end can carry is carried by whoever in the world has ships to spare, and the freight goes with the cargo.
 export function merchantStep(w, cs, carried) {

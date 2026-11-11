@@ -2681,4 +2681,33 @@ chain('A harbour lands only so much: an army fed across the sea through a small 
   assert.ok(s.factor <= .6, `a quarter of a million do not (${s.factor})`); assert.ok(/harbour/.test(fedHow(w, few)) && /can land/.test(fedHow(w, few)), 'and the staff names the harbour: ' + fedHow(w, few));
   far.port = 3; w.turn++; assert.ok(supplyAt(w, few).factor > s.factor + .2, 'a great port feeds them better');
 });
+
+// The balance of the sea (2026-11-11): classes of ship are not one currency.
+const seaTrials = (mine, theirs, o = {}) => { let won = 0, fought = 0; for (let i = 0; i < (o.n ?? 60); i++) { const f = twoNavies(); f.w.rng = scattered(i + (o.shift ?? 0)); if (o.admiral) f.gen.skill = o.admiral;
+    for (const [kind, n] of mine) f.ship('U1', f.meet, n, kind); for (const [kind, n] of theirs) f.ship(f.e, f.meet, n, kind); f.w.seaFights = []; militaryStep(f.w); if (f.w.seaFights.length) { fought++; if (f.w.seaFights[0].winner === 'U1') won++; } }
+  assert.ok(fought >= (o.n ?? 60) * .9, 'the squadrons met'); return won / fought; };
+// Each match is fought both ways round, so that nothing but the ships differs.
+const seaOdds = (first, second, o = {}) => (seaTrials(first, second, o) + 1 - seaTrials(second, first, { ...o, shift: 500 })) / 2;
+chain('Ships are not one currency: a line of battle outranges cruisers that cost as much, the all-big-gun ship outranges the battleship, and cruisers still meet cruisers ship for ship; an able admiral is worth something and not the battle', () => {
+  const even = seaOdds([['cruiser', 8]], [['cruiser', 8]]); assert.ok(even > .4 && even < .6, `equal squadrons split their fights (${even.toFixed(2)})`);
+  const line = seaOdds([['battleship', 2]], [['cruiser', 8]]); assert.ok(line > .65, `two battleships beat the eight cruisers the same money buys, most days (${line.toFixed(2)})`);
+  const big = seaOdds([['dreadnought', 1]], [['battleship', 2]]); assert.ok(big > .65, `one dreadnought beats two battleships, most days (${big.toFixed(2)})`);
+  const mixed = seaOdds([['battleship', 2], ['cruiser', 4]], [['cruiser', 12]]); assert.ok(mixed > .55, `a line with its cruisers beats cruisers alone at the same price (${mixed.toFixed(2)})`);
+  const led = seaTrials([['cruiser', 8]], [['cruiser', 8]], { admiral: 1.3 }); assert.ok(led > .55 && led < .88, `the abler admiral wins more often than not, and not always (${led.toFixed(2)})`);
+  const f = twoNavies(); assert.ok(/outrange/.test(lookUp(f.w, f.gen, 'fleet')), 'and the fleet report says what a heavier line does to a lighter one');
+});
+chain('Torpedo craft hold a coast against a line that comes without its cruisers, and not against one that brings them: off their own harbour fifteen boats beat two battleships at half the price; the same two battleships with six cruisers for a screen beat them; and cruisers alone see off boats that cost a third of what they did', () => {
+  // f.meet lies off the rival's harbour: his boats are at home there, ours are not.
+  const bare = seaTrials([['battleship', 2]], [['torpedo', 15]]); assert.ok(bare < .4, `two battleships alone off an enemy coast lose to fifteen boats more often than not (${bare.toFixed(2)})`);
+  const screened = seaTrials([['battleship', 2], ['cruiser', 6]], [['torpedo', 15]]); assert.ok(screened > .9, `the same line behind six cruisers wins (${screened.toFixed(2)})`);
+  const cruisers = seaTrials([['cruiser', 8]], [['torpedo', 12]]); assert.ok(cruisers > .7, `eight cruisers see off twelve boats (${cruisers.toFixed(2)})`);
+  const f = twoNavies(); assert.ok(/screen/.test(lookUp(f.w, f.gen, 'fleet')), 'and the fleet report says what the screen is for');
+});
+chain('A merchant marine carries an army only as fast as the harbours can embark it: tonnage beyond what the quays can load in a quarter puts no more men across', () => {
+  const f = twoNavies(), c = f.a; for (const p of countryProvinces(f.w, 'U1')) if (p.id !== f.ha.id) p.port = 0; f.ha.port = 2;
+  c.shipping = 10; c._lifted = 0; assert.equal(liftFor(c, f.w), 20, 'a small marine carries what its tonnage allows');
+  c.shipping = 400; const cap = liftFor(c, f.w); assert.ok(cap < 200 && cap >= 60, `four hundred of tonnage do not put eight hundred thousand men across from one harbour (${cap})`);
+  f.ha.port = 3; assert.ok(liftFor(c, f.w) > cap, 'a greater harbour embarks more');
+  assert.ok(/harbours can embark/.test(lookUp(f.w, f.gen, 'fleet')), 'and the fleet report says so');
+});
 console.log('All checks passed.');
