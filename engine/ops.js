@@ -718,6 +718,19 @@ export function applyOp(w, actor, op) {
       news(w, `${c.name}: the government has left ${old?.name ?? 'its old seat'} and sits at ${p.name}${pressed ? ', with the enemy close behind it' : ''}.`, { kind: 'politics', countries: [c.id], province: p.id });
       return { ok: true, msg: `The government sits at ${p.name}. The move cost ${Math.round(cost)}; the offices are in disorder for some quarters (the administration is the weaker for it until it has settled), ${old?.name ?? 'the old capital'} resents being left${pressed ? ', and with the enemy at its gates the country reads it as flight' : ''}. Vaults and archives went with it: should the old capital fall it yields no gold. Distances, the reach of the state and the army's supply are now reckoned from ${p.name}.${note}` };
     }
+    // Prisoners of war are held until a peace sends them home, unless whoever governs lets them go sooner: a gesture the other country reads, and
+    // men who go back onto its reserve roll and may be called to the colours again.
+    case 'release_prisoners': {
+      if (!target) return fail('Name the state whose men are to be sent home.'); const held = c.captives?.[target.id] || 0; if (!(held > 0)) return fail(`We hold no prisoners of ${target.name}.`);
+      const n = op.men != null ? Math.min(num(op.men, 0, 1e6, 0), held) : held; if (!(n > 0)) return fail('Say how many are to go, or leave the number out to send them all.');
+      c.captives[target.id] = held - n; if (c.captives[target.id] < .01) delete c.captives[target.id];
+      const provs = Object.values(w.provinces).filter(p => p.owner === target.id && p.controller === target.id); goHome(provs, n); target.reserve = (target.reserve || 0) + n;
+      const g = target.grudges?.[c.id]; if (g) g.incident = Math.max(0, g.incident - Math.min(6, n * .5)); target.relations[c.id] = clamp((target.relations[c.id] ?? 0) + Math.min(8, 2 + n * .4), -100, 100);
+      const words = n < 1 ? `${Math.max(1, Math.round(n * 10)) * 100}` : `${Math.round(n)} thousand`;
+      news(w, `${c.name} has sent home ${words} prisoners of war to ${target.name}${atWar(w, c.id, target.id) ? ', with the war still on' : ''}.`, { kind: 'war', countries: [c.id, target.id] });
+      tell(w, w.characters[target.leader], 'Foreign Ministry', `${c.name} has sent home ${words} of our men it held prisoner${held - n > .05 ? `; it keeps about ${Math.round((held - n) * 10) / 10} thousand more` : ''}. They are back in their provinces and on the reserve roll.`);
+      return { ok: true, msg: `${words} prisoners went home to ${target.name}${held - n > .05 ? `; about ${Math.round((held - n) * 10) / 10} thousand are still held` : ''}. Their country reads the gesture, and holds a little less against us; the men are on its reserve roll again and can be called up${atWar(w, c.id, target.id) ? ' against us' : ''}.` };
+    }
     // Who is paid and supplied first when the vote for the forces falls short. Default: nobody; all are short alike.
     case 'set_pay_priority': {
       const list = [...new Set((Array.isArray(op.first) ? op.first : op.first ? [op.first] : []).map(x => String(x).trim()).filter(Boolean))].slice(0, 24);

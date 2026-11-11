@@ -2874,6 +2874,14 @@ chain('The seat of government goes where the ruler takes it: the offices are the
     if (moved) assert.ok(applyOp(x, ld(x, k), { op: 'move_capital', province: to.id }).ok); takeProvince(x, cap, 'U2'); return k.reserves; };
   assert.ok(fall(true) > 999 && fall(false) < 750, 'the vaults went with the government');
 });
+chain('Prisoners of war go home at a peace, or sooner if whoever holds them chooses: the men return to their provinces and their reserve roll, their country holds a little less against the captor, and nobody is released twice', () => {
+  const w = fresh(), a = w.countries.U1, b = w.countries.U2, L = ld(w, a), pop = () => countryProvinces(w, 'U2').reduce((s, p) => s + Object.values(p.pops).reduce((x, y) => x + y.n, 0), 0);
+  w.wars.push({ id: 'S-p', a: ['U1'], b: ['U2'], civil: false, active: true, start: w.turn, name: 'p' }); a.captives = { U2: 12 }; b.grudges = { U1: { incident: 10, kin: 0 } }; b.reserve = 50; b.relations.U1 = -40;
+  assert.ok(!applyOp(w, w.characters[a.general], { op: 'release_prisoners', target: 'U2' }).ok, 'it is for whoever governs'); assert.ok(!applyOp(w, L, { op: 'release_prisoners', target: 'U3' }).ok, 'none are held of a state we took none from');
+  const before = pop(), part = applyOp(w, L, { op: 'release_prisoners', target: 'U2', men: 5 }); assert.ok(part.ok && Math.abs(a.captives.U2 - 7) < 1e-9 && Math.abs(b.reserve - 55) < 1e-9 && pop() > before + 4.9 && b.grudges.U1.incident < 10 && b.relations.U1 > -40, part.msg);
+  assert.ok(/7 thousand are still held/.test(part.msg) && ld(w, b).inbox.some(m => /sent home 5 thousand of our men/.test(m.text)) && /we hold 7 thousand of/.test(lookUp(w, L, 'wars')), 'both governments know how it stands');
+  const rest = applyOp(w, L, { op: 'release_prisoners', target: 'U2' }); assert.ok(rest.ok && !a.captives.U2 && Math.abs(b.reserve - 62) < 1e-9); assert.ok(!applyOp(w, L, { op: 'release_prisoners', target: 'U2' }).ok, 'there is nobody left to send');
+});
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
   // The same fight, the same dice, the enemy warned both times: only the man in command differs.
   const hurt = skill => { const f = duel({ dug: 5, ground: { trench: 2 }, rng: 99, seen: true }); f.gen.skill = skill; const [b] = quarter(f.w); assert.ok(b, 'a battle'); assert.ok(!b.prisoners, 'nobody was routed'); return f.D - f.def.men; };
