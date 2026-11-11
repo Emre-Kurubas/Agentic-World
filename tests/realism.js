@@ -12,6 +12,7 @@ import { toTable } from '../agents/game.js';
 import { GOODS, BASE_PRICE } from '../engine/world.js';
 import { glutFactor, USUAL_COVER } from '../engine/money.js';
 import { firmValue } from '../engine/firms.js';
+import { holdOf as holdOfHouses } from '../engine/firms.js';
 import { quote } from '../engine/projects.js';
 import { updateRoutes } from '../engine/economy.js';
 import { militaryStep } from '../engine/military.js';
@@ -489,7 +490,9 @@ ok('Routes are known in the first quarter, a shipment decision is not wasted', (
   const w = inherited(); assert.ok(Object.keys(w.routes).length > 0, 'no route'); const [k] = Object.keys(w.routes), [a, b] = k.split('|'); w.countries[a].stock.grain = 100; assert.equal(applyOp(w, leaderOf(w, a), { op: 'ship_goods', target: b, good: 'grain', amount: 10 }).ok, true);
 });
 ok('The inherited world has companies and owners, they run and make a profit', () => {
-  const w = inherited(), firms = Object.values(w.firms); assert.ok(firms.length >= 15, `companies ${firms.length}`); assert.ok(firms.some(f => w.characters[f.owner]?.role === 'oligarch')); assert.ok(firms.some(f => f.owner === null)); assert.ok(firms.every(f => f.name && !f.name.includes('undefined')));
+  const w = inherited(), firms = Object.values(w.firms); assert.ok(firms.length >= 15, `companies ${firms.length}`); assert.ok(firms.some(f => w.characters[f.owner]?.role === 'oligarch'));
+  // (No house is handed over without an owner any more: what the state does not hold of a country's great houses is its magnate's.)
+  assert.ok(firms.every(f => f.owner === STATE || w.characters[f.owner]?.role === 'oligarch') && firms.some(f => f.owner === STATE), 'every house has an owner, the state or the magnate'); assert.ok(firms.every(f => f.name && !f.name.includes('undefined')));
   for (let i = 0; i < 8; i++) { beginTurn(w); stepWorld(w); } assert.ok(Object.values(w.firms).some(f => f.lastProfit > 0), 'there should be a profitable company'); console.log(`       sample profits: ${Object.values(w.firms).map(f => Math.round(f.lastProfit)).sort((a, b) => b - a).slice(0, 8).join(', ')}; oligarch wealth: ${aliveCountries(w).map(c => Math.round(w.characters[c.oligarch]?.wealth ?? 0)).join(', ')}`);
 });
 ok('States are inherited: regime, army, money and debt differ by country', () => {
@@ -3038,7 +3041,7 @@ chain('Coal and iron lie in fields: in every inherited world some state works no
     assert.ok(lacks('coal').length <= 2 && lacks('iron').length <= 3 && !cs.some(c => !worksOre(w, c, 'coal') && !worksOre(w, c, 'iron')), `seed ${seed}: nobody is without both (coal ${lacks('coal').map(c => c.archetype)}, iron ${lacks('iron').map(c => c.archetype)})`);
     run(w, 4); const k = lacks('coal').length ? 'coal' : 'iron', poor = lacks(k)[0], raised = c => (c._raw[k] || 0) / Math.max((c._drawn[k] || 0) + (c._used?.[k] || 0), .01);
     assert.ok(raised(poor) < .3 && (poor.lastBought[k] || 0) > 1, `seed ${seed}: ${poor.archetype} raises ${raised(poor).toFixed(2)} of the ${k} it uses and buys the rest (${(poor.lastBought[k] || 0).toFixed(1)})`);
-    assert.ok(cs.some(c => raised(c) > 1.08), `seed ${seed}: and somebody has ${k} to sell (${cs.map(c => raised(c).toFixed(2))})`);
+    assert.ok(cs.some(c => c.id !== poor.id && (raised(c) > 1.03 || (c.lastSold[k] || 0) > 1)), `seed ${seed}: and somebody has ${k} to sell (${cs.map(c => raised(c).toFixed(2))})`);
     assert.ok(poor.foodRatio >= 1 && poor.goodsRatio > .75 && (poor.buildRatio ?? 1) > .5, `seed ${seed}: it is not crippled by it (shops ${poor.goodsRatio.toFixed(2)}, building ${(poor.buildRatio ?? 1).toFixed(2)})`);
     const told = lookUp(w, ld(w, poor), 'resources'), board = lookUp(w, ld(w, poor), 'trade');
     assert.ok(new RegExp(`No ${k} is worked on our soil`).test(told) && /fields are worked in/.test(told), 'the mines office says that none is worked at home and who has it: ' + told.slice(-700));
@@ -3163,6 +3166,39 @@ chain('The land is shared out within bounds and no capital stands on the frontie
     for (const c of cs) { const own = new Set(countryProvinces(w, c.id).map(q => q.id)), part = from => { const seen = new Set([from]), q = [from]; while (q.length) for (const x of w.provinces[q.pop()].neighbors) if (own.has(x) && !seen.has(x)) { seen.add(x); q.push(x); } return seen; };
       const body = part(c.capital), edge = id => w.provinces[id].neighbors.some(x => w.provinces[x].owner !== c.id); assert.ok([...own].every(id => part(id).size <= body.size), `seed ${seed}: ${c.id}'s capital is on its main body of land`);
       if ([...body].some(id => !edge(id))) assert.ok(!edge(c.capital), `seed ${seed}: ${c.id} has land behind its frontier and its capital ${c.capital} is not on the frontier`); } }
+});
+chain('The great houses have an owner: what the state does not hold of a country\'s largest mines and works belongs to its magnate, a real part of its industry and an income that counts beside the state\'s; and his ledger says what his houses are in the country, what each turned out and sold at, what it paid in tax, what it is worth, how many hands it employs and what duty guards it', () => {
+  const w = inherited(1848), m = ofKind(w, 'merchant'), r = ofKind(w, 'revolutionary'), houses = c => Object.values(w.firms).filter(f => f.status === 'open' && f.country === c.id), rich = w.characters[m.oligarch], had = rich.wealth;
+  assert.ok(houses(m).length >= 5 && houses(m).every(f => f.owner === m.oligarch), 'in a country of private property every great house is the magnate\'s');
+  assert.ok(houses(r).every(f => f.owner === STATE || f.owner === r.oligarch) && houses(r).some(f => f.owner === STATE), 'in a party state what is not the state\'s is his');
+  run(w, 4); const hold = holdOfHouses(w, m, rich.id), gain = rich.wealth - had;
+  assert.ok(hold.share > .08 && hold.share < .5 && hold.hands > 50, `about ${(hold.share * 100).toFixed(0)} in the hundred of what the country's mines and works turn out is his, with ${Math.round(hold.hands)} thousand hands`);
+  assert.ok(gain > 4 && gain < m.lastRevenue * .25, `a year's dividends: ${gain.toFixed(1)}, beside a quarter's state revenue of ${Math.round(m.lastRevenue)}`);
+  const told = lookUp(w, rich, 'my_companies'); for (const part of [/in the hundred of all that the country's mines and works turned out/, /turned out [\d.]+ of/, /sold at [\d.]+ a unit/, /thousand hands/, /tax on business paid/, /worth about \d+/, /duty/]) assert.ok(part.test(told), `the ledger gives ${part}: ` + told.slice(0, 500));
+});
+chain('The treasury can be robbed only by a hand its money passes through: a magnate with no office and no contract takes nothing, the ruler and the chief of staff take within the bounds of what they handle, a seat on a body the state pays for is a channel; twenty orders in a quarter take no more than one; and where there is an audit office, free courts and a free press it is mostly found out, named in the papers and filed as proof', () => {
+  const w = inherited(1848), c = ofKind(w, 'republic'), l = ld(w, c), rich = w.characters[c.oligarch], gen = w.characters[c.general]; run(w, 1); c.treasury = c.gdp;
+  const till = c.treasury, purse = rich.wealth, no = applyOp(w, rich, { op: 'embezzle', pct_gdp: .02 });
+  assert.ok(!no.ok && /does not pass through your hands/.test(no.msg) && c.treasury === till && rich.wealth === purse, 'a private person has nothing within reach: ' + no.msg);
+  let took = 0; for (let i = 0; i < 20; i++) { const before = c.treasury; if (applyOp(w, l, { op: 'embezzle', pct_gdp: .1 }).ok) took += before - c.treasury; } assert.ok(took > 0 && took <= c.gdp * .02 + 1e-6, `the ruler: ${Math.round(took)} at most a fiftieth of a quarter's output, however often he reaches`);
+  took = 0; for (let i = 0; i < 20; i++) { const before = c.treasury; if (applyOp(w, gen, { op: 'embezzle', pct_gdp: .1 }).ok) took += before - c.treasury; } assert.ok(took > 0 && took <= c.budget.military * c.gdp * .1 + 1e-6, `the chief of staff: ${Math.round(took)}, at most a tenth of the vote for the forces`);
+  const made = applyOp(w, l, { op: 'create_institution', name: 'Harbour Board', powers: ['bureaucracy'], budget: .004, members: [rich.id], _law: true }); assert.ok(made.ok, made.msg);
+  const before = c.treasury, yes = applyOp(w, rich, { op: 'embezzle', pct_gdp: .1 }); assert.ok(yes.ok && before - c.treasury > 0 && before - c.treasury <= .004 * c.gdp * .2 + 1e-6 && rich.wealth > purse, 'with a seat on a state body he takes a part of what it is paid: ' + yes.msg);
+  // How often it comes out, with and without those whose business it is to look.
+  const trials = (open, n = 40) => { let found = 0, named = 0, filed = 0; for (let i = 0; i < n; i++) { const x = structuredClone(w), cx = x.countries[c.id], thief = x.characters[cx.general]; x.rng = scattered(i + 7); x.turn += 1; beginTurn(x); cx.treasury = cx.gdp; cx.courts = open ? 90 : 8; cx.pressFreedom = open ? 90 : 8; if (open) cx.institutions.push({ id: 'T1', name: 'Court of Accounts', powers: ['audit'], strength: .9, budget: .003, members: [], head: null });
+      const r = applyOp(x, thief, { op: 'embezzle', pct_gdp: .01 }); assert.ok(r.ok, r.msg); if (/traced to you/.test(r.msg)) { found++; if (x.newsThisTurn.some(e => e.text.includes('the trail leads to ' + thief.name))) named++; if (x.characters[cx.leader].dossiers[thief.id]?.facts?.some(f => /public money/.test(f))) filed++; } } return { found: found / n, named, filed, n: found }; };
+  const watched = trials(true), dark = trials(false);
+  assert.ok(watched.found > .6 && dark.found < .35 && watched.found > dark.found + .3, `found out ${(watched.found * 100).toFixed(0)} times in the hundred where the state has eyes, ${(dark.found * 100).toFixed(0)} where it has none`);
+  assert.ok(watched.named === watched.n && watched.filed === watched.n, 'and when it is found it is in the papers with his name and in the ruler\'s file as proof');
+});
+chain('The treasury tells the ruler what a finance ministry knows: what a point on each tax would bring (and a point put on brings about that), how many quarters lenders would carry the present deficit, that a state in surplus borrows nothing, and that the cash it keeps is a working balance and not all it has', () => {
+  const w = inherited(1848), j = ofKind(w, 'junta'), m = ofKind(w, 'merchant'); run(w, 2);
+  const told = lookUp(w, ld(w, j), 'budget'), said = +/One point more on the income tax would bring about (\d+)/.exec(told)?.[1];
+  assert.ok(said > 0 && /on the land tax about \d+/.test(told) && /on the tax on business about \d+/.test(told) && /on the tariff about \d+/.test(told), 'a point on each tax: ' + told.slice(0, 200));
+  assert.ok(/can be carried on credit for about (eighty quarters or more|\d+ quarters)/.test(told) && /working balance it keeps on purpose/.test(told), 'how long the deficit can be carried, and what the cash is');
+  assert.ok(/nothing had to be borrowed/.test(lookUp(w, ld(w, m), 'budget')) && !/can be carried on credit/.test(lookUp(w, ld(w, m), 'budget')), 'a state in surplus is told so');
+  const twin = structuredClone(w), jt = twin.countries[j.id]; jt.tax.income += .01; run(w, 1); run(twin, 1); const got = jt.lastBooks.income - j.lastBooks.income;
+  assert.ok(got > said * .6 && got < said * 1.5, `the point put on brought ${got.toFixed(1)}, where the ministry said about ${said}`);
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

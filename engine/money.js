@@ -87,6 +87,8 @@ export function creditStanding(w, c, paidInFull) {
 // Inflation is left out of that sum: it raises the interest asked and wears the debt down by as much.
 const ceiling = c => { const trust = c.gdp * 4 * (1.1 + c.legitimacy / 100), rate = Math.max((c.interestRate ?? sovereignRate(c)) - Math.max(0, c.inflTrend ?? c.inflation ?? 0) * .6, .005); return c.lastRevenue > 0 ? Math.min(trust, c.lastRevenue * .5 / rate) : trust; };
 const creditRoom = c => Math.max(0, ceiling(c) - c.debt) * (c.defaulted ? .03 : .12);
+// All that lenders would still let the state owe before they stop altogether, for whoever asks how long a deficit can be carried.
+export const creditHeadroom = c => Math.max(0, ceiling(c) - c.debt);
 export function creditLeft(c) {
   return Math.max(0, Math.min(creditRoom(c), (c._room ?? Infinity) - (c._taken || 0)));
 }

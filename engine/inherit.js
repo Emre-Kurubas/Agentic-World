@@ -198,11 +198,17 @@ function payments(w, cs) {
 // leave a state's builders and works without the coal or the ore they must buy (it has too little to sell and too little gold), that state
 // has long since been working the thin seams it has: they are known and worked on the day it is handed over, and it buys the rest.
 function thinSeams(w, cs) {
-  const trial = structuredClone(w); trial.status = 'playing'; for (let i = 0; i < 16; i++) trade(trial);
+  // Judged over four years of the economy alone, by the worst of the later quarters and by what is left of the gold: a state that goes short of
+  // coal for a year in every three is a state that cannot pay for it.
+  const trial = structuredClone(w), worst = {}; trial.status = 'playing';
+  for (let i = 0; i < 16; i++) { trade(trial); if (i >= 5) for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive) continue; const x = (worst[c.id] ||= { input: 1, shops: 9 }); x.input = Math.min(x.input, t.inputRatio ?? 1); x.shops = Math.min(x.shops, t.goodsRatio ?? 1); } }
   let opened = false;
-  for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive || ((t.built ?? 1) >= .7 && (t.inputRatio ?? 1) >= .85 && (t.goodsRatio ?? 1) >= .85)) continue;
+  for (const c of cs) { const t = trial.countries[c.id], x = worst[c.id]; if (!t?.alive || !x || ((t.built ?? 1) >= .7 && x.input >= .8 && x.shops >= .8 && t.reserves >= c.reserves * .4)) continue;
     for (const k of Object.keys(FIELDS)) { const ps = countryProvinces(w, c.id); if (ps.some(p => p.deposits[k]?.known && p.deposits[k].mine > 0)) continue;
-      for (const p of ps) { const d = p.deposits[k]; if (d && !d.known) { Object.assign(d, { known: true, mine: .8 }); opened = true; } } } }
+      const hidden = ps.filter(p => p.deposits[k] && !p.deposits[k].known);
+      // Where the ground kept nothing at all, the hill province with the most working people has the thin seam every country has somewhere.
+      if (!hidden.length) { const p = [...ps].filter(q => q.id !== c.capital).sort((x, y) => (['hills', 'mountain'].includes(y.terrain) - ['hills', 'mountain'].includes(x.terrain)) || y.pops.workers.n - x.pops.workers.n || (x.id < y.id ? -1 : 1))[0]; if (p) { p.deposits[k] = { amount: k === 'coal' ? 1200 : 900, rich: .6, known: false, mine: 0 }; hidden.push(p); } }
+      for (const p of hidden) { Object.assign(p.deposits[k], { known: true, mine: .8 }); opened = true; } } }
   return opened;
 }
 function balance(w, cs) {
@@ -210,7 +216,9 @@ function balance(w, cs) {
   // A country that has stood for years has its warehouses at their usual depth, its prices where its trade has settled them and its people in such work
   // as there is. Three years are run on a copy and the stores, the market and the labour market are taken from it, so that the first year anyone
   // governs is an ordinary year and not the year the stores fill up.
-  { const trial = structuredClone(w); trial.status = 'playing'; for (let i = 0; i < 12; i++) { beginTurn(trial); stepWorld(trial); }
+  // (The economy alone is run, with the armies' ordinary wear of arms taken out of the arsenals as it would be: what is wanted is the country's
+  // ordinary stores, and a rising or a coup on the copy would leave its last quarter's wreckage in the real country's warehouses on the first day.)
+  { const trial = structuredClone(w); trial.status = 'playing'; for (let i = 0; i < 12; i++) { trade(trial); for (const c of cs) { const t = trial.countries[c.id]; if (t?.alive) t.stock.arms = Math.max(0, t.stock.arms - Object.values(trial.units).filter(u => u.country === c.id).reduce((s, u) => s + u.men, 0) * .004); } }
     // The granaries are taken with the rest: a state that sells grain has its surplus on the quay and one that buys bread has the fortnight's
     // store it lives on, and the merchants of both have last quarter's takings in hand. (When the granaries alone were left as the map made them,
     // every state began with the same full barns, nobody bought or sold bread for a year, and no customs house took anything.)
