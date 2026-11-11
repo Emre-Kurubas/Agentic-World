@@ -1067,6 +1067,22 @@ await (async () => {
   assert.ok(!L.inbox.some(m => /not ready for this war/.test(m.text)));
   console.log('passed  A letter reaches whoever it was meant for, however a person would address it, and one that finds nobody comes back to its writer');
 })();
+// The people around the seats answer their letters after the quarter's orders have been carried out, not before: whoever writes for them sees
+// the world as those orders left it, and the answer goes by the same post.
+await (async () => {
+  const cfg = { ...base, plainStates: false, seed: 1848, agentRoles: ['leader'], countryAgentRoles: {}, maxLookupRounds: 0, negotiationRounds: 0, concurrency: 1 }, w = createWorld(cfg); w.status = 'playing';
+  const c = w.countries.U1, L = ld(w, c), keeper = Object.values(w.characters).find(x => x.alive && x.country === 'U1' && x.post === 'treasury'), rate = c.tax.land, seen = {}; assert.ok(keeper, 'a treasury keeper');
+  for (const o of aliveCountries(w)) if (o.id !== 'U1') w.characters[o.leader].lastWake = 1e9;
+  const backend = { kind: 'claude', async ask(p) {
+    if (p.includes('"replies"')) { seen.rate = c.tax.land; seen.asked = (seen.asked || 0) + 1; return { replies: [{ from: keeper.id, to: L.id, text: 'The new rate is in the books, Excellency.' }] }; }
+    if (p.includes('"rulings"') || p.includes('rulings')) return { rulings: p.includes(L.id) ? [{ actor: L.id, decision: 0, narrative: 'The land tax is raised', probability: 1, public: true, operations: [{ op: 'set_tax', kind: 'land', rate: rate + .02 }] }] : [] };
+    return p.includes(`Your name: ${L.name}`) ? { decisions: ['Raise the land tax by two points.'], messages: [{ to: keeper.id, text: 'Is the new land tax in your books?' }] } : { decisions: [], messages: [] };
+  } };
+  const g = new Game({ world: w, cfg, backend, store: memoryStore() }); await g.turn();
+  assert.ok(seen.asked === 1 && seen.rate > rate + .001, `the letter was answered with the order already carried out: the rate the writer saw was ${seen.rate}, before ${rate}`);
+  assert.ok(L.inbox.some(m => m.letter && m.text === 'The new rate is in the books, Excellency.' && m.from.includes(keeper.id)), 'and the answer lies in the inbox next morning, with the sender\'s id');
+  console.log('passed  The people around the seats answer their letters after the quarter\'s orders are carried out, and the answer goes by the same post');
+})();
 
 await (async () => {
   const cfg = { ...base, agentRoles: ['leader', 'opposition'], maxLookupRounds: 0, negotiationRounds: 0, concurrency: 1 }, w = createWorld(cfg); w.status = 'playing';

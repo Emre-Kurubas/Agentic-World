@@ -277,12 +277,18 @@ export class Game {
       this.pending.referee[cid] = r;
       this.store.savePending(this.pending);
     }));
-    // Letters to people nobody plays are answered for them, country by country, from what the engine knows of each.
+  }
+
+  // Letters to people nobody plays are answered for them, country by country, from what the engine knows of each. They are written once the
+  // quarter's orders have been carried out, so that a banker who was asked to sell a note this quarter writes that he has sold it, or why he
+  // would not, and not that he will think on it; the answers go by the same post and are in the inbox next morning.
+  async answerLetters(actors, log) {
+    const w = this.w, cfg = this.cfg;
     if (this.backend.kind === 'mock') return;
     const mail = {};
     for (const ch of actors) for (const m of this.pending.actors[ch.id]?.messages ?? []) { const to = recipient(w, m.to, ch); if (to?.alive && to.status === 'free' && isMinor(to) && !to.aiControlled && to.id !== ch.id) (mail[to.country] ||= []).push({ from: ch, to, text: m.text }); }
     const posts = Object.entries(mail).filter(([cid]) => w.countries[cid]?.alive && !this.pending.replies?.[cid]);
-    if (!posts.length) return;
+    if (!posts.length) { this.deliverReplies(log); return; }
     this.setStatus('referee judging', `answering ${posts.reduce((a, [, l]) => a + l.length, 0)} letters to people around the seats`);
     await this.withRetry(() => pool(posts, cfg.concurrency, async ([cid, letters]) => {
       let r;
@@ -291,6 +297,24 @@ export class Game {
       (this.pending.replies ||= {})[cid] = (Array.isArray(r?.replies) ? r.replies : []).filter(x => x && typeof x.text === 'string').slice(0, 24).map(x => ({ from: String(x.from), to: String(x.to), text: x.text.slice(0, 3000) }));
       this.store.savePending(this.pending);
     }));
+    this.deliverReplies(log);
+  }
+  deliverReplies(log) {
+    const w = this.w;
+    for (const rs of Object.values(this.pending.replies || {})) for (const r of rs) { const from = w.characters[r.from], to = w.characters[r.to]; if (!(from?.alive && from.status === 'free' && isMinor(from) && !from.aiControlled && to?.alive)) continue; const m = { from, to: to.id, text: r.text, npc: true }; this.post(m); log.messages.push(this.posted(m)); }
+  }
+  // One letter through the post: delivered, or returned to its writer; read by the censor of a prison or copied by a watchful state on the way.
+  post(m) {
+    const w = this.w, target = recipient(w, m.to, m.from);
+    if (!target?.alive || target.id === m.from.id) { m.undelivered = true; bounce(w, m, target); }
+    if (target) m.to = target.id === w.countries[m.to]?.leader ? m.to : target.id;
+    if (m.undelivered) return;
+    if (!m.read) target.inbox.push({ turn: w.turn, from: `${m.from.name} (${m.from.id}, ${w.countries[m.from.country]?.name})`, text: m.text, letter: true });
+    // A prisoner's letters pass through the censor's hands; how often they are copied depends on how good the state's eyes are.
+    const home = w.countries[m.from.country], warden = w.characters[home?.leader];
+    if (m.from.status === 'imprisoned' && target?.alive && warden?.alive && warden.id !== target.id && rand(w) < clamp(.25 + home.intelligence / 150, .25, .85)) { warden.inbox.push({ turn: w.turn, from: 'Prison censor', text: `Letter from the prisoner ${m.from.name} to ${target.name}: ${m.text}` }); m.intercepted = true; }
+    // Every other letter goes by the post, where a watchful state copies some of them.
+    else if (target?.alive) { const readers = openPost(w, m.from, target, m.text); if (readers.length) { m.intercepted = true; m.readBy = readers; } }
   }
 
   execute(actors) {
@@ -336,23 +360,12 @@ export class Game {
     }
     // Those who never read their mail (rule-based players, sleepers) do not keep every letter for ever.
     for (const ch of Object.values(w.characters)) if (ch.inbox.length > 40) ch.inbox = ch.inbox.slice(-40);
-    // What the people around the seats wrote back goes by the same post as everyone's letters.
-    for (const rs of Object.values(this.pending.replies || {})) for (const r of rs) { const from = w.characters[r.from], to = w.characters[r.to]; if (from?.alive && from.status === 'free' && isMinor(from) && !from.aiControlled && to?.alive) outgoing.push({ from, to: to.id, text: r.text, npc: true }); }
-    for (const m of outgoing) {
-      const target = recipient(w, m.to, m.from);
-      if (!target?.alive || target.id === m.from.id) { m.undelivered = true; bounce(w, m, target); }
-      if (target) m.to = target.id === w.countries[m.to]?.leader ? m.to : target.id;
-      if (m.undelivered) continue;
-      if (!m.read) target.inbox.push({ turn: w.turn, from: `${m.from.name} (${m.from.id}, ${w.countries[m.from.country]?.name})`, text: m.text, letter: true });
-      // A prisoner's letters pass through the censor's hands; how often they are copied depends on how good the state's eyes are.
-      const home = w.countries[m.from.country], warden = w.characters[home?.leader];
-      if (m.from.status === 'imprisoned' && target?.alive && warden?.alive && warden.id !== target.id && rand(w) < clamp(.25 + home.intelligence / 150, .25, .85)) { warden.inbox.push({ turn: w.turn, from: 'Prison censor', text: `Letter from the prisoner ${m.from.name} to ${target.name}: ${m.text}` }); m.intercepted = true; }
-      // Every other letter goes by the post, where a watchful state copies some of them.
-      else if (target?.alive) { const readers = openPost(w, m.from, target, m.text); if (readers.length) { m.intercepted = true; m.readBy = readers; } }
-    }
+    for (const m of outgoing) this.post(m);
     // Notes the engine's keeper left in the world file (a fault found and corrected, a save repaired) go into the record once, with the quarter they were read in.
-    return { trace, rulings, system: [...(w.engineNotes || []).splice(0), ...(this.sysLog ||= []).splice(0)], messages: outgoing.map(m => { const target = recipient(w, m.to, m.from); return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, intercepted: !!m.intercepted, readBy: m.readBy ?? [], npc: !!m.npc, read: !!m.read, round: m.round ?? 0 }; }) };
+    return { trace, rulings, system: [...(w.engineNotes || []).splice(0), ...(this.sysLog ||= []).splice(0)], messages: outgoing.map(m => this.posted(m)) };
   }
+  // A letter as the record keeps it.
+  posted(m) { const w = this.w, target = recipient(w, m.to, m.from); return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, intercepted: !!m.intercepted, readBy: m.readBy ?? [], npc: !!m.npc, read: !!m.read, round: m.round ?? 0 }; }
 
   // The dice are rolled only for what the engine cannot judge: an act that no operation carries (a go-between who may not get through, a letter
   // that may be stopped). Whatever an operation does, the engine judges for itself: whether there is a road, money, ships on station, authority,
@@ -404,6 +417,7 @@ export class Game {
     await this.judge(actors);
     this.setStatus('world processing', 'Calculating economy, war and politics');
     const before = snapshotState(w), log = this.execute(actors);
+    await this.answerLetters(actors, log);
     stepWorld(w);
     const entries = buildEntries(w, log, before, this.pending.lookups);
     this.store.commit(w, entries);
