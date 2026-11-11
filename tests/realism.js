@@ -2580,4 +2580,29 @@ chain('The sea has seasons and crews have tempers: a northern harbour freezes in
   const c = twoNavies(), cap = c.w.provinces[c.a.capital]; cap.port = Math.max(cap.port, 2); cap.seas = cap.seas.length ? cap.seas : [c.ha.seas[0]]; const flag = c.ship('U1', cap.seas[0], 10, 'battleship', cap), admiralOp = applyOp(c.w, ld(c.w, c.a), { op: 'appoint_commander', fleet: flag.id, name: 'Admiral Rosk' }); assert.ok(admiralOp.ok);
   const plot = { leader: c.a.opposition, members: [] }, loyal = sidesOf(c.w, c.a, plot), turned = sidesOf(c.w, c.a, { leader: c.a.opposition, members: [flag.commander] }); assert.ok(loyal.pro + loyal.anti > 40 && turned.pro > loyal.pro + 8, `ten battleships in the capital's harbour weigh in a coup, and go with their admiral: ${JSON.stringify(loyal)} then ${JSON.stringify(turned)}`);
 });
+chain('What a staff sees across a frontier depends on how it looks: at peace attaches give round numbers; at war the frontier is closed and without cavalry on it, a service with eyes there or troops that have met the enemy it knows only whether little or much stands opposite; field works are known only to a service that counts, or to troops that have run into them; and the chief of staff reads in the appreciation of a war what his squadrons can do', () => {
+  const t = twoRoads(1), { w, a, over, e1, gen } = t; over.trench = 2; const def = soldier(w, 'U2', over.id, 80); a.intel.U2 = 10;
+  const line = who => lookUp(w, who, 'borders').split('\n').find(l => l.includes(`${over.id} ${over.name}`)) ?? '', count = l => +(l.match(/(\d+) thousand men/)?.[1] ?? NaN);
+  // At war, with nothing to see by.
+  const blind = line(gen); assert.ok(!/\d+ thousand men/.test(blind) && /corps or more|an army/.test(blind) && !/field works/.test(blind), `a closed frontier and no eyes across it: ${blind}`);
+  assert.ok(/the frontier is closed and the staff has no eyes across it/.test(lookUp(w, gen, 'borders')) && /reconnaissance in force/.test(lookUp(w, gen, 'borders')), 'and the staff says what would tell it more');
+  // Cavalry on that frontier.
+  const horse = makeUnit(w, 'U1', e1.id, 4, 1, 80, 'cavalry'), ridden = line(gen); assert.ok(/about \d+ thousand men/.test(ridden) && Math.abs(count(ridden) - 80) <= 16 && !/field works/.test(ridden), `cavalry on the frontier gives round numbers and nothing of the works: ${ridden}`);
+  delete w.units[horse.id];
+  // A service with eyes there.
+  a.intel.U2 = 35; assert.ok(/about \d+ thousand men/.test(line(gen)), 'a fair service still gives round numbers across a closed frontier'); a.intel.U2 = 60; const counted = line(gen); assert.ok(/: 80 thousand men/.test(counted) && /field works \(2\)/.test(counted), `a good one counts them and knows their works: ${counted}`);
+  // At peace the frontier is open to attaches and travellers.
+  a.intel.U2 = 10; const war = w.wars; w.wars = []; const peace = line(gen); assert.ok(/about \d+ thousand men/.test(peace) && Math.abs(count(peace) - 80) <= 16 && !/field works/.test(peace) && /at peace, attaches and travellers give round numbers/.test(lookUp(w, gen, 'borders')), `at peace round numbers are to be had: ${peace}`);
+  assert.ok(!/\d+ thousand men/.test(line(w.characters[a.opposition])), 'someone outside the army hears only what is said in the streets'); w.wars = war;
+  // Troops that have met the enemy bring back what they saw.
+  const scouts = soldier(w, 'U1', e1.id, 30); assert.ok(applyOp(w, gen, { op: 'offensive', to: over.id, units: [scouts.id], manner: 'probe' }).ok); quarter(w);
+  const found = line(gen); assert.ok(/about (75|80) thousand men in .*field works.*as our troops found them in/.test(found), `a reconnaissance in force tells the staff what stands there and what it stands in: ${found}`);
+  assert.ok(/as our troops found them/.test(lookUp(w, gen, `war_plan:U2`)), 'and the appreciation of the war uses it');
+  w.turn += 3; assert.ok(!/as our troops found them/.test(line(gen)), 'what was seen three quarters ago is no longer what stands there');
+  // A foreign province looked up by itself.
+  a.intel.U2 = 45; assert.ok(/garrison about \d+k/.test(lookUp(w, gen, `province:${over.id}`))); a.intel.U2 = 60; assert.ok(new RegExp(`garrison ${Math.round(def.men)}k`).test(lookUp(w, gen, `province:${over.id}`)), 'a garrison abroad is counted only by a service with eyes there');
+  // The sea, where the chief of staff already reads.
+  const plan = lookUp(w, gen, 'war_plan:U2'); if (countryProvinces(w, 'U2').some(p => p.port > 0)) assert.ok(/can shell a harbour, its batteries and the troops there \(bombard\)/.test(plan) && /\(lay_mines\)/.test(plan) && /\(demonstrate\)/.test(plan) && /is in the fleet report/.test(plan), plan);
+  assert.ok(/is in the fleet report \(fleet\)/.test(lookUp(w, gen, 'army')), 'and the army report points to the fleet\'s');
+});
 console.log('All checks passed.');

@@ -489,6 +489,9 @@ function resolve(w, pid, us) {
   // Each staff's own account of the day, for whoever gave the orders: its own figures as counted, the enemy's as estimated, and what told.
   const ground = `the ${p.terrain === 'hills' ? 'hills' : p.terrain === 'mountain' ? 'mountains' : p.terrain} of ${p.name}${pass ? ', a pass' : bridge ? ', a river crossing' : river > 1 ? ', behind its river' : ''}`;
   const worksText = [p.fort >= 1 && holds ? `a fortress of the ${['first', 'second', 'third'][Math.ceil(p.fort) - 1] ?? 'third'} order` : '', p.trench && holds ? `${p.trench > 1 ? 'two lines' : 'a line'} of prepared field works` : '', deepest >= 1 ? `trenches the troops had dug themselves over ${deepest >= 4 ? 'many months' : deepest >= 2 ? 'some months' : 'a few weeks'}` : ''].filter(Boolean).join(', ');
+  // Whoever attacked a place and did not take it has seen what holds it: the men, and the works they stand in. The staff keeps that for a while.
+  if (p.controller !== atkSide[0] || !atkWins) for (const id of atkSide) { const k = w.countries[id]; if (!k?.alive) continue; const book = (k.scouted ||= {}); for (const x of Object.keys(book)) if (w.turn - book[x].turn > 6) delete book[x];
+    book[pid] = { turn: w.turn, men: men(D), works: worksText, holder: defCountry }; }
   const because = (key, us, mine, theirs) => {
     const lostIt = (told[key] > 1) !== (us === 'A'), pc = v => Math.round(v * 100);
     if (key === 'numbers') { const crowd = us === 'A' ? crowdA : crowdD, n = us === 'A' ? wasA : wasD; return lostIt ? (crowd < .9 && n > (us === 'A' ? wasD : wasA) ? `the ground let only about ${about(n * crowd)} thousand of our ${about(n)} thousand come into action at once` : 'they had more men in action than we did') : 'we had more men in action than they did'; }
