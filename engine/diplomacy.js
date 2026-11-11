@@ -117,7 +117,8 @@ export function diplomacyStep(w) {
       if (g.id === victim.id || sideOf(war, g.id) === 'a') continue;
       const bound = (w.guarantees || []).some(x => x.by === g.id && x.of === victim.id) ? 'guarantee' : hasTreaty(w, g.id, victim.id, 'alliance') ? 'alliance' : w.treaties.some(t => t.active && t.kind === 'protection' && t.protector === g.id && t.parties.includes(victim.id)) ? 'protection' : null; if (!bound) continue;
       const key = `${g.id}>${victim.id}`, seen = war.called ||= {};
-      if (sideOf(war, g.id) === 'b') { if (seen[key] !== 'kept') { seen[key] = 'kept'; shame(w, g, 5, `it stood by ${victim.name} when ${victim.name} was attacked`); } continue; }
+      // Whoever is at war with the attacker has come to help, whether it entered this war or declared one of its own.
+      if (sideOf(war, g.id) === 'b' || war.a.some(id => atWar(w, g.id, id))) { if (seen[key] !== 'kept') { seen[key] = 'kept'; shame(w, g, 5, `it stood by ${victim.name} when ${victim.name} was attacked`); } continue; }
       if (!seen[key]) { seen[key] = w.turn; say(w, w.characters[g.leader], 'Foreign Ministry', `${victim.name}, to which we are bound by ${bound === 'guarantee' ? 'our guarantee' : 'alliance'}, is at war: ${war.name}. Our word is at stake. If we have not come in on its side within half a year, the world will know what our word is worth.`); }
       else if (typeof seen[key] === 'number' && w.turn - seen[key] >= 2) { seen[key] = 'failed'; for (const t of w.treaties) if (t.active && t.secret && t.kind === 'alliance' && t.parties.includes(g.id) && t.parties.includes(victim.id)) reveal(w, t, victim); shame(w, g, -10, `it left ${victim.name} to fight alone in spite of its ${bound}`); g.legitimacy = clamp(g.legitimacy - 2, 0, 100); news(w, `${g.name} has not come to the help of ${victim.name}, in spite of its ${bound}.`, { kind: 'diplomacy', countries: [g.id, victim.id] }); }
     }

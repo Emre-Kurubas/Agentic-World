@@ -1,6 +1,6 @@
 // Institutions, parliament and treaty clauses. The agent writes freely what to found, the referee translates it to these rules, the code decides the outcome.
 import { clamp, sum, news, rand, nextId } from './util.js';
-import { GOODS, GOOD_LABEL, aliveCountries } from './world.js';
+import { GOODS, GOOD_LABEL, aliveCountries, atWar } from './world.js';
 import { distance, installLeader } from './politics.js';
 import { incapacitated } from './health.js';
 import { shame } from './diplomacy.js';
@@ -335,7 +335,7 @@ export function treatyStep(w) {
         // Every other signatory owes its help to the one attacked.
         for (const x of t.parties) for (const ally of t.parties) for (const war of w.wars) {
           const key = t.multi ? `${war.id}:${ally}` : war.id;
-          if (ally === x || !war.active || war.civil || !war.b.includes(x) || war.a.includes(ally) || war.b.includes(ally) || cl.called[key] || w.turn - war.start < 2 || war.start < (t.turn ?? 0)) continue;
+          if (ally === x || !war.active || war.civil || !war.b.includes(x) || war.a.includes(ally) || war.b.includes(ally) || war.a.some(id => atWar(w, ally, id)) || cl.called[key] || w.turn - war.start < 2 || war.start < (t.turn ?? 0)) continue;
           cl.called[key] = true;
           breach(w, t, cl, ally, `${w.countries[ally]?.name} did not enter the war on the side of ${w.countries[x]?.name}, which was attacked (${war.name}).`);
         }

@@ -709,21 +709,26 @@ export function applyOp(w, actor, op) {
     }
     case 'amphibious': {
       // A landing needs a coast to embark from, water that can be crossed, a surface fleet holding the far shore and ships enough to carry the men.
+      // Troops carried to a coast of their own country's, an ally's or one opened to them need no squadron: only ships, and water no enemy holds.
       const u = w.units[op.unit], p = w.provinces[op.to]; if (!u || u.country !== c.id || !p?.coast) return fail('Invalid landing order.');
       const from = w.provinces[u.province];
       if (u.province === p.id) return fail('The unit is already there.');
       if (!from.coast) return fail('The unit must first march to the coast to embark.');
       if (u.shipped === w.turn) return fail('This unit has already been at sea this quarter.');
-      if (!atWar(w, c.id, p.controller) && p.controller !== c.id) return fail('You are not at war with whoever holds that coast.');
+      const ours = p.controller === c.id || hasTreaty(w, c.id, p.controller, 'alliance') || hasTreaty(w, c.id, p.controller, 'military_access');
+      if (!atWar(w, c.id, p.controller) && !ours) return fail('You are not at war with whoever holds that coast, and it is not open to our troops (an alliance or a right of passage would open it).');
       if (p.controller !== c.id && hasTreaty(w, c.id, p.controller, 'armistice')) return fail('An armistice with them is in force: no landing while it lasts. It would have to be broken first (break_treaty).');
       const escort = Object.values(w.fleets).filter(f => f.country === c.id && kindOf(f) !== 'submarine' && !f.port && p.seas.includes(f.sea) && !enemyHolds(w, f.sea, c.id));
-      if (!escort.length) return fail('You need a surface fleet at sea, holding the water off the target coast (a squadron lying in harbour covers nothing).');
+      if (!ours && !escort.length) return fail('You need a surface fleet at sea, holding the water off the target coast (a squadron lying in harbour covers nothing).');
+      if (ours && p.seas.every(s => enemyHolds(w, s, c.id))) return fail(`The enemy commands the water off ${p.name}: no transport can put in there until it is driven off.`);
       const ways = from.seas.flatMap(s => p.seas.map(t => seaPath(w, s, t, c.id))).filter(Boolean).sort((a, b) => a.length - b.length), way = ways[0]; if (!way) return fail('No sea route joins the two coasts.');
       if (way.length - 1 > 12) return fail(`The crossing is ${way.length - 1} seas: too far for transports in one quarter. The troops must embark from a coast within twelve seas of the landing place.`);
       { const held = way.find(s => enemyHolds(w, s, c.id)); if (held) return fail(`The enemy commands ${seaLabel(w, held)} on the way: transports cannot cross water an enemy squadron holds.`); }
       // The men cross in merchant ships taken up for the quarter: two thousand, with their horses and stores, to each unit of tonnage.
       const lift = liftOf(c); if (u.men > lift + 1e-9) return fail(`The merchant ships that can be taken up this quarter carry about ${Math.round(lift)} thousand men with their stores (${Math.round(c.shipping ?? 0)} of tonnage, ${LIFT} thousand men to each); this unit has ${Math.round(u.men)} thousand. Send a detachment (move with men, then land that), wait for next quarter's ships, or lay down merchant ships (build_ship with kind merchant).`);
       c._lifted = (c._lifted || 0) + u.men / LIFT;
+      if (ours) { u.from = 'sea'; delete u.attack; u.province = p.id; u.men *= p.port > 0 ? 1 : .98; u.morale = clamp(u.morale - 3, 0, 100); u.target = null; u.dug = 0; u.shipped = w.turn;
+        return { ok: true, msg: `${menText(u.men)} were carried by sea to ${p.name}${p.port > 0 ? ' and landed at its quays' : ', and put ashore over the open beach'}. The merchant ships that carried them are out of trade for the quarter; the unit marches again next quarter.` }; }
       u.from = 'sea'; delete u.attack; u.province = p.id; u.men *= Math.max(.3, .9 - (p.battery || 0) * .15); u.morale = clamp(u.morale - 10, 0, 100); u.target = null; u.dug = 0; u.shipped = w.turn;
       return { ok: true, msg: `${Math.round(u.men)} thousand men were put ashore at ${p.name}.` };
     }

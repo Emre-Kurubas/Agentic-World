@@ -546,6 +546,13 @@ ok('Leaving an attacked ally alone is a breach', () => {
   w.wars.push({ id: 'SZ', a: ['U3'], b: ['U1'], civil: false, active: true, start: w.turn, name: 'Z' }); treatyStep(w); assert.equal(t.breaches.length, 0, 'time is allowed');
   w.turn += 2; treatyStep(w); assert.equal(t.breaches.at(-1).party, 'U2'); w.turn += 8; treatyStep(w); assert.equal(t.breaches.length, 1, 'a single breach per war');
 });
+import { diplomacyStep as wordStep } from '../engine/diplomacy.js';
+chain('An ally that fights the attacker in a war of its own has come to help: its word is kept, not broken', () => {
+  const w = fresh(), ally = w.countries.U2, victim = w.countries.U1, foe = w.countries.U3; w.treaties.push({ id: 'A-al', kind: 'alliance', parties: ['U1', 'U2'], active: true, pending: false, terms: '', clauses: [], breaches: [], turn: w.turn });
+  w.wars.push({ id: 'S-a', a: ['U3'], b: ['U1'], civil: false, active: true, start: w.turn, name: 'a' }, { id: 'S-b', a: ['U2'], b: ['U3'], civil: false, active: true, start: w.turn, name: 'b' });
+  const before = ally.honour ?? 60; for (let i = 0; i < 4; i++) { wordStep(w); w.turn++; } assert.ok(!(ally.honourLog || []).some(x => /left .* to fight alone/.test(x.why)) && (ally.honour ?? 60) >= before, `it is not said to have left its ally alone: ${JSON.stringify(ally.honourLog)}`);
+  assert.ok((ally.honourLog || []).some(x => /stood by/.test(x.why)), 'it is credited with standing by its ally');
+});
 ok('A term treaty ends, institution and law events are written to the ledger', () => {
   const { w, c, l } = parliamentWorld(); applyOp(w, l, { op: 'propose_treaty', target: 'U2', kind: 'trade', turns: 1, clauses: [{ type: 'tariff', rate: .05 }] }); const t = w.treaties.at(-1); applyOp(w, leaderOf(w, 'U2'), { op: 'accept_treaty', id: t.id }); w.turn += 1; treatyStep(w); assert.equal(t.active, false);
   const snap = snapshotState(w); applyOp(w, l, { op: 'create_institution', name: 'Port Board', budget_pct_gdp: .002, powers: ['industry'] }); applyOp(w, l, { op: 'propose_law', title: 'Port Act', text: 'x' }); applyOp(w, l, { op: 'suspend_parliament', turns: 3 });
@@ -2386,6 +2393,10 @@ chain('The fleet and the shore: ships shell a coast they lie off and the shore g
   // A landing.
   const l = twoNavies(), troops = soldier(l.w, 'U1', l.ha.id, 6), idle = l.ship('U1', l.hb.seas[0], 10, 'cruiser'); idle.port = l.ha.id;
   assert.ok(/covers nothing/.test(applyOp(l.w, l.gen, { op: 'amphibious', unit: troops.id, to: l.hb.id }).msg), 'ships lying in harbour cover no landing');
+  // Along one's own coast no squadron is needed: only ships, and water no enemy holds off the place.
+  { const own = countryProvinces(l.w, 'U1').find(p => p.coast && p.seas.length && p.id !== l.ha.id && (basesOf(l.w, 'U1')[p.seas[0]]?.d ?? 99) <= 12); assert.ok(own, 'another stretch of our own coast'); const corps = soldier(l.w, 'U1', l.ha.id, 8), round = applyOp(l.w, l.gen, { op: 'amphibious', unit: corps.id, to: own.id });
+    assert.ok(round.ok && corps.province === own.id && /carried by sea/.test(round.msg) && corps.men > 7.8, `troops go round by sea to our own coast with no squadron at sea: ${round.msg}`); l.a._lifted = 0;
+    const foe = makeFleet(l.w, l.e, own.seas[0], 30, 'cruiser'); l.w.seaPower = Object.fromEntries(own.seas.map(x => [x, { [l.e]: 30 }])); const back = soldier(l.w, 'U1', l.ha.id, 4), shut = applyOp(l.w, l.gen, { op: 'amphibious', unit: back.id, to: own.id }); assert.ok(!shut.ok && /enemy commands/.test(shut.msg), shut.msg); delete l.w.fleets[foe.id]; l.w.seaPower = {}; l.a._lifted = 0; }
   delete idle.port; militaryStep(l.w); const landed = applyOp(l.w, l.gen, { op: 'amphibious', unit: troops.id, to: l.hb.id }); assert.ok(landed.ok && troops.province === l.hb.id && troops.from === 'sea', `with the squadron at sea off the beach the troops go ashore: ${landed.msg}`);
 });
 
