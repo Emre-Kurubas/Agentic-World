@@ -165,7 +165,7 @@ function endWar(w, a, b, annex) {
   for (const [holder, home] of [[a, b], [b, a]]) {
     const h = w.countries[holder], c = w.countries[home], n = h?.captives?.[home] || 0; if (!(n > 0)) continue; delete h.captives[home]; if (!c?.alive) continue;
     const provs = Object.values(w.provinces).filter(p => p.owner === home && p.controller === home), pop = sum(provs, provincePop) || 1; for (const p of provs) p.pops.workers.n += n * provincePop(p) / pop; c.reserve = (c.reserve || 0) + n;
-    news(w, `About ${Math.round(n)} thousand prisoners of war held by ${h.name} have gone home to ${c.name}.`, { kind: 'war', countries: [holder, home] });
+    news(w, `About ${n < 1 ? `${Math.max(1, Math.round(n * 10)) * 100}` : `${Math.round(n)} thousand`} prisoners of war held by ${h.name} have gone home to ${c.name}.`, { kind: 'war', countries: [holder, home] });
   }
   settleOccupations(w);
 }
