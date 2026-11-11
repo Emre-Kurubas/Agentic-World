@@ -19,30 +19,30 @@ const OFFICES = { treasury: /treasur|embezz|skim|customs|lease|tax|contract|offe
 
 // What the matter is, who has a hand in it, what about it is plain fact, and which traces belong to it.
 function matterOf(w, c, into) {
-  const key = String(into ?? '').trim(), people = ids => [...new Set(ids)].map(id => w.characters[id]).filter(x => x?.alive);
+  const key = String(into ?? '').trim(), own = (o, k) => !!o && Object.hasOwn(o, k), people = ids => [...new Set(ids)].map(id => w.characters[id]).filter(x => x?.alive);
   const posts = post => Object.values(w.characters).filter(x => x.alive && x.country === c.id && (x.post === post || x.clerkOf === post)).map(x => x.id);
-  if (w.firms?.[key] && w.firms[key].country === c.id) { const f = w.firms[key], law = c.labourLaw, owner = w.characters[f.owner];
+  if (own(w.firms, key) && w.firms[key].country === c.id) { const f = w.firms[key], law = c.labourLaw, owner = w.characters[f.owner];
     return { kind: 'works', key, name: f.name, persons: people([f.owner]), re: new RegExp(`${f.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|safety|wage|strike|disaster|works|mine`, 'i'),
       plain: [`${f.name} belongs to ${f.owner === STATE ? 'the state' : owner?.name ?? 'no one in particular'}; it pays ${r2(f.wage ?? 1)} of the going wage and spends ${r2(f.safety ?? .3)} of 1 on safety${law ? ` (the law requires ${law.wage ? `${r2(law.wage)} and ` : ''}${r2(law.safety)}${(f.safety ?? .3) < law.safety - .001 ? ': it is under the legal floor' : ''})` : ' (no law sets a floor)'}; last quarter it made ${r2(f.lastProfit ?? 0)} after tax and paid ${r2(f.lastTax ?? 0)} in tax; a buyer would give about ${n(firmValue(w, f))} for it${f.disasterAt != null ? `; its last disaster was in ${quarterLabel(f.disasterAt)}` : ''}.`] }; }
   const inst = (c.institutions || []).find(i => i.id === key || String(i.name).toLowerCase() === key.toLowerCase());
   if (inst) return { kind: 'body', key: inst.id, name: inst.name, persons: people([inst.head, ...(inst.members || []), inst.founder]), re: new RegExp(`${String(inst.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|fund|skim|drew|budget`, 'i'),
     plain: [`${inst.name} draws ${r2((inst.budget ?? 0) * 100)} in the hundred of the country's output${inst.amount ? ` and ${n(inst.amount)} a quarter from its founder` : ''}; it is funded to ${n((inst.funding ?? 1) * 100)} in the hundred and stands at ${n((inst.strength ?? 0) * 100)} of 100${inst._quarter?.used?.skim ? `; ${r2(inst._quarter.used.skim)} was drawn out of it by its head this quarter` : ''}.`] };
-  const k = (w.contracts || []).find(x => x.id === key);
+  const k = (w.contracts || []).find(x => x.id === key && [x.a, x.b].some(id => w.characters[id]?.country === c.id));
   if (k) return { kind: 'contract', key, name: `contract ${k.id}`, persons: people([k.a, k.b]), re: new RegExp(`${k.id}|contract|commission|bribe|offer`, 'i'),
     plain: [`${k.id}, between ${w.characters[k.a]?.name ?? k.a} and ${w.characters[k.b]?.name ?? k.b}, is ${k.status}${k.pay ? `; ${n(k.pay)} a quarter is paid under it${k.purse ? ' out of the treasury' : ''}` : ''}${k.good ? `; ${n(k.amount)} of ${k.good} a quarter is to be delivered${k.delivered != null ? `, and ${n(k.delivered)} was delivered last quarter` : ''}` : ''}. Its terms: ${String(k.terms).slice(0, 300)}`] };
   const o = (w.offers || []).find(x => x.id === key && x.country === c.id);
   if (o) return { kind: 'offer', key, name: `the arrangement ${o.id}`, persons: people([o.from, o.to]), re: /offer|lease|suppl|purse|paid|took/i, plain: [o.status === 'running' ? `${o.id} is in force: ${o.text}.` : `${o.id} is ${o.status}.`] };
-  if (OFFICES[key]) { const run = (w.offers || []).filter(x => x.status === 'running' && x.country === c.id && (key === 'army' ? x.kind === 'supply' : x.kind === 'lease')), b = c.lastBooks;
+  if (own(OFFICES, key)) { const run = (w.offers || []).filter(x => x.status === 'running' && x.country === c.id && (key === 'army' ? x.kind === 'supply' : x.kind === 'lease')), b = c.lastBooks;
     const who = key === 'army' ? [c.general, ...Object.values(w.units).filter(u => u.country === c.id).map(u => u.commander), ...posts('army')] : key === 'police' ? posts('police') : [...posts('treasury'), ...(key === 'customs' ? [] : [c.leader])];
     const plain = key === 'army' ? [`The forces are paid and supplied to ${n((c.militaryFunding ?? 1) * 100)} in the hundred of what they cost${run.length ? `; the army's stores are bought under ${run.map(x => `${x.id} (from the suppliers of ${w.characters[x.from]?.name}'s house, at about ${n(x.drain)} a quarter over the price)`).join(', ')}` : ''}.`]
       : key === 'police' ? [`The police stand at ${n(c.police ?? 0)} of 100.`]
       : [`${b ? `Of what was assessed last quarter about ${n((b.collect ?? 1) * 100)} in the hundred was collected, and about ${n((b.graft ?? 0) * 100)} in the hundred of what was collected stuck to the hands it passed through. ` : ''}${run.length ? `The customs are leased under ${run.map(x => `${x.id} to the house of ${w.characters[x.from]?.name}, which keeps about ${n(x.drain)} a quarter`).join(', ')}.` : 'No lease or farm of the revenue is in force.'}`];
     return { kind: 'office', key, name: key === 'army' ? 'the army\'s stores and pay' : key === 'police' ? 'the police' : key === 'customs' ? 'the customs' : 'the treasury', persons: people(who), re: OFFICES[key], plain, leases: run }; }
-  const p = w.provinces[key];
+  const p = own(w.provinces, key) ? w.provinces[key] : null;
   if (p && p.controller === c.id) return { kind: 'province', key, name: `the administration of ${p.name}`, persons: people([p.governor]), re: new RegExp(`${p.name}|governor|tax|levy|bribe`, 'i'), plain: [`${p.name}: unrest ${n(p.unrest)} of 100${p.governor && w.characters[p.governor]?.alive ? `; ${w.characters[p.governor].name} governs it` : '; it has no governor of its own'}.`] };
-  const dead = w.characters[key.replace(/^death:/, '')];
-  if (dead && !dead.alive && dead.death) { const plot = (w.plots || []).find(x => x.kind === 'assassination' && x.target === dead.id);
-    return { kind: 'death', key: dead.id, name: `the death of ${dead.name}`, persons: people(plot ? [plot.leader, ...(plot.members || [])] : []), re: /./, plot, plain: [`${dead.name} ${dead.death.how ?? 'died'} in ${quarterLabel(dead.death.turn)}.`] }; }
+  const deadKey = key.replace(/^death:/, ''), dead = own(w.characters, deadKey) ? w.characters[deadKey] : null;
+  if (dead && !dead.alive && dead.death && dead.country === c.id) { const plot = (w.plots || []).find(x => x.kind === 'assassination' && x.target === dead.id);
+    return { kind: 'death', key: dead.id, name: `the death of ${dead.name}`, persons: people(plot ? [plot.leader, ...(plot.members || [])] : []), re: /kill|shot|assassin|murder|poison/i, plot, plain: [`${dead.name} ${dead.death.how ?? 'died'} in ${quarterLabel(dead.death.turn)}.`] }; }
   return null;
 }
 export const INTO = 'a works (its id, SR...), a body of the state or a foundation (its id or name), a contract (CT...) or an arrangement with a banking house (OF...), an office (treasury, customs, army, police), a province of ours (P...), or a death (death:K...)';
@@ -51,7 +51,7 @@ export function inquiryOp(w, actor, c, op, h) {
   const { fail, num } = h, state = governs(w, c, actor);
   if (op.op === 'inspect') {
     if (!state) return fail('The inspectors of works answer to whoever governs. An owner knows his own works (my_companies); anybody else can have a works looked into (inquire).');
-    const one = op.id ? w.firms?.[op.id] : null, all = Object.values(w.firms || {}).filter(f => f.country === c.id && isOpen(f) && (one ? f.id === one.id : op.sector === 'mines' ? f.sector === 'mine' : op.sector === 'works' ? f.sector !== 'mine' : true));
+    const one = op.id && w.firms && Object.hasOwn(w.firms, op.id) ? w.firms[op.id] : null, all = Object.values(w.firms || {}).filter(f => f.country === c.id && isOpen(f) && (one ? f.id === one.id : op.sector === 'mines' ? f.sector === 'mine' : op.sector === 'works' ? f.sector !== 'mine' : true));
     if (op.id && !one) return fail('No such works.'); if (!all.length) return fail('There is no works of that kind in the country.');
     const sweep = !one && h.allowance(`inspection`, 1, 1) <= 0, law = c.labourLaw, kept = clamp(.3 + c.bureaucracy / 200 + labourInspectors(c) * .4, .2, 1), visit = clamp(kept + .25, .2, 1), lines = [], under = [];
     for (const f of all) { const boss = w.characters[f.owner], was = f.safety ?? .3, short = law && f.owner !== STATE && was < law.safety - .001;

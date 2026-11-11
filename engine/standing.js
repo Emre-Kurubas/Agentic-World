@@ -28,7 +28,7 @@ const watchWords = (w, x) => x.kind === 'person' ? `${w.characters[x.key]?.name 
 export const standingWords = (w, ch) => {
   const out = [], mine = watchesOf(w, ch); if (mine.length) out.push(`Kept under watch: ${mine.map(x => watchWords(w, x)).join(', ')}.`);
   const c = w.countries[ch.country];
-  for (const d of c?.delegations || []) { const to = d.seat ? w.characters[c[d.seat]] : w.characters[d.to]; if (d.by === ch.id) out.push(`Left in the hands of ${to?.name ?? d.seat ?? d.to}: ${d.ops.join(', ')}.`); else if (to?.id === ch.id) out.push(`Left in your hands by ${w.characters[d.by]?.name ?? 'the government'}, to order as your own: ${d.ops.join(', ')}.`); }
+  for (const d of c?.delegations || []) { const to = d.seat ? w.characters[c[d.seat]] : w.characters[d.to]; if (d.by === ch.id || governs(w, c, ch)) out.push(`Left in the hands of ${to?.name ?? d.seat ?? d.to}: ${d.ops.join(', ')}.`); else if (to?.id === ch.id) out.push(`Left in your hands by ${w.characters[d.by]?.name ?? 'the government'}, to order as your own: ${d.ops.join(', ')}.`); }
   for (const so of (w.standingOrders || []).filter(x => x.by === ch.id)) out.push(`Order ${so.id}, waiting: ${so.words}, then ${so.then.map(o => o.op).join(', ')}${so.label ? ` ("${so.label}")` : ''}.`);
   return out;
 };
@@ -50,7 +50,7 @@ export function standingOp(w, actor, c, op, h) {
         if (!here) return fail(`${person.name} is not within reach of anybody of ours who could watch: what happens abroad is the secret service's work (spy, recruit_informant).`);
         if (staff && !state && !['officer', 'general'].includes(person.role) && !Object.values(w.units).some(u => u.commander === person.id)) return fail('The staff watches its own: officers and commanders. Anybody else is for the police, which answer to whoever governs.');
       }
-      if ((kind === 'party' || kind === 'province') && !state && kind === 'province') return fail('A province is watched by the police and the gendarmes, who answer to whoever governs.');
+      if (kind === 'province' && !state) return fail('A province is watched by the police and the gendarmes, who answer to whoever governs.');
       if (kind === 'province' && prov.controller !== c.id) return fail('That province is not in our hands.');
       if (kind === 'frontier' && !state && !staff) return fail('The frontier is watched by the staff, for whoever governs or commands.');
       if (kind === 'frontier' && (!target?.alive || target.id === c.id)) return fail('No such state.');
@@ -59,7 +59,7 @@ export function standingOp(w, actor, c, op, h) {
       const fee = official ? 0 : Math.max(1, num(op.amount, 0, 20, 1)); if (!official && actor.wealth < fee) return fail(`Men who watch are paid: ${fee} a quarter, and you have not got it.`);
       list.push({ id: nextId(w, 'W'), by: actor.id, country: c.id, kind, key, state: official, fee, since: w.turn, ...(kind === 'frontier' ? { seen: round5(menFacing(w, c, target)) } : {}) });
       const what = kind === 'person' ? `What ${person.name} does in secret from now on is likely to be seen as it is done and laid in your file on ${person.name}; ${official ? 'letters to and from that door are opened where the law does not forbid it; ' : ''}if a circle gathers about that door you will hear of it. Somebody who is watched may come to notice it.`
-        : kind === 'party' ? 'Each quarter you are told what its chest holds, how its organisation stands and who paid into it.'
+        : kind === 'party' ? (official ? 'Each quarter you are told what its chest holds, how its organisation stands and who paid into it.' : 'Each quarter you are told what its chest holds and how its organisation stands; who pays into it only the police could see.')
         : kind === 'province' ? 'Each quarter you are told how the province stands and what moves under its surface.'
         : `The staff counts what stands across that frontier each quarter (about ${round5(menFacing(w, c, target))} thousand men now within a march of it) and tells you at once when the number changes much.`;
       return { ok: true, msg: `${watchWords(w, list.at(-1))} is under watch${official ? '' : `, at ${fee} a quarter from your purse`}. ${what} The watch stands until you take it off (watch with lift:true).` };
@@ -131,6 +131,7 @@ export function standingStep(w, apply) {
 
 // What the watchers saw this quarter. Run at the end of the quarter, when everything that was done in it has been done.
 export function watchStep(w) {
+  for (const c of aliveCountries(w)) if (c.delegations?.length) { const gone = c.delegations.filter(d => !(d.by === c.leader || d.by === (c.regent ?? c.heir))); for (const d of gone) say(w, d.seat ? w.characters[c[d.seat]] : w.characters[d.to], c.name, `What ${w.characters[d.by]?.name ?? 'the former government'} left in your hands (${d.ops.join(', ')}) lapsed with the government that gave it.`); if (gone.length) c.delegations = c.delegations.filter(d => !gone.includes(d)); }
   const list = w.watches || []; if (!list.length) return;
   for (const x of [...list]) { const by = w.characters[x.by], c = w.countries[x.country], drop = why => { list.splice(list.indexOf(x), 1); if (by?.alive && why) say(w, by, 'The watch', why); };
     if (!by?.alive || !c?.alive || by.status === 'imprisoned') { drop(''); continue; }
@@ -142,8 +143,8 @@ export function watchStep(w) {
       if (seen.length) { const file = by.dossiers[t.id] ||= { turn: w.turn, about: t.name, facts: [] }; file.turn = w.turn; file.facts = [...new Set([...file.facts, ...seen])].slice(-12); say(w, by, 'The watch', `On ${t.name} (${t.id}) this quarter: ${seen.join(' ')} It is in your file on ${t.name}.`); }
       if (!x.noticed && rand(w) < clamp(.08 + t.power / 500 - (x.state ? (c.police ?? 40) / 500 : 0), .03, .3)) { x.noticed = w.turn; say(w, t, 'Your household', 'You are being watched: the same men stand across the street day after day, and your letters come a day late. Whose men they are you can guess.'); }
     } else if (x.kind === 'party') { const p = c.parties.find(q => q.id === x.key); if (!p) { drop('The party you had watched is no more.'); continue; }
-      const gifts = (p.gifts || []).filter(g => g.turn === w.turn), was = x.seen; x.seen = { funds: Math.round(p.funds ?? 0), org: Math.round(p.organisation ?? p.org ?? 0) };
-      if (!was || was.funds !== x.seen.funds || was.org !== x.seen.org || gifts.length) say(w, by, 'The watch', `The ${p.name} this quarter: ${x.seen.funds} in its chest${was ? ` (it was ${was.funds})` : ''}, its organisation at ${x.seen.org} of 100${gifts.length ? `; paid into it by ${gifts.map(g => `${w.characters[g.from]?.name ?? 'an unknown hand'} (${Math.round(g.amount)})`).join(', ')}` : '; nobody was seen paying into it'}.`);
+      const gifts = x.state ? (p.gifts || []).filter(g => g.turn === w.turn) : [], was = x.seen; x.seen = { funds: Math.round(p.funds ?? 0), org: Math.round(p.organization ?? 0) };
+      if (!was || was.funds !== x.seen.funds || was.org !== x.seen.org || gifts.length) say(w, by, 'The watch', `The ${p.name} this quarter: ${x.seen.funds} in its chest${was ? ` (it was ${was.funds})` : ''}, its organisation at ${x.seen.org} of 100${gifts.length ? `; paid into it by ${gifts.map(g => `${w.characters[g.from]?.name ?? 'an unknown hand'} (${Math.round(g.amount)})`).join(', ')}` : x.state ? '; nobody was seen paying into it' : '; who pays into it hired men cannot see'}.`);
     } else if (x.kind === 'province') { const p = w.provinces[x.key]; if (!p || p.controller !== c.id) { drop(`${p?.name ?? 'The province'} is no longer in our hands; the watch there is at an end.`); continue; }
       const was = x.seen; x.seen = Math.round(p.unrest); if (was == null || Math.abs(was - x.seen) >= 4) say(w, by, 'The watch', `${p.name} (${p.id}): unrest stands at ${x.seen} of 100${was != null ? ` (it was ${was})` : ''}${p.unrest >= 55 ? '; it is close to rising' : ''}${(c.cells ?? 0) >= 25 ? '; the armed underground has men there' : ''}.`);
     } else { const o = w.countries[x.key]; if (!o?.alive) { drop(''); continue; } const now = round5(menFacing(w, c, o)), was = x.seen ?? now; x.seen = now;

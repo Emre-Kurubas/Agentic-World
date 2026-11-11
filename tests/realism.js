@@ -3764,6 +3764,11 @@ chain('Standing matters: a watch sees what is done in secret and opens the post,
   const s2 = applyOp(w, G, { op: 'standing_order', when: { troops: { province: over.id, country: d.id, below: 20 } }, then: [{ op: 'set_posture', posture: 'ordinary', unit: u.id }] }); assert.ok(s2.ok, s2.msg);
   carryStanding(w); assert.equal(u.posture, 'defensive', 'while sixty thousand stand there the order waits'); for (const x of Object.values(w.units)) if (x.country === d.id && x.province === over.id) x.men = 2; carryStanding(w); assert.ok(u.posture !== 'defensive', 'and is given when they are gone');
   const s3 = applyOp(w, G, { op: 'standing_order', when: { after: 3 }, then: [{ op: 'set_posture', posture: 'defensive', unit: u.id }] }), id = /SO\d+/.exec(s3.msg)[0]; assert.ok(applyOp(w, G, { op: 'cancel_order', id }).ok && !w.standingOrders.some(x => x.id === id), 'an order that waits can be withdrawn');
+  // What a ruler left in another's hands goes with the ruler: his successor did not give it, sees no stale grant at work, and the holder is told.
+  assert.ok(applyOp(w, L, { op: 'delegate', to: 'general', powers: ['demobilize'] }).ok && c.delegations.length === 1); c.leader = O.id; G.inbox = [];
+  assert.ok(/is not authorized for this operation: demobilize/.test(applyOp(w, G, { op: 'demobilize', men: 1 }).msg), 'a grant does not outlast the government that gave it'); watchStep(w);
+  assert.ok(!c.delegations.length && G.inbox.some(m => /lapsed with the government that gave it/.test(m.text)), 'it is struck off and its holder told'); c.leader = L.id;
+  for (const bad of ['constructor', '__proto__', 'toString']) assert.ok(!applyOp(w, L, { op: 'inquire', into: bad }).ok && !applyOp(w, L, { op: 'inspect', id: bad }).ok && !applyOp(w, L, { op: 'watch', character: bad }).ok, `a key that is no key of ours is refused: ${bad}`);
   const doc = fs.readFileSync(new URL('../agents/prompts.js', import.meta.url), 'utf8'); assert.ok(/watch\{character\|party\|province\|target/.test(doc) && /delegate\{to,powers/.test(doc) && /standing_order\{when,then/.test(doc), 'the referee knows the three');
   assert.ok(/kept under watch \(watch:/.test(String(answer(w, L, 'plots'))) && /standing_order/.test(String(answer(w, L, 'institutions'))), 'and the seats can read that such things are done');
 });

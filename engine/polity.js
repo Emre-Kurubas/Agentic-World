@@ -26,7 +26,7 @@ const memberOf = (i, id) => i.head === id || (i.members || []).includes(id);
 export function delegated(c, actor, opName) {
   // A power can sit with a body the person belongs to, or have been left in his own hands by whoever governs (delegate), by name or by seat.
   return activeInstitutions(c).some(i => memberOf(i, actor.id) && (i.authority || []).includes(opName) && (i.strength ?? 0) >= .2)
-    || (c.delegations || []).some(d => (d.seat ? c[d.seat] === actor.id : d.to === actor.id) && d.ops.includes(opName));
+    || (c.delegations || []).some(d => (d.by === c.leader || d.by === (c.regent ?? c.heir)) && (d.seat ? c[d.seat] === actor.id : d.to === actor.id) && d.ops.includes(opName));
 }
 
 // As the vetoing institution's strength and court independence grow, the leader cannot get past it.
