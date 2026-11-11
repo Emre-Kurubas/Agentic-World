@@ -205,7 +205,8 @@ ok('Ledger: failed operations and state changes are written', () => {
   const again = snapshotState(w); c.unrest = 86; assert.ok(!buildEntries(w, { trace: [], rulings: [], messages: [] }, again).some(e => e.text.includes('uprising')), 'the same threshold should not be written again');
 });
 
-await (async () => {
+// QUICK=1 leaves out the 520-quarter game that fills a store on disk (five minutes of the suite's seven); the full run is the one that counts.
+if (!process.env.QUICK) await (async () => {
   const w = createWorld(base), store = tempStore(), g = new Game({ world: w, cfg: base, backend: { kind: 'mock' }, store });
   const orig = g.turn.bind(g); g.turn = async () => { await orig(); if (w.turn >= 520) g.stop = true; };
   await g.run(0);
@@ -2604,5 +2605,80 @@ chain('What a staff sees across a frontier depends on how it looks: at peace att
   // The sea, where the chief of staff already reads.
   const plan = lookUp(w, gen, 'war_plan:U2'); if (countryProvinces(w, 'U2').some(p => p.port > 0)) assert.ok(/can shell a harbour, its batteries and the troops there \(bombard\)/.test(plan) && /\(lay_mines\)/.test(plan) && /\(demonstrate\)/.test(plan) && /is in the fleet report/.test(plan), plan);
   assert.ok(/is in the fleet report \(fleet\)/.test(lookUp(w, gen, 'army')), 'and the army report points to the fleet\'s');
+});
+
+// The balance of the land war (2026-11-11): what was measured to weigh too much or too little, set where the age had it.
+import { supplyWords as fedHow } from '../engine/military.js';
+const scattered = i => (Math.imul(i + 1, 2654435761) >>> 0) % 2147483647;
+let duelBase = null;
+const duel = (o = {}) => { duelBase ||= twoRoads(1); const w = structuredClone(duelBase.w), a = w.countries.U1, d = w.countries.U2, gen = w.characters[a.general]; gen.skill = w.characters[d.general].skill = o.skill ?? 1;
+  const f = { w, a, d, over: w.provinces[duelBase.over.id], e1: w.provinces[duelBase.e1.id], e2: w.provinces[duelBase.e2.id], gen, said: () => gen.inbox.map(m => m.text).join('\n') };
+  if (!o.radio) delete f.a.techs.radio; const D = o.def ?? 60, A = o.atk ?? 120;
+  Object.assign(f.over, o.ground || {}); f.d.intel.U1 = o.intel ?? 90;
+  const def = soldier(f.w, 'U2', f.over.id, D); def.dug = o.dug ?? 0; if (o.dug) def.posture = 'defensive';
+  const atk = o.two ? [soldier(f.w, 'U1', f.e1.id, A / 2), soldier(f.w, 'U1', f.e2.id, A / 2)] : [soldier(f.w, 'U1', f.e1.id, A)];
+  if (o.guns) { const g = makeUnit(f.w, 'U1', f.e1.id, o.guns, 1, 80, 'artillery'); g.morale = 70; g.equip = 1; atk.push(g); }
+  if (o.rng != null) f.w.rng = o.rng;
+  const r = applyOp(f.w, f.gen, { op: 'offensive', to: f.over.id, units: atk.map(u => u.id), ...(o.order || {}) }); assert.ok(r.ok, r.msg);
+  if (o.seen) for (const u of atk) u.attack.seen = f.w.turn;
+  return { ...f, def, atk, D, A }; };
+chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
+  // The same fight, the same dice, the enemy warned both times: only the man in command differs.
+  const hurt = skill => { const f = duel({ dug: 5, ground: { trench: 2 }, rng: 99, seen: true }); f.gen.skill = skill; const [b] = quarter(f.w); assert.ok(b, 'a battle'); assert.ok(!b.prisoners, 'nobody was routed'); return f.D - f.def.men; };
+  const plain = hurt(1), able = hurt(1.3);
+  assert.ok(able > plain * 1.08 && able < plain * 1.25, `an able general's assault does a tenth or two more harm than a competent one's, not two fifths more (${plain.toFixed(2)} -> ${able.toFixed(2)})`);
+  // What he does better than anyone is not to be seen coming.
+  const spotted = skill => { let n = 0; for (let i = 0; i < 80; i++) { const f = duel({ intel: 30, rng: scattered(i), order: { prepare: 1 } }); f.gen.skill = skill; quarter(f.w); if (f.atk.some(u => u.attack?.seen != null)) n++; } return n; };
+  const poorSeen = spotted(.8), ableSeen = spotted(1.5);
+  assert.ok(ableSeen < poorSeen - 5, `troops massing under an able general are seen less often (${ableSeen} of 80) than under a poor hand (${poorSeen} of 80)`);
+  // And beaten, he brings his men off.
+  const left = skill => { const f = duel({ atk: 240, rng: 7, seen: true }); f.w.characters[f.d.general].skill = skill; const [b] = quarter(f.w); assert.ok(b.attackerWon, 'four to one in the open carries the place'); return b.prisoners; };
+  assert.ok(left(1.5) < left(.7), 'a beaten force under an able general leaves fewer prisoners than one under a poor hand');
+  assert.ok(/timetable/.test(lookUp(duel().w, duel().gen, 'commanders')), 'and the staff says what a commander\'s ability is good for');
+});
+chain('A bombardment is the work of the heavy guns, it eats the arsenal, and it is heard: the field guns that march with the infantry barely scratch dug works; heavy batteries knock in more than half of them and burn more shells than the assault itself; and an attack opened by the guns surprises nobody', () => {
+  const go = o => { const f = duel({ dug: 5, ground: { trench: 2 }, rng: 31, seen: true, ...o }), a0 = f.a.stock.arms, [b] = quarter(f.w); assert.ok(b, 'a battle'); return { b, burnt: a0 - f.a.stock.arms }; };
+  const none = go({}), field = go({ order: { shelling: true } }), heavy = go({ order: { shelling: true }, guns: 15 });
+  assert.ok(field.b.shelled > 0 && field.b.shelled <= 12, `field guns alone knock in a tenth of the works at most (${field.b.shelled}%)`);
+  assert.ok(heavy.b.shelled >= 50, `fifteen thousand gunners with heavy pieces knock in half and more (${heavy.b.shelled}%)`);
+  assert.ok(heavy.burnt - none.burnt > 10, `and that bombardment burns more than the assault it prepares (${none.burnt.toFixed(1)} without, ${heavy.burnt.toFixed(1)} with)`);
+  // Nobody saw these men form up; whether the defender is surprised depends on whether the guns spoke first.
+  const unseen = shelling => { for (let i = 0; i < 40; i++) { const f = duel({ dug: 5, intel: 0, rng: scattered(i), order: shelling ? { shelling: true } : {} }), [b] = quarter(f.w); if (b && f.atk.every(u => f.w.units[u.id]) && !/forming up opposite/.test(f.w.characters[f.d.general].inbox.map(m => m.text).join(' '))) return { b, said: f.said() }; } return null; };
+  const quiet = unseen(false), loud = unseen(true); assert.ok(quiet && loud, 'attacks the other staff never saw forming up');
+  assert.ok(quiet.b.surprise, 'an unseen attack without a bombardment falls as a surprise'); assert.ok(!loud.b.surprise, 'the same attack opened by a bombardment does not');
+  assert.ok(/bombardment gave them warning/.test(loud.said), 'and the staff says what the guns cost it: ' + loud.said.slice(-400));
+  const f = duel(); assert.ok(/heavy pieces/.test(lookUp(f.w, f.gen, 'army')) && /warning/.test(lookUp(f.w, f.gen, 'army')), 'the army report says what a bombardment needs and what it gives away');
+});
+chain('Coming at a defender from two sides is worth the risk to the timetable: columns that arrive together hit a good fifth harder than the same men up one road', () => {
+  const mean = two => { let s = 0; for (let i = 0; i < 60; i++) { const f = duel({ skill: 1.6, radio: true, atk: 100, two, dug: 5, rng: scattered(i), seen: true }), [b] = quarter(f.w); assert.ok(b && (!two || b.sides === 2), 'both columns were up'); s += f.D - f.def.men - (b.prisoners || 0); } return s / 60; };
+  const one = mean(false), both = mean(true);
+  assert.ok(both > one * 1.19 && both < one * 1.36, `the defender loses a quarter more to an attack from two sides (${one.toFixed(2)} -> ${both.toFixed(2)})`);
+});
+chain('War is dearer than the peace budget knows, a long one wears out even the side that is winning, and the men who have served are still there to call: an army in the field costs twice its barracks keep and more on foreign soil; a country tires little in a first year of war and faster every quarter after; an inherited state has more trained men at home than under arms, and left alone it keeps them', () => {
+  const w = fresh(), c = w.countries.U1; for (const f of Object.values(w.fleets)) delete w.fleets[f.id]; for (const p of Object.values(w.provinces)) { p.fort = 0; p.battery = 0; }
+  const peace = upkeepCost(w, c); w.wars.push({ id: 'S-c', a: ['U1'], b: ['U2'], civil: false, active: true, start: w.turn, name: 'c' }); const war = upkeepCost(w, c);
+  assert.ok(war > peace * 1.9 && war < peace * 2.1, `an army in the field at home costs twice its keep in barracks (${(war / peace).toFixed(2)})`);
+  const abroad = countryProvinces(w, 'U2')[0]; for (const u of Object.values(w.units)) if (u.country === 'U1') u.province = abroad.id;
+  assert.ok(upkeepCost(w, c) > peace * 2.4, 'and two and a half times on the enemy\'s soil');
+  assert.ok(/twice/.test(lookUp(w, w.characters[c.general], 'army')), 'the army report says so');
+  // No battle, no province lost: only the quarters going by.
+  const tired = n => { const x = fresh(), k = x.countries.U1; for (const u of Object.values(x.units)) if (!['U1'].includes(u.country)) delete x.units[u.id]; x.wars.push({ id: 'S-t', a: ['U1'], b: ['U2'], civil: false, active: true, start: x.turn, name: 't' }); k.warExhaustion = 0; for (let i = 0; i < n; i++) quarter(x); return k.warExhaustion; };
+  const year = tired(4), three = tired(12);
+  assert.ok(year < 5, `a first year of war sits lightly (${year.toFixed(1)})`); assert.ok(three > year * 4.5, `three years of it weigh far more than three times as much (${year.toFixed(1)} -> ${three.toFixed(1)})`);
+  // The reserve.
+  const v = inherited(), army = id => Object.values(v.units).filter(u => u.country === id && !u.called).reduce((s, u) => s + u.men, 0), was = Object.fromEntries(aliveCountries(v).map(k => [k.id, k.reserve / army(k.id)]));
+  for (const k of aliveCountries(v)) assert.ok(was[k.id] >= 1.2, `${k.name} inherits more trained men at home than it keeps under arms (${was[k.id].toFixed(2)})`);
+  run(v, 20); for (const k of aliveCountries(v)) { const now = k.reserve / army(k.id); assert.ok(Math.abs(now / was[k.id] - 1) < .2, `${k.name}'s reserve stays where it was inherited (${was[k.id].toFixed(2)} -> ${now.toFixed(2)} of the standing army)`); }
+});
+chain('A harbour lands only so much: an army fed across the sea through a small port goes short once it is larger than the port can feed, and its staff is told which harbour is the neck of the bottle', () => {
+  const w = fresh(), a = w.countries.U1; for (const u of Object.values(w.units)) delete w.units[u.id]; for (const f of Object.values(w.fleets)) delete w.fleets[f.id]; w.treaties = [];
+  const home = countryProvinces(w, 'U1').find(p => p.seas.length); assert.ok(home, 'a coast of our own'); home.port = Math.max(home.port, 1);
+  while (seasonOf(w) !== 'summer') w.turn++;
+  const mine = new Set(countryProvinces(w, 'U1').map(p => p.id)), far = Object.values(w.provinces).find(p => !mine.has(p.id) && p.owner !== 'U1' && p.seas.length && p.terrain !== 'tundra' && !p.neighbors.some(n => mine.has(n))); assert.ok(far, 'a shore that no road of ours reaches');
+  far.controller = 'U1'; far.port = 1; far.rail = 0;
+  const few = soldier(w, 'U1', far.id, 40); assert.equal(supplyAt(w, few).factor, 1, 'forty thousand men live well off a small harbour');
+  w.turn++; soldier(w, 'U1', far.id, 200); const s = supplyAt(w, few);
+  assert.ok(s.factor <= .6, `a quarter of a million do not (${s.factor})`); assert.ok(/harbour/.test(fedHow(w, few)) && /can land/.test(fedHow(w, few)), 'and the staff names the harbour: ' + fedHow(w, few));
+  far.port = 3; w.turn++; assert.ok(supplyAt(w, few).factor > s.factor + .2, 'a great port feeds them better');
 });
 console.log('All checks passed.');

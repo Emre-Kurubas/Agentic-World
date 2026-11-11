@@ -11,6 +11,8 @@ import { answered, tieOf } from './diplomacy.js';
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 const menAt = (w, cid, pid) => sum(Object.values(w.units).filter(u => u.country === cid && u.province === pid), u => u.men);
 // Troops told to hold their fire, by an order to the unit or by a standing order for everything that faces that neighbour.
+// Trained men at home for every man under arms, where a state has been left to itself.
+export const RESERVE = 1.5;
 export const holdsFire = (c, u, toward) => !!(u.holdFire || c.holdFire?.[toward]);
 const heldAt = (w, c, pid, toward) => sum(Object.values(w.units).filter(u => u.country === c.id && u.province === pid && holdsFire(c, u, toward)), u => u.men);
 const grudge = (c, id) => (c.grudges ||= {})[id] ||= { incident: 0, kin: 0 };
@@ -59,8 +61,9 @@ export function frontierStep(w) {
     const felt = sum(Object.entries(c.grudges), ([id, g]) => !w.countries[id]?.alive || atWar(w, c.id, id) ? 0 : (g.incident * .12 + g.kin * .25 * nat) * (1 - answered(w, c, id))), old = sum(Object.entries(c.grudges), ([id, g]) => !w.countries[id]?.alive || atWar(w, c.id, id) ? 0 : (g.kinBase ?? 0) * .25 * nat);
     c.grief = clamp(felt - old, 0, 12);
     // A reserve of trained men: each year some of the standing army goes home with its training, and the oldest reservists pass out of reach.
+    // Short service fills it: a country keeps about one and a half times its standing army in men who have served and can be called.
     const army = sum(Object.values(w.units).filter(u => u.country === c.id && !u.called), u => u.men);
-    c.reserve = Math.max(0, (c.reserve ?? army * .6) * .97 + army * .012);
+    c.reserve = Math.max(0, (c.reserve ?? army * RESERVE) * .97 + army * RESERVE * .03);
   }
 }
 

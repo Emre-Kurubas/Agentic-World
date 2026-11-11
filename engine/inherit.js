@@ -21,6 +21,7 @@ import { writeChronicles, writeLives } from './chronicle.js';
 import { updateStrategic, updateRoutes, costOfCapacity, costOfPolice, settleBases } from './economy.js';
 import { outfitFleets } from './navy.js';
 import { outfitArmies } from './military.js';
+import { RESERVE } from './frontier.js';
 
 const R = (a, b) => [a, b];
 const ARCHETYPES = [
@@ -165,7 +166,7 @@ export function inheritStates(w) {
   // The people around the seats are there from the first day, and the state's offices work as they are staffed.
   w.burdens = true; w.friction = true; seatCourt(w);
   // An army that has stood for years has sent trained men home every year: they are its reserve.
-  for (const c of cs) c.reserve = Object.values(w.units).filter(u => u.country === c.id).reduce((a, u) => a + u.men, 0) * .6;
+  for (const c of cs) c.reserve = Object.values(w.units).filter(u => u.country === c.id).reduce((a, u) => a + u.men, 0) * RESERVE;
   settle(w, cs);
   balance(w, cs);
   for (let i = 0; i < 8; i++) partyStep(w);
