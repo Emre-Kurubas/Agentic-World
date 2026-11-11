@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { aliveCountries, ROLES, countryProvinces } from '../engine/world.js';
 import { beginTurn, stepWorld } from '../engine/step.js';
-import { applyOp, printable } from '../engine/ops.js';
+import { applyOp, printable, hangOn, onceTaken } from '../engine/ops.js';
 import { news, rand, clamp, quarterLabel } from '../engine/util.js';
 import { openPost, isMinor } from '../engine/court.js';
 import { burden } from '../engine/burdens.js';
@@ -378,16 +378,29 @@ export class Game {
   // still the referee saying that the thing cannot be done at all.
   // One operation of a ruling may hang on the engine's answer to an earlier one: if_done n is carried out only if operation n was, if_refused n
   // only if the engine refused it ("land if the way is open; if not, dig in where they stand"). Where the earlier one waits on events of the
-  // quarter (ships still on their way), what hangs on it waits with it.
+  // quarter (ships still on their way), what hangs on it waits with it. An attack is such an order whatever the quarter: it is accepted today and
+  // decided by the fighting, so what hangs on an offensive (or on a move against ground the enemy holds) waits for the place to fall, or for the
+  // attack on it to fail (ops.js hangOn, carryTaken); and an operation may name the place it waits for itself (once_taken).
   applyRuling(ch, { narrative, prob, public: pub, ops, source, decision, decisionText }) {
     const w = this.w, c = w.countries[ch.country];
     const chancy = op => op?.op === 'custom', diced = prob > 0 && prob < 1 && (!ops.length || ops.some(chancy)), luck = prob >= 1 || (prob > 0 && (!diced || rand(w) < prob));
-    const results = [];
+    const results = [], nodes = [];
     if (prob > 0) ops.forEach((op, i) => {
-      const { if_done, if_refused, ...plain } = op ?? {}, hang = Number.isInteger(if_done) ? 'done' : Number.isInteger(if_refused) ? 'refused' : null, n = hang === 'done' ? if_done : if_refused, on = hang && n >= 0 && n < i ? results[n] : null;
+      const { if_done, if_refused, once_taken, ...plain } = op ?? {}, hang = Number.isInteger(if_done) ? 'done' : Number.isInteger(if_refused) ? 'refused' : null, n = hang === 'done' ? if_done : if_refused, on = hang && n >= 0 && n < i ? results[n] : null;
       if (on?.waits) {
         const a = (w.awaiting || []).find(x => x.key === on.waits && x.actor === ch.id);
         if (a) { (a[hang === 'done' ? 'then' : 'else'] ||= []).push(plain); results.push({ op: op.op, ok: true, waits: on.waits, msg: `${op.op} waits with ${ops[n].op}: it is carried out this quarter only if that ${hang === 'done' ? 'is carried out' : 'cannot be'}, and the staff reports which.` }); return; }
+      }
+      const side = hang === 'refused' ? 'else' : 'then', place = on?.takes && on.ok !== false && !on.skipped ? on.takes : null, placeName = id => w.provinces[id]?.name ?? id;
+      if (once_taken != null && once_taken !== '') {
+        const r = onceTaken(w, ch, String(once_taken), plain);
+        if (r) { const { node, ...told } = r; if (node) nodes[i] = node; results.push({ op: op.op, ...told }); return; }
+      } else if (hang && nodes[n]) {
+        const node = { op: plain, then: [], else: [] }; nodes[n][side].push(node); nodes[i] = node;
+        results.push({ op: op.op, ok: true, waits: results[n].waits, msg: `${op.op} waits with ${ops[n].op}: it is ordered only ${hang === 'done' ? 'once that has been carried out' : 'if that cannot be'}, and the staff reports which.` }); return;
+      } else if (place) {
+        nodes[i] = hangOn(w, ch, place, side, { op: plain, then: [], else: [] });
+        results.push({ op: op.op, ok: true, waits: `take:${place}`, msg: hang === 'done' ? `${op.op} waits for ${placeName(place)} to fall: it is ordered once the place is in our hands, not before, and lapses if the attack on it is beaten off or given up. The staff reports which.` : `${op.op} is held back for the case that the attack on ${placeName(place)} fails or is given up: it is ordered then, and lapses if the place falls. The staff reports which.` }); return;
       }
       if (on && (hang === 'done' ? on.ok === false || on.skipped : on.ok !== false || on.skipped)) { results.push({ op: op.op, ok: true, skipped: true, msg: `${op.op} was not attempted: it was ordered only in case ${ops[n].op} ${hang === 'done' ? 'was carried out, and it was not' : 'was refused, and it was not'}.` }); return; }
       if (chancy(op) && !luck) { results.push({ op: op.op, ok: false, chance: true, msg: 'It did not come off.' }); return; }
@@ -404,7 +417,7 @@ export class Game {
     // The person who gave the order is told what actually came of it, in the engine's own words, not only what was intended.
     if (source === 'referee' && narrative) {
       const plain = m => m && !['Applied.', 'Recorded.'].includes(m), said = results.filter(r => plain(r.msg)).map(r => `${r.ok ? '' : `${r.op} was NOT carried out: `}${r.msg}`).join(' ');
-      const verdict = !success ? 'Failed' : refused.length === results.length && results.length ? 'Not carried out' : refused.length ? 'Only partly carried out' : waits ? 'Ordered, and waiting on the quarter' : 'Succeeded';
+      const verdict = !success ? 'Failed' : refused.length === results.length && results.length ? 'Not carried out' : refused.length ? 'Only partly carried out' : waits ? (results.some(r => String(r.waits).startsWith('take:')) ? 'Ordered; part of it waits on the fighting' : 'Ordered, and waiting on the quarter') : 'Succeeded';
       ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: ${verdict}: ${narrative}${said ? ` [${said.slice(0, 1500)}]` : ''}`); ch.outcomes = ch.outcomes.slice(-60); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
     }
     // What is recorded as the probability is the chance that was actually rolled; where the referee named one and no dice were due, its figure is kept beside it.

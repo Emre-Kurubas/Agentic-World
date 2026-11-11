@@ -71,15 +71,26 @@ export function frontierStep(w) {
 }
 
 // Calling up the reserve. Men leave the fields and the works for the depots within the quarter; rifles come out of the arsenal; everyone sees it.
-export function mobilize(w, c, share, pay, fail) {
-  const want = Math.max(0, (c.reserve || 0) * clamp(share, .05, 1)); if (want < 1) return fail('There is no reserve worth calling up.');
+// How many are called, and where they form, is the order's to say: so many thousand men, a share of the reserve, or all of it (a general
+// mobilisation). An order that names no number is not read as a general mobilisation: it is sent back. (World 15: "call up 40 thousand men of the
+// reserve" and "mobilise 120 thousand reservists at Brunland and Brunenya" each called up the whole reserve, 272 and 295 thousand, and formed them
+// where the engine chose, because the operation could carry a share and nothing else and all of it was the default; both armies went half paid.)
+export function mobilize(w, c, op, pay, fail) {
+  if (typeof op === 'number') op = { share: op };
+  const reserve = Math.max(0, c.reserve || 0), asked = op?.men != null && Number.isFinite(+op.men) ? Math.max(0, +op.men) : null, general = op?.all === true, part = op?.share != null && Number.isFinite(+op.share) ? clamp(+op.share, .05, 1) : null;
+  if (asked == null && part == null && !general) return fail(`Say how many are to be called: so many thousand men (men), a share of the reserve (share), or all of it, which is a general mobilisation (all). The reserve holds about ${Math.round(reserve)} thousand trained men.`);
+  const want = asked != null ? Math.min(asked, reserve) : reserve * (general ? 1 : part); if (want < 1) return fail(reserve < 1 ? 'There is no reserve worth calling up.' : 'A call-up of less than a thousand men is not a mobilisation.');
+  const named = [...new Set([].concat(op?.at ?? []).map(String))].map(id => w.provinces[id]).filter(Boolean), abroad = named.filter(p => p.owner !== c.id || p.controller !== c.id);
+  if (abroad.length) return fail(`${abroad.map(p => p.name).join(', ')} ${abroad.length > 1 ? 'are' : 'is'} not in our hands: reservists form in provinces of the country's own.`);
   const provs = countryProvinces(w, c.id).filter(p => p.owner === c.id), hands = sum(provs, p => p.pops.peasants.n + p.pops.workers.n), men = Math.min(want, Math.max(0, hands * .12));
   const arms = Math.min(men * .05, Math.max(0, c.stock.arms || 0)), armed = arms / .05; if (armed < 1) return fail('The arsenals hold no rifles for the men who would be called.');
   const called = Math.round(Math.min(men, armed) * 10) / 10, note = pay(c, called * .15 * c.priceLevel); if (note === null) return fail('The treasury is empty and lenders will not cover it.');
+  // Fewer than were ordered come only for a reason, and the reason is said.
+  const short = asked != null && called < asked - .5 ? ` ${Math.round(asked)} thousand were ordered: ${asked > reserve + .5 && called >= reserve - .5 ? `the reserve holds no more than ${Math.round(reserve)}` : armed < men - .5 ? `the arsenal has rifles for no more than ${Math.round(armed)}` : `no more than ${Math.round(men)} can be taken from field and workshop at once`}.` : '';
   c.stock.arms -= called * .05; c.reserve -= called;
   for (const p of provs) for (const k of ['peasants', 'workers']) p.pops[k].n = Math.max(1, p.pops[k].n - called * p.pops[k].n / Math.max(hands, 1e-9));
-  // They form at the capital and the largest towns.
-  const depots = [w.provinces[c.capital], ...provs.filter(p => p.id !== c.capital).sort((x, y) => provincePop(y) - provincePop(x))].filter(Boolean).slice(0, 3), each = called / depots.length;
+  // They form where the order says, and at the capital and the largest towns where it says nothing.
+  const depots = named.length ? named.slice(0, 8) : [w.provinces[c.capital], ...provs.filter(p => p.id !== c.capital).sort((x, y) => provincePop(y) - provincePop(x))].filter(Boolean).slice(0, 3), each = called / depots.length;
   for (const p of depots) { const u = makeUnit(w, c.id, p.id, each, .9, 55 + c.legitimacy * .3, 'infantry'); u.called = true; u.morale = 60; }
   news(w, `${c.name} has ordered mobilisation: about ${Math.round(called)} thousand reservists are joining the colours.`, { kind: 'war', countries: [c.id] });
   for (const o of aliveCountries(w)) { if (o.id === c.id) continue; const near = countryProvinces(w, o.id).some(p => p.neighbors.some(n => w.provinces[n].controller === c.id)); if (!near) continue;
@@ -87,7 +98,7 @@ export function mobilize(w, c, share, pay, fail) {
     for (const ch of [w.characters[o.leader], w.characters[o.general]]) if (ch?.alive) say(w, ch, 'General Staff', `${c.name} is mobilising: about ${Math.round(called)} thousand reservists called to the colours, on top of the standing army. They will be under arms within the quarter. Whether it is meant for us is not known.`); }
   // Whoever calls them up is told at once what he has taken on: what the forces now cost a quarter, and how much of that the vote for the army covers.
   const cost = upkeepCost(w, c), voted = c.budget.military * c.gdp * (c.paidRatio ?? 1), bill = ` With them the forces cost about ${Math.round(cost)} a quarter${inTheField(w, c.id) ? '' : ' in barracks, and twice that once they take the field'}; the military budget provides ${Math.round(voted)}, which is ${Math.round(voted / Math.max(cost, 1) * 100)} in the hundred of it. Below about 85 in the hundred men who are not paid go home, and the rest lose heart.`;
-  return { ok: true, msg: `About ${called} thousand reservists are called up and form at ${depots.map(p => p.name).join(', ')}; ${Math.round(c.reserve)} thousand remain in the reserve. They left fields and works to come, they must be paid like the rest of the army, and every neighbour knows.${bill}${note}` };
+  return { ok: true, msg: `About ${called} thousand reservists are called up and form at ${depots.map(p => p.name).join(', ')}; ${Math.round(c.reserve)} thousand remain in the reserve.${short} They left fields and works to come, they must be paid like the rest of the army, and every neighbour knows.${bill}${note}` };
 }
 // Sending the reservists home again.
 // how: null stands every reservist down; a positive number is that many thousand men, a negative one that share of them; unit names one called-up body.

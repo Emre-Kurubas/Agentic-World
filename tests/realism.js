@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createWorld, aliveCountries, countryProvinces } from '../engine/world.js';
 import { beginTurn, stepWorld } from '../engine/step.js';
-import { applyOp, carryAwaited, printable } from '../engine/ops.js';
+import { applyOp, carryAwaited, carryTaken, printable } from '../engine/ops.js';
 import { executePlot } from '../engine/politics.js';
 import { makeParliament, treatyStep } from '../engine/polity.js';
 import { currencyStep, displacedDemand, exportEdge, localPrices } from '../engine/money.js';
@@ -1517,7 +1517,7 @@ chain('A state has a reserve of trained men: discharge fills it and returns the 
   const r = applyOp(w, boss, { op: 'mobilize', share: .5 }); assert.ok(r.ok, r.msg); const called = men() - before.men; assert.ok(called > 1 && Math.abs(called - (before.reserve - c.reserve)) < 1e-6, 'the men come out of the reserve at once');
   assert.ok(Math.abs(before.hands - hands() - called) < 1e-6, 'and out of the fields and works'); assert.ok(c.stock.arms < before.arms && upkeepCost(w, c) > before.cost, 'they take rifles from the arsenal and must be paid');
   assert.ok(w.newsThisTurn.some(e => /ordered mobilisation/.test(e.text)), 'it is public'); const neighbour = countryProvinces(w, 'U2').some(p => p.neighbors.some(n => w.provinces[n].controller === 'U1')); if (neighbour) assert.ok(far.inbox.some(m => /is mobilising/.test(m.text)), 'a neighbour is warned by its own staff');
-  c.stock.arms = 0; assert.equal(applyOp(w, boss, { op: 'mobilize' }).ok, false, 'men without rifles are not called');
+  c.stock.arms = 0; const bare = applyOp(w, boss, { op: 'mobilize', all: true }); assert.ok(!bare.ok && /no rifles/.test(bare.msg), 'men without rifles are not called');
   const back = applyOp(w, boss, { op: 'demobilize' }); assert.ok(back.ok, back.msg); assert.ok(Math.abs(men() - before.men) < 1e-6 && Math.abs(c.reserve - before.reserve) < 1e-6 && Math.abs(hands() - before.hands) < called * .6, 'standing down sends them home and back onto the roll');
 });
 import { justiceStep as justiceOf } from '../engine/justice.js';
@@ -3303,6 +3303,78 @@ chain('The law of peoples reaches the treasury, the building yards and the ranks
   assert.ok(barred.u && !barred.u.eth, 'where that people may not bear arms the regiment is raised from the others');
   assert.ok(new RegExp(`raised among the ${equal.X}`).test(lookUp(equal.w, equal.w.characters[equal.c.general], 'army')), 'the army list says whom a regiment was raised among');
 });
+chain('What is ordered to follow the capture of a place waits for the place to fall: "take it, and if it falls go on" is not two attacks on the same day; the second is ordered when the first has carried and what hung on the second then waits for the second; what was ordered in case of failure is ordered when the attack has failed; an order in another decision may name the place it waits for; given again, nothing multiplies; and the staff says what it is holding', () => {
+  // World 15, the fourth quarter: "B71 and the cavalry take Brunmarka; if it falls B71 goes on against Hazburga" came from the referee as two
+  // offensives for B71, the second with if_done; both were carried out on the day, the second replaced the first, and the army of a hundred thousand
+  // was sent against Hazburga while Brunmarka was left to five thousand horsemen and to a reserve ordered to "follow once it is taken".
+  const step = w => { w.battles = []; w.newsThisTurn = []; militaryStep(w, carryAwaited, carryTaken); w.turn++; };
+  const stage = () => { const f = twoRoads(1), { w, over } = f, beyond = w.provinces[over.neighbors.find(n => w.provinces[n].controller === 'U2' && n !== f.d.capital)]; Object.assign(beyond, { terrain: 'plains', fort: 0, trench: 0 }); return { ...f, beyond, game: new Game({ world: w, cfg: base, backend: { kind: 'mock' }, store: nullStore() }) }; };
+  const rule = (s, ops) => s.game.applyRuling(s.gen, { narrative: 'ordered', prob: 1, public: false, source: 'referee', ops });
+  // The place is carried: the first attack is not replaced on the day, and the next is ordered when the place has fallen.
+  const a = stage(), army = soldier(a.w, 'U1', a.e1.id, 120), reserve = soldier(a.w, 'U1', a.e2.id, 30); soldier(a.w, 'U2', a.over.id, 15);
+  const r = rule(a, [{ op: 'offensive', to: a.over.id, units: [army.id] }, { op: 'offensive', to: a.beyond.id, units: [army.id], if_done: 0 }, { op: 'set_posture', unit: army.id, posture: 'defensive', if_done: 1 }]);
+  assert.ok(r.success && r.results[1].waits === `take:${a.over.id}` && r.results[2].waits && army.attack.to === a.over.id, `the first attack stands and the second waits: ${JSON.stringify(r.results.map(x => x.msg.slice(0, 90)))}`);
+  assert.ok(/part of it waits on the fighting/.test(a.gen.outcomes.at(-1)) && /waits for .* to fall/.test(a.gen.outcomes.at(-1)), a.gen.outcomes.at(-1));
+  // An order in another decision names the place it waits for, and does not send the reserve against it by itself.
+  const follow = rule(a, [{ op: 'move', unit: reserve.id, to: a.over.id, once_taken: a.over.id }]); assert.ok(follow.results[0].waits === `take:${a.over.id}` && !reserve.target, follow.results[0].msg);
+  assert.ok(/Orders the staff is holding now: once .* is ours, offensive to [^.]*move to /.test(answer(a.w, a.gen, 'army')), 'the army report says what the staff is holding');
+  rule(a, [{ op: 'offensive', to: a.over.id, units: [army.id] }, { op: 'offensive', to: a.beyond.id, units: [army.id], if_done: 0 }]);
+  assert.ok(a.w.hanging.length === 1 && a.w.hanging[0].then.length === 2 && army.attack.to === a.over.id, `given twice in a quarter it is still one order: ${JSON.stringify(a.w.hanging)}`);
+  step(a.w);
+  assert.ok(a.over.controller === 'U1' && army.province === a.over.id && army.attack?.to === a.beyond.id && reserve.target === a.over.id, `the place is carried, the army is ordered on and the reserve follows: ${a.over.controller} ${army.province} ${army.attack?.to} ${reserve.target}`);
+  assert.ok(/is in our hands\. What was ordered to follow its capture: offensive: Offensive against [^]* go in next quarter/.test(a.said()) && /move: \S+ marches for/.test(a.said()), a.said().slice(-900));
+  assert.ok(a.w.hanging.length === 1 && a.w.hanging[0].province === a.beyond.id && a.w.hanging[0].then[0].op.op === 'set_posture' && army.posture !== 'defensive', 'what hung on the second attack now waits for the second place');
+  step(a.w); assert.ok(a.beyond.controller === 'U1' && army.province === a.beyond.id && army.posture === 'defensive' && !a.w.hanging.length, `one province a quarter, and the men dig in where the order said: ${a.beyond.controller} ${army.province} ${army.posture}`);
+  // The attack fails: what was ordered for that case is ordered, and what was to follow the capture lapses.
+  const b = stage(), few = soldier(b.w, 'U1', b.e1.id, 30), back = soldier(b.w, 'U1', b.e2.id, 30), wall = soldier(b.w, 'U2', b.over.id, 130); wall.dug = 2;
+  const rb = rule(b, [{ op: 'offensive', to: b.over.id, units: [few.id] }, { op: 'set_posture', unit: few.id, posture: 'defensive', if_refused: 0 }, { op: 'move', unit: back.id, to: b.over.id, if_done: 0 }]);
+  assert.ok(few.posture !== 'defensive' && !back.target && b.w.hanging[0].else.length === 1 && b.w.hanging[0].then.length === 1 && /held back for the case that the attack/.test(rb.results[1].msg), rb.results[1].msg);
+  step(b.w);
+  assert.ok(b.over.controller === 'U2' && few.province !== b.over.id && b.w.provinces[few.province].controller === 'U1' && few.posture === 'defensive' && !back.target && !b.w.hanging.length, `beaten, the men dig in where they fell back to and the reserve stays: ${b.over.controller} ${few.province} ${few.posture} ${back.target} ${JSON.stringify(b.w.hanging)}`);
+  assert.ok(/did not carry the place[^]*What was ordered for that case: set_posture[^]*lapses \(move\)/.test(b.said()), b.said().slice(-700));
+  // An order that names a place nobody is attacking is refused; one that names a place already ours is carried out at once.
+  const c3 = stage(), idle = soldier(c3.w, 'U1', c3.e2.id, 30);
+  const no = rule(c3, [{ op: 'move', unit: idle.id, to: c3.over.id, once_taken: c3.over.id }]); assert.ok(no.results[0].ok === false && /No attack of ours on .* is in hand/.test(no.results[0].msg) && !idle.target, no.results[0].msg);
+  const yes = rule(c3, [{ op: 'move', unit: idle.id, to: c3.e1.id, once_taken: c3.e1.id }]); assert.ok(yes.results[0].ok && !yes.results[0].waits && idle.target === c3.e1.id, 'a place already ours is no reason to wait');
+  // Given again a quarter later while the attack is still preparing, the order replaces what hung there.
+  const d4 = stage(), slow = soldier(d4.w, 'U1', d4.e1.id, 120); soldier(d4.w, 'U2', d4.over.id, 15);
+  const twice = () => rule(d4, [{ op: 'offensive', to: d4.over.id, units: [slow.id], prepare: 2 }, { op: 'offensive', to: d4.beyond.id, units: [slow.id], if_done: 0 }]);
+  twice(); step(d4.w); assert.ok(d4.over.controller === 'U2' && d4.w.hanging.length === 1, 'an attack still preparing is in hand, and what hangs on it waits');
+  twice(); assert.ok(d4.w.hanging.length === 1 && d4.w.hanging[0].then.length === 1 && d4.w.hanging[0].turn === d4.w.turn && slow.attack.to === d4.over.id, `ordered again a quarter later it is one order, not two: ${JSON.stringify(d4.w.hanging)}`);
+  assert.ok(/once_taken/.test(fs.readFileSync(new URL('../agents/prompts.js', import.meta.url), 'utf8')), 'the referee is told how an order waits for a place');
+});
+
+chain('A peace that gives land leaves the troops who hold that land where they stand, and troops in land that goes back march out over the nearest frontier, not to the capital', () => {
+  // World 15, the fifth quarter: the peace that ceded Brunmarka to Tirara sent Tirara's garrison of Brunmarka to the capital, because the war was
+  // wound up (every soldier out of land not his country's) before the province named in the treaty had changed hands; and the army in Hazburga,
+  // one province from its own frontier, was set down in the capital too, five quarters' march from where it was ordered to withdraw to.
+  const f = twoRoads(1), { w, a, d, over, e1 } = f, beyond = w.provinces[over.neighbors.find(n => w.provinces[n].controller === 'U2' && n !== d.capital)];
+  over.controller = 'U1'; beyond.controller = 'U1'; const garrison = soldier(w, 'U1', over.id, 50), field = soldier(w, 'U1', beyond.id, 100); garrison.posture = 'defensive';
+  assert.ok(applyOp(w, ld(w, d), { op: 'propose_treaty', target: 'U1', kind: 'peace', terms: 'The province is given up; the other goes back.', cede: [over.id] }).ok); const signed = applyOp(w, ld(w, a), { op: 'accept_treaty', target: 'U2' }); assert.ok(signed.ok, signed.msg);
+  assert.ok(over.owner === 'U1' && beyond.owner === 'U2' && beyond.controller === 'U2' && !atWarOf(w, 'U1', 'U2'), 'the land named changed hands, the rest went back, and the war is over');
+  assert.ok(garrison.province === over.id && garrison.posture === 'defensive', `the garrison of the ceded province stays where it stands: ${garrison.province}`);
+  assert.ok(field.province !== beyond.id && w.provinces[field.province].controller === 'U1' && beyond.neighbors.includes(field.province) && field.province !== a.capital, `the army in the province that went back stands just over the frontier: ${field.province} (capital ${a.capital}, ${e1.id})`);
+});
+
+chain('A call-up is for as many men as the order says and they form where it says: forty thousand ordered is forty thousand called, an order that names no number is sent back and calls nobody, more than the reserve holds calls what there is and says so, a general mobilisation has to be called one, and the referee and the staff are told so', () => {
+  // World 15: "call up 40 thousand men of the reserve" (Morovia) and "mobilise 120 thousand reservists at Brunland and Brunenya" (Hazland) reached
+  // the engine as mobilize with nothing in it, the only thing the operation could carry being a share, and each called up the whole reserve: 272
+  // and 295 thousand men, formed where the engine chose, and two armies paid at half and at a third.
+  const stage = () => { const w = fresh(), c = w.countries.U1; frontierOf(w); c.reserve = 200; c.stock.arms = 500; c.treasury = 5000; return { w, c, L: ld(w, c), called: () => Object.values(w.units).filter(u => u.country === 'U1' && u.called) }; };
+  const sum = us => us.reduce((s, u) => s + u.men, 0);
+  const a = stage(), towns = countryProvinces(a.w, 'U1').filter(p => p.id !== a.c.capital).slice(0, 2), r = applyOp(a.w, a.L, { op: 'mobilize', men: 40, at: towns.map(p => p.id) });
+  assert.ok(r.ok && Math.abs(sum(a.called()) - 40) < .11 && Math.abs(a.c.reserve - 160) < .11, `forty thousand ordered, forty thousand called: ${sum(a.called())}, ${a.c.reserve} left; ${r.msg.slice(0, 160)}`);
+  assert.ok(a.called().length === 2 && a.called().every(u => towns.some(p => p.id === u.province)) && new RegExp(`form at ${towns[0].name}, ${towns[1].name}`).test(r.msg), `and they form where the order said: ${a.called().map(u => u.province)}`);
+  const b = stage(), none = applyOp(b.w, b.L, { op: 'mobilize' }); assert.ok(!none.ok && /Say how many are to be called/.test(none.msg) && /about 200 thousand/.test(none.msg) && !b.called().length && b.c.reserve === 200, `an order with no number calls nobody: ${none.msg}`);
+  const over = applyOp(b.w, b.L, { op: 'mobilize', men: 500 }); assert.ok(over.ok && Math.abs(sum(b.called()) - 200) < .11 && /500 thousand were ordered: the reserve holds no more than 200/.test(over.msg), `more than there are calls what there is, and says so: ${over.msg.slice(0, 260)}`);
+  const g = stage(), all = applyOp(g.w, g.L, { op: 'mobilize', all: true }); assert.ok(all.ok && Math.abs(sum(g.called()) - 200) < .11 && g.called().some(u => u.province === g.c.capital), 'a general mobilisation calls the whole reserve, to the capital and the largest towns');
+  const h = stage(), half = applyOp(h.w, h.L, { op: 'mobilize', share: .25 }); assert.ok(half.ok && Math.abs(sum(h.called()) - 50) < .11, 'a share is still a share');
+  const f = stage(), theirs = countryProvinces(f.w, 'U2')[0], no = applyOp(f.w, f.L, { op: 'mobilize', men: 40, at: [theirs.id] }); assert.ok(!no.ok && /not in our hands/.test(no.msg) && !f.called().length, no.msg);
+  const few = stage(); few.c.stock.arms = 1; const thin = applyOp(few.w, few.L, { op: 'mobilize', men: 40 }); assert.ok(thin.ok && Math.abs(sum(few.called()) - 20) < .11 && /40 thousand were ordered: the arsenal has rifles for no more than 20/.test(thin.msg), thin.msg.slice(0, 300));
+  assert.ok(/mobilize\{men\?,share\?,all\?,at\?\}/.test(fs.readFileSync(new URL('../agents/prompts.js', import.meta.url), 'utf8')), 'the referee is told the order carries a number of men');
+  assert.ok(/A call-up is for as many as the order says/.test(answer(a.w, a.L, 'army')), 'and the army report says so to those who give it');
+});
+
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
   // The same fight, the same dice, the enemy warned both times: only the man in command differs.
   const hurt = skill => { const f = duel({ dug: 5, ground: { trench: 2 }, rng: 99, seen: true }); f.gen.skill = skill; const [b] = quarter(f.w); assert.ok(b, 'a battle'); assert.ok(!b.prisoners, 'nobody was routed'); return f.D - f.def.men; };
@@ -3516,7 +3588,7 @@ chain('Capital that is taxed past what it is used to does not all stay to be tax
 });
 chain('A man who leaves the army goes back to what he was: a reserve called from the fields and the works and sent home again leaves as many peasants and as many workers as there were, and a state cannot fill its factories by passing its villages through the barracks', () => {
   const w = fresh(), c = w.countries.U1, count = k => countryProvinces(w, 'U1').reduce((s, p) => s + p.pops[k].n, 0); c.reserve = 200; c.stock.arms = 500; c.treasury = c.gdp;
-  const land = count('peasants'), town = count('workers'), called = applyOp(w, ld(w, c), { op: 'mobilize' }); assert.ok(called.ok); assert.ok(count('peasants') < land - 50, 'most of those called come from the land');
+  const land = count('peasants'), town = count('workers'), called = applyOp(w, ld(w, c), { op: 'mobilize', all: true }); assert.ok(called.ok); assert.ok(count('peasants') < land - 50, 'most of those called come from the land');
   assert.ok(/military budget provides/.test(called.msg) && /in the hundred/.test(called.msg), 'whoever calls them up is told what the army now costs against what is voted for it: ' + called.msg);
   assert.ok(applyOp(w, ld(w, c), { op: 'demobilize' }).ok);
   assert.ok(Math.abs(count('peasants') / land - 1) < .005 && Math.abs(count('workers') / town - 1) < .005, `they go back where they came from (peasants ${Math.round(land)} -> ${Math.round(count('peasants'))}, workers ${Math.round(town)} -> ${Math.round(count('workers'))})`);

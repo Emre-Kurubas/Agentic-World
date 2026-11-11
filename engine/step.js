@@ -7,7 +7,7 @@ import { projectStep } from './projects.js';
 import { cultureStep } from './culture.js';
 import { adminStep } from './admin.js';
 import { contractStep } from './contracts.js';
-import { applyOp, carryAwaited } from './ops.js';
+import { applyOp, carryAwaited, carryTaken } from './ops.js';
 import { courtStep } from './court.js';
 import { labourStep, labourEnd } from './labour.js';
 import { undergroundStep } from './underground.js';
@@ -33,7 +33,7 @@ export function stepWorld(w) {
   firmStep(w);
   contractStep(w);
   bondStep(w);
-  militaryStep(w, carryAwaited);
+  militaryStep(w, carryAwaited, carryTaken);
   frontierStep(w);
   institutionStep(w);
   cultureStep(w);

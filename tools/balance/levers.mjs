@@ -30,7 +30,7 @@ const levers = [
   ['half the army sent home', (w, c) => Object.values(w.units).filter(u => u.country === c.id).map(u => ({ op: 'disband', unit: u.id, men: u.men / 2 }))],
   ['railways in the three largest provinces', big.map(p => ({ op: 'build', province: p, kind: 'railway' }))], ['roads in the three largest provinces', big.map(p => ({ op: 'build', province: p, kind: 'infrastructure' }))],
   ['farming works in the three largest provinces', big.map(p => ({ op: 'build', province: p, kind: 'farming' }))], ['offices in the three largest provinces', big.map(p => ({ op: 'build', province: p, kind: 'administration' }))],
-  ['a steel works at the capital', [{ op: 'build', province: c0.capital, kind: 'steel' }]], ['reserve called up', [{ op: 'mobilize' }]],
+  ['a steel works at the capital', [{ op: 'build', province: c0.capital, kind: 'steel' }]], ['reserve called up', [{ op: 'mobilize', all: true }]],
   ['gold standard left (floating)', [{ op: 'set_fx_regime', regime: 'floating' }]], ['capital controls', [{ op: 'set_capital_controls', closed: true }]],
 ];
 const d = (x, y, n = 1) => { const v = x - y; return (v >= 0 ? '+' : '') + (Math.round(v * 10 ** n) / 10 ** n); };

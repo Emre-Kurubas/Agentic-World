@@ -173,7 +173,7 @@ export function marchQuarters(w, u, to) {
   return cur === to ? q : null;
 }
 
-export function militaryStep(w, onStation = null) {
+export function militaryStep(w, onStation = null, afterFight = null) {
   // Behind an invading army the country it has overrun is not quiet. A province of the enemy's held by too few men for its people is a province
   // where bands cut the railway and waylay the wagons: nothing passes it by rail, and by road only slowly.
   for (const p of Object.values(w.provinces)) { const was = !!p.cut, pop = provincePop(p), thin = p.controller !== p.owner && w.countries[p.owner]?.alive && atWar(w, p.owner, p.controller) && garrisonHold(sum(Object.values(w.units).filter(u => u.province === p.id && u.country === p.controller && !u.barracks), u => u.men), pop) < 1;
@@ -249,6 +249,8 @@ export function militaryStep(w, onStation = null) {
   settleOccupations(w);
   // An attack order whose objective is no longer the enemy's has been carried out, or overtaken: it is spent.
   for (const u of Object.values(w.units)) if (u.attack && !fighting(w, u.country, w.provinces[u.attack.to]?.controller)) delete u.attack;
+  // What was ordered to follow the capture of a place, or its failure, is ordered now that the quarter's fighting has said which it was.
+  afterFight?.(w);
 }
 
 // An occupation does not outlive the war that made it: land held by a power no longer at war with its owner goes back, and troops left where they have no right to be go home.
@@ -260,10 +262,12 @@ export function settleOccupations(w) {
     else if (!holder?.alive || !atWar(w, p.owner, p.controller)) p.controller = p.owner;
   }
   for (const c of aliveCountries(w)) seat(w, c);
+  // They go back over the nearest frontier of their own country, by land; the capital is where they go only when no road leads home.
+  const nearest = u => { const seen = new Set([u.province]), q = [u.province]; while (q.length) for (const n of w.provinces[q.shift()].neighbors) { if (seen.has(n)) continue; seen.add(n); if (w.provinces[n].controller === u.country) return n; q.push(n); } return null; };
   for (const u of Object.values(w.units)) {
     if (mayStand(w, u.country, u.province)) continue;
-    const c = w.countries[u.country], home = w.provinces[c?.capital]?.controller === u.country ? c.capital : countryProvinces(w, u.country)[0]?.id;
-    if (home) { u.province = home; u.target = null; } else delete w.units[u.id];
+    const c = w.countries[u.country], home = nearest(u) ?? (w.provinces[c?.capital]?.controller === u.country ? c.capital : countryProvinces(w, u.country)[0]?.id);
+    if (home) { u.province = home; u.target = null; delete u.attack; } else delete w.units[u.id];
   }
 }
 // A government sits in a city it holds: its own land before occupied land, the largest first. Returns the new capital if it had to move.

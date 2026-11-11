@@ -139,6 +139,52 @@ export function carryAwaited(w) {
     (w.awaited ||= []).push({ turn: w.turn, actor: ch.id, country: c.id, op: a.op, ok: !!r.ok, text });
   }
 }
+// Orders that hang on a place being taken ("take Brunmarka; if it falls, go on against Hazburga"; "once it is ours the reserve follows and holds
+// it"). An attack is ordered in one quarter and decided by the fighting of that quarter or a later one, so what is to follow it cannot be carried out
+// on the day the order is given: it waits (w.hanging) until the place is in the hands of whoever ordered it, and is then ordered in his name; what
+// was ordered for the case that the attack fails is ordered once no attack of his country's on the place is in hand any more. The staff reports
+// which it was. Given again in a later quarter, what hangs on a place replaces what hung on it; nothing multiplies. (World 15, the fourth quarter:
+// "B71 and the cavalry take Brunmarka; if it falls B71 goes on against Hazburga" was carried out as two attack orders to the same unit on the same
+// day, the second replacing the first, so that the army went against Hazburga and Brunmarka was left to five thousand horsemen.)
+const inHand = (w, c, p) => p.siege?.by === c.id || Object.values(w.units).some(u => u.country === c.id && (u.attack?.to === p.id || u.target === p.id || u.province === p.id));
+export function hangOn(w, actor, pid, side, node) {
+  const q = (w.hanging ||= []);
+  for (let i = q.length - 1; i >= 0; i--) if (q[i].actor === actor.id && q[i].province === pid && q[i].turn < w.turn) q.splice(i, 1);
+  let h = q.find(x => x.actor === actor.id && x.province === pid); if (!h) q.push(h = { turn: w.turn, actor: actor.id, country: actor.country, province: pid, then: [], else: [] });
+  const same = JSON.stringify(node.op), was = h[side].find(x => JSON.stringify(x.op) === same); if (was) return was;
+  h[side].push(node); return node;
+}
+// An order that names the place it waits for (once_taken): carried out at once if the place is ours already, refused if nothing of ours is on its way
+// against it, and otherwise kept until it falls. Returns null where the order is simply to be carried out now.
+export function onceTaken(w, actor, pid, op) {
+  const c = w.countries[actor.country], p = w.provinces[pid]; if (!p) return { ok: false, msg: `No such province to wait for: ${pid}.` };
+  if (p.controller === c?.id) return null;
+  if (!atWar(w, c.id, p.controller)) return { ok: false, msg: `${p.name} is held by ${cname(w, p.controller)}, with whom there is no war: there is no attack on it for this order to wait on.` };
+  if (!inHand(w, c, p)) return { ok: false, msg: `No attack of ours on ${p.name} is in hand, so there is nothing for this order to wait on: order the attack first (offensive, or a move against it), and then what is to follow its capture.` };
+  const node = hangOn(w, actor, p.id, 'then', { op, then: [], else: [] });
+  return { ok: true, waits: `take:${p.id}`, node, msg: `${op.op} waits for ${p.name} to fall: it is ordered once the place is in our hands, and lapses if the attack on it is beaten off or given up. The staff reports which.` };
+}
+function carryNode(w, ch, node, fresh) {
+  const r = applyOp(w, ch, { ...node.op, _late: true }), line = `${node.op.op}${r.ok ? '' : ' was NOT carried out'}: ${r.msg}`, more = (node.then?.length || 0) + (node.else?.length || 0);
+  // What hangs on an attack that was itself waiting now waits for that attack in its turn.
+  if (r.ok && r.takes && more) { fresh.push({ turn: w.turn, actor: ch.id, country: ch.country, province: r.takes, then: node.then || [], else: node.else || [] }); return [line]; }
+  return [line, ...((r.ok ? node.then : node.else) || []).flatMap(n => carryNode(w, ch, n, fresh))];
+}
+export function carryTaken(w) {
+  const keep = [], fresh = [];
+  for (const h of (w.hanging || [])) {
+    const ch = w.characters[h.actor], c = ch && w.countries[ch.country], p = w.provinces[h.province]; if (!ch?.alive || !c?.alive || c.id !== h.country || !p) continue;
+    const ours = p.controller === c.id, foe = !ours && atWar(w, c.id, p.controller);
+    if (foe && inHand(w, c, p) && w.turn - h.turn <= 12) { keep.push(h); continue; }
+    const said = (ours ? h.then : foe ? h.else : []).flatMap(n => carryNode(w, ch, n, fresh)), lost = (ours ? h.else : foe ? h.then : [...h.then, ...h.else]).map(n => n.op.op);
+    if (!said.length && !lost.length) continue;
+    const head = ours ? `${p.name} is in our hands.` : foe ? `The attack on ${p.name} did not carry the place, and no attack of ours on it is in hand any more.` : `${p.name} is no longer the enemy's to take (${cname(w, p.controller)} holds it).`;
+    const text = `${head}${said.length ? ` What was ordered ${ours ? 'to follow its capture' : 'for that case'}: ${said.join(' ')}` : ''}${lost.length ? ` What was ordered ${ours ? 'for the case that the attack failed' : foe ? 'to follow its capture' : 'to hang on it'} lapses (${lost.join(', ')}).` : ''}`;
+    for (const x of new Set([ch, w.characters[c.leader], w.characters[c.general]])) tell(w, x, 'General Staff', text);
+    (w.awaited ||= []).push({ turn: w.turn, actor: ch.id, country: c.id, op: { op: 'follow', province: p.id }, ok: ours, text });
+  }
+  w.hanging = [...keep, ...fresh];
+}
 const openDebt = (w, id) => (w.debts || []).find(d => d.id === id && ['open', 'overdue'].includes(d.status));
 const NO_FUNDS = 'The treasury is empty and lenders will not cover it.';
 // A bench asked the same thing twice in a quarter gives the same answer twice: an order struck down is not carried by being signed again.
@@ -280,7 +326,7 @@ function stateAims(w, c, target, op) {
 // What is settled when several states are bound by a treaty, for those newly bound: wars among them end, the land and money it names change hands, guarantees are given.
 function settleTerms(w, t, fresh) {
   const had = Object.fromEntries(t.parties.map(id => [id, ownedPeople(w, id)])), notes = {}, note = (id, s) => { notes[id] = (notes[id] || '') + s; }, forced = t.kind === 'peace';
-  const pairs = []; if (t.kind === 'peace') for (const x of fresh) for (const y of t.parties) if (x !== y && atWar(w, x, y)) { pairs.push([x, y, warsBetween(w, x, y)]); endWar(w, x, y, t.annex); peaceRecognises(w, w.countries[x], w.countries[y]); }
+  const warring = []; if (t.kind === 'peace') for (const x of fresh) for (const y of t.parties) if (x !== y && atWar(w, x, y)) warring.push([x, y, warsBetween(w, x, y)]);
   let moved = false;
   for (const g of t.grants || []) {
     const p = w.provinces[g.province]; if (g.done || !p || !t.parties.includes(p.owner) || !t.parties.includes(g.to) || p.owner === g.to) continue;
@@ -290,6 +336,10 @@ function settleTerms(w, t, fresh) {
     news(w, `${p.name} passed from ${giver.name} to ${taker.name} by treaty.`, { kind: 'diplomacy', countries: [giver.id, taker.id], province: p.id, secret: !!t.secret });
   }
   if (moved) settleOccupations(w);
+  // The wars end once the land the peace names has changed hands, not before: winding up a war sends every occupied province back to its owner and
+  // every soldier out of land that is not his country's, and a province ceded by this very treaty is his country's. (World 15, the fifth quarter:
+  // Tirara's garrison of Brunmarka, ceded to Tirara by the peace, was sent home to the capital on the day the peace was signed.)
+  const pairs = []; for (const [x, y, fought] of warring) if (atWar(w, x, y)) { pairs.push([x, y, fought]); endWar(w, x, y, t.annex); peaceRecognises(w, w.countries[x], w.countries[y]); }
   let paid = 0;
   if (t.reparations && !t.paid && t.parties.includes(t.payer) && t.parties.includes(t.payee)) {
     const payer = w.countries[t.payer], payee = w.countries[t.payee], due = Math.max(payer.realGdp, 1) * t.reparations, gold = Math.min(Math.max(payer.reserves, 0), due);
@@ -979,7 +1029,7 @@ export function applyOp(w, actor, op) {
       u.men -= men;
       return { ok: true, msg: `${count} went home. ${u.id} keeps ${menText(u.men)} under arms.` };
     }
-    case 'mobilize': return mobilize(w, c, num(op.share, .05, 1, 1), pay, fail);
+    case 'mobilize': return mobilize(w, c, op, pay, fail);
     case 'demobilize': return demobilize(w, c, op.men != null ? num(op.men, 0, 1e6, 0) : op.share != null ? -num(op.share, 0, 1, 1) : null, op.unit) ?? fail('No reservists are under arms.');
     case 'move': {
       const u = w.units[op.unit]; if (!u || u.country !== c.id || !w.provinces[op.to]) return fail('Invalid movement order.');
@@ -1152,7 +1202,6 @@ export function applyOp(w, actor, op) {
       // Giving way to a demand with a date on it is seen at home for what it is, and remembered against the one who made it.
       if (t.ultimatum) { c.legitimacy = clamp(c.legitimacy - 4, 0, 100); other.legitimacy = clamp(other.legitimacy + 2, 0, 100); const g = (c.grudges ||= {})[other.id] ||= { incident: 0, kin: 0 }; g.incident += 15; news(w, `${c.name} has accepted the ultimatum of ${other.name}.`, { kind: 'diplomacy', countries: [c.id, other.id] }); }
       const fought = warsBetween(w, c.id, other.id), land = settlementText(w, t); t.since = w.turn;
-      if (t.kind === 'peace') { endWar(w, c.id, other.id, t.annex); peaceRecognises(w, c, other); }
       if (land && (t.kind === 'peace' || t.cede?.length)) { news(w, `${c.name} and ${other.name}: ${land.replace('On signing these provinces change hands', 'by the treaty these provinces changed hands').replace('goes back to its owner the day the peace is signed', 'went back to its owner')}`, { kind: 'diplomacy', countries: [c.id, other.id], secret: !!t.secret }); tell(w, w.characters[other.leader], c.name, `${c.name} has signed ${t.id}. ${land}`); }
       for (const pid of t.cede || []) {
         const p = w.provinces[pid], giver = w.countries[p.owner], taker = p.owner === c.id ? other : p.owner === other.id ? c : null; if (!taker) continue;
@@ -1160,6 +1209,8 @@ export function applyOp(w, actor, op) {
         if (giver.capital === pid) { const next = [...countryProvinces(w, giver.id)].sort((a, b) => provincePop(b) - provincePop(a))[0]; if (next) giver.capital = next.id; }
         news(w, `${p.name} passed from ${giver.name} to ${taker.name} by treaty.`, { kind: 'diplomacy', countries: [giver.id, taker.id], province: pid });
       }
+      // The war is wound up once the land has changed hands, not before (see settleTerms): troops standing in what the treaty gives their country stay.
+      if (t.kind === 'peace') { endWar(w, c.id, other.id, t.annex); peaceRecognises(w, c, other); }
       if (t.cede?.length) settleOccupations(w);
       if (t.reparations) {
         // Paid in gold as far as there is gold; the rest is owed.
@@ -1533,7 +1584,7 @@ function applyOrder(w, c, u, to, named = true) {
   u.target = to; const q = marchQuarters(w, u, to), still = postureWords(u);
   const road = roadTo(w, u.province, to, c.id) || [], foes = road.filter(id => { const o = w.provinces[id].controller; return o !== c.id && atWar(w, c.id, o); }), through = foes.filter(id => id !== to).map(id => w.provinces[id].name);
   const fight = foes.includes(to) ? ` ${w.provinces[to].name} is held by the enemy: the unit attacks it as it arrives, by itself${through.length ? `, after fighting its way through ${through.join(', ')}` : ''}. (An offensive order would have it form up, wait for the others and go in to a plan.)` : through.length ? ` No road leads there over ground we hold or may cross: the way runs through ${through.join(', ')}, which the enemy holds, and the unit will have to fight its way through.` : '';
-  return { ok: true, msg: `${u.id} marches for ${w.provinces[to].name}${q ? `: about ${q} quarter${q > 1 ? 's' : ''} as the ground, the roads and the seasons stand (the army report shows how far it got each quarter and what held it)` : ''}.${fight}${lifted}${off}${still ? ` Its standing orders go with it: ${still}.` : ''}` };
+  return { ok: true, ...(foes.includes(to) ? { takes: to } : {}), msg: `${u.id} marches for ${w.provinces[to].name}${q ? `: about ${q} quarter${q > 1 ? 's' : ''} as the ground, the roads and the seasons stand (the army report shows how far it got each quarter and what held it)` : ''}.${fight}${lifted}${off}${still ? ` Its standing orders go with it: ${still}.` : ''}` };
 }
 // A standing order to troops: one unit, everything in a province, everything facing a neighbour, or the whole army. It holds until it is changed.
 const POSTURE_SAYS = {
@@ -1580,10 +1631,10 @@ function offensive(w, c, op) {
   const set = Math.max(...went.map(x => x.u.attack.start)) - w.turn, need = shellsFor(went.map(x => x.u), manner, shelling), have = Math.max(c.stock.arms || 0, 0), when = slow + Math.max(set, 0);
   const how = { probe: 'It is a reconnaissance in force: the troops feel out what stands there, break off before it costs much, come back to where they started and report what they met. It takes the place only if it finds it all but empty.', assault: 'It is an assault: beaten, the troops fall back; if they carry it the province is taken, or its fortress invested.', all_out: 'It is to be pressed regardless of loss: the attack hits harder and costs both sides more, the attacker most, and troops that are beaten stay on the field and go in again next quarter until the place falls, the order is changed or their spirit breaks.' }[manner];
   const guns = shelling ? 'The guns prepare it: a bombardment knocks in field works in the measure of the guns brought against the men behind them (the heavy pieces of artillery units count for much, the field guns that march with the infantry for little), and only heavy pieces tell against a fortress.' : 'No bombardment is ordered before it.';
-  const timing = when === 0 ? 'The troops are formed up and go in this quarter.' : `They go in together ${set > 0 ? `no sooner than ${set} quarter${set > 1 ? 's' : ''} from now, which is time to bring up shells and study the ground${slow > set ? ', and not before the last column is up' : ''}` : 'when the last column is up'}${wait ? '; the staff waits up to three quarters for a column that is not up, and then goes with what it has' : '; no column waits for another'}.`;
+  const timing = when === 0 ? `The troops are formed up and go in ${op._late ? 'next' : 'this'} quarter.` : `They go in together ${set > 0 ? `no sooner than ${set} quarter${set > 1 ? 's' : ''} from now, which is time to bring up shells and study the ground${slow > set ? ', and not before the last column is up' : ''}` : 'when the last column is up'}${wait ? '; the staff waits up to three quarters for a column that is not up, and then goes with what it has' : '; no column waits for another'}.`;
   const other = to.neighbors.map(n => w.provinces[n]).filter(q => q.controller === c.id && !cols.some(col => col[0].at === q.id));
   const flank = cols.length > 1 ? ' Columns that come from different provinces and arrive together take the defender in flank and have more room to deploy; every column but the strongest keeps the timetable only as well as its commander can, and one that is late goes in a quarter after the rest, alone.' : went.length > 1 && other.length ? ` All of them come up by the same road and strike from one side. To take the defender from two sides a unit would first have to be marched (move) to another province of ours that touches ${to.name} (${other.map(q => `${q.name} ${q.id}`).join(', ')}) and the offensive ordered with it standing there.` : '';
-  return { ok: true, msg: `Offensive against ${to.name} (${to.terrain}${to.fort >= 1 ? ', a fortress' : ''}), held by ${foe.name}: ${went.length} unit${went.length > 1 ? 's' : ''}, ${menText(menAll)}, in ${cols.length} column${cols.length > 1 ? 's' : ''}: ${colText}. ${how} ${guns} ${timing}${flank} The attack will ask about ${Math.round(need * 10) / 10} of arms and ammunition a quarter of the arsenal, which holds ${Math.round(have)}${(c.arsenalReserve || 0) > 0 ? `, of which ${Math.round(Math.min(c.arsenalReserve, have))} is kept back from any attack` : ''}${need > have - Math.min(c.arsenalReserve || 0, have) ? ': not enough, and where the arsenal cannot send what the fight calls for the fire slackens' : ''}.${went[0].u.attack.shells ? ` It is held to ${Math.round(went[0].u.attack.shells * 10) / 10} a quarter${went[0].u.attack.shells < need ? ', less than it will ask for: its fire will be the thinner' : ''}.` : ''}${closedNow(w, to) ? ` ${to.name} is closed by ${season(w) === 'winter' ? 'snow' : 'mud'} this season: the attack waits for the roads.` : ''}${not.length ? ` Not part of it: ${not.join('; ')}.` : ''}${again.length ? ` This attack was already in hand for ${again.join(', ')}: ordering it again changes how it is to be made, not the day it was set for.` : ''}${left.length ? ` A unit is part of one attack at a time: ${left.join(', ')} had been ordered against another objective, and that order is replaced by this one. To take one place and then the next, order the second attack once the first has carried.` : ''} What is known of the troops in ${to.name} is in the borders report; the staff reports after the fight what decided it.` };
+  return { ok: true, takes: to.id, msg: `Offensive against ${to.name} (${to.terrain}${to.fort >= 1 ? ', a fortress' : ''}), held by ${foe.name}: ${went.length} unit${went.length > 1 ? 's' : ''}, ${menText(menAll)}, in ${cols.length} column${cols.length > 1 ? 's' : ''}: ${colText}. ${how} ${guns} ${timing}${flank} The attack will ask about ${Math.round(need * 10) / 10} of arms and ammunition a quarter of the arsenal, which holds ${Math.round(have)}${(c.arsenalReserve || 0) > 0 ? `, of which ${Math.round(Math.min(c.arsenalReserve, have))} is kept back from any attack` : ''}${need > have - Math.min(c.arsenalReserve || 0, have) ? ': not enough, and where the arsenal cannot send what the fight calls for the fire slackens' : ''}.${went[0].u.attack.shells ? ` It is held to ${Math.round(went[0].u.attack.shells * 10) / 10} a quarter${went[0].u.attack.shells < need ? ', less than it will ask for: its fire will be the thinner' : ''}.` : ''}${closedNow(w, to) ? ` ${to.name} is closed by ${season(w) === 'winter' ? 'snow' : 'mud'} this season: the attack waits for the roads.` : ''}${not.length ? ` Not part of it: ${not.join('; ')}.` : ''}${again.length ? ` This attack was already in hand for ${again.join(', ')}: ordering it again changes how it is to be made, not the day it was set for.` : ''}${left.length ? ` A unit is part of one attack at a time: ${left.join(', ')} had been ordered against another objective, and that order is replaced by this one. To take one place and then the next, the second attack is ordered to follow the first (it then waits until the first place is in our hands), not beside it.` : ''} What is known of the troops in ${to.name} is in the borders report; the staff reports after the fight what decided it.` };
 }
 const seaLabel = (w, id) => `${w.seas[id]?.name || 'the open sea'} (${id})`;
 const count = (n, k) => { const r = Math.round(n); return `${r} ${r === 1 ? SHIPS[k].one : SHIPS[k].name}`; };
