@@ -12,6 +12,10 @@ export const RECIPE = {
 };
 const ORDER = ['steel', 'fuel', 'fertilizer', 'machines', 'arms', 'goods'];
 export const hasTech = (c, t) => !!c.techs?.[t];
+// How far an invention has come into use. What a state inherited is long since in every works; what it has just learned spreads as works are
+// wired and farmers persuaded, over the quarters given here, and does its work in that measure.
+export const SPREAD = { electricity: 24, chemical_fertilizer: 12 };
+export const inUse = (w, c, t) => !c.techs?.[t] ? 0 : c.adopting?.[t] == null || !SPREAD[t] ? 1 : clamp((w.turn - c.adopting[t]) / SPREAD[t], 0, 1);
 
 // Rule: goods move only if a route exists. War, a closed strait and an enemy fleet cut the route.
 // A sea is closed to two countries' trade when an enemy of either holds it in strength; held thinly, runners still get through, at a price.
@@ -111,13 +115,15 @@ function extract(w, c) {
   const raw = Object.fromEntries(RAW.map(g => [g, 0])); let gold = 0, services = 0, dev = 0, popAll = 0;
   c._cap = Object.fromEntries(Object.keys(PLANTS).map(k => [k, 0]));
   const engine = hasTech(c, 'combustion_engine') ? 1 + clamp(c.stock.fuel / Math.max(c._lastFuelNeed || 1, 1), 0, 1) * .25 * (c.motor ?? 0) : 1;
-  const fert = hasTech(c, 'chemical_fertilizer') ? 1 + clamp(c.stock.fertilizer / Math.max(c._pop * .002, 1), 0, 1) * .4 : 1;
+  const spread = inUse(w, c, 'chemical_fertilizer'), fert = spread > 0 ? 1 + clamp(c.stock.fertilizer / Math.max(c._pop * .002 * spread, 1), 0, 1) * .4 * spread : 1;
+  // Private owners keep up their mines and works out of what the tax on business leaves them (see investment): what they have let run down turns out less.
+  const tended = 1 - (1 - (c.upkeep ?? 1)) * (1 - c.ownership);
   const strikes = c.strike ? .65 : 1, bank = c.bankHealth < 30 ? .8 : 1;
   c._rent = 0; c._idleV = 0;
   const pace = Object.fromEntries(RAW.map(g => [g, glutFactor(c, g)]));
   for (const p of countryProvinces(w, c.id)) {
     const occ = p.controller !== p.owner ? .55 : 1;
-    const rail = 1 + p.rail * .12 + (hasTech(c, 'electricity') ? .08 : 0);
+    const rail = 1 + p.rail * .12 + .08 * inUse(w, c, 'electricity');
     const eff = (1 - p.devastation * .75) * (.72 + p.infra * .36) * occ * (1 - (p.unrest > 60 ? (p.unrest - 60) / 100 : 0)) * rail;
     const water = clamp(p.water - p.waterPenalty + (p.dam ? .15 : 0), .15, 1.4);
     // A province has only so much land. Hands beyond those it was farmed with add less and less, and fewer hands lose less than their share:
@@ -132,7 +138,7 @@ function extract(w, c) {
     const mineLoad = sum(deposits, ([, d]) => d.mine), plantLoad = sum(Object.values(p.plants)) + .3;
     const mineShare = mineLoad / (mineLoad + plantLoad);
     for (const [k, d] of deposits) {
-      const full = p.pops.workers.n * mineShare * (d.mine / mineLoad) * d.rich * ({ coal: .3, iron: .22, oil: .12 }[k] ?? .06) * c.tech.ind * eff * strikes * (1 - (p.halt?.[k] ?? 0)), f = k === 'gold' ? 1 : pace[k] ?? 1, q = full * f;
+      const full = p.pops.workers.n * mineShare * (d.mine / mineLoad) * d.rich * ({ coal: .3, iron: .22, oil: .12 }[k] ?? .06) * c.tech.ind * eff * strikes * (1 - (p.halt?.[k] ?? 0)) * (k === 'gold' ? 1 : tended), f = k === 'gold' ? 1 : pace[k] ?? 1, q = full * f;
       if (f < 1) c._idleV += (full - q) * BASE_PRICE[k];
       d.amount = Math.max(0, d.amount - q * .08);
       const con = p.concessions?.[k];
@@ -144,7 +150,7 @@ function extract(w, c) {
       if (d.amount <= 0) news(w, `${c.name}: the ${p.name} ${GOOD_LABEL[k]} deposit is exhausted.`, { kind: 'economy', countries: [c.id] });
     }
     const labor = p.pops.workers.n * (1 - mineShare), level = sum(Object.values(p.plants));
-    if (level > 0) for (const pl of Object.keys(PLANTS)) if (p.plants[pl] > 0) { const here = labor * (p.plants[pl] / level) * clamp(.7 + p.plants[pl] * .35, .7, 3) * .05 * 25 / BASE_PRICE[pl] * c.tech.ind * eff * strikes * bank * (1 - c.ownership * .15) * (1 - (p.halt?.[pl] ?? 0)); c._cap[pl] += here; p.cap[pl] = here; }
+    if (level > 0) for (const pl of Object.keys(PLANTS)) if (p.plants[pl] > 0) { const here = labor * (p.plants[pl] / level) * clamp(.7 + p.plants[pl] * .35, .7, 3) * .05 * 25 / BASE_PRICE[pl] * c.tech.ind * eff * strikes * bank * (1 - c.ownership * .15) * (1 - (p.halt?.[pl] ?? 0)) * tended; c._cap[pl] += here; p.cap[pl] = here; }
     services += (p.pops.middle.n + p.pops.elite.n * 1.5) * eff;
     const pop = provincePop(p); popAll += pop; dev += p.devastation * pop;
   }
@@ -166,7 +172,7 @@ function needs(w, c) {
   // Machinery wears out: what the country's works and farms use up in a quarter is what its engineering trade has to replace before anything new is built.
   need.arms += men * .01; need.fuel += engine * .05 + ships * .08 * motor + c._pop * .0006 * motor; need.machines += c._pop * .00014;
   c._burn = { coal: ships * .08 * (1 - motor), fuel: engine * .05 + ships * .08 * motor };
-  if (hasTech(c, 'chemical_fertilizer')) need.fertilizer += c._pop * .002;
+  if (hasTech(c, 'chemical_fertilizer')) need.fertilizer += c._pop * .002 * inUse(w, c, 'chemical_fertilizer');
   if (hasTech(c, 'rare_alloys')) need.rare += sum(Object.values(w.units).filter(u => u.country === c.id && ['armor', 'air'].includes(u.kind)), u => u.men) * .004 + c._cap.machines * .05;
   c._need = need; c._lastFuelNeed = need.fuel;
   c._reserve = Object.fromEntries(GOODS.map(g => [g, need[g] * .4]));
@@ -316,7 +322,7 @@ function consume(w, c, prev) {
     // With fuel to spare more of the country takes to the engine; when the tanks run dry it goes back.
     c.motor = clamp(m + (c.stock.fuel > Math.max(n.fuel, c._pop * .0006 * .25) ? .04 : c.fuelRatio < .6 ? -.1 : 0), 0, 1);
   } else c.fuelRatio = 1;
-  if (hasTech(c, 'chemical_fertilizer')) c.stock.fertilizer = Math.max(0, (c.stock.fertilizer || 0) - c._pop * .002);
+  if (hasTech(c, 'chemical_fertilizer')) c.stock.fertilizer = Math.max(0, (c.stock.fertilizer || 0) - c._pop * .002 * inUse(w, c, 'chemical_fertilizer'));
   if (n.rare > 0) c.stock.rare = Math.max(0, (c.stock.rare || 0) - n.rare);
   // Nothing keeps for ever: what lies in store beyond two years' need rusts, rots or is written off.
   for (const good of GOODS) { const keep = (n[good] || 0) * 8; if (good !== 'grain' && good !== 'goods' && c.stock[good] > keep) c.stock[good] -= (c.stock[good] - keep) * .04; }
@@ -429,6 +435,7 @@ function fiscal(w, c) {
 export function settleBases(w) {
   for (const c of aliveCountries(w)) {
     c.graftBase ??= c.corruption + c.pressFreedom * .3 + c.courts * .35; c.intelBase ??= c.intelligence - c.police * .5; c.roadShare ??= c.budget.infrastructure;
+    c.profitBase = 1 - (c.taxTarget?.business ?? c.tax.business); c.upkeep = 1;
     { const ps = countryProvinces(w, c.id), n = sum(ps, p => p.pops.workers.n); if (n > 0) c.workBase ??= sum(ps, p => p.pops.workers.sat * p.pops.workers.n) / n; }
     for (const p of countryProvinces(w, c.id)) p.infraBase ??= p.infra;
   }
@@ -478,6 +485,12 @@ function investment(w, c) {
     const grow = 1 + (b.infrastructure * paid - c.roadShare) * .35 * machines * bank;
     for (const pl of Object.keys(PLANTS)) p.plants[pl] = clamp(p.plants[pl] * grow, 0, 8);
   }
+  // Private mines and works stand where their owners' returns hold them. Owners renew and extend out of what the tax on business leaves them:
+  // at the rate the country inherited they keep what they have; a state that takes much more collects it at once and watches the plant run
+  // down over years toward what still pays to keep up, one that takes less sees it extended. A level, not a counter.
+  c.profitBase ??= 1 - c.tax.business; c.upkeep ??= 1;
+  c.upkeep += (upkeepAt(c) - c.upkeep) * .04;
+  prospectors(w, c);
   // When a new technology arrives, the private sector builds the first plants itself; expansion is left to the state or capital.
   const cap = w.provinces[c.capital];
   if (cap && hasTech(c, 'oil_prospecting') && !sum(countryProvinces(w, c.id), p => p.plants.fuel)) cap.plants.fuel = .4;
@@ -486,6 +499,20 @@ function investment(w, c) {
   c.tech.ind = clamp(c.tech.ind * (1 + edu + .001 * (.5 + machines)), .5, 10);
   c.tech.agri = clamp(c.tech.agri * (1 + edu * .7 + .0008), .5, 10);
   c.tech.mil = clamp(c.tech.mil * (1 + edu * .6 + b.military * paid * .02), .5, 10);
+}
+
+// Where owners would settle their works at the present tax on business, against where they inherited them.
+export const upkeepAt = c => clamp(Math.pow(Math.max(1 - c.tax.business, .05) / Math.max(c.profitBase ?? 1 - c.tax.business, .05), .8), .4, 1.3);
+// A price several times the usual draws private capital to the ground that holds the thing. A known deposit nobody works is opened by a company
+// of its own accord; what lies hidden is looked for, and the dearer the thing the harder they look. Governments can still do both sooner.
+export function prospectors(w, c) {
+  for (const p of countryProvinces(w, c.id)) { if (p.owner !== c.id) continue;
+    for (const [k, d] of Object.entries(p.deposits)) {
+      if (!BASE_PRICE[k] || d.mine > 0 || !(d.amount > 0)) continue;
+      const dear = (w.globalPrice?.[k] ?? BASE_PRICE[k]) / BASE_PRICE[k]; if (dear < 2.5) continue;
+      if (!d.known) { if ((k === 'oil' && !hasTech(c, 'oil_prospecting')) || (k === 'rare' && !hasTech(c, 'electricity')) || rand(w) >= .04 * Math.min(dear - 1.5, 4)) continue; d.known = true; }
+      d.mine = .3; news(w, `${c.name}: with ${GOOD_LABEL[k]} selling at ${Math.round(dear)} times its usual price, private capital has opened the deposit at ${p.name}.`, { kind: 'economy', countries: [c.id], province: p.id });
+    } }
 }
 
 function research(w, c) {
@@ -497,7 +524,7 @@ function research(w, c) {
   const known = aliveCountries(w).filter(o => o.techs[t]).length;
   c.research.progress += points * (1 + known * .15);
   if (c.research.progress >= TECHS[t].cost) {
-    c.techs[t] = Math.max(1, w.turn); c.research = { target: null, progress: 0 };
+    c.techs[t] = Math.max(1, w.turn); (c.adopting ||= {})[t] = w.turn; c.research = { target: null, progress: 0 };
     news(w, `${c.name}: ${TECHS[t].name} has been put into practice.`, { kind: 'economy', countries: [c.id] });
     if (t === 'oil_prospecting') for (const p of countryProvinces(w, c.id)) if (p.deposits.oil && rand(w) < .35) p.deposits.oil.known = true;
   }

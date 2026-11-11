@@ -2710,4 +2710,57 @@ chain('A merchant marine carries an army only as fast as the harbours can embark
   f.ha.port = 3; assert.ok(liftFor(c, f.w) > cap, 'a greater harbour embarks more');
   assert.ok(/harbours can embark/.test(lookUp(f.w, f.gen, 'fleet')), 'and the fleet report says so');
 });
+
+// The balance of the economy (2026-11-11): nothing a government does is free.
+import { prospectors as goldRush, inUse as wiredShare } from '../engine/economy.js';
+const worksOf = c => Object.keys(c._capAll || {}).reduce((s, k) => s + c._capAll[k] * BASE_PRICE[k], 0), customMood = c => c.mods.filter(m => m.src === 'custom' && m.key === 'sat.all').reduce((s, m) => s + m.delta, 0);
+chain('The business tax is paid out of what would have renewed the works: a state that takes three fifths of every profit collects far more at once and watches its private industry run down year by year, one that takes little sees it extended, and the treasury is told which is happening', () => {
+  const a = fresh(), b = fresh(), k = fresh(), ca = a.countries.U1, cb = b.countries.U1, ck = k.countries.U1, was = ca.tax.business;
+  assert.ok(applyOp(b, ld(b, cb), { op: 'set_tax', kind: 'business', rate: .6 }).ok); assert.ok(applyOp(k, ld(k, ck), { op: 'set_tax', kind: 'business', rate: was / 3 }).ok);
+  run(a, 1); run(b, 1); run(k, 1); assert.ok(worksOf(cb) > worksOf(ca) * .97, 'nothing falls down the day the rate is raised');
+  assert.ok(cb.lastBooks.business > ca.lastBooks.business * 1.5, 'and the treasury takes far more at once');
+  run(a, 11); run(b, 11); run(k, 11);
+  assert.ok(worksOf(cb) < worksOf(ca) * .93 && worksOf(cb) > worksOf(ca) * .7, `three years on the works turn out a tenth or two less than they would have (${(worksOf(cb) / worksOf(ca)).toFixed(2)})`);
+  assert.ok(worksOf(ck) > worksOf(ca) * 1.02, `and under a light tax more (${(worksOf(ck) / worksOf(ca)).toFixed(2)})`);
+  run(a, 28); run(b, 28);
+  assert.ok(worksOf(cb) < worksOf(ca) * .82 && worksOf(cb) > worksOf(ca) * .5, `ten years on a quarter less, and no further: the owners keep up what still pays (${(worksOf(cb) / worksOf(ca)).toFixed(2)})`);
+  assert.ok(/renew/.test(lookUp(b, ld(b, cb), 'economy')), 'the economy report says what the tax is doing to the works');
+});
+chain('An invention is not a harvest: electrification raises what the country turns out as the works are wired, over years and not in the quarter the patent is read; what a state inherited is long since in use; and the report on technology says what each thing is for and how far it has come into use', () => {
+  const still = c => { c.research = { target: null, progress: 0 }; }, make = (given) => { const w = fresh(), c = w.countries.U1; delete c.techs.electricity; if (c.adopting) delete c.adopting.electricity; if (given === 'old') c.techs.electricity = 1; c.budget.education = 0; return { w, c }; };
+  const none = make(), fresh1 = make(), old = make('old');
+  fresh1.c.research = { target: 'electricity', progress: 1e6 }; fresh1.c.budget.education = .001;
+  for (const x of [none, fresh1, old]) { run(x.w, 1); x.c.budget.education = 0; still(x.c); }
+  assert.ok(fresh1.c.techs.electricity, 'the invention is made'); assert.ok(wiredShare(fresh1.w, fresh1.c, 'electricity') < .1, 'and hardly a works is wired yet'); assert.equal(wiredShare(old.w, old.c, 'electricity'), 1, 'what was inherited is in full use');
+  for (const x of [none, fresh1, old]) { run(x.w, 1); still(x.c); }
+  const grain = x => x.c._raw.grain;
+  assert.ok(grain(fresh1) < grain(none) * 1.012, `the quarter after, the country turns out barely more than it would have (${(grain(fresh1) / grain(none)).toFixed(3)})`);
+  assert.ok(grain(old) > grain(none) * 1.04, `where a country long wired turns out a good deal more (${(grain(old) / grain(none)).toFixed(3)})`);
+  for (const x of [none, fresh1]) for (let i = 0; i < 26; i++) { run(x.w, 1); still(x.c); }
+  assert.equal(wiredShare(fresh1.w, fresh1.c, 'electricity'), 1, 'six years on the works are wired');
+  const text = lookUp(fresh1.w, ld(fresh1.w, fresh1.c), 'technology'); assert.ok(/Electrification/.test(text) && /wired|in use/.test(text) && /machine guns|held line/.test(text), 'the report says what each invention does: ' + text.slice(0, 300));
+});
+chain('Propaganda is cheap, and it is believed as far as nothing contradicts it: a gagged press carries it twice as far as a free one, hungry people are harder to tell that all is well, and a country told the same thing every quarter stops listening', () => {
+  const told = setup => { const w = fresh(), c = w.countries.U1; c.treasury = c.gdp; c.bureaucracy = 60; c.foodRatio = 1; setup(c); const r = applyOp(w, ld(w, c), { op: 'propaganda', strength: 1 }); assert.ok(r.ok, r.msg); return { w, c, got: customMood(c), msg: r.msg }; };
+  const gagged = told(c => { c.pressFreedom = 5; }), free = told(c => { c.pressFreedom = 95; }), hungry = told(c => { c.pressFreedom = 5; c.foodRatio = .7; });
+  assert.ok(gagged.got > 2, `where no paper answers back the country is moved (${gagged.got.toFixed(2)})`);
+  assert.ok(gagged.got > free.got * 1.8, `a free press halves what placards can do (${gagged.got.toFixed(2)} against ${free.got.toFixed(2)})`); assert.ok(/free press/.test(free.msg), 'and the ministry says so: ' + free.msg);
+  assert.ok(hungry.got < gagged.got * .85, `empty shops argue with the placards (${hungry.got.toFixed(2)})`);
+  // Every quarter for two years.
+  const { w, c } = gagged; let standing = 0; for (let i = 0; i < 8; i++) { run(w, 1); c.pressFreedom = 5; c.foodRatio = 1; c.treasury = Math.max(c.treasury, c.gdp); applyOp(w, ld(w, c), { op: 'propaganda', strength: 1 }); standing = customMood(c); }
+  assert.ok(standing < gagged.got * .7 && standing > 0, `told the same thing every quarter the country listens with half an ear (${gagged.got.toFixed(2)} at first, ${standing.toFixed(2)} after two years of it)`);
+  // Twenty orders in one quarter are one campaign.
+  const once = told(c => { c.pressFreedom = 5; }); for (let i = 0; i < 20; i++) applyOp(once.w, ld(once.w, once.c), { op: 'propaganda', strength: 1 }); assert.ok(Math.abs(customMood(once.c) - once.got) < .01, 'and repeating the order the same quarter adds nothing');
+});
+chain('A price several times the usual draws private capital to the ground that holds the thing: a known deposit nobody works is opened without a government lifting a finger, what lies hidden is looked for and found, and the ore comes out the quarter after', () => {
+  const w = fresh(), c = w.countries.U1, [p, q] = countryProvinces(w, 'U1').filter(x => x.id !== c.capital && x.pops.workers.n > 1);
+  p.deposits.phosphate = { amount: 900, rich: 1, known: true, mine: 0 }; q.deposits.oil = { amount: 4000, rich: 1.5, known: false, mine: 0 }; c.techs.oil_prospecting = 1;
+  w.globalPrice.phosphate = BASE_PRICE.phosphate; goldRush(w, c); assert.equal(p.deposits.phosphate.mine, 0, 'at the usual price nobody digs');
+  w.globalPrice.phosphate = BASE_PRICE.phosphate * 4; w.newsThisTurn = []; goldRush(w, c);
+  assert.ok(p.deposits.phosphate.mine > 0, 'at four times the price a company opens the deposit'); assert.ok(w.newsThisTurn.some(n => /phosphate/i.test(n.text)), 'and the papers report it');
+  const first = p.deposits.phosphate.mine; goldRush(w, c); assert.equal(p.deposits.phosphate.mine, first, 'once: a working mine is not opened again every quarter');
+  w.globalPrice.oil = BASE_PRICE.oil * 5; for (let i = 0; i < 60 && !q.deposits.oil.known; i++) { w.turn++; goldRush(w, c); }
+  assert.ok(q.deposits.oil.known && q.deposits.oil.mine > 0, 'and where oil sells at five times its price, prospectors find what the state never looked for');
+  run(w, 1); assert.ok((c._raw.phosphate || 0) > 0, 'the quarter after, phosphate comes out of the ground');
+});
 console.log('All checks passed.');

@@ -17,18 +17,18 @@ export const PLANTS = { steel: 'Steel mill', fuel: 'Refinery', fertilizer: 'Chem
 export const BASE_PRICE = { grain: 10, timber: 6, coal: 5, iron: 7, copper: 14, oil: 9, phosphate: 8, rare: 40, steel: 22, fuel: 18, fertilizer: 16, machines: 60, goods: 25, arms: 45 };
 export const GOOD_LABEL = { grain: 'grain', timber: 'timber', coal: 'coal', iron: 'iron', copper: 'copper', oil: 'oil', phosphate: 'phosphate', rare: 'rare metal', gold: 'gold', steel: 'steel', fuel: 'fuel', fertilizer: 'fertilizer', machines: 'machinery', goods: 'consumer goods', arms: 'arms' };
 export const TECHS = {
-  railway: { name: 'Railway networks', cost: 40, req: [] },
-  electricity: { name: 'Electrification', cost: 90, req: [] },
-  automatic_weapons: { name: 'Automatic weapons', cost: 70, req: [] },
-  chemical_fertilizer: { name: 'Chemical fertilizer', cost: 100, req: ['electricity'] },
-  oil_prospecting: { name: 'Geological oil prospecting', cost: 60, req: [] },
-  combustion_engine: { name: 'Internal combustion engine', cost: 130, req: ['oil_prospecting'] },
-  radio: { name: 'Radio broadcasting', cost: 90, req: ['electricity'] },
-  armor: { name: 'Armored vehicles', cost: 150, req: ['combustion_engine', 'automatic_weapons'] },
-  aviation: { name: 'Aviation', cost: 170, req: ['combustion_engine'] },
-  antibiotics: { name: 'Modern medicine', cost: 140, req: ['chemical_fertilizer'] },
-  rare_alloys: { name: 'Rare metal alloys', cost: 220, req: ['electricity', 'armor'] },
-  dreadnought: { name: 'All-big-gun battleships', cost: 150, req: ['electricity'] }
+  railway: { name: 'Railway networks', cost: 40, req: [], does: 'second tracks and branch lines can be laid where a line already runs; a province with more railway turns out more, and its lines carry armies and feed them' },
+  electricity: { name: 'Electrification', cost: 90, req: [], does: 'farms, mines and works turn out about a twelfth more as they are wired, which takes some six years from the invention; needed for fertilizer, wireless, the search for rare metals, alloys and the all-big-gun ship' },
+  automatic_weapons: { name: 'Automatic weapons', cost: 70, req: [], does: 'machine guns: infantry holding a line is worth about a third more, infantry advancing a little more' },
+  chemical_fertilizer: { name: 'Chemical fertilizer', cost: 100, req: ['electricity'], does: 'harvests rise by up to two fifths where fertilizer is to hand (it is made from phosphate), over some three years as farmers take to it; needed for modern medicine' },
+  oil_prospecting: { name: 'Geological oil prospecting', cost: 60, req: [], does: 'oil can be looked for in the ground and found, and fuel refined from it' },
+  combustion_engine: { name: 'Internal combustion engine', cost: 130, req: ['oil_prospecting'], does: 'engines on the land as fast as fuel is found for them (up to a quarter more grain), ships that burn fuel instead of coal, and submarines; needed for armoured vehicles and aircraft' },
+  radio: { name: 'Radio broadcasting', cost: 90, req: ['electricity'], does: 'the columns of an offensive keep their timetable better' },
+  armor: { name: 'Armored vehicles', cost: 150, req: ['combustion_engine', 'automatic_weapons'], does: 'armoured units can be raised: strong in open country, weak in close, and useless without fuel' },
+  aviation: { name: 'Aviation', cost: 170, req: ['combustion_engine'], does: 'air units can be raised, and a staff with aircraft sees troops massing across a frontier sooner' },
+  antibiotics: { name: 'Modern medicine', cost: 140, req: ['chemical_fertilizer'], does: 'an army in the field loses half as many men to sickness, and an epidemic kills far fewer' },
+  rare_alloys: { name: 'Rare metal alloys', cost: 220, req: ['electricity', 'armor'], does: 'alloys for machine tools, armoured vehicles and aircraft, which from then on ask for rare metals every quarter' },
+  dreadnought: { name: 'All-big-gun battleships', cost: 150, req: ['electricity'], does: 'the all-big-gun ship can be laid down in a harbour of the third size: worth two battleships in weight and outranging them' }
 };
 
 export const word = w => { let s = ''; const n = 2 + Math.floor(rand(w) * 2); for (let i = 0; i < n; i++) s += pick(w, SYL); return s[0].toUpperCase() + s.slice(1); };
