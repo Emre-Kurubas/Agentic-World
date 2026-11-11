@@ -1,0 +1,40 @@
+// What each lever of government does: one inherited world, one country, one decision taken on the first day and nothing else for three years,
+// Run from the repository: node tools/balance/levers.mjs .   (the argument is the repository's folder)
+// against the same country left alone. A lever that moves nothing is dead; one that moves everything for nothing is too strong.
+import { pathToFileURL } from 'node:url';
+const root = pathToFileURL(process.argv[2] + '/').href, who = process.argv[3] || 'U3', Q = +process.argv[4] || 12;
+const { createWorld, aliveCountries, countryProvinces, provincePop } = await import(root + 'engine/world.js');
+const { beginTurn, stepWorld } = await import(root + 'engine/step.js');
+const { applyOp } = await import(root + 'engine/ops.js');
+const r1 = v => Math.round(v * 10) / 10, sum = (xs, f = x => x) => xs.reduce((a, x) => a + f(x), 0);
+const cfg = { plainStates: false, seed: 1848, countries: 5, provinces: 130, agentRoles: [], countryAgentRoles: {}, models: {}, concurrency: 2, wakeEvery: 1, wakeTension: 45, maxMessagesPerActor: 3, maxDecisionsPerActor: 5, limitRetryMinutes: 0, maxTurns: 0 };
+const w0 = createWorld(cfg); for (let i = 0; i < 2; i++) { beginTurn(w0); stepWorld(w0); }
+const measure = w => { const c = w.countries[who], ps = countryProvinces(w, c.id), us = Object.values(w.units).filter(u => u.country === c.id); return { gdp: c.realGdp, legit: c.legitimacy, unrest: c.unrest ?? 0, pop: c.popularity ?? 50, tr: c.treasury / c.gdp * 100, debt: c.debt / (c.gdp * 4) * 100, price: c.priceLevel, unemp: c.unemployment * 100, lit: c.literacy, bur: c.bureaucracy, corr: c.corruption, police: c.police, fund: (c.militaryFunding ?? 1) * 100, morale: sum(us, u => u.morale * u.men) / Math.max(sum(us, u => u.men), 1), men: sum(us, u => u.men), food: (c.foodRatio ?? 1) * 100, bal: (c.lastBalance ?? 0) / c.gdp * 100, sat: Object.fromEntries(['peasants', 'workers', 'middle', 'elite'].map(k => [k, sum(ps, p => p.pops[k].sat * p.pops[k].n) / Math.max(sum(ps, p => p.pops[k].n), 1)])), cells: c.cells || 0, infra: sum(ps, p => p.infra) / ps.length, arms: c.stock.arms }; };
+const run = (ops, every = false) => { const w = structuredClone(w0), c = w.countries[who], boss = w.characters[c.leader], notes = []; const apply = () => { for (const op of typeof ops === 'function' ? ops(w, c) : ops) { const r = applyOp(w, boss, { ...op, _law: true }); if (!r.ok) notes.push(String(r.msg).slice(0, 60)); } }; apply(); for (let i = 0; i < Q; i++) { beginTurn(w); if (every && i) apply(); stepWorld(w); } return { m: measure(w), notes }; };
+const c0 = w0.countries[who], b = c0.budget, t = c0.tax, base = run([]).m;
+console.log(`== ${who} ${c0.name} (${c0.archetype}); budget ${Object.entries(b).map(([k, v]) => `${k} ${r1(v * 100)}`).join(' ')}; tax income ${r1(t.income * 100)} land ${r1(t.land * 100)} business ${r1(t.business * 100)} tariff ${r1(c0.tariff * 100)}; after ${Q} quarters left alone: gdp ${Math.round(base.gdp)} legit ${r1(base.legit)} unrest ${r1(base.unrest)} support ${r1(base.pop)} treasury ${r1(base.tr)}% debt ${r1(base.debt)}% bal ${r1(base.bal)}% unemp ${r1(base.unemp)} funding ${r1(base.fund)} morale ${r1(base.morale)}`);
+const big = countryProvinces(w0, who).sort((x, y) => provincePop(y) - provincePop(x)).slice(0, 3).map(p => p.id);
+const levers = [
+  ['income tax +10 points', [{ op: 'set_tax', kind: 'income', rate: t.income + .1 }]], ['income tax -10 points', [{ op: 'set_tax', kind: 'income', rate: Math.max(0, t.income - .1) }]],
+  ['land tax +10 points', [{ op: 'set_tax', kind: 'land', rate: t.land + .1 }]], ['business tax +10 points', [{ op: 'set_tax', kind: 'business', rate: t.business + .1 }]],
+  ['tariff +20 points', [{ op: 'set_tariff', rate: c0.tariff + .2 }]], ['tariff to nothing', [{ op: 'set_tariff', rate: 0 }]],
+  ...['military', 'welfare', 'infrastructure', 'education', 'police', 'administration'].flatMap(k => [[`${k} budget doubled`, [{ op: 'set_budget', category: k, share: b[k] * 2 }]], [`${k} budget halved`, [{ op: 'set_budget', category: k, share: b[k] / 2 }]]]),
+  ['money printed, 20% of a quarter once', [{ op: 'print_money', pct_gdp: .2 }]], ['money printed, 10% every quarter', [{ op: 'print_money', pct_gdp: .1 }], true],
+  ['borrowing 30% of a quarter once', [{ op: 'borrow', pct_gdp: .3 }]], ['debt repudiated', [{ op: 'default_debt' }]],
+  ['repression at half strength', [{ op: 'repress', strength: .5 }]], ['propaganda every quarter', [{ op: 'propaganda', strength: .5 }], true],
+  ['press freed and courts made independent', [{ op: 'set_institutions', press_freedom: 90, courts: 80 }]], ['press gagged, courts in hand, unions banned', [{ op: 'set_institutions', press_freedom: 5, courts: 5, unions: false }]],
+  ['land reform', [{ op: 'land_reform' }]], ['factory law: full wage floor, safety 0.6', [{ op: 'set_labour_law', min_safety: .6, min_wage: 1 }]],
+  ['language: assimilation', [{ op: 'set_culture_policy', language: 'assimilate' }]], ['language: autonomy', [{ op: 'set_culture_policy', language: 'autonomy' }]],
+  ['arms share of industry to 0.5', [{ op: 'set_arms_share', share: .5 }]], ['a bonus to the workers, 2% of a quarter', [{ op: 'concession', cls: 'workers', pct_gdp: .02 }]],
+  ['army doubled by recruiting', (w, c) => big.flatMap(p => [{ op: 'recruit', province: p, men: sum(Object.values(w.units).filter(u => u.country === c.id), u => u.men) / 3 }])],
+  ['half the army sent home', (w, c) => Object.values(w.units).filter(u => u.country === c.id).map(u => ({ op: 'disband', unit: u.id, men: u.men / 2 }))],
+  ['railways in the three largest provinces', big.map(p => ({ op: 'build', province: p, kind: 'railway' }))], ['roads in the three largest provinces', big.map(p => ({ op: 'build', province: p, kind: 'infrastructure' }))],
+  ['farming works in the three largest provinces', big.map(p => ({ op: 'build', province: p, kind: 'farming' }))], ['offices in the three largest provinces', big.map(p => ({ op: 'build', province: p, kind: 'administration' }))],
+  ['a steel works at the capital', [{ op: 'build', province: c0.capital, kind: 'steel' }]], ['reserve called up', [{ op: 'mobilize' }]],
+  ['gold standard left (floating)', [{ op: 'set_fx_regime', regime: 'floating' }]], ['capital controls', [{ op: 'set_capital_controls', closed: true }]],
+];
+const d = (x, y, n = 1) => { const v = x - y; return (v >= 0 ? '+' : '') + (Math.round(v * 10 ** n) / 10 ** n); };
+console.log('lever'.padEnd(44) + 'gdp%   legit  unrest support treas%  debt%  bal%   price% unemp  peas   work   mid    elite  other');
+for (const [name, ops, every] of levers) { const { m, notes } = run(ops, every);
+  const other = [Math.abs(m.fund - base.fund) > 2 ? `funding ${d(m.fund, base.fund, 0)}` : '', Math.abs(m.morale - base.morale) > 1.5 ? `morale ${d(m.morale, base.morale, 0)}` : '', Math.abs(m.lit - base.lit) > .5 ? `literacy ${d(m.lit, base.lit)}` : '', Math.abs(m.bur - base.bur) > 1 ? `bureaucracy ${d(m.bur, base.bur, 0)}` : '', Math.abs(m.corr - base.corr) > 1 ? `corruption ${d(m.corr, base.corr, 0)}` : '', Math.abs(m.police - base.police) > 1 ? `police ${d(m.police, base.police, 0)}` : '', Math.abs(m.men - base.men) > 2 ? `men ${d(m.men, base.men, 0)}` : '', Math.abs(m.cells - base.cells) > 1 ? `cells ${d(m.cells, base.cells, 0)}` : '', Math.abs(m.infra - base.infra) > .01 ? `roads ${d(m.infra, base.infra, 2)}` : '', Math.abs(m.arms - base.arms) > 2 ? `arms ${d(m.arms, base.arms, 0)}` : '', Math.abs(m.food - base.food) > 2 ? `food ${d(m.food, base.food, 0)}` : '', ...notes.map(n => `[${n}]`)].filter(Boolean).join(', ');
+  console.log(name.padEnd(44) + [d((m.gdp / base.gdp - 1) * 100, 0), d(m.legit, base.legit), d(m.unrest, base.unrest), d(m.pop, base.pop), d(m.tr, base.tr), d(m.debt, base.debt), d(m.bal, base.bal), d((m.price / base.price - 1) * 100, 0), d(m.unemp, base.unemp), d(m.sat.peasants, base.sat.peasants), d(m.sat.workers, base.sat.workers), d(m.sat.middle, base.sat.middle), d(m.sat.elite, base.sat.elite)].map(x => String(x).padEnd(7)).join('') + other); }
