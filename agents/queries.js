@@ -454,7 +454,7 @@ ${(() => { const by = k => Math.round(men(us.filter(u => u.posture === k))), d =
 function bondsText(w, c, ch) {
   const nm = id => w.countries[id]?.name ?? id, b = pledgesOf(w, c, t => seesTreaty(w, ch, t)), until = t => t.expires != null ? ` until ${quarterLabel(t.expires)}` : '';
   const toUs = [...b.allies.map(x => `${nm(x.id)} (alliance ${x.t.id}${x.t.secret ? ', secret' : ''})`), ...b.for.map(g => `${nm(g.by)} (its guarantee of our independence)`), ...b.wards.filter(t => t.protector !== c.id).map(t => `${nm(t.protector)} (our protector)`)];
-  const weTo = [...b.allies.map(x => nm(x.id)), ...b.by.map(g => `${nm(g.of)} (our guarantee)`), ...b.wards.filter(t => t.protector === c.id).flatMap(t => t.parties.filter(id => id !== c.id).map(id => `${nm(id)} (under our protection)`))];
+  const weTo = [...new Set(b.allies.map(x => nm(x.id))), ...b.by.map(g => `${nm(g.of)} (our guarantee)`), ...b.wards.filter(t => t.protector === c.id).flatMap(t => t.parties.filter(id => id !== c.id).map(id => `${nm(id)} (under our protection)`))];
   return `Who is bound to whom. Bound to come to our side if we are attacked: ${toUs.join(', ') || 'no state'}. We are bound to come to the side of: ${weTo.join(', ') || 'no state'}. Peace is promised between us and: ${b.pacts.map(x => `${nm(x.id)} (${x.t.kind}${until(x.t)})`).join(', ') || 'no state'}.`;
 }
 // What a state has done abroad, as every chancery has it on file.

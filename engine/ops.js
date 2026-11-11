@@ -69,7 +69,8 @@ const OWN = ['set_paper', 'incite', ...NOTE_OPS, ...SEAT_OPS];
 QUIET.add('lead_rising').add('name_deputy');
 for (const op of NOTE_OPS) QUIET.add(op);
 PRIVATE.push(...OWN, ...OPEN_STANDING);
-for (const op of STANDING_OPS) QUIET.add(op);
+// (Named here, not read from the module that carries them out: that module is still loading when this line runs if it was loaded first.)
+for (const op of ['watch', 'delegate', 'standing_order', 'cancel_order']) QUIET.add(op);
 PERMISSIONS.private = new Set(PRIVATE);
 for (const seat of ['general', 'opposition', 'oligarch']) for (const op of [...OWN, ...OPEN_STANDING]) PERMISSIONS[seat].add(op);
 // The chief of staff also says who is paid first when the vote is short and how much of the arsenal an attack may not touch.
