@@ -5,6 +5,7 @@ import { dealsWith, tieOf } from './diplomacy.js';
 import { migrate } from './culture.js';
 import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding, USUAL_COVER, treasuryPays } from './money.js';
 import { blockadeOf, merchantStep, iced } from './navy.js';
+import { upkeepCost } from './military.js';
 
 export const RECIPE = {
   steel: { iron: 1, coal: .8 }, fuel: { oil: 1.25 }, fertilizer: { phosphate: 1, coal: .2 },
@@ -384,6 +385,8 @@ function consume(w, c, prev) {
   } else if (c.unions && klass < Math.min(28, (c.workBase ??= klass) - 2) && w.turn >= (c.strikeRest ?? 0)) { c.strike = true; c.strikeSince = w.turn; news(w, `${c.name}: a general strike has brought industry to a halt.`, { kind: 'politics', countries: [c.id] }); }
 }
 
+// How far past their bare keep the forces can put money to use.
+export const FULL_KIT = 1.3;
 function fiscal(w, c) {
   const eff = clamp((.4 + c.bureaucracy / 120) * (1 - c.corruption / 130) * (1 - (c.unrest ?? 0) / 400) * (c._adminFactor ?? 1) * (c.service?.treasury ?? 1), .2, 1);
   const land = c._raw.grain * 10 * c.priceLevel * c.tax.land, business = (sum(RAW.filter(g => g !== 'grain'), g => c._raw[g] * BASE_PRICE[g]) + sum(Object.keys(RECIPE), g => (c._made[g] || 0) * BASE_PRICE[g] * .45)) * c.priceLevel * c.tax.business;
@@ -396,7 +399,11 @@ function fiscal(w, c) {
   { const past = Math.max(0, c.tax.business - (1 - (c.profitBase ?? 1 - c.tax.business))), want = past > 0 ? business / Math.max(c.tax.business, .01) * past * .5 / (c.rate || 1) * (c.capitalClosed ? 1 - sealOf(w, c) : 1) : 0;
     const haven = want > 0 ? aliveCountries(w).filter(o => o.id !== c.id && !o.capitalClosed).sort((a, b) => b.legitimacy - a.legitimacy)[0] : null, out = haven ? Math.min(Math.max(c.reserves, 0), want) : 0;
     if (out > 0) { c.reserves -= out; haven.reserves += out; } c._flight = out; }
-  const b = c.budget, programs = (b.military + b.welfare + b.infrastructure + b.education + b.police + b.administration) * c.gdp;
+  // A vote is leave to spend, not money spent. The forces draw what they can use: their keep, and up to three tenths over it for better pay,
+  // stores and training (the same bound past which more money buys the army nothing, military.js upkeep). What is voted beyond that is not
+  // drawn and stays in the treasury; a shrunken army on its old vote does not go on costing what the old one did.
+  const b = c.budget, voted = b.military * c.gdp, usable = upkeepCost(w, c) * FULL_KIT, drawn = Math.min(voted, usable);
+  const programs = drawn + (b.welfare + b.infrastructure + b.education + b.police + b.administration) * c.gdp;
   // Standing institutions are part of the budget: a state that founds many of them pays for them every quarter.
   const agencies = sum((c.institutions || []).filter(i => i.id), i => i.sponsor ? i.grant || 0 : i.budget || 0) * c.gdp;
   // Lenders price in the inflation they have come to expect, not one quarter's jump.
@@ -435,7 +442,7 @@ function fiscal(w, c) {
   // The quarter's books in their parts: which tax brought what, what was lost in the collecting, where the money went, and how it stood the quarter before.
   c.lastBooks = { eff, collect: clamp(.4 + c.bureaucracy / 120, 0, 1), graft: c.corruption / 130, unrest: (c.unrest ?? 0) / 400, reach: c._adminFactor ?? 1,
     income: c.gdp * .45 * c.tax.income * eff, land: land * eff, business: business * eff, customs: customs * eff, tolls: (c._tolls || 0) * c.priceLevel, works: c._stateProfit || 0,
-    programs: Object.fromEntries(Object.keys(b).map(k => [k, b[k] * c.gdp])), agencies, interest, abroad: extPaid * (c.rate || 1), outlay: c._outlay || {},
+    programs: Object.fromEntries(Object.keys(b).map(k => [k, k === 'military' ? drawn : b[k] * c.gdp])), forces: { voted, usable, drawn }, agencies, interest, abroad: extPaid * (c.rate || 1), outlay: c._outlay || {},
     before: c.lastRevenue != null ? { revenue: c.lastRevenue, due: c.lastRevenue - (c.lastBalance ?? 0) } : null };
   c._stateProfit = 0; c._outlay = {};
   c.lastRevenue = revenue; c.lastSpending = need * paid; c.paidRatio = paid;

@@ -26,7 +26,11 @@ export function adminStep(w) {
     const pace = clamp(.3 + c.bureaucracy / 100, .35, 1);
     for (const [k, to] of Object.entries(c.taxTarget || {})) { c.tax[k] += (to - c.tax[k]) * pace; if (Math.abs(to - c.tax[k]) < .003) { c.tax[k] = to; delete c.taxTarget[k]; } }
     if (c.tariffTarget != null) { c.tariff += (c.tariffTarget - c.tariff) * pace; if (Math.abs(c.tariffTarget - c.tariff) < .003) { c.tariff = c.tariffTarget; c.tariffTarget = null; } }
-    const pop = sum(provs, provincePop) || 1, reach = sum(provs, p => (p.admin ?? .5) * provincePop(p)) / pop, base = Math.max(c.bureaucracy / 100, .1);
+    // What the offices in the provinces collect is measured against the administration they were staffed for (c.staffed), which follows a
+    // growing bureaucracy at the pace the provincial offices themselves are filled. (Measured against the bureaucracy of the day, every new
+    // clerk in the capital made the provinces look worse held than before, and a state that enlarged its tax office collected less for three years.)
+    c.staffed = c.staffed == null || c.bureaucracy <= c.staffed ? c.bureaucracy : c.staffed + (c.bureaucracy - c.staffed) * .06;
+    const pop = sum(provs, provincePop) || 1, reach = sum(provs, p => (p.admin ?? .5) * provincePop(p)) / pop, base = Math.max(c.staffed / 100, .1);
     c._adminFactor = clamp(reach / (base * .92), .65, 1.1);
   }
 }

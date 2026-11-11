@@ -2912,7 +2912,9 @@ const share = (a, side, g) => (a[side][g] || 0) / a.gdp;
 chain('Nations live by what they sell each other: an inherited world has states that buy their bread abroad and pay for it in manufactures, and states that sell grain and buy wares; a good part of the world\'s output crosses a frontier, the customs are a real part of revenue, nobody is drained of gold by it and nobody goes hungry while the roads are open; and the board of trade says what the country lives by', () => {
   for (const seed of [1848, 7]) { const w = inherited(seed), acc = ledgerOf(w), cs = aliveCountries(w), tot = k => cs.reduce((s, c) => s + acc[c.id][k], 0);
     assert.ok(tot('imp') / tot('gdp') > .03, `seed ${seed}: at least a thirtieth of the world's output is bought across a frontier (${(tot('imp') / tot('gdp') * 100).toFixed(1)}%)`);
-    const bread = cs.filter(c => share(acc[c.id], 'bought', 'grain') > .01), wares = cs.filter(c => share(acc[c.id], 'bought', 'goods') > .01);
+    // A buyer of bread is a state that buys more grain than it sells. (Since states start with their prices where trade had settled them, a seller
+    // of grain whose money stands high also takes in some foreign grain from the first quarter; it is not living on bought bread.)
+    const bread = cs.filter(c => share(acc[c.id], 'bought', 'grain') - share(acc[c.id], 'sold', 'grain') > .01), wares = cs.filter(c => share(acc[c.id], 'bought', 'goods') > .01);
     assert.ok(bread.length >= 1 && wares.length >= 1, `seed ${seed}: some states buy bread abroad (${bread.map(c => c.archetype)}) and some buy wares (${wares.map(c => c.archetype)})`);
     for (const c of bread) assert.ok(acc[c.id].sold.goods > acc[c.id].bought.grain * .4, `${c.name} pays for its bread largely in manufactures`);
     assert.ok(tot('cus') / tot('rev') > .02, `seed ${seed}: the customs bring in a real part of what states collect (${(tot('cus') / tot('rev') * 100).toFixed(1)}%)`);
@@ -2972,6 +2974,34 @@ chain('A man who leaves the army goes back to what he was: a reserve called from
   assert.ok(/military budget provides/.test(called.msg) && /in the hundred/.test(called.msg), 'whoever calls them up is told what the army now costs against what is voted for it: ' + called.msg);
   assert.ok(applyOp(w, ld(w, c), { op: 'demobilize' }).ok);
   assert.ok(Math.abs(count('peasants') / land - 1) < .005 && Math.abs(count('workers') / town - 1) < .005, `they go back where they came from (peasants ${Math.round(land)} -> ${Math.round(count('peasants'))}, workers ${Math.round(town)} -> ${Math.round(count('workers'))})`);
+});
+chain('A state that has stood for years trades from its first quarter: the granaries, the merchants\' takings and the level of prices are carried in from the years before, so the world buys and sells in the first quarter about what it does in the eighth, the customs houses take in the first year what they take in the second, and those who buy their bread abroad are fed from the first day', () => {
+  for (const seed of [1848, 7]) { const w = inherited(seed), gdp = () => aliveCountries(w).reduce((s, c) => s + c.gdp / (c.rate || 1), 0), bought = () => aliveCountries(w).reduce((s, c) => s + GOODS.reduce((a, g) => a + (c.lastBought?.[g] || 0) * w.globalPrice[g], 0), 0) / gdp(), customs = () => aliveCountries(w).reduce((s, c) => s + (c.lastBooks?.customs ?? 0) / c.gdp, 0);
+    const stores = aliveCountries(w).map(c => c.stock.grain / (countryProvinces(w, c.id).reduce((s, p) => s + popOf(p), 0) * .01)); assert.ok(Math.max(...stores) > Math.min(...stores) * 3, `seed ${seed}: the granaries differ as the states do (${stores.map(v => v.toFixed(2)).join(' ')} quarters of bread)`);
+    let first = 0, firstYear = 0, food = 9; run(w, 1); first = bought(); firstYear = customs(); food = Math.min(...aliveCountries(w).map(c => c.foodRatio));
+    for (let i = 0; i < 3; i++) { run(w, 1); firstYear += customs(); food = Math.min(food, ...aliveCountries(w).map(c => c.foodRatio)); }
+    let secondYear = 0, eighth = 0; for (let i = 0; i < 4; i++) { run(w, 1); secondYear += customs(); eighth = bought(); }
+    assert.ok(first > .025 && first > eighth * .7, `seed ${seed}: the first quarter trades like the eighth (${(first * 100).toFixed(1)}% of output against ${(eighth * 100).toFixed(1)}%)`);
+    assert.ok(firstYear > secondYear * .75, `seed ${seed}: customs in the first year are those of the second (${(firstYear * 100).toFixed(2)} against ${(secondYear * 100).toFixed(2)})`);
+    assert.ok(food >= 1, `seed ${seed}: nobody goes short of bread in the first year (${food.toFixed(2)})`); }
+});
+chain('A vote for the army is leave to spend, not money spent: the forces draw their keep and up to three tenths over it, what is voted beyond that stays in the treasury, a vote below their keep is spent to the last coin and leaves them short, and the treasury tells the ruler what was voted and what the forces could use', () => {
+  const play = times => { const w = fresh(), c = w.countries.U1; c.treasury = c.gdp; c.budget.military = upkeepCost(w, c) / c.gdp * times; run(w, 2); return { w, c, drew: c.lastBooks.programs.military, voted: c.lastBooks.forces.voted, cost: upkeepCost(w, c) }; };
+  const bare = play(1), full = play(1.3), lavish = play(3), starved = play(.5);
+  assert.ok(Math.abs(bare.drew / bare.voted - 1) < .001 && Math.abs(starved.drew / starved.voted - 1) < .001, 'a vote the forces can use is drawn in full');
+  assert.ok(lavish.voted > lavish.drew * 2 && Math.abs(lavish.drew / (lavish.cost * 1.3) - 1) < .05, `a vote of three times their keep is drawn only as far as they can use it (voted ${Math.round(lavish.voted)}, drawn ${Math.round(lavish.drew)}, keep ${Math.round(lavish.cost)})`);
+  assert.ok(Math.abs(lavish.c.treasury / full.c.treasury - 1) < .02 && lavish.c.militaryFunding > 1.29 && full.c.militaryFunding > 1.2, `the rest stays in the treasury: it stands where it would under a vote of exactly what they can use (${Math.round(lavish.c.treasury)} against ${Math.round(full.c.treasury)})`);
+  assert.ok(starved.c.militaryFunding < .6 && starved.c.treasury > lavish.c.treasury, `and a vote of half their keep leaves them half paid (${starved.c.militaryFunding.toFixed(2)})`);
+  const told = lookUp(lavish.w, ld(lavish.w, lavish.c), 'budget'); assert.ok(/voted/.test(told) && /could use/.test(told) && /was not drawn/.test(told), 'the budget says what was voted and what the forces could use: ' + told.slice(0, 900));
+  assert.ok(!/was not drawn/.test(lookUp(bare.w, ld(bare.w, bare.c), 'budget')), 'and says nothing of the kind when the whole vote is used');
+});
+chain('A bigger administration never collects less: a state that doubles its vote for administration takes in a larger part of what it is owed in every quarter that follows, and one that halves it a smaller part; the offices in the provinces are measured against the administration they were staffed for, not against the clerks hired in the capital last month', () => {
+  const play = times => { const w = inherited(1848), c = aliveCountries(w).find(x => x.archetype === 'agrarian'); assert.ok(applyOp(w, ld(w, c), { op: 'set_budget', category: 'administration', share: c.budget.administration * times, _law: true }).ok); const eff = []; for (let i = 0; i < 12; i++) { run(w, 1); eff.push(c.lastBooks.eff); } return { c, eff }; };
+  const calm = play(1), more = play(2), less = play(.5);
+  assert.ok(more.c.bureaucracy > calm.c.bureaucracy + 6 && less.c.bureaucracy < calm.c.bureaucracy - 3, `the vote moves the bureaucracy (${Math.round(less.c.bureaucracy)}, ${Math.round(calm.c.bureaucracy)}, ${Math.round(more.c.bureaucracy)})`);
+  assert.ok(more.eff.every((v, i) => v >= calm.eff[i] - 1e-9), `with the vote doubled the treasury never collects a smaller part than it would have (${more.eff.map((v, i) => ((v - calm.eff[i]) * 100).toFixed(1)).join(' ')} points)`);
+  assert.ok(more.eff[11] > calm.eff[11] + .01 && more.eff[3] > calm.eff[3], `and collects more within the year and plainly more after three (${(calm.eff[11] * 100).toFixed(1)} -> ${(more.eff[11] * 100).toFixed(1)} in the hundred)`);
+  assert.ok(less.eff[11] < calm.eff[11] - .005, `with the vote halved it collects less (${(less.eff[11] * 100).toFixed(1)})`);
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

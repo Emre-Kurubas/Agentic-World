@@ -139,18 +139,29 @@ function balance(w, cs) {
   // as there is. Three years are run on a copy and the stores, the market and the labour market are taken from it, so that the first year anyone
   // governs is an ordinary year and not the year the stores fill up.
   { const trial = structuredClone(w); trial.status = 'playing'; for (let i = 0; i < 12; i++) { beginTurn(trial); stepWorld(trial); }
-    for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive) continue; for (const g of Object.keys(c.stock)) if (g !== 'grain') c.stock[g] = t.stock[g]; c.unemployment = t.unemployment; c.lastSold = { ...t.lastSold }; c._need = { ...t._need };
+    // The granaries are taken with the rest: a state that sells grain has its surplus on the quay and one that buys bread has the fortnight's
+    // store it lives on, and the merchants of both have last quarter's takings in hand. (When the granaries alone were left as the map made them,
+    // every state began with the same full barns, nobody bought or sold bread for a year, and no customs house took anything.)
+    for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive) continue; for (const g of Object.keys(c.stock)) c.stock[g] = t.stock[g]; c.unemployment = t.unemployment; c.lastSold = { ...t.lastSold }; c._need = { ...t._need }; c.lastExportGold = t.lastExportGold || 0;
+      // And lenders have long since learned what this state's money does: they ask what its prices have taught them to ask, not a newcomer's premium.
+      c.inflation = t.inflation; c.inflTrend = t.inflTrend ?? Math.max(0, t.inflation); c._lastShortage = t._lastShortage;
       // The army a state has kept for years is an army it has been paying: its military budget is what those men cost, measured against the output the country settles at.
       if (t.realGdp > 0) c.budget.military = clamp(upkeepCost(w, c) / Math.max(c.priceLevel, .01) / t.realGdp * 1.03, .002, .2); }
+    // Prices too have long since found their level against the neighbours': a state that sells more than it buys has seen gold come in and its
+    // prices rise until its people bought abroad what they had not before. Each state starts with the price level, against the others', that
+    // those years left it, and its money, its treasury and its debt are reckoned in that money; the gold in its vaults is what it inherited.
+    { const live = cs.filter(c => trial.countries[c.id]?.alive), rel = c => { const t = trial.countries[c.id]; return Math.max(t.priceLevel / (t.rate || 1), 1e-6) / Math.max(c.priceLevel / (c.rate || 1), 1e-6); }, size = c => Math.max(trial.countries[c.id].realGdp, 1), all = live.reduce((s, c) => s + size(c), 0) || 1, mean = Math.exp(live.reduce((s, c) => s + Math.log(rel(c)) * size(c), 0) / all);
+      for (const c of live) { const k = clamp(rel(c) / mean, .7, 1.4); for (const key of ['priceLevel', 'wageIndex', 'money', 'treasury', 'debt', 'gdp']) c[key] *= k; } }
     w.globalPrice = { ...trial.globalPrice }; }
-  // The books are read after a year and a half, when the first quarters' adjustments are over: that is the level the state lives at.
+  // The books are read over the first year and a half as it will actually be lived, now that stores, trade and prices start where they had
+  // settled: the state's books stand where its kind of state keeps them from the first quarter, not only from the sixth.
   // Twice over: the first reading sets the rates, the second corrects for what those rates themselves changed.
   for (let pass = 0; pass < 2; pass++) {
-    const trial = structuredClone(w); trial.status = 'playing';
-    for (let i = 0; i < 6; i++) { beginTurn(trial); stepWorld(trial); }
+    const trial = structuredClone(w), got = {}; trial.status = 'playing';
+    for (let i = 0; i < 6; i++) { beginTurn(trial); stepWorld(trial); for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive || !(t.lastRevenue > 0)) continue; const a = (got[c.id] ||= { rev: 0, bal: 0, gdp: 0 }); a.rev += t.lastRevenue; a.bal += t.lastBalance; a.gdp += t.gdp; } }
     for (const c of cs) {
-      const t = trial.countries[c.id]; if (!t?.alive || !(t.lastRevenue > 0)) continue;
-      const want = (BOOKS[c.archetype] ?? 0) * t.gdp, factor = clamp((t.lastRevenue + want - t.lastBalance) / t.lastRevenue, .5, 1.8);
+      const a = got[c.id]; if (!trial.countries[c.id]?.alive || !(a?.rev > 0)) continue;
+      const want = (BOOKS[c.archetype] ?? 0) * a.gdp, factor = clamp((a.rev + want - a.bal) / a.rev, .5, 1.8);
       for (const k of Object.keys(c.tax)) c.tax[k] = clamp(c.tax[k] * factor, .02, .6); c.tariff = clamp(c.tariff * factor, 0, .6);
     }
   }
