@@ -233,6 +233,9 @@ export function createWorld(cfg) {
       p.pops = { peasants: { n: n * .56, sat: 52 }, workers: { n: n * .27, sat: 48 }, middle: { n: n * .14, sat: 55 }, elite: { n: n * .03, sat: 60 } };
       const urban = k === 0 ? 1 : k < mine.length / 3 ? .55 : .2;
       p.plants.goods = urban * between(w, .5, 1); p.plants.steel = (p.deposits.iron || p.deposits.coal) ? urban * between(w, .2, .8) : urban * .1; p.plants.machines = urban * between(w, .1, .4); p.plants.arms = urban * between(w, .1, .4);
+      // A works has places for hands in the measure of its size (economy.js extract): as the map makes a country, before anyone has inherited
+      // it, the works of every province together have places for all its working people, in the proportions drawn above.
+      { const all = Object.values(p.plants).reduce((a, v) => a + v, 0); if (all > 0 && all < 1) for (const k of Object.keys(p.plants)) p.plants[k] /= all; }
       p.rail = rand(w) < urban ? 1 : 0;
     });
     if (mine[0].coast) mine[0].port = 2;

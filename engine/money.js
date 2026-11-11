@@ -25,11 +25,11 @@ export function updateRer(w) {
 // steel in the yards, a quarter's wares on the shelves, two years' machinery, an arsenal for a war. One number does three things, so that they agree:
 // at that depth the world price stands at its ordinary level, a country's own price stands at the world's, and makers begin to work short time.
 // (Bread is left as it was: the granaries fill and empty with the harvest, and farmers do not stop sowing because the barns are full.)
-const STORE = { timber: 4, coal: 4, iron: 4, copper: 4, oil: 3, phosphate: 4, rare: 4, steel: 2, fuel: 2, fertilizer: 2, machines: 8, goods: 1, arms: 16 };
+export const STORE = { timber: 4, coal: 4, iron: 4, copper: 4, oil: 3, phosphate: 4, rare: 4, steel: 2, fuel: 2, fertilizer: 2, machines: 8, goods: 1, arms: 16 };
 // What the world market reads (economy.js `trade`): its price stands at the ordinary level when the world's stores hold four fifths of this, hence the quarter added.
-// Consumer goods are the exception on the world's side: a country that cannot pay for them keeps no shelves at all, so the world as a whole holds
-// about half of what its makers do, and the world price is at its ordinary level there.
-export const USUAL_COVER = { ...Object.fromEntries(Object.entries(STORE).map(([g, q]) => [g, q * 1.25])), goods: STORE.goods * .5 * 1.25 };
+// (Consumer goods used to be read at half this: countries that could not pay for wares kept no shelves, and the world held half of what its makers
+// did. Now that every country's shops are stocked, the shelves of the world are the makers' shelves, and the price is ordinary when they are.)
+export const USUAL_COVER = { ...Object.fromEntries(Object.entries(STORE).map(([g, q]) => [g, q * 1.25])), goods: STORE.goods * .9 * 1.25 };
 const coverOf = (c, g, demand) => (c.stock[g] || 0) / demand * 2 / (STORE[g] ?? 2);
 // With full warehouses producers slow down: looks at how many quarters of domestic demand and last quarter's sales the stock covers.
 // Past the usual store they cut back faster than the stock grows, so the store stays near its ordinary depth instead of running to years of unsold

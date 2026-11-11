@@ -301,7 +301,9 @@ chain('Inflation sinks a floating currency and makes imports dearer', () => {
   assert.ok(ca.rate > cb.rate * 1.3, `${ca.rate} / ${cb.rate}`); assert.ok(ca.fx < cb.fx);
 });
 chain('Under a fixed rate, gold flight shrinks money and running out of reserves breaks the rate', () => {
-  const w = fresh(), c = w.countries.U1, before = c.money; c.fxRegime = 'gold'; c._lastReserves = c.reserves; c.reserves -= c.realGdp * .02; run(w, 1); assert.ok(c.money < before * 1.02, `money ${before} -> ${c.money}`);
+  // Against the same quarter without the flight: money also follows output, and what a quarter's output does is not the same in every world.
+  const calm = fresh(), cc = calm.countries.U1; cc.fxRegime = 'gold'; cc._lastReserves = cc.reserves; run(calm, 1);
+  const w = fresh(), c = w.countries.U1, before = c.money; c.fxRegime = 'gold'; c._lastReserves = c.reserves; c.reserves -= c.realGdp * .02; run(w, 1); assert.ok(c.money < cc.money * .995, `money ${before} -> ${c.money}, against ${cc.money} with the gold at home`);
   c.reserves = 0; const rate = c.rate, legit = c.legitimacy; beginTurn(w); currencyStep(w, c); assert.equal(c.fxRegime, 'gold', 'a single quarter is not enough for a crisis'); currencyStep(w, c);
   assert.equal(c.fxRegime, 'floating'); assert.ok(c.rate > rate * 1.2, `rate ${c.rate}`); assert.ok(c.legitimacy < legit); assert.ok(w.newsThisTurn.some(n => n.text.includes('broke from its peg')));
 });
@@ -330,7 +332,8 @@ ok('Scarcity raises the domestic price and capital controls stop flight', () => 
   const ol = w.characters[c.oligarch], total = aliveCountries(w).reduce((a, x) => a + x.reserves, 0); applyOp(w, ol, { op: 'capital_flight', share: .2 }); assert.ok(aliveCountries(w).reduce((a, x) => a + x.reserves, 0) > total * .97, 'fleeing money does not vanish from the world');
   c.capitalClosed = true; assert.equal(applyOp(w, ol, { op: 'capital_flight', share: .2 }).ok, false);
 });
-const inherited = (seed = 1848, countries = 5) => createWorld({ ...base, plainStates: false, seed, countries });
+// An inherited world takes a second or two to settle (inherit.js balance) and many checks start from the same one: each is built once and copied.
+const heirlooms = new Map(), inherited = (seed = 1848, countries = 5) => { const key = seed + '|' + countries; if (!heirlooms.has(key)) heirlooms.set(key, createWorld({ ...base, plainStates: false, seed, countries })); return structuredClone(heirlooms.get(key)); };
 ok('Country chronicles and character lives are events, record no feelings, and vary by country', () => {
   const w = inherited(), cs = aliveCountries(w);
   for (const c of cs) { assert.ok(c.chronicle.length >= 5, c.name); assert.ok(c.culture.language && c.culture.myth); assert.ok(c.chronicle.every((e, i, a) => !i || a[i - 1].year <= e.year), 'chronological order'); }
@@ -1668,7 +1671,10 @@ chain('Roads and works stand where their upkeep holds them: an inherited state l
   const hi = mean(up, 'U1'), lo = mean(down, 'U1'), mid = mean(same, 'U1'); assert.ok(hi > mid + .2 && lo < mid - .1, `spending moves the roads: ${lo.toFixed(2)} < ${mid.toFixed(2)} < ${hi.toFixed(2)}`);
   for (let i = 0; i < 60; i++) { for (const c of [cu, cd]) rich(c); run(up, 1); run(down, 1); }
   assert.ok(mean(up, 'U1') - hi < .08 && lo - mean(down, 'U1') < .08, 'and they settle instead of climbing or falling for ever');
-  assert.ok(plants(up, 'U1') > plants(same, 'U1') && plants(down, 'U1') < plants(same, 'U1'), 'the country\'s works follow the same spending');
+  // Works that sell to a market now follow that market (economy.js follow): what the spending built beyond what is bought is let go again by its owners.
+  // The works no market lets go, the arsenals, show what the spending itself does.
+  const arsenals = (x, id) => countryProvinces(x, id).reduce((s, p) => s + p.plants.arms, 0);
+  assert.ok(arsenals(up, 'U1') > arsenals(same, 'U1') && arsenals(down, 'U1') < arsenals(same, 'U1'), 'the works the state keeps up follow the same spending');
   // Roads that were built stay built on top of that.
   const [y, cy] = three(), p = countryProvinces(y, 'U1')[0], before = p.infra; cy.treasury = 1e6; applyOp(y, ld(y, cy), { op: 'build', province: p.id, kind: 'infrastructure', amount: quote(y, cy, p, 'infrastructure').price * .3 });
   for (let i = 0; i < 40; i++) { rich(cy); run(y, 1); } assert.ok(p.infra > before + .25, `roads built forty quarters ago are still there: ${before.toFixed(2)} -> ${p.infra.toFixed(2)}`);
@@ -1788,7 +1794,8 @@ chain('Full yards → short time → stores stay near their usual depth → the 
   assert.ok(floored.length <= 2, `on the floor: ${floored.join(', ')}`);
   assert.ok(w.globalPrice.coal > BASE_PRICE.coal * .5 && w.globalPrice.steel > BASE_PRICE.steel * .55, `coal ${w.globalPrice.coal}, steel ${w.globalPrice.steel}`);
   // What the pits could have raised and did not is counted as idle, not dug to rot.
-  assert.ok(cs.some(c => c.idleShare > .1), 'short time shows as idle capacity');
+  // (Since the mills and pits a state inherits are as large as its trade has made them, short time is a few parts in the hundred, where it used to be a fifth of all output.)
+  assert.ok(cs.some(c => c.idleShare > .01) && cs.every(c => c.idleShare < .25), `short time shows as idle capacity, and it is not half the country (${cs.map(c => c.idleShare.toFixed(2))})`);
 });
 chain('A store past its usual depth slows the makers faster than it fills; bread is not held back by full barns', () => {
   const w = fresh(), c = w.countries.U1; c.lastSold = {};
@@ -2863,7 +2870,10 @@ chain('The business tax is paid out of what would have renewed the works: a stat
   assert.ok(worksOf(ck) > worksOf(ca) * 1.02, `and under a light tax more (${(worksOf(ck) / worksOf(ca)).toFixed(2)})`);
   assert.ok(cb.unemployment > ca.unemployment + .01, `works that are not kept up employ fewer hands (${(ca.unemployment * 100).toFixed(1)}% out of work -> ${(cb.unemployment * 100).toFixed(1)}%)`); assert.ok(/let run down/.test(lookUp(b, ld(b, cb), 'economy')), 'and the report on work says why');
   run(a, 28); run(b, 28);
-  assert.ok(worksOf(cb) < worksOf(ca) * .82 && worksOf(cb) > worksOf(ca) * .5, `ten years on a quarter less, and no further: the owners keep up what still pays (${(worksOf(cb) / worksOf(ca)).toFixed(2)})`);
+  // (The plant itself is kept at about seven tenths of what it was, as before. Against the untaxed twin the works are no longer a quarter smaller after ten years:
+  // in this test world of oversized works the twin's owners have been letting idle mills go all the while (economy.js follow), which the taxed owners, already
+  // running fewer, have had less cause to; and owners who are not renewing do not extend either.)
+  assert.ok(cb.upkeep < .82 && cb.upkeep > .55 && worksOf(cb) < worksOf(ca) * .99 && worksOf(cb) > worksOf(ca) * .5, `ten years on plainly less, and no further: the owners keep up what still pays (${(worksOf(cb) / worksOf(ca)).toFixed(2)})`);
   assert.ok(/renew/.test(lookUp(b, ld(b, cb), 'economy')), 'the economy report says what the tax is doing to the works');
 });
 chain('An invention is not a harvest: electrification raises what the country turns out as the works are wired, over years and not in the quarter the patent is read; what a state inherited is long since in use; and the report on technology says what each thing is for and how far it has come into use', () => {
@@ -3002,6 +3012,91 @@ chain('A bigger administration never collects less: a state that doubles its vot
   assert.ok(more.eff.every((v, i) => v >= calm.eff[i] - 1e-9), `with the vote doubled the treasury never collects a smaller part than it would have (${more.eff.map((v, i) => ((v - calm.eff[i]) * 100).toFixed(1)).join(' ')} points)`);
   assert.ok(more.eff[11] > calm.eff[11] + .01 && more.eff[3] > calm.eff[3], `and collects more within the year and plainly more after three (${(calm.eff[11] * 100).toFixed(1)} -> ${(more.eff[11] * 100).toFixed(1)} in the hundred)`);
   assert.ok(less.eff[11] < calm.eff[11] - .005, `with the vote halved it collects less (${(less.eff[11] * 100).toFixed(1)})`);
+});
+// The goods side. Helpers: world prices against the ordinary, who works a mineral, what the world's works made.
+const dearOf = (w, g) => w.globalPrice[g] / BASE_PRICE[g], worksOre = (w, c, k) => countryProvinces(w, c.id).some(p => p.deposits[k]?.known && p.deposits[k].mine > 0), worldMade = (w, g) => aliveCountries(w).reduce((s, c) => s + (c._made?.[g] || 0), 0);
+const shutPits = (w, id) => { for (const p of countryProvinces(w, id)) for (const k of ['coal', 'iron']) if (p.deposits[k]) { p.deposits[k].mine = 0; p.deposits[k].known = false; } }, refuse = (w, id) => { for (const o of aliveCountries(w)) if (o.id !== id) o.embargo.push(id); };
+chain('The mills and pits a state inherits are as large as its trade has made them: in the first two quiet years steel, machinery, coal and iron run a little short of flat out and not at half, their prices stand near the ordinary and not on the floor, and next to nothing is left unmade because the stores are full', () => {
+  for (const seed of [1848, 7]) { const w = inherited(seed), ran = {}, low = {}, high = {}; let n = 0;
+    for (let t = 0; t < 8; t++) { run(w, 1); n++; const cs = aliveCountries(w);
+      for (const pl of ['steel', 'machines', 'goods']) ran[pl] = (ran[pl] || 0) + cs.reduce((s, c) => s + c._made[pl], 0) / cs.reduce((s, c) => s + c._capAll[pl], 0);
+      for (const g of ['coal', 'iron']) ran[g] = (ran[g] || 0) + cs.reduce((s, c) => s + c._raw[g], 0) / cs.reduce((s, c) => s + c._rawFull[g], 0);
+      for (const g of ['coal', 'iron', 'steel', 'machines']) { low[g] = Math.min(low[g] ?? 9, dearOf(w, g)); high[g] = Math.max(high[g] ?? 0, dearOf(w, g)); } }
+    for (const k of ['steel', 'machines', 'coal', 'iron']) assert.ok(ran[k] / n > .72 && ran[k] / n <= 1.001, `seed ${seed}: ${k} is worked at ${(ran[k] / n * 100).toFixed(0)} in the hundred of what the world's works could turn out`);
+    assert.ok(ran.goods / n > .65, `seed ${seed}: consumer industry at ${(ran.goods / n * 100).toFixed(0)}`);
+    for (const g of ['coal', 'iron', 'steel', 'machines']) assert.ok(low[g] > .7 && high[g] < 1.45, `seed ${seed}: ${g} stood between ${low[g].toFixed(2)} and ${high[g].toFixed(2)} of its ordinary price`);
+    assert.ok(aliveCountries(w).every(c => c._idleV / c.realGdp < .22), `seed ${seed}: little is left unmade for full stores (${aliveCountries(w).map(c => (c._idleV / c.realGdp).toFixed(2))})`);
+    assert.ok(aliveCountries(w).some(c => c._loose / c._hands > .15), 'and the hands the mills have no places for live by the small trades of the towns'); }
+});
+chain('Coal and iron lie in fields: in every inherited world some state works no coal or no iron and must buy it, some state raises more than it burns, no state is left without both, and the state that lacks one is told so, what it uses, what comes from abroad and from whom', () => {
+  for (const seed of [1848, 7, 99]) { const w = inherited(seed), cs = aliveCountries(w), lacks = k => cs.filter(c => !worksOre(w, c, k));
+    assert.ok(lacks('coal').length + lacks('iron').length >= 1, `seed ${seed}: somebody has to buy coal or iron`);
+    assert.ok(lacks('coal').length <= 2 && lacks('iron').length <= 3 && !cs.some(c => !worksOre(w, c, 'coal') && !worksOre(w, c, 'iron')), `seed ${seed}: nobody is without both (coal ${lacks('coal').map(c => c.archetype)}, iron ${lacks('iron').map(c => c.archetype)})`);
+    run(w, 4); const k = lacks('coal').length ? 'coal' : 'iron', poor = lacks(k)[0], raised = c => (c._raw[k] || 0) / Math.max((c._drawn[k] || 0) + (c._used?.[k] || 0), .01);
+    assert.ok(raised(poor) < .3 && (poor.lastBought[k] || 0) > 1, `seed ${seed}: ${poor.archetype} raises ${raised(poor).toFixed(2)} of the ${k} it uses and buys the rest (${(poor.lastBought[k] || 0).toFixed(1)})`);
+    assert.ok(cs.some(c => raised(c) > 1.08), `seed ${seed}: and somebody has ${k} to sell (${cs.map(c => raised(c).toFixed(2))})`);
+    assert.ok(poor.foodRatio >= 1 && poor.goodsRatio > .85 && (poor.buildRatio ?? 1) > .5, `seed ${seed}: it is not crippled by it (shops ${poor.goodsRatio.toFixed(2)}, building ${(poor.buildRatio ?? 1).toFixed(2)})`);
+    const told = lookUp(w, ld(w, poor), 'resources'), board = lookUp(w, ld(w, poor), 'trade');
+    assert.ok(new RegExp(`No ${k} is worked on our soil`).test(told) && /fields are worked in/.test(told), 'the mines office says that none is worked at home and who has it: ' + told.slice(-700));
+    assert.ok(new RegExp(`${k} \\(\\d+ of the \\d+ it used`).test(board) && /came from abroad, chiefly from/.test(board), 'the board of trade says what is used, what is raised and where the rest comes from: ' + board.slice(0, 200));
+    assert.ok(w.past.some(e => new RegExp(`has no known ${k} deposits`).test(e.text) && e.countries.includes(poor.id)), 'and it is in the chronicle the state inherits'); }
+});
+chain('Blockade → coal → steel → arms and building: a state that works no coal and is refused by every seller burns through its store in under a year, its steel mills and arms works stop, its builders stand idle and its people are out of work; and the ministry says the works stand for want of coal', () => {
+  const quiet = inherited(1848), poor = aliveCountries(quiet).find(c => !worksOre(quiet, c, 'coal')); assert.ok(poor, 'a state without coal'); const cut = structuredClone(quiet), id = poor.id; refuse(cut, id);
+  const store = cut.countries[id].stock.coal; assert.ok(store > 20, 'it keeps some months of coal in its yards'); let steel = 0, usual = 0; for (let t = 0; t < 6; t++) { run(quiet, 1); run(cut, 1); if (t >= 4) { steel += cut.countries[id]._made.steel; usual += quiet.countries[id]._made.steel; } }
+  const a = quiet.countries[id], b = cut.countries[id];
+  assert.ok(b.stock.coal < store * .1, `the coal is gone (${Math.round(store)} -> ${Math.round(b.stock.coal)})`);
+  assert.ok(steel < usual * .5 && b._made.steel < a._made.steel * .5, `the steel mills stop or all but stop (${a._made.steel.toFixed(1)} -> ${b._made.steel.toFixed(1)} a quarter)`);
+  assert.ok(b._made.arms < a._made.arms * .75, `and the arms works after them (${a._made.arms.toFixed(2)} -> ${b._made.arms.toFixed(2)})`);
+  assert.ok(b.buildRatio < a.buildRatio * .8 && b.unemployment > a.unemployment + .08, `building falls off and people are out of work (building ${a.buildRatio.toFixed(2)} -> ${b.buildRatio.toFixed(2)}, unemployment ${(a.unemployment * 100).toFixed(1)} -> ${(b.unemployment * 100).toFixed(1)})`);
+  const told = lookUp(cut, ld(cut, b), 'economy'); assert.ok(/for want of coal/.test(told) && !/for want of coal/.test(lookUp(quiet, ld(quiet, a), 'economy')), 'the ministry says why the works stand: ' + told.slice(0, 900));
+});
+chain('Resources bite: with half the world\'s coal and iron workings shut the price of coal more than doubles within three years and the world makes less steel, not more; a state stripped of its own pits makes hardly more steel than before (its miners are in the small trades, not in the mills) and far less once it cannot buy', () => {
+  const quiet = inherited(1848), shut = structuredClone(quiet); let i = 0, peak = 0; for (const p of Object.values(shut.provinces)) for (const k of ['coal', 'iron']) if (p.deposits[k]?.mine > 0 && (i++ % 2)) { p.deposits[k].mine = 0; p.deposits[k].known = false; }
+  const rich = aliveCountries(quiet).find(c => worksOre(quiet, c, 'coal') && worksOre(quiet, c, 'iron')), bare = structuredClone(quiet), cutOff = structuredClone(quiet); shutPits(bare, rich.id); shutPits(cutOff, rich.id); refuse(cutOff, rich.id);
+  let made = 0, madeBare = 0; for (let t = 0; t < 8; t++) { for (const w of [quiet, shut, bare, cutOff]) run(w, 1); peak = Math.max(peak, dearOf(shut, 'coal')); made += quiet.countries[rich.id]._made.steel; madeBare += bare.countries[rich.id]._made.steel; }
+  assert.ok(madeBare < made * 1.1, `stripped of its pits it makes no tenth more steel (${made.toFixed(0)} -> ${madeBare.toFixed(0)} in two years)`);
+  assert.ok(bare.countries[rich.id]._loose > quiet.countries[rich.id]._loose * 1.1 && (bare.countries[rich.id].lastBought.coal || 0) > (quiet.countries[rich.id].lastBought.coal || 0) + 5, 'its miners are in the small trades and its coal comes from abroad');
+  assert.ok(cutOff.countries[rich.id]._made.steel < quiet.countries[rich.id]._made.steel * .6, `and cut off as well, its mills run down (${quiet.countries[rich.id]._made.steel.toFixed(1)} -> ${cutOff.countries[rich.id]._made.steel.toFixed(1)})`);
+  for (let t = 0; t < 4; t++) { run(quiet, 1); run(shut, 1); peak = Math.max(peak, dearOf(shut, 'coal')); }
+  assert.ok(peak > dearOf(quiet, 'coal') * 2, `coal goes from ${dearOf(quiet, 'coal').toFixed(2)} of its ordinary price to ${peak.toFixed(2)}`);
+  assert.ok(worldMade(shut, 'steel') < worldMade(quiet, 'steel') * .9, `and the world makes less steel (${worldMade(quiet, 'steel').toFixed(0)} -> ${worldMade(shut, 'steel').toFixed(0)} a quarter)`);
+});
+chain('A naval programme is felt in every steel yard: two states laying down heavy ships for a year, and buying plate abroad, raise the world price of steel by half within that year, and their own builders go short', () => {
+  const quiet = inherited(1848), busy = structuredClone(quiet), yards = [...aliveCountries(busy)].sort((x, y) => y.treasury - x.treasury).slice(0, 2); let peak = 0, laid = 0, short = 0;
+  for (let t = 0; t < 4; t++) { for (const c of yards) { const port = countryProvinces(busy, c.id).filter(p => p.port > 0).sort((x, y) => y.port - x.port)[0]; if (!port) continue; c.treasury += c.gdp * .05; if (applyOp(busy, ld(busy, c), { op: 'build_ship', province: port.id, kind: port.port >= 2 ? 'battleship' : 'cruiser', ships: 6, _law: true }).ok) laid++; applyOp(busy, ld(busy, c), { op: 'buy_goods', good: 'steel', amount: 40, _law: true }); } run(quiet, 1); run(busy, 1); peak = Math.max(peak, dearOf(busy, 'steel') / dearOf(quiet, 'steel')); for (const c of yards) short += (quiet.countries[c.id].buildRatio ?? 1) - (c.buildRatio ?? 1); }
+  assert.ok(laid >= 2, 'ships were laid down'); assert.ok(peak > 1.5, `steel stood at ${peak.toFixed(2)} times what it did in the quiet world`);
+  assert.ok(short > .2, `and ordinary building in the countries that built the ships went short of it (${short.toFixed(2)} of a quarter's building lost between them over the year)`);
+});
+chain('Ordinary building is the standing custom of the mills: every country draws steel, timber and machinery in proportion to its output without anyone ordering it, less in a slump and when steel is dear, nothing when there is none to be had; then the building trades are idle, and the ministry says what was built', () => {
+  // Prices at the ordinary, stores full, unless the case says otherwise: a quarter's building is then what a country of this size builds.
+  const quarter = (o = {}) => { const w = fresh(), c = w.countries.U1; for (const g of ['steel', 'timber', 'machines']) { c.stock[g] = Math.max(c.stock[g], c._need[g] * 6); c.prices[g] = BASE_PRICE[g] * (c.rer ?? 1) * (o.dear?.[g] ?? 1); } c.trend = o.trend ?? .004; run(w, 1); return c; };
+  const calm = quarter(), usual = calm._build.steel;
+  assert.ok(usual > 0 && Math.abs(usual / calm._build.timber - (.001 / .0006)) < .2 && calm._built.steel > usual * .95 && calm.buildRatio > .85, `a country of this size builds: ${usual.toFixed(1)} of steel a quarter and timber and machinery in proportion, and got ${calm._built.steel.toFixed(1)}`);
+  assert.ok(Math.abs(usual / (calm.realGdp * .001) - 1) < .25, 'in proportion to what it turns out');
+  const slump = quarter({ trend: -.03 }); assert.ok(slump._build.steel < usual * .75, `in a slump it builds less (${slump._build.steel.toFixed(1)})`);
+  const dear = quarter({ dear: { steel: 3 } }); assert.ok(dear._build.steel < usual * .7 && dear._build.timber > calm._build.timber * .95, `and less in iron when steel is dear (${dear._build.steel.toFixed(1)}), not less in timber`);
+  const years = cut => { const w = fresh(), c = w.countries.U1; if (cut) refuse(w, 'U1'); for (let t = 0; t < 4; t++) { for (const g of ['steel', 'timber', 'machines']) { c.stock[g] = Math.max(c.stock[g], c._need[g] * 6); c.prices[g] = BASE_PRICE[g] * (c.rer ?? 1); } c.trend = .004; if (cut) { c.stock.steel = 0; c.stock.iron = 0; } run(w, 1); } return { w, c }; };
+  const open = years(false), none = years(true);
+  assert.ok(none.c._built.steel < .01 && none.c.buildRatio < open.c.buildRatio - .3 && none.c.lastJobs.yards > open.c.lastJobs.yards + .01, `with no steel to be had nothing is built in it and the building trades are out of work (building ${open.c.buildRatio.toFixed(2)} -> ${none.c.buildRatio.toFixed(2)}, idle building trades put ${(none.c.lastJobs.yards * 100).toFixed(1)} in the hundred out of work, against ${(open.c.lastJobs.yards * 100).toFixed(1)})`);
+  const told = lookUp(none.w, ld(none.w, none.c), 'economy'); assert.ok(/Ordinary building/.test(told) && /building trades are short of work/.test(told), 'the ministry reports it: ' + told.slice(0, 1600));
+});
+chain('Works follow their trade: mills whose yards have been full for years are let go by their owners and mills that are sold out at a good price are extended, a little every quarter; what the state owns follows neither', () => {
+  const play = (stock, own) => { const w = fresh(), c = w.countries.U1, level = () => countryProvinces(w, 'U1').reduce((s, p) => s + p.plants.steel, 0), was = level(); if (own != null) c.ownership = own;
+    for (let t = 0; t < 8; t++) { if (stock != null) c.stock.steel = c._need.steel * stock; if (stock === 0) { c.stock.iron = Math.max(c.stock.iron, 500); c.stock.coal = Math.max(c.stock.coal, 500); for (const g of ['timber', 'machines']) c.stock[g] = Math.max(c.stock[g], c._need[g] * 6); } run(w, 1); } return { w, c, grew: level() / was }; };
+  const full = play(12), short = play(0), state = play(12, 1);
+  assert.ok(full.grew < .97, `works that stand for want of buyers are let go (${full.grew.toFixed(3)} of their size after two years)`);
+  assert.ok(short.grew > 1.005, `works that are sold out are extended (${short.grew.toFixed(3)})`);
+  assert.ok(Math.abs(state.grew - 1) < .002, `the state's works stay as they are until it decides otherwise (${state.grew.toFixed(3)})`);
+  assert.ok(/letting go what has long stood idle: [^.]*steel mill/.test(lookUp(full.w, ld(full.w, full.c), 'economy')), 'and the ministry says which trades are being let go');
+});
+chain('Fertilizer is bought by farmers at a price: when it is dear they put less on the fields and the harvest answers to what was put on, so the price is not pinned at its ceiling; when it is cheap the whole dressing goes on', () => {
+  const play = dear => { const w = fresh(), c = w.countries.U1; c.techs.chemical_fertilizer = 1; c.stock.fertilizer = 5000; for (let t = 0; t < 3; t++) { w.globalPrice.fertilizer = BASE_PRICE.fertilizer * dear; c.stock.fertilizer = 5000; run(w, 1); } return c; };
+  const cheap = play(.8), dearer = play(6);
+  assert.ok(cheap._dose > .9 && cheap.fed > .9, `cheap, the whole dressing goes on (${cheap.fed.toFixed(2)})`);
+  assert.ok(dearer._dose < .5 && dearer.fed < .5, `dear, less than half of it (${dearer.fed.toFixed(2)})`);
+  assert.ok(cheap._raw.grain > dearer._raw.grain * 1.08, `and the harvest follows what was put on (${Math.round(dearer._raw.grain)} against ${Math.round(cheap._raw.grain)})`);
+  assert.ok(dearer._need.fertilizer < cheap._need.fertilizer * .5, 'the want that bids the price up shrinks with the price');
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

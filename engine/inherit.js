@@ -1,14 +1,14 @@
 // Leaders do not design the state, they inherit it: regime, budget, army, debt and past differ from country to country.
 // Only facts live here; the character is not told how to think, and the leader can change everything.
 import { clamp, rand, pick, between, nextId } from './util.js';
-import { countryProvinces, aliveCountries, GOOD_LABEL, makeUnit, provincePop } from './world.js';
+import { countryProvinces, aliveCountries, GOOD_LABEL, GOODS, RAW, makeUnit, provincePop } from './world.js';
 import { countryRoot } from './names.js';
 import { initGroups } from './culture.js';
 import { initAdmin } from './admin.js';
 import { partyStep, satisfactionStep } from './politics.js';
 import { leaderForeignness } from './culture.js';
 import { makeParliament } from './polity.js';
-import { issueCurrency } from './money.js';
+import { issueCurrency, STORE } from './money.js';
 import { initFirms } from './firms.js';
 import { seatCourt } from './court.js';
 import { burdenAll } from './burdens.js';
@@ -18,7 +18,8 @@ import { seatGovernment, allocateSeats } from './polity.js';
 import { settleUnderground } from './underground.js';
 import { distance } from './politics.js';
 import { writeChronicles, writeLives } from './chronicle.js';
-import { updateStrategic, updateRoutes, costOfCapacity, costOfPolice, settleBases } from './economy.js';
+import { updateStrategic, updateRoutes, costOfCapacity, costOfPolice, settleBases, RECIPE, economyStep } from './economy.js';
+import { MAX_PLANT, MAX_MINE } from './projects.js';
 import { outfitFleets } from './navy.js';
 import { outfitArmies } from './military.js';
 import { RESERVE } from './frontier.js';
@@ -120,10 +121,40 @@ function makePast(w) {
 // what its share of that market will buy (grain being cheap when there is plenty of it: TERMS), so that no state's gold drains away to the
 // others in the ordinary course of trade.
 const LEAN = { merchant: -.6, republic: -.36, federation: -.2, revolutionary: .03, theocracy: .1, monarchy: .12, junta: .12, agrarian: .3 }, SPARE = .1, TERMS = .8;
+// The mills, the engine works and the pits of a world that has stood for years are as large as its trade has made them: nobody went on sinking
+// shafts for coal that lay unsold at the pithead. What each state uses of steel, machinery, coal, iron, copper and timber in an ordinary quarter
+// (for its wares, its arms, the wear of its machines, its ordinary building, its hearths and bunkers) is reckoned up, and its works and workings
+// are scaled so that the world's together run a little short of flat out (RUN) and the stores stand at their usual depth.
+// Pits: a state that has the seams raises at least what it uses itself, as far as its ground allows; the states with seams to spare share the
+// custom of those that have none, by the size of their fields. Who must buy coal or iron is therefore decided by the ground, not by chance.
+// Mills and engine works: scaled most of the way toward what each state uses, so that a country of workshops still has steel and engines to
+// sell and a country of fields still buys some. The hands the smaller works no longer need are in the small trades of the towns (economy.js
+// extract). Arms works are left as they are: an arsenal is kept for a war, not for the quarter's wear.
+// A year of the economy alone on a copy of the world: enough to measure works, stores and trade by, without the politics of the copy.
+const trade = t => { beginTurn(t); economyStep(t); t.turn += 1; };
+const RUN = { steel: .86, machines: .86, coal: .88, iron: .88, copper: .85, timber: .88 }, OWN = .6;
+function sizeWorks(w, cs) {
+  const trial = structuredClone(w); trial.status = 'playing'; for (let i = 0; i < 2; i++) trade(trial);
+  const ts = cs.map(c => trial.countries[c.id]).filter(t => t?.alive && t._need && t._build); if (!ts.length) return;
+  const menOf = id => Object.values(trial.units).filter(u => u.country === id).reduce((s, u) => s + u.men, 0);
+  const wants = t => { const D = Object.fromEntries(GOODS.map(g => [g, 0])); D.goods = (t._capAll?.goods || 0) * .9; D.machines = t._pop * .00014 + t._build.machines; D.arms = menOf(t.id) * .004; D.steel = t._build.steel; D.timber = t._build.timber; D.coal = (t._hearth ?? t._pop * .001) + (t._burn?.coal || 0);
+    for (const pl of ['goods', 'arms', 'machines', 'steel']) for (const [g, q] of Object.entries(RECIPE[pl])) D[g] += D[pl] * q; return D; };
+  const own = Object.fromEntries(ts.map(t => [t.id, wants(t)])), fullOf = (t, g) => (RAW.includes(g) ? t._rawFull?.[g] : t._capAll?.[g]) || 0, by = {};
+  for (const g of Object.keys(RUN)) { const D = ts.reduce((s, t) => s + own[t.id][g], 0), full = ts.reduce((s, t) => s + fullOf(t, g), 0), world = full > 0 ? D / RUN[g] / full : 1;
+    for (const t of ts) { const mine = fullOf(t, g) > 0 ? own[t.id][g] / RUN[g] / fullOf(t, g) : world;
+      (by[t.id] ||= {})[g] = clamp(g === 'timber' ? world : ['steel', 'machines'].includes(g) ? world * Math.pow(Math.max(mine, 1e-6) / Math.max(world, 1e-6), OWN) : Math.max(world, mine), .2, 3); } }
+  for (const p of Object.values(w.provinces)) { const f = by[p.controller]; if (!f) continue;
+    for (const g of ['steel', 'machines']) p.plants[g] = clamp(p.plants[g] * f[g], 0, MAX_PLANT);
+    for (const g of ['coal', 'iron', 'copper']) { const d = p.deposits[g]; if (d?.known && d.mine > 0) d.mine = clamp(d.mine * f[g], .05, MAX_MINE); }
+    p.timber *= clamp(f.timber, .5, 2); }
+  // And the stores: a year's coal and ore at the pithead, half a year's steel in the yards, two years' machinery, as the trades keep them.
+  for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive || !t._need) continue; for (const g of Object.keys(RUN)) c.stock[g] = Math.max(0, t._need[g]) * (STORE[g] ?? 2) * .9; }
+}
 function specialise(w, cs) {
   for (let pass = 0; pass < 3; pass++) {
+    sizeWorks(w, cs);
     const trial = structuredClone(w), got = {}; trial.status = 'playing';
-    for (let i = 0; i < 4; i++) { beginTurn(trial); stepWorld(trial); for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive || !t._need) continue; const a = (got[c.id] ||= { grain: 0, eaten: 0, cap: 0, made: 0, used: 0 }); a.grain += t._raw.grain; a.eaten += t._need.grain; a.cap += t._capAll.goods; a.made += t._made?.goods || 0; a.used += t._need.goods; } }
+    for (let i = 0; i < 4; i++) { trade(trial); for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive || !t._need) continue; const a = (got[c.id] ||= { grain: 0, eaten: 0, cap: 0, made: 0, used: 0 }); a.grain += t._raw.grain; a.eaten += t._need.grain; a.cap += t._capAll.goods; a.made += t._made?.goods || 0; a.used += t._need.goods; } }
     const live = cs.filter(c => got[c.id]?.eaten > 0 && got[c.id].used > 0), size = c => got[c.id].eaten, all = live.reduce((s, c) => s + size(c), 0) || 1, mean = live.reduce((s, c) => s + (LEAN[c.archetype] ?? 0) * size(c), 0) / all;
     const leanOf = c => (LEAN[c.archetype] ?? 0) - mean, short = c => Math.max(0, -leanOf(c) - SPARE) * size(c), over = c => Math.max(0, SPARE + leanOf(c)) * size(c), bread = live.reduce((s, c) => s + short(c), 0), spare = live.reduce((s, c) => s + over(c), 0) || 1;
     for (const c of live) { const a = got[c.id], lean = leanOf(c), ps = countryProvinces(w, c.id);
@@ -133,8 +164,32 @@ function specialise(w, cs) {
   }
 }
 const BOOKS = { merchant: .010, republic: .003, federation: .001, monarchy: -.002, theocracy: -.003, revolutionary: -.007, agrarian: -.009, junta: -.016 };
+// A state that buys its coal or its ore, or its bread, has long since found something to pay with: its workshops make for the foreigner what
+// its mines and fields do not yield, and a state that sells coal and grain buys its cloth and boots abroad with the proceeds instead of
+// making them all. Each state's works for consumer goods are set so that, over ordinary years, its gold neither drains away nor piles up.
+function payments(w, cs) {
+  for (let pass = 0; pass < 2; pass++) {
+    sizeWorks(w, cs);
+    const trial = structuredClone(w), was = {}, got = {}; trial.status = 'playing';
+    for (let i = 0; i < 6; i++) { trade(trial); for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive) continue; if (i === 1) was[c.id] = t.reserves; if (i >= 2) { const a = (got[c.id] ||= { cap: 0, n: 0 }); a.cap += t._capAll?.goods || 0; a.n++; } } }
+    for (const c of cs) { const t = trial.countries[c.id], a = got[c.id]; if (!t?.alive || !a?.n || was[c.id] == null) continue;
+      const flow = (t.reserves - was[c.id]) / a.n, cap = a.cap / a.n * trial.globalPrice.goods; if (!(cap > 0)) continue;
+      const k = clamp(1 - flow / cap, .75, 1.35); for (const p of countryProvinces(w, c.id)) p.plants.goods = clamp(p.plants.goods * k, 0, MAX_PLANT); }
+  }
+}
+// Nobody inherits a country that is already going under for want of a mineral it cannot pay for. Where the years before the handing over
+// leave a state's builders and works without the coal or the ore they must buy (it has too little to sell and too little gold), that state
+// has long since been working the thin seams it has: they are known and worked on the day it is handed over, and it buys the rest.
+function thinSeams(w, cs) {
+  const trial = structuredClone(w); trial.status = 'playing'; for (let i = 0; i < 16; i++) trade(trial);
+  let opened = false;
+  for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive || ((t.built ?? 1) >= .7 && (t.inputRatio ?? 1) >= .85 && (t.goodsRatio ?? 1) >= .85)) continue;
+    for (const k of Object.keys(FIELDS)) { const ps = countryProvinces(w, c.id); if (ps.some(p => p.deposits[k]?.known && p.deposits[k].mine > 0)) continue;
+      for (const p of ps) { const d = p.deposits[k]; if (d && !d.known) { Object.assign(d, { known: true, mine: .8 }); opened = true; } } } }
+  return opened;
+}
 function balance(w, cs) {
-  specialise(w, cs);
+  specialise(w, cs); payments(w, cs); if (thinSeams(w, cs)) payments(w, cs); sizeWorks(w, cs);
   // A country that has stood for years has its warehouses at their usual depth, its prices where its trade has settled them and its people in such work
   // as there is. Three years are run on a copy and the stores, the market and the labour market are taken from it, so that the first year anyone
   // governs is an ordinary year and not the year the stores fill up.
@@ -182,8 +237,38 @@ function settle(w, cs) {
   for (const c of cs) c.legitBase = Math.round(clamp(c.legitimacy - (22 + c.popularity * .75 - leaderForeignness(w, c)), -10, 45));
 }
 
+// Coal and iron lie in fields, not under every third hill. The map scatters seams everywhere; what a world inherits is a few coalfields and
+// fewer ore districts that are known and worked, richer than a scattered seam, and around them country where nothing workable has been found:
+// most of the scattered seams are not there at all, and a third lie undiscovered, thin and poor, for a survey or a time of dear coal to find.
+// So in every world some states have coal to sell, some have ore, and some must buy one or both; who is which is decided by the ground.
+// (When every state had both in several times what it could burn, no blockade, embargo or conquest ever touched a mill.)
+// Nothing here is drawn by lot: the fields are the richest seams that lie far enough apart.
+const FIELDS = { coal: { fields: .8, seams: 2.6 }, iron: { fields: .6, seams: 2 } };
+function dealFields(w, cs) {
+  const at = (a, b) => Math.hypot(a.cx - b.cx, a.cy - b.cy), holds = (c, k) => countryProvinces(w, c.id).some(p => p.deposits[k]?.field);
+  for (const [k, plan] of Object.entries(FIELDS)) {
+    const seams = Object.values(w.provinces).filter(p => p.deposits[k] && w.countries[p.owner]?.alive), worth = p => p.deposits[k].amount * p.deposits[k].rich; if (seams.length < 2) continue;
+    const centres = [[...seams].sort((a, b) => worth(b) - worth(a) || (a.id < b.id ? -1 : 1))[0]], n = Math.max(2, Math.round(cs.length * plan.fields));
+    while (centres.length < Math.min(n, seams.length)) centres.push(seams.filter(p => !centres.includes(p)).sort((a, b) => Math.min(...centres.map(c => at(b, c))) * Math.sqrt(worth(b)) - Math.min(...centres.map(c => at(a, c))) * Math.sqrt(worth(a)) || (a.id < b.id ? -1 : 1))[0]);
+    const near = [...seams].sort((a, b) => Math.min(...centres.map(c => at(a, c))) - Math.min(...centres.map(c => at(b, c))) || (a.id < b.id ? -1 : 1)), keep = Math.max(centres.length, Math.round(cs.length * plan.seams));
+    // Every state keeps at least one thin seam of what it had, found or not: the ground of a whole country is never quite bare.
+    const thin = new Set(cs.map(c => near.slice(keep).find(p => p.owner === c.id)?.id));
+    near.forEach((p, i) => { const d = p.deposits[k];
+      if (i < keep) Object.assign(d, { field: true, known: true, rich: d.rich * 1.25, amount: d.amount * 1.5, mine: d.mine > 0 ? d.mine : .8 });
+      else if ((i - keep) % 3 === 0 || thin.has(p.id)) Object.assign(d, { known: false, mine: 0, rich: d.rich * .6, amount: d.amount * .5 });
+      else delete p.deposits[k]; });
+    // If the fields happen to reach into every state, the state with the least of them has only the thin seams at their edge: known, and not worth working.
+    // (Of two such states, the one that still has the other mineral: no state is left without both for the sake of the rule.)
+    if (cs.length > 2 && cs.every(c => holds(c, k))) { const other = k === 'coal' ? 'iron' : 'coal', least = [...cs].sort((a, b) => (k === 'iron' ? holds(b, other) - holds(a, other) : 0) || 0).sort((a, b) => countryProvinces(w, a.id).filter(p => p.deposits[k]?.field).reduce((s, p) => s + worth(p), 0) - countryProvinces(w, b.id).filter(p => p.deposits[k]?.field).reduce((s, p) => s + worth(p), 0) || (a.id < b.id ? -1 : 1))[0];
+      for (const p of countryProvinces(w, least.id)) { const d = p.deposits[k]; if (d?.field) Object.assign(d, { field: false, known: false, mine: 0, rich: d.rich * .5, amount: d.amount * .4 }); } }
+  }
+  // A state with neither a coalfield nor an ore district works what thin coal it has: to be without both is more than a state can pay for.
+  for (const c of cs) { if (Object.keys(FIELDS).some(k => holds(c, k))) continue; const ps = countryProvinces(w, c.id), k = ['coal', 'iron'].find(g => ps.some(p => p.deposits[g])); if (k) for (const p of ps) if (p.deposits[k]) Object.assign(p.deposits[k], { known: true, mine: .8 }); }
+}
+
 export function inheritStates(w) {
   const cs = aliveCountries(w), bag = shuffled(w, ARCHETYPES);
+  dealFields(w, cs);
   cs.forEach((c, i) => applyArchetype(w, c, bag[i % bag.length], i));
   initGroups(w);
   w.past = makePast(w);

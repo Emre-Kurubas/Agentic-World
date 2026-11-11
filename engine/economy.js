@@ -12,6 +12,13 @@ export const RECIPE = {
   machines: { steel: .7, copper: .2 }, goods: { timber: .2, coal: .2, steel: .1 }, arms: { steel: .7, coal: .3 }
 };
 const ORDER = ['steel', 'fuel', 'fertilizer', 'machines', 'arms', 'goods'];
+// What a hand in the small trades of a town (the building, the carting, the docks, the workshop of one master and two men) adds in a quarter,
+// in money of constant value: less than a hand in a mill, more than a hand on poor land.
+export const SMALL = .3, CURSE = .125;
+// Ordinary private building: what a unit of the country's output draws in a quarter of steel, timber and machinery when times are ordinary
+// (some two parts in a hundred of output in iron and steel, as much in engines and rolling stock, a little in timber), and how hard it swings
+// with the trend of trade (BOOM: a country growing a point a quarter faster than the usual builds three tenths more, as harvest years did).
+export const BUILDING = { steel: .001, timber: .0006, machines: .00035 }, BOOM = 30, USUAL_GROWTH = .004;
 export const hasTech = (c, t) => !!c.techs?.[t];
 // How far an invention has come into use. What a state inherited is long since in every works; what it has just learned spreads as works are
 // wired and farmers persuaded, over the quarters given here, and does its work in that measure.
@@ -120,12 +127,13 @@ function extract(w, c) {
   const raw = Object.fromEntries(RAW.map(g => [g, 0])); let gold = 0, services = 0, dev = 0, popAll = 0;
   c._cap = Object.fromEntries(Object.keys(PLANTS).map(k => [k, 0]));
   const engine = hasTech(c, 'combustion_engine') ? 1 + clamp(c.stock.fuel / Math.max(c._lastFuelNeed || 1, 1), 0, 1) * .25 * (c.motor ?? 0) : 1;
-  const spread = inUse(w, c, 'chemical_fertilizer'), fert = spread > 0 ? 1 + clamp(c.stock.fertilizer / Math.max(c._pop * .002 * spread, 1), 0, 1) * .4 * spread : 1;
+  // The harvest answers to the fertilizer that was actually put on the fields last quarter (c.fed, of the full dressing), not to what lies in store.
+  const spread = inUse(w, c, 'chemical_fertilizer'), fert = spread > 0 ? 1 + (c.fed ?? clamp(c.stock.fertilizer / Math.max(c._pop * .002 * spread, 1), 0, 1)) * .4 * spread : 1;
   // Private owners keep up their mines and works out of what the tax on business leaves them (see investment): what they have let run down turns out less.
   const tended = 1 - (1 - (c.upkeep ?? 1)) * (1 - c.ownership);
   const strikes = c.strike ? .65 : 1, bank = c.bankHealth < 30 ? .8 : 1;
-  c._rent = 0; c._idleV = 0;
-  const pace = Object.fromEntries(RAW.map(g => [g, glutFactor(c, g)]));
+  c._rent = 0; c._idleV = 0; c._loose = 0; c._hands = 0; c._rawFull = Object.fromEntries(RAW.map(g => [g, 0]));
+  const pace = Object.fromEntries(RAW.map(g => [g, glutFactor(c, g)])); c._pace = pace;
   for (const p of countryProvinces(w, c.id)) {
     const occ = p.controller !== p.owner ? .55 : 1;
     const rail = 1 + p.rail * .12 + .08 * inUse(w, c, 'electricity');
@@ -136,14 +144,21 @@ function extract(w, c) {
     p.land ??= Math.max(p.pops.peasants.n, 1);
     const hands = p.land * Math.pow(Math.max(p.pops.peasants.n, 0) / p.land, .7);
     const grain = hands * p.fertility * water * .03 * c.tech.agri * eff * p.weather * fert * engine + p.fish * p.pops.peasants.n * .002, timber = p.pops.peasants.n * p.timber * .006 * eff;
-    raw.grain += grain * pace.grain; raw.timber += timber * pace.timber;
+    raw.grain += grain * pace.grain; raw.timber += timber * pace.timber; c._rawFull.grain += grain; c._rawFull.timber += timber;
     c._idleV += grain * (1 - pace.grain) * BASE_PRICE.grain + timber * (1 - pace.timber) * BASE_PRICE.timber;
     p.cap = {}; p.dug = {};
     const deposits = Object.entries(p.deposits).filter(([, d]) => d.known && d.mine > 0 && d.amount > 0);
-    const mineLoad = sum(deposits, ([, d]) => d.mine), plantLoad = sum(Object.values(p.plants)) + .3;
-    const mineShare = mineLoad / (mineLoad + plantLoad);
+    // A works gives work by its size: one step of a mill or a pit has places for as many hands as the province had working people when the
+    // world was handed over (p.base; it is priced by that number, projects.js). Where the mills and pits of a province have places for more
+    // hands than there are, the hands are shared among them by size; where they have places for fewer, the rest work in the small trades of the
+    // town, at the building, the carting and the docks, and make no steel and no cloth. People who come to the towns find places in the mills
+    // only as the mills are extended. (When every hand was shared out among whatever works stood there, a country that lost its pits made more steel.)
+    p.base ??= Math.max(p.pops.workers.n, 1);
+    const mineLoad = sum(deposits, ([, d]) => d.mine), level = sum(Object.values(p.plants)), places = (mineLoad + level) * p.base, per = places > 0 ? Math.min(p.base, p.pops.workers.n * p.base / places) : 0;
+    const loose = Math.max(0, p.pops.workers.n - places); c._loose += loose; c._hands += p.pops.workers.n; p.loose = loose;
     for (const [k, d] of deposits) {
-      const full = p.pops.workers.n * mineShare * (d.mine / mineLoad) * d.rich * ({ coal: .3, iron: .22, oil: .12 }[k] ?? .06) * c.tech.ind * eff * strikes * (1 - (p.halt?.[k] ?? 0)) * (k === 'gold' ? 1 : tended), f = k === 'gold' ? 1 : pace[k] ?? 1, q = full * f;
+      const full = per * d.mine * d.rich * ({ coal: .3, iron: .22, oil: .12 }[k] ?? .06) * c.tech.ind * eff * strikes * (1 - (p.halt?.[k] ?? 0)) * (k === 'gold' ? 1 : tended), f = k === 'gold' ? 1 : pace[k] ?? 1, q = full * f;
+      if (k !== 'gold') c._rawFull[k] += full;
       if (f < 1) c._idleV += (full - q) * BASE_PRICE[k];
       d.amount = Math.max(0, d.amount - q * .08);
       const con = p.concessions?.[k];
@@ -154,9 +169,11 @@ function extract(w, c) {
       raw[k] += kept; p.dug[k] = kept; c._rent += kept * BASE_PRICE[k] * (k === 'oil' ? 1.4 : 1);
       if (d.amount <= 0) news(w, `${c.name}: the ${p.name} ${GOOD_LABEL[k]} deposit is exhausted.`, { kind: 'economy', countries: [c.id] });
     }
-    const labor = p.pops.workers.n * (1 - mineShare), level = sum(Object.values(p.plants));
-    if (level > 0) for (const pl of Object.keys(PLANTS)) if (p.plants[pl] > 0) { const here = labor * (p.plants[pl] / level) * clamp(.7 + p.plants[pl] * .35, .7, 3) * .05 * 25 / BASE_PRICE[pl] * c.tech.ind * eff * strikes * bank * (1 - c.ownership * .15) * (1 - (p.halt?.[pl] ?? 0)) * tended; c._cap[pl] += here; p.cap[pl] = here; }
-    services += (p.pops.middle.n + p.pops.elite.n * 1.5) * eff;
+    if (level > 0) for (const pl of Object.keys(PLANTS)) if (p.plants[pl] > 0) { const here = per * p.plants[pl] * clamp(.7 + p.plants[pl] * .35, .7, 3) * .05 * 25 / BASE_PRICE[pl] * c.tech.ind * eff * strikes * bank * (1 - c.ownership * .15) * (1 - (p.halt?.[pl] ?? 0)) * tended; c._cap[pl] += here; p.cap[pl] = here; }
+    // A town has only so much carting, building and mending to be done: hands beyond those its small trades had when the world was handed over
+    // add less and less, as on the land.
+    p.trades ??= Math.max(loose, p.base * .1);
+    services += (p.pops.middle.n + p.pops.elite.n * 1.5 + p.trades * Math.pow(loose / p.trades, .7) * SMALL) * eff;
     const pop = provincePop(p); popAll += pop; dev += p.devastation * pop;
   }
   c._pop = popAll; c._dev = popAll ? dev / popAll : 0; c._raw = raw; c._services = services; c._capAll = { ...c._cap };
@@ -173,11 +190,24 @@ function needs(w, c) {
   // Knowing the engine is not the same as running a country on it. Towns, farms and the fleet go over to oil only as fast as oil is to be had (c.motor),
   // and go back to coal and horses when it fails; a country without oil keeps its coal-fired navy and loses nothing by the invention.
   const motor = hasTech(c, 'combustion_engine') ? c.motor ?? 0 : 0;
-  need.grain += c._pop * .01; need.goods += c._pop * .004; need.coal += c._pop * .001 + ships * .08 * (1 - motor);
+  // Hearths burn coal where coal is to be had at a price; where it is dear people burn wood, peat and straw and go cold sooner (at twice the usual
+  // price about three fifths of the coal).
+  const dear = g => clamp(Math.pow(Math.max(c.prices?.[g] ?? BASE_PRICE[g], .01) / BASE_PRICE[g] / Math.max(c.rer ?? 1, .2), -.6), .45, 1.15);
+  c._hearth = c._pop * .001 * clamp(dear('coal') ** 1.2, .4, 1.1);
+  need.grain += c._pop * .01; need.goods += c._pop * .004; need.coal += c._hearth + ships * .08 * (1 - motor);
   // Machinery wears out: what the country's works and farms use up in a quarter is what its engineering trade has to replace before anything new is built.
   need.arms += men * .01; need.fuel += engine * .05 + ships * .08 * motor + c._pop * .0006 * motor; need.machines += c._pop * .00014;
   c._burn = { coal: ships * .08 * (1 - motor), fuel: engine * .05 + ships * .08 * motor };
-  if (hasTech(c, 'chemical_fertilizer')) need.fertilizer += c._pop * .002 * inUse(w, c, 'chemical_fertilizer');
+  // Ordinary building. Towns grow, plant is renewed, lines are relaid and rolling stock replaced whether or not any government orders it: a
+  // standing want of steel, timber and machinery in proportion to what the country turns out. It rises in good years and falls off in a slump,
+  // with sick banks and when the materials are dear; it is what kept the mills of the age busy. Nobody decrees it: it is what owners and
+  // townspeople do. (Without it nothing in the world wanted steel but arms and wares, and half of every mill stood still.)
+  const pulse = clamp(1 + ((c.trend ?? USUAL_GROWTH) - USUAL_GROWTH) * BOOM, .5, 1.35) * (c.bankHealth < 30 ? .6 : 1) * (1 - clamp(c._dev || 0, 0, .5));
+  c._build = Object.fromEntries(Object.entries(BUILDING).map(([g, q]) => [g, q * Math.max(c.realGdp || 0, 0) * pulse * dear(g)]));
+  for (const [g, q] of Object.entries(c._build)) need[g] += q;
+  // Fertilizer is bought by farmers, and farmers buy less of it the dearer it is: at twice its usual price about half the full dressing goes on the fields.
+  c._dose = hasTech(c, 'chemical_fertilizer') ? clamp(Math.pow(Math.max(c.prices?.fertilizer ?? BASE_PRICE.fertilizer, .01) / BASE_PRICE.fertilizer / Math.max(c.rer ?? 1, .2), -1), .1, 1) : 0;
+  if (hasTech(c, 'chemical_fertilizer')) need.fertilizer += c._pop * .002 * inUse(w, c, 'chemical_fertilizer') * c._dose;
   if (hasTech(c, 'rare_alloys')) need.rare += sum(Object.values(w.units).filter(u => u.country === c.id && ['armor', 'air'].includes(u.kind)), u => u.men) * .004 + c._cap.machines * .05;
   c._need = need; c._lastFuelNeed = need.fuel;
   c._reserve = Object.fromEntries(GOODS.map(g => [g, need[g] * .4]));
@@ -193,8 +223,12 @@ export const sealOf = (w, c) => w.friction ? clamp(.3 + c.bureaucracy / 100, .35
 // The duty one good pays coming in: what a treaty fixed with that seller, else a duty the government has aimed at that country's goods, else
 // its own rule for the good, else the general tariff.
 const usualDuty = (c, g) => c.imports?.rules?.[g]?.tariff ?? c.tariff;
-// What part of the country's ordinary buying abroad still comes in over its own duty on the good.
-const SHY = { grain: .5, goods: 1.2 };
+// What part of the country's ordinary buying abroad still comes in over its own duty on the good. Wares fall off fastest; bread less (people
+// must eat); and coal, ore and timber least of all, because a mill that wants coal wants it at any duty: the duty is paid and the coal comes.
+const SHY = { grain: .5, goods: 1.2, coal: .2, iron: .2, copper: .2, oil: .2, phosphate: .2, rare: .2, timber: .3, steel: .5, machines: .5 };
+// What a trade that must buy its material abroad keeps lying beyond the quarter's need, in quarters of that need: a works that lives on
+// foreign coal has some months of it in the yard, where a town buys its bread and its cloth from week to week.
+const KEEP = { coal: 1.5, iron: 1.5, copper: 1.5, oil: 1, phosphate: 1, timber: 1, steel: .7, machines: 1 };
 export const wallOf = (c, g) => 1 - clamp((usualDuty(c, g) || 0) * (SHY[g] ?? .8), 0, .8);
 const dutyOn = (c, g, from) => c.tariffDeals?.[from] ?? c.aimed?.[from] ?? usualDuty(c, g);
 // A duty aimed at one seller sends merchants to the others and, the dearer it is, keeps the goods out: of what would have come from there, this much still does.
@@ -208,7 +242,7 @@ function trade(w, cs) {
   for (const c of cs) { c.lastSold = {}; c.lastBought = {}; c.lastOrders = []; }
   // What merchants would bring in of a good, and how much of that the law lets through: a prohibition or a quota cuts it, and the part the customs cannot hold back is smuggled.
   // A duty makes the foreign thing dearer at home and fewer people buy it: wares fall off fastest, bread least (people must eat).
-  const wantOf = (c, g) => { const usual = Math.max(0, c._need[g] + c._reserve[g] * .5 - c.stock[g]) * wallOf(c, g) + displacedDemand(c, g), r = c.imports?.rules?.[g]; if (!r || (!r.ban && r.quota == null)) return { usual, legal: usual }; const legal = r.ban ? 0 : Math.min(usual, r.quota); return { usual: legal + (usual - legal) * (1 - sealOf(w, c)), legal }; };
+  const wantOf = (c, g) => { const usual = Math.max(0, c._need[g] * (1 + (KEEP[g] ?? .2)) - c.stock[g]) * wallOf(c, g) + displacedDemand(c, g), r = c.imports?.rules?.[g]; if (!r || (!r.ban && r.quota == null)) return { usual, legal: usual }; const legal = r.ban ? 0 : Math.min(usual, r.quota); return { usual: legal + (usual - legal) * (1 - sealOf(w, c)), legal }; };
   // The state's own order abroad is the treasury's purchase: it reaches as far as the cash above the working balance and what lenders will add, at the day's price and exchange.
   const affords = (c, g) => (Math.max(0, c.treasury - (c.till || 0)) + Math.max(0, creditLeft(c))) / Math.max(w.globalPrice[g] * (c.rate || 1) * 1.05, .01);
   const stateOrder = (c, g) => { const o = c.orders?.[g]; return o && (!(o.limit > 0) || w.globalPrice[g] <= o.limit) ? Math.min(o.amount, affords(c, g)) : 0; };
@@ -281,8 +315,9 @@ function trade(w, cs) {
     }
     const unmet = wanted > 0 ? clamp((wanted - moved) / wanted, 0, 1) : 0;
     // Durable goods are held in deeper stores everywhere, so a world with years of machinery in hand is not a world glutted with it.
-    // (The stores are read as they stood before this quarter's wares came out of the mills, which is how the usual depths were measured.)
-    const before = w.globalPrice[g], D = sum(cs, c => c._need[g]) + 1, S = (sum(cs, c => Math.max(0, c.stock[g] - (c._made?.[g] || 0))) + moved * .2) / ((USUAL_COVER[g] ?? 2) / 2) + 1;
+    // (The stores are read as they stood before this quarter's wares came out of the mills, which is how the usual depths were measured; and for
+    // steel and the like before the engine works and arms shops drew on them, which is when the mills themselves judge whether their yards are full.)
+    const before = w.globalPrice[g], D = sum(cs, c => c._need[g]) + 1, S = (sum(cs, c => Math.max(0, c.stock[g] - (c._made?.[g] || 0) + (RECIPE[g] ? c._drawn?.[g] || 0 : 0))) + moved * .2) / ((USUAL_COVER[g] ?? 2) / 2) + 1;
     const target = BASE_PRICE[g] * clamp(Math.pow(D / S * 1.6, .8), .4, 5) * (1 + unmet * .9);
     w.globalPrice[g] = clamp(before + (target - before) * .4, BASE_PRICE[g] * .3, BASE_PRICE[g] * 9);
     if (w.globalPrice[g] > before * 1.5 && before > BASE_PRICE[g]) news(w, `World ${GOOD_LABEL[g]} price rose sharply.`, { kind: 'economy' });
@@ -294,18 +329,23 @@ function trade(w, cs) {
 function factories(w, c) {
   const made = {};
   const armsPriority = clamp(c.armShare * 4, .2, 1);
+  // Why each kind of works made less than it could (c._still): the stores were full and nobody was buying, the state asked the arms shops for
+  // only part of what they can make, or a material ran out, and which one. The same figures the works were run on, kept for whoever asks.
+  c._still = {}; let could = 0;
   for (const pl of ORDER) {
-    const pace = glutFactor(c, pl), cap = c._cap[pl] * (pl === 'arms' ? armsPriority : 1) * pace, rec = RECIPE[pl];
+    const pace = glutFactor(c, pl), asked = pl === 'arms' ? armsPriority : 1, cap = c._cap[pl] * asked * pace, rec = RECIPE[pl], full = c._cap[pl];
     c._cap[pl] *= pace; if (pace < 1) c._idleV += cap / pace * (1 - pace) * BASE_PRICE[pl] * .45;
     if (pl === 'fuel' && !hasTech(c, 'oil_prospecting') && !c.stock.oil) { made[pl] = 0; continue; }
-    let r = cap;
-    for (const [g, q] of Object.entries(rec)) r = Math.min(r, (c.stock[g] || 0) / q);
+    let r = cap, lack = null;
+    for (const [g, q] of Object.entries(rec)) if ((c.stock[g] || 0) / q < r) { r = (c.stock[g] || 0) / q; lack = g; }
     r = Math.max(0, r);
     for (const [g, q] of Object.entries(rec)) c.stock[g] -= r * q;
-    c.stock[pl] = (c.stock[pl] || 0) + r; made[pl] = r;
+    c.stock[pl] = (c.stock[pl] || 0) + r; made[pl] = r; could += cap * BASE_PRICE[pl];
+    c._still[pl] = { full, buyers: full * (1 - pace), orders: full * pace * (1 - asked), materials: cap - r, lack: cap - r > full * .005 ? lack : null };
   }
-  const cap = sum(Object.keys(RECIPE), pl => c._cap[pl] * BASE_PRICE[pl]);
-  c.inputRatio = cap > 0 ? clamp(sum(Object.keys(RECIPE), pl => (made[pl] || 0) * BASE_PRICE[pl]) / cap, 0, 1) : 1;
+  // Works idle for want of materials, as a part of what the works were set to make (short time for full stores and arms not ordered are not want of materials).
+  c.inputRatio = could > 0 ? clamp(sum(Object.keys(RECIPE), pl => (made[pl] || 0) * BASE_PRICE[pl]) / could, 0, 1) : 1;
+  c._drawn = Object.fromEntries(GOODS.map(g => [g, sum(Object.entries(RECIPE), ([pl, rec]) => (made[pl] || 0) * (rec[g] || 0))]));
   c._made = made;
 }
 
@@ -333,20 +373,29 @@ function consume(w, c, prev) {
   const consumer = clamp(c.stock.goods / Math.max(c._pop * .004, 1), 0, 1.2);
   c.stock.goods = Math.max(0, c.stock.goods - c._pop * .004) * .96;
   // What the fleet and the motorised army burn, the fields take and the workshops use really leaves the stores.
-  c.stock.coal = Math.max(0, c.stock.coal - c._pop * .001 - (c._burn?.coal || 0));
+  c.stock.coal = Math.max(0, c.stock.coal - (c._hearth ?? c._pop * .001) - (c._burn?.coal || 0));
+  // What the country itself used up this quarter, beyond what its works drew (c._drawn): for whoever asks how long the stores will last.
+  c._used = { grain: c._pop * .01 * Math.min(c.foodRatio, 1), goods: c._pop * .004 * Math.min(consumer, 1), coal: (c._hearth ?? c._pop * .001) + (c._burn?.coal || 0), machines: c._pop * .00014 };
   if (hasTech(c, 'combustion_engine')) {
     const m = c.motor ?? 0; c.fuelRatio = n.fuel > .05 ? clamp(c.stock.fuel / n.fuel, 0, 1.2) : 1; c.stock.fuel = Math.max(0, c.stock.fuel - c._pop * .0006 * m - (c._burn?.fuel || 0));
     // With fuel to spare more of the country takes to the engine; when the tanks run dry it goes back.
     c.motor = clamp(m + (c.stock.fuel > Math.max(n.fuel, c._pop * .0006 * .25) ? .04 : c.fuelRatio < .6 ? -.1 : 0), 0, 1);
   } else c.fuelRatio = 1;
-  if (hasTech(c, 'chemical_fertilizer')) c.stock.fertilizer = Math.max(0, (c.stock.fertilizer || 0) - c._pop * .002 * inUse(w, c, 'chemical_fertilizer'));
+  if (hasTech(c, 'chemical_fertilizer')) { const full = c._pop * .002 * inUse(w, c, 'chemical_fertilizer'), on = Math.min(c.stock.fertilizer || 0, full * (c._dose ?? 1)); c.stock.fertilizer = Math.max(0, (c.stock.fertilizer || 0) - on); c.fed = full > 0 ? on / full : 0; }
+  // Ordinary building takes its steel, timber and machinery out of the country's stores after the works have had theirs, and never the last of
+  // them: a quarter's want of the works is left lying, and of what lies beyond that builders get at most half in a quarter. What they could not
+  // get is not built: the building trades stand idle (unemployment) and plant that is not renewed runs down (c.built, investment).
+  // It is measured against what a country of this size builds in an ordinary year, so that building put off because steel is dear counts as not built.
+  { let got = 0, usual = 0; c._built = {};
+    for (const [g, q] of Object.entries(c._build || {})) { const take = Math.min(q, Math.max(0, (c.stock[g] || 0) - (n[g] - q)) * .5); c.stock[g] -= take; c._built[g] = take; got += take * BASE_PRICE[g]; usual += BUILDING[g] * Math.max(prev || c.realGdp || 0, 0) * BASE_PRICE[g]; }
+    c.buildRatio = usual > 0 ? clamp(got / usual, 0, 1.3) : 1; c.built = (c.built ?? c.buildRatio) * .8 + c.buildRatio * .2; for (const [g, q] of Object.entries(c._built)) c._used[g] = (c._used[g] || 0) + q; }
   if (n.rare > 0) c.stock.rare = Math.max(0, (c.stock.rare || 0) - n.rare);
   // Nothing keeps for ever: what lies in store beyond two years' need rusts, rots or is written off.
   for (const good of GOODS) { const keep = (n[good] || 0) * 8; if (good !== 'grain' && good !== 'goods' && c.stock[good] > keep) c.stock[good] -= (c.stock[good] - keep) * .04; }
   const rawV = sum(RAW, g => c._raw[g] * BASE_PRICE[g]), madeV = sum(Object.keys(RECIPE), g => (c._made[g] || 0) * BASE_PRICE[g] * .45);
   // The first quarter has no measured past to compare with, so it counts as no growth rather than a boom or a slump.
   const real = rawV + madeV + c._services, g = prev > 0 && c._measured ? real / prev - 1 : 0;
-  c._measured = true; c.realGdp = real; c.growth = g;
+  c._measured = true; c.realGdp = real; c.growth = g; c.trend = (c.trend ?? 0) * .7 + g * .3;
   const prevM = c._lastMoney ?? c.money, mg = prevM > 0 ? c.money / prevM - 1 : 0;
   // What the shops have against what people are used to finding there is felt in the towns (moodParts); the level a country inherited is its ordinary lot.
   c.goodsRatio = consumer; c.shopBase ??= Math.min(consumer, 1);
@@ -366,11 +415,15 @@ function consume(w, c, prev) {
   // Works that are not kept up employ fewer hands: what private owners have let run down under the tax on business puts people on the street
   // long before the country runs short of what those works made. (Works being extended take a few on.)
   const rundown = clamp((1 - (c.upkeep ?? 1)) * (1 - c.ownership) * .35, -.03, .2);
-  c.lastJobs = { inputs: (1 - c.inputRatio) * .3, damage: c._dev * .3, slump: Math.max(0, -g) * .9, idle: c.idleShare * .13, rundown, works };
-  c.unemployment += (clamp(.06 + (1 - c.inputRatio) * .3 + c._dev * .3 + Math.max(0, -g) * .9 + c.idleShare * .13 + rundown - works, .02, .6) - c.unemployment) * .4;
-  // Resource-rent dependence: easy money feeds corruption and oligarchs and weakens industry.
+  // The building trades are a good part of a town's work: when ordinary building stops for want of steel or timber, or shrinks in a slump, its men are on the street.
+  const yards = clamp((1 - (c.buildRatio ?? 1) / (c.builtBase ?? 1)) * .05, -.01, .05);
+  c.lastJobs = { inputs: (1 - c.inputRatio) * .3, damage: c._dev * .3, slump: Math.max(0, -g) * .9, idle: c.idleShare * .13, rundown, yards, works };
+  c.unemployment += (clamp(.06 + (1 - c.inputRatio) * .3 + c._dev * .3 + Math.max(0, -g) * .9 + c.idleShare * .13 + rundown + yards - works, .02, .6) - c.unemployment) * .4;
+  // Resource-rent dependence: easy money feeds corruption and oligarchs and weakens industry. It begins where a country lives by its pits in
+  // earnest, an eighth of all it turns out (no state reached the old mark of more than a fifth; the richest coal and ore states stand near a
+  // tenth), and is in full force at a fifth and beyond.
   c.rentShare = clamp((c._rent || 0) / Math.max(real, 1), 0, 1);
-  if (c.rentShare > .22) { c.corruption = clamp(c.corruption + (c.rentShare - .22) * 2.2, 2, 95); const o = w.characters[c.oligarch]; if (o?.alive) { o.wealth += c.rentShare * 5; o.power = clamp(o.power + c.rentShare * .3, 0, 95); } for (const p of countryProvinces(w, c.id)) if (p.eth !== c.majorityEth && Object.values(p.deposits).some(d => d.known && d.mine > 0)) p.unrest = clamp(p.unrest + 2.2, 0, 100); }
+  if (c.rentShare > CURSE) { const hold = clamp((c.rentShare - CURSE) / .1, 0, 1); c.corruption = clamp(c.corruption + (c.rentShare - CURSE) * 2.2, 2, 95); const o = w.characters[c.oligarch]; if (o?.alive) { o.wealth += c.rentShare * 5 * hold; o.power = clamp(o.power + c.rentShare * .3 * hold, 0, 95); } for (const p of countryProvinces(w, c.id)) if (p.eth !== c.majorityEth && Object.values(p.deposits).some(d => d.known && d.mine > 0)) p.unrest = clamp(p.unrest + 2.2 * hold, 0, 100); }
   c.bankHealth = clamp(c.bankHealth + (c.inflation > .15 ? -6 : 1.2) + (c.reserves < 0 ? -4 : 0) + (g < -.08 ? -4 : 0), 0, 100);
   if (c.bankHealth < 30 && !c.bankCrisis) { c.bankCrisis = true; news(w, `${c.name}: a run on the banks has begun, credit is drying up.`, { kind: 'economy', countries: [c.id] }); } if (c.bankHealth > 45) c.bankCrisis = false;
   const klass = sum(countryProvinces(w, c.id), p => p.pops.workers.sat * p.pops.workers.n) / Math.max(sum(countryProvinces(w, c.id), p => p.pops.workers.n), 1);
@@ -467,7 +520,7 @@ function fiscal(w, c) {
 export function settleBases(w) {
   for (const c of aliveCountries(w)) {
     c.graftBase ??= c.corruption + c.pressFreedom * .3 + c.courts * .35; c.intelBase ??= c.intelligence - c.police * .5; c.roadShare ??= c.budget.infrastructure;
-    c.profitBase = 1 - (c.taxTarget?.business ?? c.tax.business); c.upkeep = 1; c.goldBase = Math.max(0, c.reserves); c.goldFloor = c.goldBase * .6;
+    c.profitBase = 1 - (c.taxTarget?.business ?? c.tax.business); c.upkeep = 1; c.builtBase = clamp(c.built ?? 1, .3, 1); c.goldBase = Math.max(0, c.reserves); c.goldFloor = c.goldBase * .6;
     { const ps = countryProvinces(w, c.id), n = sum(ps, p => p.pops.workers.n); if (n > 0) c.workBase ??= sum(ps, p => p.pops.workers.sat * p.pops.workers.n) / n; }
     for (const p of countryProvinces(w, c.id)) p.infraBase ??= p.infra;
   }
@@ -487,8 +540,9 @@ function demography(w, c) {
     const here = hungerOf(c, p);
     for (const k of CLASSES) { const pop = p.pops[k], sev = k === 'elite' ? .1 : k === 'middle' ? .5 : 1, lost = pop.n * Math.max(0, Math.max(gap, here) - .05) * .12 * sev / welfare; starved += lost; pop.n = Math.max(1, pop.n * (1 + .0035 * (c.foodRatio >= 1 ? 1 : .4)) - lost); }
     // Urbanization comes with literacy and industry.
-    // People leave the land for the towns while there is bread there; when bread fails they go back to it.
-    if (c.foodRatio >= 1) { const mv = p.pops.peasants.n * clamp((sum(Object.values(p.plants)) - .3) * .002 + c.literacy * .00002, 0, .01); p.pops.peasants.n -= mv; p.pops.workers.n += mv * .8; p.pops.middle.n += mv * .2; }
+    // People leave the land for the towns while there is bread there; when bread fails they go back to it. And they come for work: where the
+    // mills have no places and two hands in five already live by the small trades, fewer follow, and where it is three in four hardly any.
+    if (c.foodRatio >= 1) { const crowd = clamp(((p.loose || 0) / Math.max(p.pops.workers.n, 1) - .4) * 2.5, 0, .85), mv = p.pops.peasants.n * clamp((sum(Object.values(p.plants)) - .3) * .002 + c.literacy * .00002, 0, .01) * (1 - crowd); p.pops.peasants.n -= mv; p.pops.workers.n += mv * .8; p.pops.middle.n += mv * .2; }
     else if (c.foodRatio < .9) { const back = p.pops.workers.n * .012; p.pops.workers.n -= back; p.pops.peasants.n += back; }
     if (gap > .12 || p.devastation > .45) {
       const outs = p.neighbors.map(n => w.provinces[n]).filter(n => (n.controller !== p.controller && !atWar(w, n.controller, p.controller)) || (n.controller === p.controller && n.devastation < p.devastation - .1));
@@ -520,8 +574,9 @@ function investment(w, c) {
   // Private mines and works stand where their owners' returns hold them. Owners renew and extend out of what the tax on business leaves them:
   // at the rate the country inherited they keep what they have; a state that takes much more collects it at once and watches the plant run
   // down over years toward what still pays to keep up, one that takes less sees it extended. A level, not a counter.
-  c.profitBase ??= 1 - c.tax.business; c.upkeep ??= 1;
+  c.profitBase ??= 1 - c.tax.business; c.upkeep ??= 1; c.builtBase ??= clamp(c.built ?? 1, .3, 1);
   c.upkeep += (upkeepAt(c) - c.upkeep) * .04;
+  follow(w, c);
   prospectors(w, c);
   for (const t of Object.keys(c.adopting || {})) { c.adopting[t] += paceOf(c, t); if (c.adopting[t] >= 1) delete c.adopting[t]; }
   // When a new technology arrives, the private sector builds the first plants itself; expansion is left to the state or capital.
@@ -534,18 +589,43 @@ function investment(w, c) {
   c.tech.mil = clamp(c.tech.mil * (1 + edu * .6 + b.military * paid * .02), .5, 10);
 }
 
+// Works and workings follow their trade. Owners do not go on renewing a mill that has stood on short time for years because its yards are full,
+// nor keep open the galleries of a pit whose coal lies unsold: what the stores have kept idle below nineteen parts in twenty (SLACK) is let go, a twelfth
+// of the idle part a quarter. A trade that is sold out and working flat out at a good price extends, as fast as ordinary building can find it
+// the iron and engines. So the size of a country's works settles near what is bought of them; it is not a number that only a decree moves.
+// What the state owns does not follow the market either way, and arms works are the state's affair altogether.
+const SLACK = .95, LET_GO = .08, EXTEND = .012, FOLLOW = ['steel', 'machines', 'goods', 'fuel', 'fertilizer'], PITS = ['coal', 'iron', 'copper', 'phosphate', 'oil'];
+function follow(w, c) {
+  // Owners extend out of what the tax on business leaves them: those it leaves too little to renew what they have do not build more.
+  const priv = 1 - clamp(c.ownership, 0, 1), dear = g => (c.prices?.[g] ?? BASE_PRICE[g]) / BASE_PRICE[g] / Math.max(c.rer ?? 1, .2), can = clamp(c.buildRatio ?? 1, 0, 1) * (c.bankHealth < 30 ? 0 : 1) * clamp((Math.pow(Math.max(1 - c.tax.business, .05) / Math.max(c.profitBase ?? 1 - c.tax.business, .05), .8) - .9) * 10, 0, 1.3), drift = {};
+  for (const pl of FOLLOW) { const s = c._still?.[pl]; if (!s || !(s.full > 0)) continue;
+    const pace = 1 - s.buyers / s.full; drift[pl] = pace < SLACK ? -LET_GO * (SLACK - pace) * priv : pace >= 1 && s.materials < s.full * .03 && dear(pl) > 1.02 ? EXTEND * priv * can : 0; }
+  // (A working nobody at all has a use for yet, like phosphate before the chemists, is not let go: it is simply not worked.)
+  for (const g of PITS) { const pace = c._pace?.[g] ?? 1; if (!((c._need?.[g] || 0) + (c.lastSold?.[g] || 0) > .01)) continue; drift[g] = pace < SLACK ? -LET_GO * (SLACK - pace) * priv : pace >= 1 && (w.globalPrice?.[g] ?? BASE_PRICE[g]) / BASE_PRICE[g] > 1.03 ? EXTEND * priv * can : 0; }
+  c._drift = drift;
+  for (const p of countryProvinces(w, c.id)) {
+    for (const pl of FOLLOW) if (drift[pl] && p.plants[pl] > 0) p.plants[pl] = clamp(p.plants[pl] * (1 + drift[pl]), 0, 8);
+    for (const g of PITS) { const d = p.deposits[g]; if (drift[g] && d?.known && d.mine > 0) d.mine = clamp(d.mine * (1 + drift[g]), .05, 4); } }
+}
 // Where owners would settle their works at the present tax on business, against where they inherited them.
-export const upkeepAt = c => clamp(Math.pow(Math.max(1 - c.tax.business, .05) / Math.max(c.profitBase ?? 1 - c.tax.business, .05), .8), .4, 1.3);
+// Renewal needs iron and engines as well as money: plant that ordinary building could not renew for want of materials (c.built, the part of
+// ordinary building carried out over the last year or so, against what the country was used to; a shortfall of an eighth is a slack year and
+// does no harm) runs down toward seven tenths of itself however light the tax.
+export const upkeepAt = c => clamp(Math.pow(Math.max(1 - c.tax.business, .05) / Math.max(c.profitBase ?? 1 - c.tax.business, .05), .8) * (.7 + .3 * clamp((c.built ?? 1) / (c.builtBase ?? 1) * 1.15, 0, 1)), .4, 1.3);
+// (Whether a search at home finds anything in a given quarter is settled by the place and the date, not by the world's dice: a private search
+// in one country does not change the luck of a battle in another.)
+const luckOf = key => { let h = 2166136261; for (const ch of key) { h ^= ch.codePointAt(0); h = Math.imul(h, 16777619) >>> 0; } h ^= h >>> 15; h = Math.imul(h, 2246822519) >>> 0; h ^= h >>> 13; return (h >>> 0) / 4294967296; };
 // A price several times the usual draws private capital to the ground that holds the thing. A known deposit nobody works is opened by a company
 // of its own accord; what lies hidden is looked for, and the dearer the thing the harder they look. Governments can still do both sooner.
 export function prospectors(w, c) {
   for (const p of countryProvinces(w, c.id)) { if (p.owner !== c.id) continue;
     for (const [k, d] of Object.entries(p.deposits)) {
       if (!BASE_PRICE[k] || d.mine > 0 || !(d.amount > 0)) continue;
-      const dear = (w.globalPrice?.[k] ?? BASE_PRICE[k]) / BASE_PRICE[k]; if (dear < 2.5) continue;
+      // Dear in the world, or dear at home: a country whose works stand for want of a thing it cannot buy pays any price for it at home.
+      const world = (w.globalPrice?.[k] ?? BASE_PRICE[k]) / BASE_PRICE[k], dear = Math.max(world, (c.prices?.[k] ?? BASE_PRICE[k]) / BASE_PRICE[k] / Math.max(c.rer ?? 1, .2)); if (dear < 2.5) continue;
       // Where the state owns the works there is little private capital to go looking.
       if (c.ownership >= .85) continue;
-      if (!d.known) { if ((k === 'oil' && !hasTech(c, 'oil_prospecting')) || (k === 'rare' && !hasTech(c, 'electricity')) || rand(w) >= .04 * Math.min(dear - 1.5, 4) * (1 - c.ownership)) continue; d.known = true; }
+      if (!d.known) { if ((k === 'oil' && !hasTech(c, 'oil_prospecting')) || (k === 'rare' && !hasTech(c, 'electricity')) || (world >= 2.5 ? rand(w) : luckOf(`${p.id}|${k}|${w.turn}`)) >= .04 * Math.min(dear - 1.5, 4) * (1 - c.ownership)) continue; d.known = true; }
       d.mine = .3; news(w, `${c.name}: with ${GOOD_LABEL[k]} selling at ${Math.round(dear)} times its usual price, private capital has opened the deposit at ${p.name}.`, { kind: 'economy', countries: [c.id], province: p.id });
     } }
 }
