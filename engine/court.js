@@ -66,24 +66,26 @@ export const watch = c => c.postalSecrecy ? 0 : clamp((c.intelligence - 15) / 26
 // ---- Standing posts ----
 // Every state has someone who keeps its treasury and someone who heads its police, every country a leading banking house, and every large
 // body of troops a commander. Where the ruler has named nobody, the service fills the post itself.
-function fillPosts(w, c) {
-  const mine = minorsOf(w, c), room = () => mine.length < 22;
+function fillPosts(w, c, report = false) {
+  const mine = minorsOf(w, c), room = () => mine.length < 22, put = [];
   for (const post of Object.keys(POSTS)) if (!mine.some(x => x.post === post && x.status === 'free') && room()) {
     const ch = spawnCharacter(w, c.id, post === 'house' ? 'financier' : 'official', c.axes, { power: post === 'house' ? 36 : 28 }); ch.post = post;
-    if (post === 'house') { ch.wealth = Math.round(70 + rand(w) * 130); (w.bonds ||= []).push({ id: nextId(w, 'O'), holder: ch.id, country: c.id, amount: Math.round(ch.wealth * .8), turn: w.turn }); } mine.push(ch);
+    if (post === 'house') { ch.wealth = Math.round(70 + rand(w) * 130); (w.bonds ||= []).push({ id: nextId(w, 'O'), holder: ch.id, country: c.id, amount: Math.round(ch.wealth * .8), turn: w.turn }); } mine.push(ch); if (post !== 'house') put.push([ch, post === 'treasury' ? 'keeps the treasury (appoint_minister)' : 'heads the police (appoint_minister)']);
   }
   // The largest provinces away from the capital have a governor: where the ruler has named none, the service sends one.
   if (w.friction) for (const p of Object.values(w.provinces).filter(p => p.controller === c.id && p.owner === c.id && p.id !== c.capital).sort((a, b) => Object.values(b.pops).reduce((s, x) => s + x.n, 0) - Object.values(a.pops).reduce((s, x) => s + x.n, 0)).slice(0, 3)) {
     const cur = w.characters[p.governor]; if (cur?.alive && cur.status === 'free' && cur.country === c.id) continue;
-    if (!room()) break; const ch = spawnCharacter(w, c.id, 'governor', c.axes, { power: 30 }); p.governor = ch.id; mine.push(ch);
+    if (!room()) break; const ch = spawnCharacter(w, c.id, 'governor', c.axes, { power: 30 }); p.governor = ch.id; mine.push(ch); put.push([ch, `governs ${p.name} (appoint_governor)`]);
   }
   for (const u of unitsOf(w, c).filter(u => u.men >= 10).sort((a, b) => b.men - a.men).slice(0, 4)) {
     const cur = w.characters[u.commander]; if (cur?.alive && cur.status === 'free' && cur.country === c.id) continue;
-    if (!room()) break; const ch = spawnCharacter(w, c.id, 'officer', c.axes, { power: 30 }); u.commander = ch.id; mine.push(ch);
+    if (!room()) break; const ch = spawnCharacter(w, c.id, 'officer', c.axes, { power: 30 }); u.commander = ch.id; mine.push(ch); put.push([ch, `commands ${u.id} (appoint_commander)`]);
   }
   // And the heaviest squadron an admiral.
   const flag = Object.values(w.fleets).filter(f => f.country === c.id).sort((a, b) => weightOf(b) - weightOf(a))[0], cur = flag && w.characters[flag.commander];
-  if (flag && weightOf(flag) >= 3 && !(cur?.alive && cur.status === 'free' && cur.country === c.id) && room()) { const ch = spawnCharacter(w, c.id, 'officer', c.axes, { power: 28 }); flag.commander = ch.id; mine.push(ch); }
+  if (flag && weightOf(flag) >= 3 && !(cur?.alive && cur.status === 'free' && cur.country === c.id) && room()) { const ch = spawnCharacter(w, c.id, 'officer', c.axes, { power: 28 }); flag.commander = ch.id; mine.push(ch); put.push([ch, `commands the squadron ${flag.id} as admiral (appoint_commander)`]); }
+  // Whoever governs is told whom the service has put where, since he did not choose them and can put others there.
+  if (report && put.length) say(w, w.characters[c.leader], 'The capital', `Posts that stood vacant have been filled by the service itself, with nobody of your choosing: ${put.map(([ch, what]) => `${ch.name} (${ch.id}) ${what}`).join('; ')}. Each holds the post until you put someone else there.`);
 }
 const weightOf = f => (f.ships + (f.damaged || 0)) * ({ dreadnought: 7, battleship: 3.5, torpedo: .3, submarine: .6 }[f.kind] ?? 1);
 
@@ -328,7 +330,7 @@ function inform(w, c, ch) {
 
 export function courtStep(w, applyOp) {
   for (const c of aliveCountries(w)) {
-    fillPosts(w, c);
+    fillPosts(w, c, true);
     for (const ch of minorsOf(w, c)) {
       if (ch.status !== 'free') continue;
       settle(w, c, ch);

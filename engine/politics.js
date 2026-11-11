@@ -1,7 +1,7 @@
-import { clamp, sum, news, rand, between, nextId, pick } from './util.js';
+import { clamp, sum, news, rand, between, nextId, pick, quarterLabel } from './util.js';
 import { CLASSES, ROLES, countryProvinces, provincePop, aliveCountries, makeCountry, spawnCharacter, atWar, clampRel } from './world.js';
 import { voiceOf } from './press.js';
-import { allocateSeats, onBenches, rivalParty, seatGovernment } from './polity.js';
+import { allocateSeats, onBenches, rivalParty, seatGovernment, makeParliament } from './polity.js';
 import { issueCurrency } from './money.js';
 import { culturePenalty, leaderForeignness, minorityShare } from './culture.js';
 import { adminPressure } from './admin.js';
@@ -136,7 +136,7 @@ export function installLeader(w, c, ch, regimeChange, keepSlot = false) {
   const old = w.characters[c.leader], oldRole = ch.role, held = c[oldRole] === ch.id;
   if (old && old.id !== ch.id && old.role === 'leader') { old.role = 'former_leader'; old.outSince = w.turn; }
   ch.role = 'leader'; ch.status = 'free'; ch.loyalty = 100; ch.power = Math.max(ch.power, 60); c.leader = ch.id; c.heir = null;
-  if (!keepSlot && held && oldRole !== 'leader' && ROLES.includes(oldRole)) { const n = spawnCharacter(w, c.id, oldRole, c.axes); c[oldRole] = n.id; n.rise = `Took the place of ${ch.name}, who became head of state, in ${w.date ?? 'the first days'}.`; }
+  if (!keepSlot && held && oldRole !== 'leader' && ROLES.includes(oldRole)) fillSeat(w, c, oldRole, ch, 'became head of state');
   if (regimeChange) Object.assign(c, regimeChange);
 }
 
@@ -207,18 +207,32 @@ export function disputeStep(w) {
 }
 
 // What became of someone, as the next person in their seat would put it.
-const fateOf = ch => ch.status === 'dead' ? ch.death?.how ?? 'died' : ch.status === 'exiled' ? 'was driven into exile' : ch.status === 'imprisoned' ? 'was imprisoned' : 'left the post';
-function replaceSlot(w, c, ch) {
+const fateOf = ch => ch.status === 'dead' ? ch.death?.how ?? 'died' : ch.status === 'exiled' ? (ch.wentAbroad != null ? 'left the country' : 'was driven into exile') : ch.status === 'imprisoned' ? 'was imprisoned' : ch.resigned === ch.outSince && ch.resigned != null ? 'resigned' : 'left the post';
+const SEAT_WORDS = { general: 'chief of the general staff', opposition: 'leader of the opposition', oligarch: 'head of the first business house' };
+// A seat that falls vacant is taken by the deputy named for it, if one was named and is alive, at liberty and in the country. Where none was
+// named the service fills it itself (the army its chief, the opposition its leader, a house its head) with a man nobody chose; and when that
+// seat is the chief of staff's, whoever governs is told who it is and that he can put another there.
+export function fillSeat(w, c, role, gone, how) {
+  const dep = w.characters[c.deputies?.[role]], named = !!dep && dep.alive && dep.status === 'free' && dep.country === c.id && dep.id !== gone?.id && !incapacitated(dep) && !ROLES.some(r => c[r] === dep.id);
+  if (c.deputies) delete c.deputies[role];
+  const n = named ? dep : spawnCharacter(w, c.id, role, c.axes), fresh = !named;
+  if (named) { stripPosts(w, n); n.role = role; n.post = null; n.power = Math.max(n.power, 45); n.inbox.push({ turn: w.turn, from: c.name, text: `${gone?.name ?? 'The holder of the office'} ${how}. As the deputy named for it, you are now ${SEAT_WORDS[role] ?? role}.` }); }
+  c[role] = n.id; n.rise = `Took the place of ${gone?.name ?? 'the last holder'}, who ${how}, in ${w.date ?? 'the first days'}${named ? ', as the deputy named for it' : ''}.`;
+  const ruler = w.characters[c.leader];
+  const own = ruler?.id === gone?.id, vacant = own ? 'Your old office of chief of the general staff is vacant now that you govern.' : `The office of chief of the general staff fell vacant: ${gone?.name ?? 'its holder'} ${how}.`;
+  if (role === 'general' && ruler?.alive && ruler.id !== n.id) ruler.inbox.push({ turn: w.turn, from: 'War Ministry', text: named ? `${own ? vacant : `${gone?.name ?? 'The chief of the general staff'} ${how}.`} ${n.name} (${n.id}), whom you had named deputy, is chief of the general staff from today.` : `${vacant} The army has put forward ${n.name} (${n.id}), and he holds the office. He is not your choice: you can put another in his place at any time (dismiss, naming the successor), and a deputy named in advance (name_deputy) takes the office the day it falls vacant.` });
+  return { n, fresh };
+}
+export function replaceSlot(w, c, ch) {
   if (!ROLES.includes(ch.role) || c[ch.role] !== ch.id || ch.role === 'leader') return;
-  const n = spawnCharacter(w, c.id, ch.role, c.axes); c[ch.role] = n.id; ch.outSince = w.turn;
+  ch.outSince = w.turn; const { n, fresh } = fillSeat(w, c, ch.role, ch, fateOf(ch));
   // A business house outlives its head, and its fortune is the one it had: whoever takes it over takes over what was left of it, most of it if
   // the old head is dead, what could be reached at home if he sits in a cell or abroad. No new fortune comes with a new name.
-  if (ch.role === 'oligarch') { const left = ch.status === 'dead' ? Math.max(0, ch.wealth) * .8 : Math.max(0, ch.wealth - (ch.abroad || 0)) * .7; n.wealth = Math.round(left); ch.wealth = ch.status === 'dead' ? 0 : ch.wealth - n.wealth; }
-  n.rise = `Took the place of ${ch.name}, who ${fateOf(ch)}, in ${w.date ?? 'the first days'}.`;
+  if (ch.role === 'oligarch') { const left = Math.round(ch.status === 'dead' ? Math.max(0, ch.wealth) * .8 : Math.max(0, ch.wealth - (ch.abroad || 0)) * .7); n.wealth = fresh ? left : n.wealth + left; ch.wealth = ch.status === 'dead' ? 0 : ch.wealth - left; }
 }
 
 // Posts need a free and living person: a jailed governor governs nothing.
-function stripPosts(w, ch) {
+export function stripPosts(w, ch) {
   for (const p of Object.values(w.provinces)) if (p.governor === ch.id) p.governor = null;
   for (const u of Object.values(w.units)) if (u.commander === ch.id) u.commander = null;
   for (const c of Object.values(w.countries)) { if (c.heir === ch.id) c.heir = null; for (const i of c.institutions || []) { if (i.head === ch.id) i.head = null; if (i.members?.includes(ch.id)) i.members = i.members.filter(x => x !== ch.id); } }
@@ -295,7 +309,7 @@ export function startCivilWar(w, c, leaderCh, label, seedProvinces = [], { only 
   f.debt = c.debt * share; c.debt *= 1 - share; c.gdp *= 1 - share; f.gdp = c.gdp * share / Math.max(1 - share, .1); f.realGdp = f.gdp / f.priceLevel; c.realGdp *= 1 - share;
   // Whoever leads the rising leaves everything held under the old government behind: posts, plots, a place in the succession, and a sentence of exile.
   stripPosts(w, leaderCh); leavePlots(w, leaderCh); leaderCh.status = 'free';
-  leaderCh.country = id; if (c[leaderCh.role] === leaderCh.id) { const n = spawnCharacter(w, c.id, leaderCh.role, c.axes); c[leaderCh.role] = n.id; n.rise = `Took the place of ${leaderCh.name}, who rose against the government, in ${w.date ?? 'the first days'}.`; }
+  leaderCh.country = id; if (c[leaderCh.role] === leaderCh.id) fillSeat(w, c, leaderCh.role, leaderCh, 'rose against the government');
   leaderCh.role = 'leader'; leaderCh.loyalty = 100; f.leader = leaderCh.id; leaderCh.rise = `Raised the standard of revolt against ${c.name} in ${w.date ?? 'the first days'}.`;
   for (const r of ROLES) if (r !== 'leader') f[r] = spawnCharacter(w, id, r, f.axes).id;
   w.wars.push({ id: nextId(w, 'S'), a: [id], b: [c.id], civil: true, active: true, start: w.turn, name: `${c.name} Civil War` });
@@ -353,7 +367,7 @@ export function armySides(w, c, pl) {
   return { pro, anti };
 }
 
-export function executePlot(w, pl, { fate } = {}) {
+export function executePlot(w, pl, { fate, acts = {}, by = null } = {}) {
   const c = w.countries[pl.country], lead = w.characters[pl.leader];
   if (!pl.active || !c?.alive || !lead?.alive) return 'The plot is no longer valid.';
   pl.active = false;
@@ -428,20 +442,30 @@ export function executePlot(w, pl, { fate } = {}) {
     const after = end === 'dead' ? ` ${target.name} was shot.` : end === 'imprisoned' ? ` ${target.name} is held prisoner.` : slipped ? ` ${target.name} escaped abroad.` : ` ${target.name} was driven into exile.`;
     news(w, `Coup in ${c.name}: ${target.name} was overthrown and ${lead.name} took power.${after}`, { kind: 'plot', countries: [c.id] });
     if (end !== 'dead') sideline(w, target, end);
-    const military = ['general', 'officer'].includes(lead.role);
+    const military = ['general', 'officer'].includes(lead.role), had = { elections: !!c.elections, regime: c.regime };
     // Soldiers who seize the state rule as soldiers until they say otherwise: no vote is due and the army names what follows. What they do about the press is theirs to order.
-    installLeader(w, c, lead, military ? { regime: 'Military junta', elections: false, succession: 'army' } : { succession: c.elections ? c.succession : 'open' });
+    // What is done in the first hours is for those who took the palace to say (acts); where they say nothing it goes as it always has.
+    const first = military ? { regime: 'Military junta', elections: false, succession: 'army' } : { succession: c.elections ? c.succession : 'open' };
+    if (typeof acts.elections === 'boolean') first.elections = acts.elections; if (SUCCESSION.includes(acts.succession)) first.succession = acts.succession; if (acts.regime) first.regime = String(acts.regime).slice(0, 60); else if (military && acts.elections === true) delete first.regime;
+    installLeader(w, c, lead, first);
     if (end === 'dead') {
       // The killing of a fallen ruler is remembered: by his following, by whoever keeps files, and by those who already hated the men who did it.
       die(w, target, 'was shot when the government fell', { quiet: true }); mark(w, lead, `Had ${target.name} shot when the palace was taken.`);
       c.legitimacy = clamp(c.legitimacy - 5 * (.4 + c.pressFreedom / 100), 0, 100); c.blood = (c.blood || 0) + 2; c.mods.push({ key: 'unrest', delta: clamp(target.power / 12, 1, 6), turns: 3, label: `The shooting of ${target.name}` });
     }
     // Soldiers who take the palace send the deputies home; the chamber sits again only when the junta recalls it.
-    if (military && c.parliament) c.parliament.suspendedUntil = w.turn + 400;
+    const sitting = !!c.parliament && w.turn >= (c.parliament.suspendedUntil ?? 0), sendHome = acts.parliament === 'suspend' || (acts.parliament !== 'keep' && military);
+    if (sendHome && c.parliament) c.parliament.suspendedUntil = w.turn + 400;
+    // A vote that is kept or promised has to have a date: within two years, if none was nearer.
+    if (c.elections && !had.elections) { c.nextElection = w.turn + 8; if (!c.parliament) makeParliament(c, 'Parliament'); }
     lead.rise = `Seized power in ${w.date ?? 'the first days'} by overthrowing ${target.name}.`;
     // Those who take the palace by force do not inherit what the old order stood on.
     c.legitimacy = clamp(c.legitimacy - 14, 0, 100); c.legitBase = Math.min(c.legitBase ?? 0, 0);
-    return `The coup succeeded.${slipped ? ` ${target.name} was to be ${want === 'dead' ? 'shot' : 'held'} but got away across the border.` : after}`;
+    // What was done in the first hours, said to whoever struck and to whoever now governs: each of these is theirs to change afterwards.
+    const done = `In the first hours: ${c.regime !== had.regime ? `the state is now called "${c.regime}"` : `the state keeps its name, "${c.regime}"`}; ${c.elections ? `elections stand, the next due in ${quarterLabel(c.nextElection)}` : had.elections ? 'elections are done away with' : 'no elections are held, as before'}; ${!c.parliament ? 'there is no chamber' : sendHome ? (sitting ? 'the chamber has been sent home and sits again only when it is recalled' : 'the chamber stays suspended') : 'the chamber goes on sitting'}; if the new ruler falls, ${SUCCESSION_TEXT[successionRule(c)]}. Taking the palace by force cost the government most of the standing the old order had. All of this is the new ruler's to change (set_regime, hold_election, suspend_parliament, designate_successor).`;
+    const result = `The coup succeeded${by && by !== lead.id ? ` and ${lead.name} governs` : ''}.${slipped ? ` ${target.name} was to be ${want === 'dead' ? 'shot' : 'held'} but got away across the border.` : after} ${done}`;
+    if (by !== lead.id) lead.inbox.push({ turn: w.turn, from: 'The palace', text: `The stroke has succeeded and you govern ${c.name}.${slipped ? ` ${target.name} got away across the border.` : after} ${done}` });
+    return result;
   }
   // A colonel whose stroke stalls takes the army with him only if a good part of it is his own; otherwise he is simply put down.
   const own = lead.role === 'officer' ? sum(Object.values(w.units).filter(u => u.country === c.id && u.commander === lead.id), u => u.men) / Math.max(sum(Object.values(w.units).filter(u => u.country === c.id), u => u.men), 1e-9) : 1;
@@ -479,13 +503,25 @@ export function uprisingStep(w) {
       // A rising in a remote valley shakes the government less than one in a great city.
       c.legitimacy = clamp(c.legitimacy - clamp(provincePop(p) / people * 20, .3, 2.5), 0, 100);
     }
-    const total = provs.length;
-    if (canSplit(w, c) && hot.length >= Math.ceil(total * .5) && rand(w) < .14) {
-      const oppId = c.opposition, opp = w.characters[oppId];
-      const minority = sum(hot, p => minorityShare(p, c)) > hot.length / 2;
-      // A country in revolt finds a leader: the opposition's if they are free to lead it, otherwise someone no one had heard of.
-      const head = opp?.alive && opp.status === 'free' && !incapacitated(opp) ? opp : spawnCharacter(w, c.id, 'rebel', c.axes, { power: 45 });
-      startCivilWar(w, c, head, minority ? 'Separatists' : 'People\'s Front', hot.filter(p => p.id !== c.capital).map(p => p.id));
+    const total = provs.length, minority = () => sum(hot, p => minorityShare(p, c)) > hot.length / 2;
+    // The leader of the opposition was asked a quarter ago whether he would put himself at the head of the provinces. Now they rise: under him
+    // if he said yes or said nothing and is still there to lead them, under a man of their own if he refused or is gone. If the country has
+    // gone quiet in the meantime, nothing comes of it.
+    if (c.rising && w.turn > c.rising.turn) {
+      const r = c.rising, opp = w.characters[r.asked]; c.rising = null;
+      if (!canSplit(w, c) || hot.length < Math.ceil(total * .25)) { if (opp?.alive) opp.inbox.push({ turn: w.turn, from: 'A visitor', text: 'The men from the provinces have sent word: the moment has passed, and nothing will come of what was spoken of.' }); }
+      else {
+        const leads = r.answer !== false && opp?.alive && opp.status === 'free' && opp.country === c.id && c.opposition === opp.id && !incapacitated(opp);
+        startCivilWar(w, c, leads ? opp : spawnCharacter(w, c.id, 'rebel', c.axes, { power: 45 }), minority() ? 'Separatists' : 'People\'s Front', hot.filter(p => p.id !== c.capital).map(p => p.id));
+      }
+    } else if (!c.rising && canSplit(w, c) && hot.length >= Math.ceil(total * .5) && rand(w) < .14) {
+      const oppId = c.opposition, opp = w.characters[oppId], free = opp?.alive && opp.status === 'free' && !incapacitated(opp);
+      // A country in revolt finds a leader: the opposition's if they are free to lead it, otherwise someone no one had heard of. Where somebody
+      // plays the leader of the opposition, it is his to say: the provinces send to him first and wait a quarter for his answer.
+      if (free && opp.aiControlled) {
+        c.rising = { turn: w.turn, asked: opp.id, answer: null };
+        opp.inbox.push({ turn: w.turn, from: 'A visitor', text: `Men from the provinces have come to you in secret. Half the country is ready to rise, and it will rise in the coming quarter whatever you do. They ask you to put yourself at its head: you would leave your seat and everything you hold here, and lead a government of the rising against ${w.characters[c.leader]?.name ?? 'the government'}, in a civil war. You may accept or refuse (lead_rising); if you refuse, they rise under a man of their own, and you stay what you are. You may also give the government warning. If they hear nothing from you, they take your silence for consent and proclaim you. What you do, and what you leave undone, is a thing others may come to know.` });
+      } else startCivilWar(w, c, free ? opp : spawnCharacter(w, c.id, 'rebel', c.axes, { power: 45 }), minority() ? 'Separatists' : 'People\'s Front', hot.filter(p => p.id !== c.capital).map(p => p.id));
     }
   }
 }

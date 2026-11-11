@@ -128,7 +128,7 @@ export function diplomacyStep(w) {
     if (!ch.alive || ch.status !== 'exiled') { if (ch.host) ch.host = null; continue; }
     if (ch.host && w.countries[ch.host]?.alive && ch.host !== ch.country) continue;
     const home = w.countries[ch.country], hosts = cs.filter(o => o.id !== ch.country).sort((a, b) => (a.relations[ch.country] ?? 0) - (b.relations[ch.country] ?? 0)); if (!hosts.length) continue;
-    ch.host = hosts[0].id; say(w, w.characters[hosts[0].leader], 'Police', `${ch.name}, driven out of ${home?.name ?? 'their country'}, has settled among us. Sheltering, expelling or handing them back is yours to decide.`); say(w, ch, 'A border post', `You have crossed into ${hosts[0].name} and are living there.`);
+    ch.host = hosts[0].id; say(w, w.characters[hosts[0].leader], 'Police', `${ch.name}, driven out of ${home?.name ?? 'their country'}, has settled among us. Sheltering, expelling or handing them back is yours to decide.`); say(w, ch, 'A border post', `You have crossed into ${hosts[0].name} and are living there. You may move on to any other state that will have you (go_abroad).`);
   }
   w.guarantees = (w.guarantees || []).filter(x => w.countries[x.by]?.alive && w.countries[x.of]?.alive);
   // Without an envoy at his post a government sees less of the other capital each quarter, and with relations broken almost nothing.
