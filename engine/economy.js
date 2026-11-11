@@ -204,8 +204,9 @@ function needs(w, c) {
   // It is a want of the country like any other (it is bought abroad when the stores run low, and it moves the world's prices), and it is met
   // before the towns' (consume).
   c._kit = kitOf(w, c); for (const [g, q] of Object.entries(c._kit)) need[g] += q;
-  // What the guns burned last quarter the arsenal wants back: the market for arms feels a war that is being fought.
-  need.arms += c._shot || 0;
+  // What the guns burned last quarter the arsenal wants back, and an army at war wears out rifles and fires off cartridges in outpost fighting
+  // whether or not a battle is fought: the market for arms feels a war.
+  need.arms += (c._shot || 0) + (c.war?.on ? men * .004 : 0);
   // An army in the field takes wagons, horses, trains and the men who work them: carriage and the trades that live by it do less.
   { const field = c.war?.on ? men : 0, taken = clamp(field / Math.max(c._pop, 1) * 2.5, 0, .1); c._requisition = taken; if (taken > 0) c._services *= 1 - taken; }
   c._burn = { coal: ships * .08 * (1 - motor), fuel: engine * .05 + ships * .08 * motor };
@@ -335,7 +336,11 @@ function trade(w, cs) {
     // Durable goods are held in deeper stores everywhere, so a world with years of machinery in hand is not a world glutted with it.
     // (The stores are read as they stood before this quarter's wares came out of the mills, which is how the usual depths were measured; and for
     // steel and the like before the engine works and arms shops drew on them, which is when the mills themselves judge whether their yards are full.)
-    const before = w.globalPrice[g], D = sum(cs, c => c._need[g]) + 1, S = (sum(cs, c => Math.max(0, c.stock[g] - (c._made?.[g] || 0) + (RECIPE[g] ? c._drawn?.[g] || 0 : 0))) + moved * .2) / ((USUAL_COVER[g] ?? 2) / 2) + 1;
+    // What a state at war has to sell is not as good as on the market: its cargoes come dearer and fewer, and buyers do not count on them. The
+    // exchanges reckon half of what it could spare abroad (its stock beyond its own want and reserve) as not there, which is how a war in the
+    // country that sells much of a thing makes that thing dear for everybody, and leaves the price of what it does not sell alone.
+    const held = c => c.war?.on ? .5 * Math.max(0, (c.stock[g] || 0) - (c._need?.[g] || 0) - (c._reserve?.[g] || 0)) : 0;
+    const before = w.globalPrice[g], D = sum(cs, c => c._need[g]) + 1, S = (sum(cs, c => Math.max(0, c.stock[g] - (c._made?.[g] || 0) + (RECIPE[g] ? c._drawn?.[g] || 0 : 0) - held(c))) + moved * .2) / ((USUAL_COVER[g] ?? 2) / 2) + 1;
     const target = BASE_PRICE[g] * clamp(Math.pow(D / S * 1.6, .8), .4, 5) * (1 + unmet * .9);
     w.globalPrice[g] = clamp(before + (target - before) * .4, BASE_PRICE[g] * .3, BASE_PRICE[g] * 9);
     if (w.globalPrice[g] > before * 1.5 && before > BASE_PRICE[g]) news(w, `World ${GOOD_LABEL[g]} price rose sharply.`, { kind: 'economy' });

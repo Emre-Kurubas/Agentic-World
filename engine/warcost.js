@@ -22,6 +22,10 @@ export const kitOf = (w, c) => { const men = menOf(w, c.id), per = c.war?.on ? K
 // How a state stands with its lenders and its merchants while it is at war, settled once a quarter before anything is bought, lent or shipped:
 // since when, whether it began it, whether the enemy holds more of its land than it holds of his, what lenders add to its interest for it and how
 // much less they will carry. The premium outlasts the peace by a few quarters, fading; the first months of a war frighten money most.
+// What lenders add to a quarter's interest: for any war about four fifths of a point a year, rising over two years to about two; as much again as
+// the first for the state that began it; and over a point more while the enemy holds more of its land than it holds of his. (Measured against
+// the age: the powers that fought its short wars paid one to two points more for their money while they fought, the beaten more.)
+export const PREMIUM = { war: .002, long: .0004, struck: .002, losing: .003 };
 export function warFooting(w) {
   for (const c of aliveCountries(w)) {
     const foes = foesOf(w, c.id), was = c.war;
@@ -30,7 +34,7 @@ export function warFooting(w) {
     // A war found already running (a save from before lenders priced wars) is dated from the day it began, and frightens no money a second time.
     const mine = w.wars.filter(x => x.active && !x.civil && (x.a.includes(c.id) || x.b.includes(c.id))), started = Math.min(w.turn, ...mine.map(x => x.start ?? w.turn));
     const struck = mine.some(x => x.a[0] === c.id), since = was?.on ? was.since : started, quarters = w.turn - since, losing = lost > taken;
-    c.war = { on: true, since, quarters, begun: !was?.on && w.turn - started <= 1, struck, losing, foes, premium: .003 + .0005 * clamp(quarters - 2, 0, 8) + (struck ? .0015 : 0) + (losing ? .003 : 0), squeeze: 1 - (.2 + (losing ? .15 : 0)) };
+    c.war = { on: true, since, quarters, begun: !was?.on && w.turn - started <= 1, struck, losing, foes, premium: PREMIUM.war + PREMIUM.long * clamp(quarters - 2, 0, 8) + (struck ? PREMIUM.struck : 0) + (losing ? PREMIUM.losing : 0), squeeze: 1 - (.2 + (losing ? .15 : 0)) };
   }
 }
 // What insurers and carriers add to a cargo for each end of the voyage that is a state at war: more by sea than over a land frontier.
@@ -63,6 +67,6 @@ export const whyPrice = (w, g) => { const n = w.market?.notes?.[g]; return n ? `
 export function lendersWords(c) {
   const x = c.war; if (!x || !(x.premium > 0)) return '';
   const pts = Math.round(x.premium * 4 * 1000) / 10;
-  return x.on ? `The country is at war, and the houses that lend to governments price it: they ask about ${pts} points a year more of us than they would in peace${x.struck ? ', the more because we began it' : ''}${x.losing ? ', and more again while the enemy holds more of our land than we hold of his' : ''}, and they will carry about ${Math.round((1 - x.squeeze) * 100)} in the hundred less of our debt; the premium grows with every quarter the war lasts past the second, and fades over a year or so once peace is signed.`
+  return x.on ? `The country is at war, and the houses that lend to governments price it: they ask about ${pts} points a year more of us than they would in peace${x.struck ? ', about twice what they would ask of a state that had been attacked, because we began it' : ''}${x.losing ? ', and more again while the enemy holds more of our land than we hold of his' : ''}, and they will carry about ${Math.round((1 - x.squeeze) * 100)} in the hundred less of our debt; the premium grows with every quarter the war lasts past the second, and fades over a year or so once peace is signed.`
     : `The war is over, and lenders still ask about ${pts} points a year more of us than they did before it; that fades over the next quarters.`;
 }
