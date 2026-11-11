@@ -409,7 +409,7 @@ function yearbook(w, c, o, ch) {
 }
 // How a state stands toward the peoples and faiths inside it: its policy, the rules made for single provinces or peoples, and what its law lays on whom. It is public law.
 const disabilityWords = s => [s.vote ? '' : 'have no vote', s.office ? '' : 'may hold no office', s.arms ? '' : 'may not bear arms', s.levy ? `pay a levy of ${Math.round(s.levy * 1000) / 10} in the hundred` : '', s.shielded ? '' : 'are left without the protection of the police'].filter(Boolean).join(', ');
-function lawOfPeoples(w, c) {
+export function lawOfPeoples(w, c) {
   const rules = (c.cultureRules || []).map(r => `${r.people ? `the ${r.people}` : 'everyone'}${r.province ? ` in ${w.provinces[r.province]?.name}` : ''}: ${[r.language ? `language ${r.language}` : '', r.faith ? `faith ${r.faith}` : ''].filter(Boolean).join(', ')}`), laws = Object.keys(c.status || {}).map(name => `the ${name} ${disabilityWords(statusOf(c, { eth: name, rel: name }))}`);
   return `Policy toward peoples and faiths: language ${c.languagePolicy ?? 'tolerate'}, faith ${c.faithPolicy ?? 'tolerate'}${rules.length ? `; rules of their own: ${rules.join('; ')}` : ''}. Before the law ${laws.length ? laws.join('; ') : 'all peoples and faiths stand alike'}.`;
 }

@@ -473,6 +473,27 @@ ok('What atlas and trade directory print is open to every seat; what the secret 
   assert.ok(answer(w, O, 'commanders').includes(`${u.id} at ${mine.name}`), 'in peace garrison towns are no secret');
   w.wars.push({ id: 'S-k', a: ['U2'], b: ['U1'], civil: false, active: true, start: w.turn, name: 'k' }); assert.ok(answer(w, O, 'commanders').includes(`${u.id}: ${chief.name}`) && !answer(w, O, 'commanders').includes(`${u.id} at `) && answer(w, G, 'commanders').includes(`${u.id} at ${mine.name}`), 'in war they are');
 });
+ok('The opening names the creeds of the age, gives the peoples of the country as facts and asks what the person believes; and states are handed over with different law toward their peoples, each at rest with it', () => {
+  // In five real games nobody persecuted, executed or assimilated anyone, and every state began with the same equal law; the owner asked that
+  // convictions about peoples and faiths be open to the characters as war is, and that the status quo differ from state to state.
+  const w = inherited(1848, 8), cs = aliveCountries(w), by = k => cs.find(c => c.archetype === k), law = c => Object.values(c.status || {});
+  for (const k of ['merchant', 'republic', 'federation', 'revolutionary']) if (by(k)) assert.ok(!by(k).status, `a ${k} state knows one law for all`);
+  assert.ok(by('junta') && law(by('junta')).some(s => s.arms === false), 'a state of soldiers does not arm the largest of its other peoples');
+  assert.ok(by('agrarian') && law(by('agrarian')).some(s => s.office === false), 'a principality of landowners keeps its offices for its own');
+  if (by('theocracy')) assert.ok(by('theocracy').faithPolicy === 'state' && law(by('theocracy')).every(s => s.office === false && s.levy > 0), 'a state built on one faith taxes the others and shuts them out of office');
+  if (by('monarchy') && by('monarchy').status) assert.ok(law(by('monarchy')).every(s => s.office === false));
+  assert.ok(by('federation')?.languagePolicy === 'autonomy' || !by('federation'));
+  assert.ok(new Set(cs.map(c => `${c.languagePolicy}|${c.faithPolicy}|${JSON.stringify(law(c))}`)).size >= 4, 'the status quo differs from state to state');
+  // What a ruler reads on the first morning, and only then.
+  const j = by('junta'), L = ld(w, j), first = actorPrompt(w, L, [], false, { intro: true }), barred = Object.keys(j.status)[0];
+  assert.ok(first.includes('This is an age of nations and creeds') && first.includes('It may be generous and it may be ugly') && first.includes('whom you think the state is for and how far you would go for it'), 'the creeds of the age, and the question of what this person believes');
+  assert.ok(new RegExp(`The peoples of this country, by the census: ${j.majorityEth} about \\d+ in the hundred`).test(first) && first.includes(`- ${barred}, about `) && /their own nation is /.test(first) && first.includes(`Before the law the ${barred} may not bear arms`) && first.includes(`You are of the ${L.origin.eth}`), first.slice(first.indexOf('The peoples of this country'), first.indexOf('The peoples of this country') + 700));
+  assert.ok(!actorPrompt(w, L, [], false, { intro: false }).includes('The peoples of this country, by the census'), 'it is said once, at the opening');
+  // At rest: in a world nobody governs and nobody stirs, the handed-over law drives no mob into the streets and no state apart in its first three years.
+  const legit = Object.fromEntries(cs.map(c => [c.id, c.legitimacy])); run(w, 12);
+  assert.ok(cs.every(c => !(c.atrocities || []).some(a => a.turn > 0)), `nobody is set upon where nobody points a finger: ${cs.flatMap(c => (c.atrocities || []).map(a => a.text)).join(' | ')}`);
+  assert.ok(aliveCountries(w).length === cs.length && cs.every(c => c.legitimacy > legit[c.id] - 15), `the states stand as they stood: ${cs.map(c => `${c.archetype} ${Math.round(legit[c.id])}->${Math.round(c.legitimacy)}`).join(', ')}`);
+});
 ok('The staff knows what another state lives by, by which road or water it comes and how such a trade is cut; the routes report says where our own runs; and the army report says what ground is worth', () => {
   const w = inherited(); w.status = 'playing'; run(w, 2); const c = w.countries.U1, g = w.characters[c.general];
   for (const o of aliveCountries(w).filter(x => x.id !== 'U1')) { const plan = answer(w, g, `war_plan:${o.id}`);

@@ -50,6 +50,20 @@ export function initGroups(w) {
   }
   const FROM = { junta: 'assimilate', monarchy: 'assimilate', theocracy: 'tolerate', revolutionary: 'tolerate', republic: 'tolerate', merchant: 'tolerate', agrarian: 'tolerate', federation: 'autonomy' };
   for (const c of cs) { c.languagePolicy = FROM[c.archetype] ?? 'tolerate'; c.faithPolicy = c.archetype === 'theocracy' ? 'state' : c.archetype === 'revolutionary' ? 'secular' : 'tolerate'; }
+  // And the law each kind of state was handed over with, as a fact of the day of handing over and nothing more: a ruler keeps it, hardens it or
+  // strikes it out. States of soldiers do not arm the frontier people whose own nation lies across the line; a principality of landowners and a
+  // crown keep their offices for their own; a state built on one faith taxes the others and shuts them out of office; traders, republics,
+  // federations and revolutions know one law for all. (The owner asked that the status quo differ from state to state, 2026-11-11.)
+  for (const c of cs) {
+    const heads = { eth: {}, rel: {} }; let all = 0;
+    for (const p of countryProvinces(w, c.id)) { const n = provincePop(p); all += n; for (const g of groupsOf(p)) { if (g.eth !== c.majorityEth) heads.eth[g.eth] = (heads.eth[g.eth] || 0) + n * g.share; if (g.rel !== c.majorityRel) heads.rel[g.rel] = (heads.rel[g.rel] || 0) + n * g.share; } }
+    const big = k => Object.entries(heads[k]).filter(([, n]) => n / Math.max(all, 1) >= .04).sort((a, b) => b[1] - a[1]).map(([name]) => name), status = {};
+    if (c.archetype === 'junta' && big('eth')[0]) status[big('eth')[0]] = { arms: false };
+    if (c.archetype === 'agrarian' && big('eth')[0]) status[big('eth')[0]] = { office: false };
+    if (c.archetype === 'monarchy' && big('rel')[0]) status[big('rel')[0]] = { office: false };
+    if (c.archetype === 'theocracy') for (const rel of big('rel')) status[rel] = { office: false, levy: .02 };
+    if (Object.keys(status).length) c.status = status; c._privilege = privilege(w, c);
+  }
 }
 
 // Part of a people's weight moves with refugees.
