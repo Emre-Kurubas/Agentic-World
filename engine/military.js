@@ -277,13 +277,27 @@ export function seat(w, c) {
 // A war is dearer than a peace: men in the field eat, march and shoot twice what men in barracks do, and men kept on soil that is not their
 // own country's cost twice their keep in peace and two and a half times in war. A state that goes to war on its peace budget watches its army
 // go unpaid.
+// What one body of troops and one squadron cost to keep: the parts the whole bill is made of.
+const keepOfUnit = (w, c, u, out) => u.men * (UPKEEP[u.kind] ?? 1) * (w.provinces[u.province] && w.provinces[u.province].owner !== c.id ? (out ? 2.5 : 2) : out ? 2 : 1) * .8 * c.priceLevel;
+// A ship costs its keep whether it floats or lies in dock; a squadron kept at sea costs two fifths more than one lying in harbour.
+const keepOfFleet = (c, f, out) => (f.ships + (f.damaged || 0) * .5) * SHIPS[kindOf(f)].power * (f.port ? 1 : 1.4) * (out ? 1.5 : 1) * 3 * c.priceLevel;
 export function upkeepCost(w, c) {
-  const out = inTheField(w, c.id), field = out ? 2 : 1, afloat = out ? 1.5 : 1;
-  const men = sum(Object.values(w.units).filter(u => u.country === c.id), u => u.men * (UPKEEP[u.kind] ?? 1) * (w.provinces[u.province] && w.provinces[u.province].owner !== c.id ? (out ? 2.5 : 2) : field));
-  // A ship costs its keep whether it floats or lies in dock; a squadron kept at sea costs two fifths more than one lying in harbour.
-  const ships = sum(Object.values(w.fleets).filter(f => f.country === c.id), f => (f.ships + (f.damaged || 0) * .5) * SHIPS[kindOf(f)].power * (f.port ? 1 : 1.4)) * afloat;
+  const out = inTheField(w, c.id);
+  const men = sum(Object.values(w.units).filter(u => u.country === c.id), u => keepOfUnit(w, c, u, out));
+  const ships = sum(Object.values(w.fleets).filter(f => f.country === c.id), f => keepOfFleet(c, f, out));
   const forts = sum(countryProvinces(w, c.id), p => (p.fort || 0) * 3 + (p.battery || 0) * 2);
-  return (men * .8 + ships * 3 + forts * 5) * c.priceLevel;
+  return men + ships + forts * 5 * c.priceLevel;
+}
+// When the vote for the forces falls short, who goes short is a decision (set_pay_priority): the bodies named are paid and supplied in full
+// first and the rest share what is left. With no decision every regiment and every crew is short alike. A guard kept sweet while the
+// frontier army rots, or a fleet put last until its crews hoist the red flag, are then somebody's choice and not the engine's.
+export const PAY_FIRST = ['navy', 'army', 'capital'];
+export function payOf(w, c, money, required, funded) {
+  const first = c.payFirst || []; if (!first.length || funded >= 1) return () => funded;
+  const out = inTheField(w, c.id), favoured = x => first.includes(x.id) || (x.ships != null ? first.includes('navy') : first.includes('army') || (first.includes('capital') && x.province === c.capital));
+  const all = [...Object.values(w.units), ...Object.values(w.fleets)].filter(x => x.country === c.id), cost = x => x.ships != null ? keepOfFleet(c, x, out) : keepOfUnit(w, c, x, out);
+  const costA = sum(all.filter(favoured), cost), a = costA > 0 ? clamp(money / costA, 0, 1) : 1, b = clamp((money - costA * a) / Math.max(required - costA, 1e-9), 0, 1);
+  return x => favoured(x) ? a : b;
 }
 const UPKEEP = { infantry: 1, artillery: 1.5, armor: 3, air: 3, cavalry: 1.4 };
 
@@ -300,27 +314,30 @@ function upkeep(w, c) {
   c.warExhaustion = clamp(c.warExhaustion + (!inWar ? -2 : out ? .6 + Math.min(2.4, Math.max(0, c.afield - 4) * .25) + lost * 6 : lost * 3 - .5), 0, 100);
   if (!men) { c.militaryFunding = 1; return; }
   const required = upkeepCost(w, c);
-  const funded = clamp((c.budget.military * c.gdp * c.paidRatio) / Math.max(required, 1), 0, 1.3);
+  const money = c.budget.military * c.gdp * c.paidRatio, funded = clamp(money / Math.max(required, 1), 0, 1.3), paid = payOf(w, c, money, required, funded), chosen = !!c.payFirst?.length && funded < 1;
   c.militaryFunding = funded;
+  for (const f of Object.values(w.fleets)) if (f.country === c.id) { if (chosen) f.paid = paid(f); else delete f.paid; }
   // An army in the field wears out rifles, boots and cartridges faster than one in barracks; what a battle fires off is drawn when it is fought (resolve).
   const consume = men * (inWar && inTheField(w, c.id) ? .006 : .004);
   c.stock.arms = Math.max(0, c.stock.arms - consume);
   // Pay, arrears and a long war decide where the troops' spirit settles; a battle only knocks it about for a while.
-  const spirit = clamp(40 + funded * 35 - c.arrears * 6 - c.warExhaustion * .3, 8, 95);
+  const spiritAt = got => clamp(40 + got * 35 - c.arrears * 6 - c.warExhaustion * .3, 8, 95);
   let gone = 0; const field = inWar && inTheField(w, c.id); c._sick = 0;
   for (const u of us) {
-    u.morale = clamp(u.morale + (spirit - u.morale) * .2, 0, 100);
+    // What this body of men was paid and supplied with this quarter: the army's common share, unless someone decided otherwise.
+    const got = paid(u); if (chosen) u.paid = got; else delete u.paid;
+    u.morale = clamp(u.morale + (spiritAt(got) - u.morale) * .2, 0, 100);
     // Drill brings raw men up to the army's standard in a couple of years, and the edge of veterans wears off as they go home.
     u.quality += (drillOf(c) - u.quality) * .08;
     // An army in the field loses men to sickness every quarter it stays there: most in marsh and in summer heat, in siege lines and on foreign
     // soil; a medical service that knows what it is doing loses half as many.
     if (field) { const p = w.provinces[u.province], sick = u.men * (.004 + (p.terrain === 'marsh' ? .012 : 0) + (season(w) === 'summer' && ['marsh', 'desert'].includes(p.terrain) ? .006 : 0) + (p.siege ? .008 : 0) + (p.controller !== u.country ? .004 : 0)) * (hasTech(c, 'antibiotics') ? .5 : 1); u.men -= sick; c._sick += sick; }
     // Soldiers who are not paid go home: the army shrinks toward what the budget can keep.
-    if (funded < .85) { const left = u.men * clamp((.85 - funded) * .35, 0, .3); u.men -= left; gone += left; }
-    u.equip = clamp(u.equip + (c.stock.arms > 0 ? .02 : -.05) * (funded > .6 ? 1 : .3), .2, 1.4);
+    if (got < .85) { const left = u.men * clamp((.85 - got) * .35, 0, .3); u.men -= left; gone += left; }
+    u.equip = clamp(u.equip + (c.stock.arms > 0 ? .02 : -.05) * (got > .6 ? 1 : .3), .2, 1.4);
     { const s = supplyOf(w, u); if (!s.linked) { u.men *= .92; u.morale = clamp(u.morale - 6, 0, 100); } else if (s.depth > 4.5) { u.men *= .98; u.morale = clamp(u.morale - 2, 0, 100); } }
     // Loyalty settles where pay and the government's standing put it, around the bond the unit already had; a shock fades, it does not add up for ever.
-    const pull = (funded - .85) * 40 - c.arrears * 6 + (c.legitimacy - 50) * .25;
+    const pull = (got - .85) * 40 - c.arrears * 6 + (c.legitimacy - 50) * .25;
     u.bond ??= u.loyalty - pull;
     u.loyalty = clamp(u.loyalty + (clamp(u.bond + pull, 0, 100) - u.loyalty) * .12, 0, 100);
   }
@@ -438,7 +455,12 @@ function resolve(w, pid, us) {
   const guns = u => u.attack?.to === pid && u.attack.shelling ? u.men * (u.kind === 'artillery' ? 1 : FIELD_GUNS) : 0, want = {}, fire = {}, shot = {};
   for (const u of A) want[u.country] = (want[u.country] || 0) + u.men * crowdA * RATE[manner] * (u.kind === 'artillery' ? 3 : 1) + guns(u) * SHELLING;
   for (const u of D) want[u.country] = (want[u.country] || 0) + u.men * crowdD * RATE_DEF * (u.kind === 'artillery' ? 3 : 1);
-  for (const [id, x] of Object.entries(want)) { const c = w.countries[id], have = Math.max(c.stock.arms || 0, 0), got = Math.min(x, have); c.stock.arms = have - got; c._shot = (c._shot || 0) + got; shot[id] = got; fire[id] = x > 0 ? got / x : 1; }
+  // How much an attack may draw is the staff's to say: a reserve in the arsenal that no attack touches (set_arsenal_reserve; the defence of the
+  // country and a call-up still draw on it), and a ceiling on what one operation may burn in a quarter (offensive with shells).
+  const stint = {};
+  for (const [id, x] of Object.entries(want)) { const c = w.countries[id], have = Math.max(c.stock.arms || 0, 0), attacking = atkSide.includes(id), kept = attacking ? Math.min(have, c.arsenalReserve || 0) : 0, cap = attacking ? Math.min(Infinity, ...A.filter(u => u.country === id && u.attack?.to === pid && u.attack.shells > 0).map(u => u.attack.shells)) : Infinity, got = Math.max(0, Math.min(x, have - kept, cap));
+    if (got < x - 1e-9) stint[id] = cap <= have - kept ? { why: 'ceiling', n: cap } : kept > 0 && have - kept < x ? { why: 'reserve', n: kept } : { why: 'empty' };
+    c.stock.arms = have - got; c._shot = (c._shot || 0) + got; shot[id] = got; fire[id] = x > 0 ? got / x : 1; }
   // A bombardment knocks in field works in the measure of the guns brought against the men behind them; the field guns that march with the
   // infantry count for little at this, the heavy pieces of the artillery for much. Masonry and concrete yield only to the heavy pieces.
   const weight = sum(A, guns), shelled = weight > 0 ? sum(A, u => guns(u) * fire[u.country]) / weight : 0, heavy = sum(A.filter(u => u.kind === 'artillery'), guns);
@@ -523,7 +545,7 @@ function resolve(w, pid, us) {
     if (key === 'ground') return p.terrain === 'plains' && !pass && !bridge && river === 1 ? (us === 'A' ? 'they stood on the defensive and we had to come at them over open ground' : 'we stood on the defensive and they had to come at us over open ground') : us === 'A' ? `${ground} fight for whoever holds them` : `${ground} fought for us`;
     if (key === 'works') return us === 'A' ? `they fought from works (${worksText || 'what they had dug'})${weight > 0 ? `; our bombardment knocked in about ${pc(breach)} in the hundred of the field works${p.fort >= 1 && holds ? ` and ${pc(breachFort)} of the fortress` : ''}` : ', and we went in without a bombardment'}` : `we fought from our works (${worksText || 'what we had dug'})${weight > 0 ? `, though their guns knocked in about ${pc(breach)} in the hundred of the field works${p.fort >= 1 && holds ? ` and ${pc(breachFort)} of the fortress` : ''}` : ''}`;
     if (key === 'supply') { const s = supplyOf(w, far(lostIt ? mine : theirs)); return lostIt ? (s.linked ? `our troops were ${Math.round(s.depth * 10) / 10} marches of wagon road from their supply head at ${w.provinces[s.head]?.name} and short of everything` : 'our troops were cut off from supply altogether') : s.linked ? 'their troops were far from their railhead and ill supplied' : 'their troops were cut off from their supplies'; }
-    if (key === 'shells') { const id = mine[0].country; return lostIt ? `the arsenal could send only ${pc(fire[id] ?? 1)} in the hundred of the cartridges and shells the fight called for` : 'their fire slackened as the fight went on: they are short of shells'; }
+    if (key === 'shells') { const id = mine[0].country, s = stint[id]; return lostIt ? (s?.why === 'ceiling' ? `the attack was held to the ${Math.round(s.n * 10) / 10} of ammunition allowed it, ${pc(fire[id] ?? 1)} in the hundred of what the fight called for` : s?.why === 'reserve' ? `the reserve of ${Math.round(s.n)} kept back in the arsenal was not touched, and the attack got ${pc(fire[id] ?? 1)} in the hundred of the cartridges and shells it called for` : `the arsenal could send only ${pc(fire[id] ?? 1)} in the hundred of the cartridges and shells the fight called for`) : 'their fire slackened as the fight went on: they are short of shells'; }
     if (key === 'command') return lostIt ? 'they were the better led' : 'we were the better led';
     if (key === 'spirit') return lostIt ? 'our men went in with less heart than theirs' : 'our men were in better heart than theirs';
     if (key === 'arms') return lostIt ? 'they were the better armed and trained' : 'we were the better armed and trained';
@@ -540,7 +562,7 @@ function resolve(w, pid, us) {
       const c = w.countries[id], here = Object.values(w.units).filter(u => u.country === id && mine.includes(u)), stayed = here.some(u => u.province === pid), to = [...(went[id] || [])].join(', ');
       const found = probe && us === 'A' ? ` The reconnaissance puts them at about ${about(their.was)} thousand${worksText ? `, in ${worksText}` : ', with no works to speak of'}${(fire[theirs[0].country] ?? 1) < .7 ? '; their guns answered thinly, as if short of shells' : ''}.` : '';
       const lateText = us === 'A' && late.some(u => u.country === id) ? ` The column of ${[...new Set(late.filter(u => u.country === id).map(u => u.id))].join(', ')} was not up in time and took no part; it goes in next quarter unless ordered otherwise.` : '';
-      mark(w, c, `${probe ? (us === 'A' ? `Our reconnaissance in force at ${p.name}` : `An enemy reconnaissance in force against ${p.name} was beaten off`) : us === 'A' ? `Our attack on ${p.name} ${won ? 'carried the place' : 'failed'}` : `${p.name} was attacked and ${won ? 'held' : 'lost'}`}. We had ${about(my.was)} thousand men there and lost ${Math.round(my.dead * 10) / 10} thousand${!won && taken >= .5 && !probe ? `, besides about ${about(taken)} thousand taken prisoner` : ''}; they had about ${about(their.was)} thousand and their loss is put at about ${about(their.dead)} thousand${won && taken >= .5 ? `, besides about ${about(taken)} thousand prisoners in our hands` : ''}.${found}${reasons.length ? ` What ${probe ? 'the fighting showed' : won ? 'told for us' : 'told against us'}: ${reasons.join('; ')}.` : ''}${lateText}${us === 'A' && unseen && weight > 0 ? ' Nothing had been seen of our preparations, but the bombardment gave them warning: there was no surprise.' : ''}${paper < 0 ? (us === 'A' ? ' Their dispositions show that they knew our plan of campaign. Until a new one is drawn up (prepare_plan) the army cannot count on its own.' : ' Their attack came where the copy of their plan in our hands said it would.') : ''} The fight used ${Math.round((shot[id] || 0) * 10) / 10} of arms and ammunition; ${Math.round(c.stock.arms || 0)} remain in the arsenal.${to ? ` Our troops ${probe ? 'are back at' : 'fell back to'} ${to}.` : ''}${stayed && !won && !probe ? ` Our troops are still on the field at ${p.name}${us === 'A' && press ? ' under the order to press the attack, and go in again next quarter unless that order is changed' : ', under the order not to give a step'}.` : ''}`);
+      mark(w, c, `${probe ? (us === 'A' ? `Our reconnaissance in force at ${p.name}` : `An enemy reconnaissance in force against ${p.name} was beaten off`) : us === 'A' ? `Our attack on ${p.name} ${won ? 'carried the place' : 'failed'}` : `${p.name} was attacked and ${won ? 'held' : 'lost'}`}. We had ${about(my.was)} thousand men there and lost ${Math.round(my.dead * 10) / 10} thousand${!won && taken >= .5 && !probe ? `, besides about ${about(taken)} thousand taken prisoner` : ''}; they had about ${about(their.was)} thousand and their loss is put at about ${about(their.dead)} thousand${won && taken >= .5 ? `, besides about ${about(taken)} thousand prisoners in our hands` : ''}.${found}${reasons.length ? ` What ${probe ? 'the fighting showed' : won ? 'told for us' : 'told against us'}: ${reasons.join('; ')}.` : ''}${lateText}${us === 'A' && unseen && weight > 0 ? ' Nothing had been seen of our preparations, but the bombardment gave them warning: there was no surprise.' : ''}${paper < 0 ? (us === 'A' ? ' Their dispositions show that they knew our plan of campaign. Until a new one is drawn up (prepare_plan) the army cannot count on its own.' : ' Their attack came where the copy of their plan in our hands said it would.') : ''} The fight used ${Math.round((shot[id] || 0) * 10) / 10} of arms and ammunition; ${Math.round(c.stock.arms || 0)} remain in the arsenal.${stint[id]?.why === 'ceiling' ? ` The attack was held to the ${Math.round(stint[id].n * 10) / 10} of ammunition allowed it, about ${Math.round((fire[id] ?? 1) * 100)} in the hundred of what the fight called for.` : stint[id]?.why === 'reserve' ? ` The reserve of ${Math.round(stint[id].n)} kept back in the arsenal was not touched, and the attack got about ${Math.round((fire[id] ?? 1) * 100)} in the hundred of what it called for.` : ''}${to ? ` Our troops ${probe ? 'are back at' : 'fell back to'} ${to}.` : ''}${stayed && !won && !probe ? ` Our troops are still on the field at ${p.name}${us === 'A' && press ? ' under the order to press the attack, and go in again next quarter unless that order is changed' : ', under the order not to give a step'}.` : ''}`);
     }
   }
   w.battles.push({ province: pid, attacker: atkSide[0], defender: defCountry, attackerWon: atkWins, lossA: Math.round(da), lossD: Math.round(dd), prisoners: Math.round(taken), manner, ...(flank ? { sides: flank + 1 } : {}), ...(surprise ? { surprise: true } : {}), ...(weight > 0 ? { shelled: Math.round(breach * 100), ...(p.fort >= 1 && holds ? { breached: Math.round(breachFort * 100) } : {}) } : {}), why });

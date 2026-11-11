@@ -107,8 +107,8 @@ export function navalStep(w) {
   // The temper of the crews settles where pay, arrears and a long war put it, as the army's does; a fight only knocks it about for a while. Crews
   // left unpaid in harbour until their spirit is gone hoist the red flag: the squadron does not sail, the port is in uproar, and the armed
   // underground has found friends with guns. It ends when they are paid and fed again.
-  for (const c of aliveCountries(w)) { const spirit = clamp(40 + (c.militaryFunding ?? 1) * 35 - (c.arrears || 0) * 6 - (c.warExhaustion || 0) * .3, 8, 95);
-    for (const f of fleets()) { if (f.country !== c.id) continue; f.morale = clamp(f.morale + (spirit - f.morale) * .15, 0, 100); const p = w.provinces[f.port];
+  for (const c of aliveCountries(w)) { const spiritOf = f => clamp(40 + (f.paid ?? c.militaryFunding ?? 1) * 35 - (c.arrears || 0) * 6 - (c.warExhaustion || 0) * .3, 8, 95);
+    for (const f of fleets()) { if (f.country !== c.id) continue; f.morale = clamp(f.morale + (spiritOf(f) - f.morale) * .15, 0, 100); const p = w.provinces[f.port];
       if (!f.mutiny && p && f.morale < 30) { f.mutiny = w.turn; news(w, `${c.name}: the crews of the squadron at ${p.name} have mutinied; red flags fly from the ships.`, { kind: 'politics', countries: [c.id], province: p.id }); tell(w, c, `The crews of ${f.id} at ${p.name} have mutinied: unpaid and ill fed, they have put their officers ashore. The squadron will not sail or fight until its spirit is restored, which is a matter of pay and arrears (the military budget), and while it lasts the port is in uproar and the armed underground has friends with guns.`); }
       else if (f.mutiny && (f.morale >= 45 || !p)) { delete f.mutiny; news(w, `${c.name}: the mutiny in the squadron${p ? ` at ${p.name}` : ''} is over.`, { kind: 'politics', countries: [c.id] }); }
       if (f.mutiny && p) { p.unrest = clamp(p.unrest + 6, 0, 100); c.cells = clamp((c.cells || 0) + 1.5, 0, 100); } } }
@@ -131,11 +131,11 @@ export function navalStep(w) {
       news(w, `A merchant ship of ${o.name} was lost on a mine in ${seaName(w, sea)}. The mines there are ${w.countries[m.by].name}'s.`, { kind: 'war', countries: [id, m.by] }); } }
   }
   // Who commands which water: the surface ships at sea there, weighed as they would fight.
-  w.seaPower = {}; w.seaControl = {}; w.seaRaids = {};
+  w.seaPower = {}; w.seaControl = {}; w.seaRaids = {}; w.seaBlock = {};
   for (const f of fleets()) {
     if (!atSea(f)) continue;
     // Ships that are out after merchantmen, or under orders to keep out of a fight, command nothing.
-    if (surface(f) && !beaten.has(f.id) && !['raid', 'evade'].includes(f.orders)) { const p = (w.seaPower[f.sea] ||= {}); p[f.country] = (p[f.country] || 0) + strength(w, f); }
+    if (surface(f) && !beaten.has(f.id) && !['raid', 'evade'].includes(f.orders)) { const p = (w.seaPower[f.sea] ||= {}), s = strength(w, f); p[f.country] = (p[f.country] || 0) + s; if (f.orders === 'blockade') { const b = (w.seaBlock[f.sea] ||= {}); b[f.country] = (b[f.country] || 0) + s; } }
     // Submarines, and cruisers sent out against trade, prey on the merchant ships of their enemies wherever they lie.
     if ((!surface(f) || f.orders === 'raid') && !beaten.has(f.id)) (w.seaRaids[f.sea] ||= []).includes(f.country) || w.seaRaids[f.sea].push(f.country);
   }
@@ -266,21 +266,26 @@ export function portFalls(w, p, by) {
 }
 
 // Guns from the sea. A squadron lying off a coast shells what it can reach: harbour works, batteries, troops in the open, the town.
-export function bombard(w, c, f, p, h) {
+// What the guns are laid on is the order's to say (at): the harbour and its batteries (works), the troops there, the ships lying in the harbour,
+// or the town itself. Laid on one of them they do that work half as well again and little of the rest; with nothing said they fire on all of it,
+// as before. To lay them on a town is a decision someone took, and where the town had no guns to answer the world reads of it.
+export const AIMS = ['works', 'troops', 'ships', 'town'];
+export function bombard(w, c, f, p, h, at = 'all') {
+  const aim = AIMS.includes(at) ? at : 'all', on = k => aim === 'all' ? 1 : aim === k ? 1.6 : .15;
   const k = SHIPS[kindOf(f)], foe = w.countries[p.controller], weight = f.ships * k.power * readiness(w, f);
   const reply = (p.battery || 0) * .04 + ((p.fort || 0) >= 1 ? .01 : 0), lost = f.ships * reply; f.ships -= lost; f.damaged = (f.damaged || 0) + lost * .6;
   const share = clamp(weight / 60, .02, .3), open = !(p.battery > 0) && !(p.fort >= 1) && !Object.values(w.units).some(u => u.province === p.id && u.country === p.controller);
-  p.devastation = clamp(p.devastation + share * .5, 0, 1); if (p.battery) p.battery = Math.max(0, p.battery - share * 2);
-  let dead = 0; for (const cls of Object.keys(p.pops)) { const d = p.pops[cls].n * share * .01; p.pops[cls].n -= d; dead += d; }
-  for (const u of Object.values(w.units)) if (u.province === p.id && fighting(w, u.country, c.id)) { u.men *= 1 - share * .08; u.morale = clamp(u.morale - share * 20, 0, 100); u.dug = Math.max(0, (u.dug || 0) - 1); }
-  for (const x of Object.values(w.fleets)) if (x.port === p.id && fighting(w, x.country, c.id) && (p.battery || 0) < 1.5) { const hit = x.ships * share * .3; x.ships -= hit; x.damaged = (x.damaged || 0) + hit; }
-  p.unrest = clamp(p.unrest + share * 20, 0, 100); foe.warExhaustion = clamp((foe.warExhaustion || 0) + share * 4, 0, 100);
-  const g = ((foe.grudges ||= {})[c.id] ||= { incident: 0, kin: 0 }); g.incident += 4 + share * 30;
+  p.devastation = clamp(p.devastation + share * .5 * Math.max(on('works'), on('town') * .6), 0, 1); if (p.battery) p.battery = Math.max(0, p.battery - share * 2 * on('works'));
+  let dead = 0; for (const cls of Object.keys(p.pops)) { const d = p.pops[cls].n * share * .01 * on('town'); p.pops[cls].n -= d; dead += d; }
+  for (const u of Object.values(w.units)) if (u.province === p.id && fighting(w, u.country, c.id)) { u.men *= 1 - Math.min(.5, share * .08 * on('troops')); u.morale = clamp(u.morale - share * 20 * on('troops'), 0, 100); if (on('troops') >= 1) u.dug = Math.max(0, (u.dug || 0) - 1); }
+  for (const x of Object.values(w.fleets)) if (x.port === p.id && fighting(w, x.country, c.id) && (p.battery || 0) < 1.5) { const hit = x.ships * Math.min(.6, share * .3 * on('ships')); x.ships -= hit; x.damaged = (x.damaged || 0) + hit; }
+  p.unrest = clamp(p.unrest + share * 20 * on('town'), 0, 100); foe.warExhaustion = clamp((foe.warExhaustion || 0) + share * 4 * on('town'), 0, 100);
+  const g = ((foe.grudges ||= {})[c.id] ||= { incident: 0, kin: 0 }); g.incident += 4 + share * 30 * on('town');
   news(w, `${c.name}'s ships shelled ${p.name}${open ? ', an undefended town' : ''}: about ${Math.round(dead * 1000)} townspeople were killed.`, { kind: 'war', countries: [c.id, foe.id], province: p.id });
-  // Shelling a town that cannot answer is something every other government reads about.
-  if (open) { h.shame(w, c, -2, `its ships shelled the undefended town of ${p.name}`); for (const o of aliveCountries(w)) if (o.id !== c.id && o.id !== foe.id && !atWar(w, o.id, foe.id)) o.relations[c.id] = clamp((o.relations[c.id] ?? 0) - 4, -100, 100); }
+  // Shelling a town that cannot answer is something every other government reads about; guns laid only on its quays, its garrison or the ships in its harbour are another matter.
+  if (open && on('town') >= 1) { h.shame(w, c, -2, `its ships shelled the undefended town of ${p.name}`); for (const o of aliveCountries(w)) if (o.id !== c.id && o.id !== foe.id && !atWar(w, o.id, foe.id)) o.relations[c.id] = clamp((o.relations[c.id] ?? 0) - 4, -100, 100); }
   for (const ch of [w.characters[foe.leader], w.characters[foe.general]]) if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'Naval Staff', text: `${c.name}'s ships shelled ${p.name}: about ${Math.round(dead * 1000)} dead in the town, the harbour and works damaged${p.battery ? `; our batteries answered and hit ${Math.round(lost * 10) / 10} of them` : '; there were no guns there to answer'}.` });
-  return { ok: true, msg: `${f.id} shelled ${p.name}: the harbour and works are damaged${p.battery ? ', its batteries partly silenced' : ''}, troops in the open there lost men and shelter, and about ${Math.round(dead * 1000)} townspeople were killed.${lost >= .05 ? ` The shore guns answered: ${Math.round(lost * 10) / 10} of our ${k.name} were hit, most of them fit to be mended.` : ''}${open ? ' The place had no guns and no garrison: the world has read that our ships shelled an open town, and thinks the less of us.' : ''} The country it belongs to will hold it against us.` };
+  return { ok: true, msg: `${f.id} shelled ${p.name}${aim === 'all' ? '' : `, its guns laid on ${{ works: 'the harbour and its batteries', troops: 'the troops there', ships: 'the ships in the harbour', town: 'the town' }[aim]}`}: ${on('works') >= 1 ? `the harbour and works are damaged${p.battery ? ', its batteries partly silenced' : ''}` : 'the harbour and works took little'}, ${on('troops') >= 1 ? 'troops in the open there lost men and shelter' : 'the troops there were hardly touched'}, and about ${Math.round(dead * 1000)} townspeople were killed.${lost >= .05 ? ` The shore guns answered: ${Math.round(lost * 10) / 10} of our ${k.name} were hit, most of them fit to be mended.` : ''}${open && on('town') >= 1 ? ' The place had no guns and no garrison: the world has read that our ships shelled an open town, and thinks the less of us.' : ''} The country it belongs to will hold it against us.` };
 }
 
 // What a fleet off a coast adds to an army fighting on it: the ships' guns reach the field while the water is theirs.
@@ -336,12 +341,19 @@ export function merchantStep(w, cs, carried) {
 
 // How tightly a stretch of water is closed to a country by its enemies: not at all where they do not outweigh it, and from a quarter (a
 // cruiser or two off a coast with several harbours, past which most runners get through) to the whole as the weight of ships grows.
+// Whether to stop the trade of the world with an enemy is a government's decision, and the most quarrelled-over one at sea. A squadron that
+// merely holds the water (patrol, seek) fights what comes and takes the enemy's own merchantmen where it meets them: his trade through that
+// water goes on in other flags, dearer, and is never shut. Only ships under orders to blockade turn back every flag, the neutral's too, and
+// it is their weight against the harbours of that water that closes it; the neutral then has his protest to make.
+const LEAKY = .5;
 export function blockadeOf(w, sea, id) {
   if (!enemyHolds(w, sea, id)) return 0;
-  let mine = 0, theirs = 0;
-  for (const [o, v] of Object.entries(w.seaPower[sea])) { if (o === id || hasTreaty(w, o, id, 'alliance')) mine += v; else if (atWar(w, o, id)) theirs += v; }
-  const harbours = w.seas[sea].coast.filter(pid => w.provinces[pid].controller === id && w.provinces[pid].port > 0).length;
-  return clamp((theirs - mine) / (3 + 3 * harbours), .25, 1);
+  let mine = 0, theirs = 0, closing = 0;
+  for (const [o, v] of Object.entries(w.seaPower[sea])) { if (o === id || hasTreaty(w, o, id, 'alliance')) mine += v; else if (atWar(w, o, id)) { theirs += v; closing += w.seaBlock?.[sea]?.[o] || 0; } }
+  const harbours = w.seas[sea].coast.filter(pid => w.provinces[pid].controller === id && w.provinces[pid].port > 0).length, room = 3 + 3 * harbours;
+  // Ships that hold the water without stopping trade still keep the blockaders from being driven off.
+  const cover = theirs - closing, strict = clamp((closing - Math.max(0, mine - cover)) / room, 0, 1), leaky = Math.min(clamp((theirs - mine) / room, .25, 1), LEAKY);
+  return Math.max(leaky, strict);
 }
 
 // ---- Ships as an argument ----

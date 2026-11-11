@@ -166,7 +166,8 @@ chain('An enemy fleet holding the sea cuts trade', () => {
   const [a, b] = k.split('|'), sea = w.routes[k].path[0], enemy = aliveCountries(w).find(c => ![a, b].includes(c.id));
   w.wars.push({ id: 'SX', a: [enemy.id], b: [a], civil: false, active: true, start: w.turn, name: 'X' });
   for (const s of Object.keys(w.seas)) { const f = Object.values(w.fleets).find(x => x.country === enemy.id) ; if (!f) break; }
-  const path = w.routes[k].path; for (const s of path) w.fleets['Z' + s] = { id: 'Z' + s, country: enemy.id, sea: s, ships: 900, quality: 3, morale: 90, target: null };
+  // The ships are under orders to blockade: holding a water is not yet shutting it to trade (see the check on blockade orders).
+  const path = w.routes[k].path; for (const s of path) w.fleets['Z' + s] = { id: 'Z' + s, country: enemy.id, sea: s, ships: 900, quality: 3, morale: 90, target: null, orders: 'blockade' };
   run(w, 2); const r = w.routes[k]; assert.ok(!r || !path.every(s => r.path.includes(s)), 'the same route should not stay open');
 });
 chain('A dam lowers the downstream harvest', () => {
@@ -2576,7 +2577,7 @@ chain('A navy is handed over as a navy of its time and its staff knows how it wo
   const report = lookUp(w, gen, 'fleet'); assert.ok(/in harbour at/.test(report) && /Our harbours:/.test(report) && /A squadron works from a base/.test(report) && /Standing orders \(fleet_orders\)/.test(report), report);
   assert.ok(/Fleet details are secret/.test(lookUp(w, w.characters[c.opposition], 'fleet')));
   const other = cs.find(o => o.id !== c.id && Object.values(w.provinces).some(p => p.controller === o.id && p.port > 0)), plan = lookUp(w, gen, `war_plan:${other.id}`); assert.ok(/At sea\. Ours: .*Theirs, by the published navy lists/.test(plan) && /Their harbours:/.test(plan), plan);
-  const ref = refereePrompt(w, c, [{ actor: gen, decisions: ['The fleet puts to sea.'] }]); assert.ok(ref.includes('fleet_orders{fleet?|all?,orders:patrol|seek|evade|blockade|raid|port}') && ref.includes('Its harbours:') && ref.includes('in harbour at') && ref.includes('lay_mines{sea}') && ref.includes('bombard{province,fleet?}'), 'the referee knows the orders and sees where the ships lie');
+  const ref = refereePrompt(w, c, [{ actor: gen, decisions: ['The fleet puts to sea.'] }]); assert.ok(ref.includes('fleet_orders{fleet?|all?,orders:patrol|seek|evade|blockade|raid|port}') && ref.includes('Its harbours:') && ref.includes('in harbour at') && ref.includes('lay_mines{sea}') && ref.includes('bombard{province,fleet?,at?:works|troops|ships|town}'), 'the referee knows the orders and sees where the ships lie');
   // The yards.
   c.treasury = c.gdp * 4; c.stock.steel = 500; const small = countryProvinces(w, c.id).find(p => p.port === 1);
   assert.ok(applyOp(w, boss, { op: 'build_ship', province: home.id, ships: 6, kind: 'torpedo' }).ok); if (small) assert.ok(/harbour is too small/.test(applyOp(w, boss, { op: 'build_ship', province: small.id, ships: 1, kind: 'battleship' }).msg));
@@ -2623,7 +2624,7 @@ chain('A blockade closes a coast in the measure of its weight: a few cruisers of
   const gate = home.seas.includes(sea) ? sea : w.routes[k].path.at(-1); for (const p of countryProvinces(w, v.id)) if (p !== home) p.port = 0; home.seas = [gate];
   w.wars = [{ id: 'S-k', a: ['U1'], b: [v.id], civil: false, active: true, start: w.turn, name: 'k' }]; for (const c of [w.countries.U1, v]) { c.stock.coal = 3000; c.budget.military = .3; }
   updateRoutes(w); assert.equal(w.routes[k]?.mode, 'sea'); const open = w.routes[k].cost, rel = n.relations.U1 ?? 0;
-  const thin = makeFleet(w, 'U1', gate, 2, 'cruiser'); thin.coaled = 1; militaryStep(w); const e1 = closedBy(w, gate, v.id); updateRoutes(w);
+  const thin = makeFleet(w, 'U1', gate, 2, 'cruiser'); thin.coaled = 1; thin.orders = 'blockade'; militaryStep(w); const e1 = closedBy(w, gate, v.id); updateRoutes(w);
   assert.ok(e1 > 0 && e1 < .8 && w.routes[k]?.mode === 'sea' && w.routes[k].cost > open + .05, `two cruisers do not seal a harbour: runners get through, at a price (${e1}, ${w.routes[k]?.cost} against ${open})`);
   thin.ships = 60; militaryStep(w); const e2 = closedBy(w, gate, v.id); updateRoutes(w);
   assert.ok(e2 >= .8 && w.routes[k]?.mode !== 'sea', `a battle squadron does: ${e2}, ${JSON.stringify(w.routes[k] ?? null)}`);
@@ -2786,6 +2787,75 @@ const duel = (o = {}) => { duelBase ||= twoRoads(1); const w = structuredClone(d
   const r = applyOp(f.w, f.gen, { op: 'offensive', to: f.over.id, units: atk.map(u => u.id), ...(o.order || {}) }); assert.ok(r.ok, r.msg);
   if (o.seen) for (const u of atk) u.attack.seen = f.w.turn;
   return { ...f, def, atk, D, A }; };
+chain('When the vote for the forces is short, who goes short is somebody\'s decision: the bodies paid first keep their spirit, their men and their faith while the rest waste the faster, crews put last sour, and with no decision all are short alike', () => {
+  // The same army voted half of what it costs, for two years, three ways: nobody chooses; the capital's garrison is paid first; the fleet is paid first.
+  const run2 = first => { const w = fresh(), c = w.countries.U1, gen = w.characters[c.general]; for (const u of Object.values(w.units)) if (u.country === 'U1') delete w.units[u.id]; for (const f of Object.values(w.fleets)) if (f.country === 'U1') delete w.fleets[f.id]; w.wars = [];
+    const far = countryProvinces(w, 'U1').find(p => p.id !== c.capital), port = countryProvinces(w, 'U1').find(p => p.port > 0 && p.seas.length), guard = soldier(w, 'U1', c.capital, 40), line = soldier(w, 'U1', far.id, 40), ships = makeFleet(w, 'U1', port.seas[0], 6, 'cruiser'); ships.port = ships.home = port.id; ships.morale = 70;
+    c.paidRatio = 1; c.arrears = 0; c.warExhaustion = 0; c.legitimacy = 55; c.stock.arms = 500; c.stock.coal = 500;
+    c.budget.military = upkeepCost(w, c) / c.gdp; quarter(w); c.budget.military = upkeepCost(w, c) * .5 / c.gdp;
+    const said = first ? applyOp(w, gen, { op: 'set_pay_priority', first }) : null; if (said) assert.ok(said.ok, said.msg);
+    for (let i = 0; i < 8; i++) quarter(w);
+    return { w, c, gen, guard, line, ships, said }; };
+  const even = run2(null), cap = run2(['capital']), sea = run2(['navy']);
+  assert.ok(Math.abs(even.guard.morale - even.line.morale) < .5 && Math.abs(even.guard.men - even.line.men) < .2 && even.guard.paid == null, `with no decision the two corps fare alike: ${even.guard.men.toFixed(1)} and ${even.line.men.toFixed(1)} thousand`);
+  assert.ok(cap.guard.paid === 1 && cap.line.paid < .5, `the garrison of the capital is paid in full and the rest share what is left: ${cap.guard.paid} and ${cap.line.paid}`);
+  assert.ok(cap.guard.morale > cap.line.morale + 8 && cap.guard.men > cap.line.men * 1.15 && cap.guard.loyalty > cap.line.loyalty + 5, `paid first, it keeps its spirit, its men and its faith: morale ${Math.round(cap.guard.morale)} against ${Math.round(cap.line.morale)}, men ${cap.guard.men.toFixed(1)} against ${cap.line.men.toFixed(1)}, faith ${Math.round(cap.guard.loyalty)} against ${Math.round(cap.line.loyalty)}`);
+  assert.ok(cap.guard.men > even.guard.men + 1 && cap.line.men < even.line.men - 1, 'and the corps that waits wastes faster than it would have if all had been short alike');
+  assert.ok(cap.ships.morale < even.ships.morale - 3 && sea.ships.morale > even.ships.morale + 5, `crews put last sour, crews paid first do not: ${Math.round(cap.ships.morale)}, ${Math.round(even.ships.morale)}, ${Math.round(sea.ships.morale)}`);
+  assert.ok(/now paid first: capital/.test(lookUp(cap.w, cap.gen, 'army')) && /paid 100 in the hundred/.test(lookUp(cap.w, cap.gen, 'army')), 'the army report says who is paid first and what each body got');
+  // No money is made by it, an unknown name is refused, an empty list ends it, and with the vote in full nobody is singled out.
+  assert.ok(!applyOp(cap.w, cap.gen, { op: 'set_pay_priority', first: ['B-none'] }).ok && cap.c.payFirst.join() === 'capital', 'a name that is not ours is refused and the order stands');
+  assert.ok(applyOp(cap.w, cap.gen, { op: 'set_pay_priority', first: [] }).ok && !cap.c.payFirst);
+  applyOp(cap.w, cap.gen, { op: 'set_pay_priority', first: ['capital'] }); cap.c.budget.military = upkeepCost(cap.w, cap.c) * 1.05 / cap.c.gdp; quarter(cap.w); assert.ok(cap.guard.paid == null && cap.line.paid == null, 'a vote that covers the cost leaves nobody to choose between');
+  assert.ok(!applyOp(cap.w, cap.w.characters[cap.c.opposition], { op: 'set_pay_priority', first: ['navy'] }).ok, 'it is the staff\'s and the ruler\'s to say, not a party leader\'s');
+});
+chain('How much of the arsenal an attack may burn is the staff\'s to say: a reserve that no attack touches and a ceiling on one operation thin the attack\'s fire and leave the shells in store, and the staff\'s report says which it was', () => {
+  const fight = (o = {}) => { const f = duel({ atk: 120, def: 60, rng: 4242, order: o.order }); f.a.stock.arms = 60; f.d.stock.arms = 200; if (o.reserve != null) assert.ok(applyOp(f.w, f.gen, { op: 'set_arsenal_reserve', amount: o.reserve }).ok); const before = f.a.stock.arms; quarter(f.w); return { ...f, burned: before - f.a.stock.arms, lostD: f.D - (f.w.units[f.def.id]?.men ?? 0) }; };
+  const free = fight(), kept = fight({ reserve: 58 }), held = fight({ order: { shells: 1.5 } });
+  assert.ok(free.burned > 4, `left alone the assault burns what it calls for: ${free.burned.toFixed(1)}`);
+  assert.ok(kept.a.stock.arms >= 58 - .5 && kept.burned < free.burned * .6 && kept.lostD < free.lostD, `the reserve stays in the arsenal and the attack bites less: burned ${kept.burned.toFixed(1)} against ${free.burned.toFixed(1)}, their loss ${kept.lostD.toFixed(1)} against ${free.lostD.toFixed(1)}`);
+  assert.ok(/reserve of 58 kept back in the arsenal was not touched/i.test(kept.said()), kept.said().slice(-500));
+  assert.ok(held.burned < free.burned * .5 && held.lostD < free.lostD && /held to the 1\.5 of ammunition allowed it/i.test(held.said()), `one operation held to a ceiling: burned ${held.burned.toFixed(1)}; ${held.said().slice(-300)}`);
+  // The defender draws on his whole arsenal whatever reserve he has ordered: a reserve is kept from attacks, not from the country's defence.
+  const d = duel({ atk: 120, def: 60, rng: 4242 }); d.d.stock.arms = 50; d.d.arsenalReserve = 50; quarter(d.w); assert.ok(d.d.stock.arms < 49.5, 'troops attacked on their own ground fire what there is');
+  // Ordering the attack again without a figure keeps the ceiling; 0 lifts it; the reserve is ended by 0.
+  const again = duel({ order: { shells: 2 } }); applyOp(again.w, again.gen, { op: 'offensive', to: again.over.id, units: again.atk.map(u => u.id) }); assert.equal(again.atk[0].attack.shells, 2, 'an attack ordered again keeps what it was held to');
+  applyOp(again.w, again.gen, { op: 'offensive', to: again.over.id, units: again.atk.map(u => u.id), shells: 0 }); assert.ok(!again.atk[0].attack.shells);
+  assert.ok(applyOp(again.w, again.gen, { op: 'set_arsenal_reserve', amount: 0 }).ok && !again.a.arsenalReserve);
+});
+chain('To shut a coast to the trade of the world is an order and not what any squadron does by lying there: ships that hold the water take the enemy\'s own merchantmen and make his trade dearer, ships ordered to blockade close it in the measure of their weight, and it is then that the neutral protests', () => {
+  const t = twoNavies(), { w, e, hb, meet } = t, big = t.ship('U1', meet, 60, 'cruiser'); big.coaled = 1;
+  militaryStep(w); const held = closedBy(w, meet, e); assert.ok(heldByEnemy(w, meet, e) && held > 0 && held <= .5, `a squadron on patrol commands the water and only makes their trade dearer: ${held}`);
+  assert.ok(applyOp(w, t.gen, { op: 'fleet_orders', fleet: big.id, orders: 'blockade' }).ok); militaryStep(w); const shut = closedBy(w, meet, e); assert.ok(shut >= .8, `ordered to blockade, the same ships close it: ${shut}`);
+  // Weight still decides: a few cruisers ordered to blockade a coast only leak.
+  big.ships = 2; militaryStep(w); assert.ok(closedBy(w, meet, e) < .8, 'two cruisers do not seal a harbour whatever their orders');
+  // Half the squadron blockading under the guns of the other half: the patrol's weight keeps the enemy off, the blockaders' weight does the closing.
+  big.ships = 30; const cover = t.ship('U1', meet, 30, 'cruiser'); cover.coaled = 1; t.ship(e, meet, 10, 'cruiser'); militaryStep(w); const both = closedBy(w, meet, e);
+  delete cover.orders; assert.ok(both > .5, `blockaders covered by a patrol close the coast: ${both}`);
+  assert.ok(/turn back every ship bound for the enemy's harbours/.test(lookUp(w, t.gen, 'fleet')) && /ordered to blockade/.test(lookUp(w, t.gen, `war_plan:${e}`)), 'the fleet report and the staff\'s appreciation say what the order means');
+});
+chain('What the guns of a squadron are laid on is the order\'s to say: laid on the troops they spare the town, laid on the town they kill more of it, and only a town shelled is held against the flag', () => {
+  const shell = at => { const t = twoNavies(), { w, hb, e } = t; hb.battery = 0; hb.fort = 0; const f = t.ship('U1', hb.seas[0], 20, 'battleship'); f.coaled = 1; const men = soldier(w, e, hb.id, 30), pop = () => Object.values(hb.pops).reduce((a, x) => a + x.n, 0), before = pop(), honour = w.countries.U1.honour ?? 60;
+    const r = applyOp(w, t.gen, { op: 'bombard', province: hb.id, fleet: f.id, ...(at ? { at } : {}) }); assert.ok(r.ok, r.msg); return { dead: before - pop(), lost: 30 - men.men, shame: honour - (w.countries.U1.honour ?? 60), msg: r.msg }; };
+  const all = shell(null), troops = shell('troops'), town = shell('town');
+  assert.ok(troops.lost > all.lost * 1.3 && troops.dead < all.dead * .3, `guns laid on the troops: their loss ${troops.lost.toFixed(2)} against ${all.lost.toFixed(2)}, the town's dead ${(troops.dead * 1000).toFixed(0)} against ${(all.dead * 1000).toFixed(0)}`);
+  assert.ok(town.dead > all.dead * 1.3 && town.lost < all.lost * .3, 'guns laid on the town: more of its people die and the garrison is hardly touched');
+  assert.ok(/its guns laid on the troops there/.test(troops.msg));
+  // An open town: shelling its quays is one thing, shelling its people another.
+  const open = at => { const t = twoNavies(), { w, e } = t, p = countryProvinces(w, e).find(q => q.coast && q.seas.length && !q.battery && !q.fort); const f = t.ship('U1', p.seas[0], 10, 'cruiser'); f.coaled = 1; const was = (w.countries.U1.honourLog || []).length; assert.ok(applyOp(w, t.gen, { op: 'bombard', province: p.id, fleet: f.id, at }).ok); return (w.countries.U1.honourLog || []).length - was; };
+  assert.ok(open('town') > 0 && open('works') === 0, 'the world holds an open town shelled against the flag, and not guns laid on its harbour works');
+});
+chain('The seat of government goes where the ruler takes it: the offices are the worse for the move, the city left behind resents it, it cannot be done again for two years, and a capital that falls after the vaults have left yields the enemy no gold', () => {
+  const w = fresh(), c = w.countries.U1, L = ld(w, c), old = w.provinces[c.capital], next = countryProvinces(w, 'U1').find(p => p.id !== c.capital && p.owner === 'U1'), bur = c.bureaucracy, legit = c.legitimacy, unrest = old.unrest; c.treasury = c.gdp;
+  assert.ok(!applyOp(w, L, { op: 'move_capital', province: countryProvinces(w, 'U2')[0].id }).ok, 'not to a province that is not ours');
+  assert.ok(!applyOp(w, w.characters[c.general], { op: 'move_capital', province: next.id }).ok, 'it is the ruler\'s to order');
+  const r = applyOp(w, L, { op: 'move_capital', province: next.id }); assert.ok(r.ok && c.capital === next.id && c.bureaucracy < bur && c.legitimacy < legit && old.unrest > unrest, r.msg);
+  assert.ok(/moved in Q\d 19\d\d/.test(applyOp(w, L, { op: 'move_capital', province: old.id }).msg), 'not again for two years');
+  // The old capital falls: the enemy finds the vaults empty; had the government stayed he would have had three tenths of the gold.
+  const fall = moved => { const x = fresh(), k = x.countries.U1, cap = x.provinces[k.capital], to = countryProvinces(x, 'U1').find(p => p.id !== k.capital && p.owner === 'U1'); k.treasury = k.gdp; k.reserves = 1000; x.wars.push({ id: 'S-c', a: ['U2'], b: ['U1'], civil: false, active: true, start: x.turn, name: 'c' });
+    if (moved) assert.ok(applyOp(x, ld(x, k), { op: 'move_capital', province: to.id }).ok); takeProvince(x, cap, 'U2'); return k.reserves; };
+  assert.ok(fall(true) > 999 && fall(false) < 750, 'the vaults went with the government');
+});
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
   // The same fight, the same dice, the enemy warned both times: only the man in command differs.
   const hurt = skill => { const f = duel({ dug: 5, ground: { trench: 2 }, rng: 99, seen: true }); f.gen.skill = skill; const [b] = quarter(f.w); assert.ok(b, 'a battle'); assert.ok(!b.prisoners, 'nobody was routed'); return f.D - f.def.men; };
