@@ -455,6 +455,24 @@ ok('Every seat finds its own business on its desk each morning, the rules of a m
   c.elections = true; c.nextElection = w.turn + 1; assert.ok(alarms(w, L).some(x => /An election is due in Q\d 19\d\d/.test(x)));
   const hot = countryProvinces(w, 'U1')[0]; hot.unrest = 70; assert.ok(alarms(w, G).some(x => x.includes(`${hot.name} (${hot.id}) is close to rising`)));
 });
+ok('What atlas and trade directory print is open to every seat; what the secret service has learned goes to the ruler and the chief of staff, not to a party leader or a magnate; and the army\'s own field works and wartime stations are the staff\'s', () => {
+  const w = fresh(), c = w.countries.U1, o = w.countries.U2, L = ld(w, c), G = w.characters[c.general], O = w.characters[c.opposition], M = w.characters[c.oligarch];
+  const p = countryProvinces(w, 'U2').find(q => q.id !== o.capital); p.trench = 2; p.battery = 1; p.fort = 1; soldier(w, 'U2', p.id, 35); o.pressFreedom = 60; const see = (ch, intel) => { c.intel.U2 = intel; return answer(w, ch, `province:${p.id}`); };
+  // Free to all: ground, people with their shares, known deposits, the fortress.
+  for (const ch of [O, M, G]) { const a = see(ch, 0); assert.ok(a.includes(p.terrain) && /\d+% /.test(a) && /a fortress/.test(a) && !/garrison/.test(a) && !/trenches/.test(a), `${ch.role} at no intelligence: ${a}`); }
+  // The service's knowledge: round garrison at 40, counted and with field works at 60, and only for the seats it reports to.
+  assert.ok(/garrison about \d+k/.test(see(G, 45)) && !/trenches/.test(see(G, 45)), see(G, 45)); assert.ok(/garrison 35k/.test(see(L, 65)) && /trenches 2, shore batteries 1/.test(see(L, 65)), see(L, 65));
+  for (const ch of [O, M]) assert.ok(!/garrison|trenches/.test(see(ch, 90)), `a ${ch.role} does not read the service's returns: ${see(ch, 90)}`);
+  assert.ok(/Our service in that country is good/.test(see(G, 65)) && /Our service in that country is weak[^]*recruit_informant/.test(see(G, 10)) && !/Our service/.test(see(O, 65)), 'the staff is told how good its eyes are and what would improve them');
+  // A gagged country: its provincial unrest is not reported unless the service reaches it.
+  o.pressFreedom = 10; assert.ok(/unrest not reported/.test(see(O, 10)) && /unrest about \d+/.test(see(G, 45)));
+  assert.ok(!/trenches/.test(answer(w, O, 'map:U2')) && /trenches 2 batteries 1/.test((c.intel.U2 = 65, answer(w, G, 'map:U2'))) && /fortress 1/.test(answer(w, O, 'map:U2')), 'the same on the map of their country');
+  // At home: a fortress is on every map, field works and shore guns are not given out; in war the army list names commanders and not their stations.
+  const mine = countryProvinces(w, 'U1')[0]; mine.trench = 3; mine.fort = 1; const u = soldier(w, 'U1', mine.id, 20), chief = Object.values(w.characters).find(x => x.alive && x.country === 'U1' && x.role === 'officer') ?? spawnCharacter(w, 'U1', 'officer', c.axes, {}); u.commander = chief.id;
+  assert.ok(/trenches 3/.test(answer(w, G, 'fortifications')) && !/trenches 3/.test(answer(w, O, 'fortifications')) && /a fortress/.test(answer(w, O, 'fortifications')));
+  assert.ok(answer(w, O, 'commanders').includes(`${u.id} at ${mine.name}`), 'in peace garrison towns are no secret');
+  w.wars.push({ id: 'S-k', a: ['U2'], b: ['U1'], civil: false, active: true, start: w.turn, name: 'k' }); assert.ok(answer(w, O, 'commanders').includes(`${u.id}: ${chief.name}`) && !answer(w, O, 'commanders').includes(`${u.id} at `) && answer(w, G, 'commanders').includes(`${u.id} at ${mine.name}`), 'in war they are');
+});
 ok('The staff knows what another state lives by, by which road or water it comes and how such a trade is cut; the routes report says where our own runs; and the army report says what ground is worth', () => {
   const w = inherited(); w.status = 'playing'; run(w, 2); const c = w.countries.U1, g = w.characters[c.general];
   for (const o of aliveCountries(w).filter(x => x.id !== 'U1')) { const plan = answer(w, g, `war_plan:${o.id}`);
