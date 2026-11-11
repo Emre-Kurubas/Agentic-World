@@ -1432,6 +1432,48 @@ chain('A state has a reserve of trained men: discharge fills it and returns the 
 import { justiceStep as justiceOf } from '../engine/justice.js';
 import { rand as rollOf } from '../engine/util.js';
 import { billStep as billsOf, governmentSeats as benchOf, leadsParties as leadsOf } from '../engine/polity.js';
+import { voiceOf as voiceIn, standOf as standIn } from '../engine/press.js';
+import { rivalParty as rivalIn } from '../engine/polity.js';
+chain('A paper has a line and its owner sets it: whom it serves moves the government\'s standing and a party\'s following one way or the other, its reporters go after whom they are told and leave alone whom they are told, a find held back lies in the owner\'s file until he uses it, and a censor short of closing strikes the piece, costs the press some of its freedom and leaves what was struck in the owner\'s hands and the government\'s', () => {
+  const mk = () => { const w = fresh(), c = w.countries.U1, rich = w.characters[c.oligarch]; c.pressFreedom = 80; c.literacy = 80; rich.wealth = 500; const r = applyOp(w, rich, { op: 'found_paper', name: 'The Courier', amount: 80 }); assert.ok(r.ok, r.msg); assert.ok(!/dig among your enemies/.test(r.msg) && /set_paper/.test(r.msg), `the founder is told what the paper does and that its line is his: ${r.msg}`); return { w, c, rich, n: c.papers[0], boss: ld(w, c), gen: w.characters[c.general] }; };
+  // Whom it serves: the government's standing.
+  const weigh = set => { const { w, c, rich, n } = mk(); if (set) { const r = applyOp(w, rich, { op: 'set_paper', id: n.id, ...set }); assert.ok(r.ok, r.msg); } for (let i = 0; i < 4; i++) { c.mods = c.mods.filter(m => m.key !== 'legitimacy'); pressOf(w); } return c.mods.filter(m => m.key === 'legitimacy').reduce((s, m) => s + m.delta, 0); };
+  const alone = weigh(null), friend = weigh({ serves: 'government' }), nobody = weigh({ serves: 'none' });
+  assert.ok(alone < 0, `left alone, a paper that is not the ruler's weighs on him as it always did: ${alone}`); assert.ok(friend > 0, `an ally's paper told to serve the government adds to its standing: ${friend}`); assert.equal(nobody, 0, 'and one that serves nobody weighs on neither side');
+  // Whom it serves: a party's following.
+  { const { w, c, rich, n } = mk(), party = rivalIn(c), ruling = c.parties.find(p => p.id === c.rulingParty); for (let i = 0; i < 4; i++) pressOf(w); assert.equal(voiceIn(w, c, party), 0, 'a magnate with no party lends his paper to none');
+    assert.ok(applyOp(w, rich, { op: 'set_paper', id: n.id, serves: party.id }).ok); assert.ok(voiceIn(w, c, party) > 3 && standIn(w, c, n) === 'against', 'told to speak for the party outside the government, it is that party\'s voice');
+    assert.ok(applyOp(w, rich, { op: 'set_paper', id: n.id, serves: 'government' }).ok); assert.ok(voiceIn(w, c, party) === 0 && voiceIn(w, c, ruling) > 3, 'and told to serve the government, the ruling party\'s');
+    const said = applyOp(w, rich, { op: 'set_paper', id: n.id, serves: 'owner' }); assert.ok(said.ok && standIn(w, c, n) === 'against', said.msg); assert.equal(applyOp(w, w.characters[c.general], { op: 'set_paper', id: n.id, serves: 'government' }).ok, false, 'only its owner gives a paper its line');
+    // The leader of a party on the government's benches is the government's friend without being told so.
+    const opp = w.characters[c.opposition]; opp.wealth = 100; assert.ok(applyOp(w, opp, { op: 'found_paper', name: 'The Bench', amount: 20 }).ok); const sheet = c.papers.at(-1), was = standIn(w, c, sheet); c.coalition = [leadsOf(w, c, opp)[0].id]; c.coalitionBy = { [c.coalition[0]]: opp.id };
+    assert.ok(was === 'against' && standIn(w, c, sheet) === 'for', 'a party leader\'s paper follows his party onto the government\'s benches'); }
+  // Whom its reporters go after, and whom they leave alone.
+  const hunt = (set, before) => { const x = mk(), { w, c, rich, n, boss, gen } = x; for (const p of Object.values(w.characters)) if (p.country === 'U1') p.secrets = []; boss.secrets = [{ turn: 0, text: 'In 1894: took money from a concession-holder.' }]; gen.secrets = [{ turn: 0, text: 'In 1896: sold army contracts to a relative.' }];
+    if (before) before(x); if (set) { const r = applyOp(w, rich, { op: 'set_paper', id: n.id, ...set(x) }); assert.ok(r.ok, r.msg); }
+    x.hit = null; for (let i = 0; i < 400 && !x.hit; i++) { n.funds = 80; w.newsThisTurn = []; pressOf(w); c.mods = []; x.hit = w.newsThisTurn.find(e => /has printed that/.test(e.text)) ?? null; } return x; };
+  const a = hunt(null); assert.ok(a.hit?.text.includes(a.boss.name), 'left alone it prints about the ruler first, as before');
+  const b = hunt(x => ({ targets: [x.gen.id] })); assert.ok(b.hit?.text.includes(b.gen.name) && !b.boss.secrets[0].published, 'told to go after the chief of staff, it prints about him first');
+  const s = hunt(x => ({ spare: [x.boss.name] })); assert.ok(s.hit?.text.includes(s.gen.name) && !s.boss.secrets[0].published, 'and it sits on the secrets of whoever it is told to spare');
+  const f = hunt(x => ({ serves: 'government' })); assert.ok(f.hit && !f.hit.text.includes(f.boss.name), 'a paper that serves the government does not print against the ruler');
+  // A find held back.
+  const h = hunt(() => ({ print: 'hold' })), fact = h.boss.secrets[0].text; assert.equal(h.hit, null, 'a paper told to hold its finds prints none of them'); assert.ok(h.rich.dossiers[h.boss.id]?.facts.includes(fact) && !h.boss.secrets[0].published, 'the find lies in the owner\'s file instead');
+  assert.ok(h.rich.inbox.filter(m => m.text.includes(fact)).length === 1, 'he is told of it once, not every quarter'); assert.equal(h.boss.inbox.filter(m => m.text.includes(fact)).length, 0, 'and the person it concerns is not');
+  const stand = h.c.legitimacy; assert.ok(applyOp(h.w, h.rich, { op: 'publish_dossier', character: h.boss.id }).ok); assert.ok(h.boss.secrets[0].published && h.c.legitimacy < stand, 'what was held can be printed later, and then it costs');
+  // Twenty orders are one line.
+  { const { w, c, rich, n } = mk(), purse = rich.wealth, liberty = c.pressFreedom, legit = c.legitimacy; for (let i = 0; i < 20; i++) assert.ok(applyOp(w, rich, { op: 'set_paper', id: n.id, serves: 'government', print: 'hold' }).ok); assert.ok(rich.wealth === purse && c.pressFreedom === liberty && c.legitimacy === legit && n.serves === 'government' && n.print === 'hold', 'giving the same line twenty times costs and adds nothing'); }
+  // The censor: short of closing.
+  const z = hunt(null, x => { const { w, c, boss, gen, n } = x; x.liberty = c.pressFreedom; assert.equal(applyOp(w, gen, { op: 'censor', paper: n.id }).ok, false, 'only whoever governs sets a censor'); const r = applyOp(w, boss, { op: 'censor', paper: n.id }); assert.ok(r.ok, r.msg); x.cost = x.liberty - c.pressFreedom;
+    for (let i = 0; i < 20; i++) applyOp(w, boss, { op: 'censor', paper: n.id }); assert.equal(x.liberty - c.pressFreedom, x.cost, 'a censor set twenty times is one censor'); });
+  assert.ok(z.cost > 0 && z.cost < 6 && z.c.papers.length === 1, `a censor in the office costs the press less of its freedom than closing the paper, and the paper still appears: ${z.cost}`); assert.equal(z.hit, null, 'a paper with the censor in its office prints nothing its reporters find');
+  { const open = weigh(null), mk2 = mk(), { w, c, boss, n } = mk2; applyOp(w, boss, { op: 'censor', paper: n.id }); for (let i = 0; i < 4; i++) { c.mods = c.mods.filter(m => m.key !== 'legitimacy'); pressOf(w); } const gagged = c.mods.filter(m => m.key === 'legitimacy').reduce((t, m) => t + m.delta, 0); assert.ok(gagged < 0 && gagged > open * .6, `and it weighs less on the government than it did: ${gagged} against ${open}`);
+    assert.ok(applyOp(w, boss, { op: 'censor', paper: n.id, lift: true }).ok && !n.gag, 'the censor can be taken out again'); }
+  // A name the papers may not print.
+  const k = hunt(x => ({ targets: [x.gen.id] }), x => { const r = applyOp(x.w, x.boss, { op: 'censor', about: x.gen.id }); assert.ok(r.ok, r.msg); x.boss.inbox = []; x.rich.inbox = []; }), struck = k.gen.secrets[0].text;
+  assert.ok(k.hit && k.hit.text.includes(k.boss.name) && !k.gen.secrets[0].published, 'a name the censor has forbidden is not printed; the paper prints what it still may');
+  assert.ok(k.rich.dossiers[k.gen.id]?.facts.includes(struck) && k.boss.dossiers[k.gen.id]?.facts.includes(struck), 'the piece that was struck lies with the owner who wrote it and with the government that struck it'); assert.ok(k.boss.inbox.some(m => m.text.includes(struck)) && k.rich.inbox.some(m => /censor/i.test(m.text)), 'and both are told');
+  const page = lookUp(k.w, k.rich, 'press'); for (const part of ['set_paper', 'censor', k.gen.name, 'The Courier']) assert.ok(page.includes(part), `the owner reads his paper's line and the rule where he looks the press up: ${part}`);
+});
 // [people, press, seats] checks of the small people, the press and what a seat decides for itself are added above this line.
 chain('A trial is the lawful road and it can fail: a free court convicts on evidence and acquits without it, a tame court convicts anyone, forged papers may be found out, and a sentence runs out', () => {
   const run = (courts, real, forged = 0, n = 50) => { let guilty = 0, found = 0, legit = 0; for (let i = 0; i < n; i++) { const w = fresh(), c = w.countries.U1, boss = ld(w, c), opp = w.characters[c.opposition]; for (let j = 0; j < i * 3 + 1; j++) rollOf(w);
