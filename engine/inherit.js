@@ -1,7 +1,7 @@
 // Leaders do not design the state, they inherit it: regime, budget, army, debt and past differ from country to country.
 // Only facts live here; the character is not told how to think, and the leader can change everything.
 import { clamp, rand, pick, between, nextId } from './util.js';
-import { countryProvinces, aliveCountries, GOOD_LABEL, GOODS, RAW, makeUnit, provincePop } from './world.js';
+import { countryProvinces, aliveCountries, GOOD_LABEL, GOODS, RAW, makeUnit, provincePop, outlying } from './world.js';
 import { countryRoot, hashOf } from './names.js';
 import { initGroups } from './culture.js';
 import { initAdmin } from './admin.js';
@@ -90,6 +90,10 @@ const neighbours = (w, c) => [...new Set(countryProvinces(w, c.id).flatMap(p => 
 function makePast(w) {
   const past = [], cs = aliveCountries(w), pairs = [];
   const say = (year, text, ...countries) => past.push({ year, text, countries: countries.map(c => c.id) });
+  // What a state holds across the sea from its own landmass it took at some date, and the people there are not its own.
+  for (const c of cs) { const away = outlying(w, Object.values(w.provinces).filter(p => p.owner === c.id)).filter(x => x.sea).flatMap(x => x.provinces); if (!away.length) continue;
+    const year = 1820 + (hashOf(c.id + away[0].id) % 60), folk = [...new Set(away.map(p => p.eth))].filter(e => e !== c.majorityEth);
+    say(year, `${c.name} has held ${away.length === 1 ? away[0].name : `${away.slice(0, 3).map(p => p.name).join(', ')}${away.length > 3 ? ` and ${away.length - 3} more provinces` : ''}`} across the sea since ${year}${folk.length ? `; the people there are ${folk.join(' and ')}` : ''}.`, c); }
   for (let i = 0; i < cs.length; i++) for (let j = i + 1; j < cs.length; j++) if (neighbours(w, cs[i]).includes(cs[j].id)) pairs.push([cs[i], cs[j]]);
   for (const [a, b] of shuffled(w, pairs).slice(0, Math.ceil(pairs.length * .7))) {
     const roll = rand(w), year = 1868 + Math.floor(rand(w) * 31);
@@ -312,6 +316,8 @@ function fortify(w, cs) {
 
 export function inheritStates(w) {
   const cs = aliveCountries(w), bag = shuffled(w, ARCHETYPES);
+  { const lone = cs.findIndex(c => c.seaState), trader = bag.slice(0, cs.length).findIndex(a => a.key === 'merchant');
+    if (lone >= 0 && trader >= 0 && lone !== trader) [bag[lone], bag[trader]] = [bag[trader], bag[lone]]; }
   dealFields(w, cs);
   cs.forEach((c, i) => applyArchetype(w, c, bag[i % bag.length], i));
   initGroups(w);
@@ -348,4 +354,11 @@ export function inheritStates(w) {
   settleUnderground(w);
   // Last of all, so that nothing else about the day of handing over depends on it: every army has its horsemen.
   outfitArmies(w);
+  // Land held apart from the body of the country is held by somebody: every piece of it, across the sea or behind a neighbour's land, that has no
+  // troops keeps a garrison in its largest province, drawn from the state's biggest body of troops, about four men to the thousand people there.
+  // (Counted by piece: one garrison in an enclave by land once left three provinces across the sea without a soldier.)
+  for (const c of cs) for (const piece of outlying(w, Object.values(w.provinces).filter(p => p.owner === c.id))) { const away = piece.provinces; if (Object.values(w.units).some(u => u.country === c.id && away.some(p => p.id === u.province))) continue;
+    const big = Object.values(w.units).filter(u => u.country === c.id && u.kind === 'infantry').sort((a, b) => b.men - a.men)[0]; if (!big) continue;
+    const n = Math.round(Math.min(big.men * .15, Math.max(4, away.reduce((a, p) => a + provincePop(p), 0) * .004))), at = [...away].sort((a, b) => provincePop(b) - provincePop(a))[0]; if (n < 2) continue;
+    const g = makeUnit(w, c.id, at.id, n, big.quality, big.loyalty, 'infantry'); g.morale = big.morale; g.equip = big.equip; big.men -= n; }
 }

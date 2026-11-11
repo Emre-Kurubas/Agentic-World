@@ -3729,5 +3729,28 @@ chain('The treasury tells the ruler what a finance ministry knows: what a point 
   const twin = structuredClone(w), jt = twin.countries[j.id]; jt.tax.income += .01; run(w, 1); run(twin, 1); const got = jt.lastBooks.income - j.lastBooks.income;
   assert.ok(got > said * .6 && got < said * 1.5, `the point put on brought ${got.toFixed(1)}, where the ministry said about ${said}`);
 });
+chain('A landmass large enough for a state has a state of its own: an island of a sixth of the world is not handed out among the powers of the mainland; the state alone on its island is the trading state of its world; what any state holds across the sea is garrisoned, dated and peopled by others than its own; and on a frontier the other people are the people across it', () => {
+  // The first world of eight states put every capital on the continent and gave an island of 35 provinces and 24 million people to the four
+  // nearest states, a third of each of them, without a soldier on it and peopled by some other state's nation (seed 880749).
+  for (const seed of [880749, 2696855]) {
+    const w = createWorld({ ...base, plainStates: false, seed, countries: 8, provinces: 200 }), cs = aliveCountries(w), ps = Object.values(w.provinces), body = {}, bodies = [];
+    for (const p of ps) { if (p.id in body) continue; const k = bodies.length, q = [p.id], here = []; body[p.id] = k; while (q.length) { const x = w.provinces[q.pop()]; here.push(x); for (const n of x.neighbors) if (!(n in body)) { body[n] = k; q.push(n); } } bodies.push(here); }
+    const even = ps.length / cs.length, most = Math.ceil(even * 1.2), main = bodies.reduce((a, b) => b.length > a.length ? b : a), islands = bodies.filter(b => b !== main && b.length >= even * .6); assert.ok(islands.length, `seed ${seed} has an island that could carry a state`);
+    for (const isle of islands) { const k = body[isle[0].id], seated = cs.filter(c => body[c.capital] === k), held = c => isle.filter(p => p.owner === c.id).length; assert.ok(seated.length >= 1, `seed ${seed}: a state has its capital on the island of ${isle.length} provinces`);
+      if (seated.length === 1) { const sea = seated[0]; assert.ok(sea.seaState && sea.archetype === 'merchant', `seed ${seed}: the state alone on its island is the trading state of that world, not a ${sea.archetype}`); assert.ok(held(sea) >= Math.min(isle.length, most) - 1 && countryProvinces(w, sea.id).length <= most + 3, `seed ${seed}: it holds its island, within the bound every state is held to: ${held(sea)} of ${isle.length}`); }
+      for (const c of cs) if (!seated.includes(c)) assert.ok(held(c) <= 8 && held(c) < countryProvinces(w, c.id).length * .3, `seed ${seed}: no mainland state has a third of itself on that island: ${c.archetype} ${held(c)}`); }
+    for (const c of cs) { const away = countryProvinces(w, c.id).filter(p => body[p.id] !== body[c.capital]); if (!away.length) continue;
+      assert.ok(Object.values(w.units).some(u => u.country === c.id && away.some(p => p.id === u.province)), `seed ${seed}: ${c.name} keeps troops in what it holds across the sea`);
+      assert.ok(w.past.some(e => e.countries.includes(c.id) && /across the sea since 18\d\d/.test(e.text)), 'and the past says since when it has held it');
+      assert.ok(away.every(p => p.eth !== c.majorityEth), 'the people there are not the people of the state'); }
+    let n = 0, same = 0; for (const p of ps) { if (p.lostBy || !(p.groups?.length > 1)) continue; const across = [...new Set(p.neighbors.map(x => w.provinces[x].owner).filter(o => o !== p.owner))].map(o => w.countries[o].majorityEth), other = p.groups.filter(g => g.eth !== w.countries[p.owner].majorityEth).map(g => g.eth); if (!across.length || !other.length) continue; n++; if (other.some(e => across.includes(e))) same++; }
+    assert.ok(n > 10 && same / n > .85, `seed ${seed}: on a frontier the other people are the people across it: ${same} of ${n}`);
+  }
+  // The world that is played: seven states on the continent, each with at least two neighbours by land, and the trading state on its island.
+  const cfg = JSON.parse(fs.readFileSync(new URL('../config.json', import.meta.url), 'utf8')), w = createWorld({ ...base, plainStates: false, seed: cfg.seed, countries: cfg.countries, provinces: cfg.provinces });
+  const land = c => new Set(countryProvinces(w, c.id).flatMap(p => p.neighbors.map(n => w.provinces[n].owner)).filter(id => id !== c.id)).size, cs = aliveCountries(w);
+  assert.ok(cs.filter(c => c.seaState).length <= 1 && cs.every(c => c.seaState || land(c) >= 2), `in the configured world every mainland state has two neighbours by land: ${cs.map(c => `${c.archetype} ${land(c)}`).join(', ')}`);
+  assert.ok(Math.max(...cs.map(c => c.gdp)) / Math.min(...cs.map(c => c.gdp)) < 2.4 && cs.every(c => !w.provinces[c.capital].neighbors.some(n => w.provinces[n].owner !== c.id)), 'no state is a fraction of another and no capital lies on a frontier');
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

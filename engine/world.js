@@ -207,20 +207,30 @@ export function createWorld(cfg) {
   w.map = { W, H, polys: Object.fromEntries(lands.map(s => [pid(s), roughen(s.poly)])),
     rivers: lands.filter(s => s.flow > 1.15 && s.down !== null).map(s => [Math.round(s.x), Math.round(s.y), Math.round(sites[s.down].x), Math.round(sites[s.down].y), Math.round(Math.min(s.flow, 14) * 10) / 10]) };
 
-  // The largest landmass is divided among the countries; islands become colonies of the nearest one.
-  const ids = Object.keys(w.provinces), seen = new Set(); let main = [];
-  for (const id of ids) { if (seen.has(id)) continue; const comp = [], q = [id]; seen.add(id); while (q.length) { const x = q.pop(); comp.push(x); for (const n of w.provinces[x].neighbors) if (!seen.has(n)) { seen.add(n); q.push(n); } } if (comp.length > main.length) main = comp; }
+  // Every landmass large enough to carry a state has states of its own: the seats are shared out among the landmasses by their size, as seats in
+  // a house are shared among parties, and only land too small for a state (less than three fifths of an even share) is a colony of the nearest.
+  // (All the capitals used to be put on the largest landmass. In the first world of eight states that left an island of 35 provinces and 24
+  // million people, a sixth of the world, to be handed out among the four nearest states: a third of each of them lay across the sea without
+  // a soldier on it, peopled by some other state's nation.) Where every state fits on the largest landmass nothing changes.
+  const ids = Object.keys(w.provinces), seen = new Set(), bodies = [];
+  for (const id of ids) { if (seen.has(id)) continue; const comp = [], q = [id]; seen.add(id); while (q.length) { const x = q.pop(); comp.push(x); for (const n of w.provinces[x].neighbors) if (!seen.has(n)) { seen.add(n); q.push(n); } } bodies.push(comp); }
+  bodies.sort((a, b) => b.length - a.length); const main = bodies[0], even = ids.length / cfg.countries, seats = bodies.map(() => 0);
+  for (let k = 0; k < cfg.countries; k++) { let best = 0, most = -1; bodies.forEach((b, i) => { if (i > 0 && b.length < even * .6) return; const q = b.length / (2 * seats[i] + 1); if (q > most + 1e-9) { most = q; best = i; } }); seats[best]++; }
   const dist = (a, b) => Math.hypot(w.provinces[a].cx - w.provinces[b].cx, w.provinces[a].cy - w.provinces[b].cy);
-  const seeds = [pick(w, main)];
-  while (seeds.length < cfg.countries) seeds.push(main.filter(i => !seeds.includes(i)).sort((a, b) => Math.min(...seeds.map(s => dist(b, s))) - Math.min(...seeds.map(s => dist(a, s))))[0]);
-  const cIds = seeds.map((_, i) => `U${i + 1}`), fronts = {}, sizes = {}, cap = Math.ceil(main.length / cfg.countries) + 3;
+  const seeds = [], homeOf = [], roomOf = [], alone = [];
+  bodies.forEach((body, i) => { if (!seats[i]) return; const here = [i === 0 ? pick(w, body) : [...body].sort((a, b) => w.provinces[a].cx - w.provinces[b].cx || (a < b ? -1 : 1))[Math.floor(body.length / 2)]];
+    while (here.length < seats[i]) here.push(body.filter(x => !here.includes(x)).sort((a, b) => Math.min(...here.map(s => dist(b, s))) - Math.min(...here.map(s => dist(a, s))))[0]);
+    // The states of a landmass share it between them, but no state is born with more than a fifth above an even share, on an island either:
+    // what is left of a large island beyond that is some other state's foothold on it. A state that is alone on its landmass is a sea state.
+    for (const s of here) { seeds.push(s); homeOf.push(new Set(body)); roomOf.push(Math.min(Math.ceil(body.length / seats[i]) + 3, i === 0 ? Infinity : Math.ceil(even * 1.2))); alone.push(i > 0 && seats[i] === 1); } });
+  const cIds = seeds.map((_, i) => `U${i + 1}`), fronts = {}, sizes = {}, capOf = Object.fromEntries(cIds.map((id, i) => [id, roomOf[i]])), home = Object.fromEntries(cIds.map((id, i) => [id, homeOf[i]]));
   seeds.forEach((s, i) => { w.provinces[s].owner = cIds[i]; fronts[cIds[i]] = [s]; sizes[cIds[i]] = 1; });
-  for (let changed = true; changed;) { changed = false; for (const c of [...cIds].sort((a, b) => sizes[a] - sizes[b])) { if (sizes[c] >= cap) continue; const opts = fronts[c].flatMap(p => w.provinces[p].neighbors).filter(n => !w.provinces[n].owner); if (!opts.length) continue; const n = pick(w, opts); w.provinces[n].owner = c; fronts[c].push(n); sizes[c]++; changed = true; } }
+  for (let changed = true; changed;) { changed = false; for (const c of [...cIds].sort((a, b) => sizes[a] - sizes[b])) { if (sizes[c] >= capOf[c]) continue; const opts = fronts[c].flatMap(p => w.provinces[p].neighbors).filter(n => !w.provinces[n].owner); if (!opts.length) continue; const n = pick(w, opts); w.provinces[n].owner = c; fronts[c].push(n); sizes[c]++; changed = true; } }
   // Land the states could not reach by growing (islands, and country hemmed in behind a neighbour) goes to the nearest state, province by
   // province from the nearest shore, but not without bound: a state that already holds a fifth more than an even share takes no more, and
   // the next nearest has it. (When every island went whole to whoever lay nearest, one state in a world was born with three or four times
   // the land of another, and once with sixty provinces against seven.)
-  { const even = ids.length / cfg.countries, most = Math.ceil(even * 1.2);
+  { const most = Math.ceil(even * 1.2);
     for (let left = Object.values(w.provinces).filter(p => !p.owner); left.length; left = left.filter(p => !p.owner)) { const held = Object.values(w.provinces).filter(x => x.owner);
       const reach = p => { const by = {}; for (const x of held) { const d = dist(x.id, p.id); if (!(d >= by[x.owner])) by[x.owner] = d; } return Object.entries(by).sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1)); };
       const next = left.map(p => ({ p, by: reach(p) })).sort((a, b) => a.by[0][1] - b.by[0][1] || (a.p.id < b.p.id ? -1 : 1))[0], to = (next.by.find(([o]) => sizes[o] < most) ?? next.by[0])[0];
@@ -235,7 +245,7 @@ export function createWorld(cfg) {
   for (const p of Object.values(w.provinces)) p.controller = p.owner;
 
   cIds.forEach((id, i) => {
-    const c = makeCountry(w, id); w.countries[id] = c;
+    const c = makeCountry(w, id); w.countries[id] = c; if (alone[i]) c.seaState = true;
     const mine = Object.values(w.provinces).filter(p => p.owner === id).sort((a, b) => (b.fertility + b.port + b.river) - (a.fertility + a.port + a.river));
     // The capital stands on the country's main body of land, not on an outlying island; and not on the frontier where the country has anything
     // behind the frontier: of the provinces that lie deepest (three steps from foreign soil if there are any, else two, else wherever it can)
@@ -248,7 +258,12 @@ export function createWorld(cfg) {
     const eth = ETH[i % ETH.length], minor = ETH[(i + 5) % ETH.length], rel = REL[i % REL.length], minorRel = REL[(i + 3) % REL.length];
     mine.forEach((p, k) => {
       const border = p.neighbors.some(n => w.provinces[n].owner !== id);
-      p.eth = (border && rand(w) < .4) || !main.includes(p.id) ? minor : eth; p.rel = rand(w) < .2 ? minorRel : rel;
+      // Across the water from the state's own landmass live other people than its own: a possession, not a province of the nation. Where that
+      // land is the home of another state they are that state's people; on an island nobody's home they are a people apart.
+      const native = home[id].has(p.id) ? -1 : cIds.findIndex((o, j) => o !== id && home[o].has(p.id) && !cIds.some((x, k) => k !== j && x !== id && home[x].has(p.id) && dist(seeds[k], p.id) < dist(seeds[j], p.id)));
+      // On a frontier the other people are the people of whoever lives across it.
+      const across = cIds.indexOf(p.neighbors.map(n => w.provinces[n].owner).find(o => o && o !== id) ?? ''), mixed = border && rand(w) < .4, odd = rand(w) < .2;
+      p.eth = native >= 0 ? ETH[native % ETH.length] : mixed ? (across >= 0 ? ETH[across % ETH.length] : minor) : !home[id].has(p.id) ? minor : eth; p.rel = native >= 0 ? REL[native % REL.length] : mixed && across >= 0 ? REL[across % REL.length] : odd ? minorRel : rel;
       const n = between(w, 300, 900) * (.45 + p.fertility * .8 + (p.port ? .25 : 0)) * (k === 0 ? 2 : 1);
       p.pops = { peasants: { n: n * .56, sat: 52 }, workers: { n: n * .27, sat: 48 }, middle: { n: n * .14, sat: 55 }, elite: { n: n * .03, sat: 60 } };
       const urban = k === 0 ? 1 : k < mine.length / 3 ? .55 : .2;
@@ -284,8 +299,19 @@ export function createWorld(cfg) {
   return w;
 }
 
+// What a country holds apart from its main body, piece by piece: each piece is a stretch of its own provinces that can be walked, and it lies
+// across the sea when no road of any state leads to it from the main body (another landmass), and is only cut off by a neighbour's land otherwise.
+export function outlying(w, provs) {
+  const main = mainBody(w, provs), own = new Set(provs.map(p => p.id)), seen = new Set(main), pieces = []; if (!main.size) return pieces;
+  const reach = new Set([[...main][0]]), q = [[...main][0]]; while (q.length) for (const n of w.provinces[q.pop()].neighbors) if (!reach.has(n)) { reach.add(n); q.push(n); }
+  for (const p of provs) { if (seen.has(p.id)) continue; const part = [p], r = [p.id]; seen.add(p.id);
+    while (r.length) for (const n of w.provinces[r.pop()].neighbors) if (own.has(n) && !seen.has(n)) { seen.add(n); part.push(w.provinces[n]); r.push(n); }
+    pieces.push({ provinces: part, sea: !reach.has(p.id) }); }
+  return pieces;
+}
+
 // The largest stretch of a country's provinces that can be walked without leaving it.
-function mainBody(w, provs) {
+export function mainBody(w, provs) {
   const own = new Set(provs.map(p => p.id)), seen = new Set(); let best = new Set();
   for (const p of provs) {
     if (seen.has(p.id)) continue;

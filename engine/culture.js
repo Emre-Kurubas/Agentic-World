@@ -44,7 +44,8 @@ export function initGroups(w) {
   for (const p of Object.values(w.provinces)) {
     const c = w.countries[p.controller], border = p.neighbors.some(n => w.provinces[n].controller !== p.controller), main = between(w, border ? .62 : .78, border ? .85 : .96);
     p.groups = [{ eth: p.eth, rel: p.rel, share: main }];
-    const [eth, rel] = pick(w, peoples);
+    // The lesser people of a province on a frontier is the nation across it; elsewhere it is whoever history left there.
+    const drawn = pick(w, peoples), next = border ? w.countries[p.neighbors.map(n => w.provinces[n].controller).find(o => o && o !== p.controller)] : null, [eth, rel] = next?.majorityEth && next.majorityEth !== p.eth ? [next.majorityEth, next.majorityRel] : drawn;
     add(p, eth === p.eth ? c.majorityEth : eth, rel, 1 - main);
     normalize(p);
   }
