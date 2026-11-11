@@ -776,6 +776,30 @@ await (async () => {
 })();
 
 await (async () => {
+  // World 16: in the last replies of a quarter Sonnet and Haiku seats wrote "decisions": [] to say "no change", the engine read it as "cancel
+  // everything", and a president's ninety-two orders of four years (a declaration of war among them) never reached the referee. Nobody told him.
+  const { cfg, w } = sessionWorld(); const a = w.countries.U1.leader, b = w.countries.U2.leader, A = w.characters[a], B = w.characters[b], idle = w.characters[w.countries.U3.leader]; let judged = '', asked = '';
+  const backend = { kind: 'claude', async ask(p) {
+    if (p.includes('rulings')) { judged += p; return { rulings: [] }; }
+    if (p.includes('SAME QUARTER')) asked = p;
+    if (p.includes(A.name) && !p.includes('SAME QUARTER')) return { decisions: ['Plan A'], messages: [{ to: 'U2', text: 'Shall we open the border?' }] };
+    if (p.includes(B.name) && !p.includes('SAME QUARTER')) return { decisions: ['Plan B', 'Plan B the second'], messages: [] };
+    if (p.includes('open the border')) return { inner_voice: 'Nothing to change.', decisions: [], messages: [{ to: a, text: 'Agreed, my condition is tariffs.' }] };
+    if (p.includes('my condition is tariffs')) return { decisions: ['I withdraw every order I gave this quarter'], messages: [] };
+    return { decisions: [], messages: [] };
+  } };
+  const g = new Game({ world: w, cfg: { ...cfg, maxLookupRounds: 0, negotiationRounds: 2 }, backend, store: memoryStore() });
+  await g.turn();
+  assert.ok(/\d\. Plan B\n/.test(judged) && judged.includes('Plan B the second'), 'an empty list written in a reply leaves the orders of the morning standing');
+  assert.ok(judged.includes('I withdraw every order I gave this quarter') && !/\d\. Plan A\n/.test(judged), 'a list that is written replaces the earlier one, and that is how everything is withdrawn');
+  assert.ok(/add no "decisions" field, or leave it empty, and nothing changes/.test(asked) && /that list replaces the whole earlier one, so it must repeat every earlier decision/.test(asked) && !/an empty list cancels/.test(asked), 'the reply is asked for in those words');
+  assert.ok(!/"decisions"/.test(asked.slice(asked.indexOf('Respond with only this JSON'))), 'the form of the reply shows no decisions field to be filled in or left empty');
+  assert.ok((idle.newOutcomes || []).some(x => /No order of yours was put in hand: your list of decisions was empty when the quarter closed/.test(x)), 'whoever gave no order is told next morning that none was put in hand');
+  assert.ok(!(B.newOutcomes || []).some(x => /No order of yours was put in hand/.test(x)), 'whoever gave orders is not told so');
+  console.log('passed  Chain: an empty list of decisions in a reply within the quarter changes nothing, and whoever gave no order is told that none was put in hand');
+})();
+
+await (async () => {
   const cfg = { ...base, agentRoles: ['leader', 'general'], maxLookupRounds: 0, concurrency: 1, wakeEvery: 99, wakeTension: 999 }, w = createWorld(cfg); w.status = 'playing';
   const c = w.countries.U1, l = c.leader, gen = w.characters[c.general]; for (const x of Object.values(w.characters)) x.lastWake = 0; w.turn = 1; let woke = null;
   const backend = { kind: 'claude', async ask(p, model, session) { if (p.includes('rulings')) return { rulings: [] }; if (p.includes(gen.name) && p.includes('SAME QUARTER')) { woke = { p, resume: session.resume }; return { decisions: ['Prepare the unit'], messages: [] }; } if (p.includes(w.characters[l].name) && !p.includes('SAME QUARTER')) return { decisions: [], messages: [{ to: gen.id, text: 'Be ready.' }] }; return { decisions: [], messages: [] }; } };

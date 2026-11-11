@@ -244,7 +244,12 @@ export class Game {
         if (joined) { this.pending.actors[id] = { ...clean, messages: sentNow }; actors.push(ch); }
         else {
           const cur = this.pending.actors[id];
-          if (Array.isArray(r?.decisions)) cur.decisions = clean.decisions;
+          // A list written in a reply replaces the morning's list; an empty one changes nothing. (World 16: the answer format showed a "decisions"
+          // field and said that an empty list cancels everything. Sonnet and Haiku seats wrote "decisions": [] to say "no change" in the last
+          // replies of the quarter, and every order they had given that morning was dropped without a word to them: 113 of 565
+          // character-quarters, 446 of 2512 orders in seventeen quarters; one president gave 92 orders in four years, a declaration of war among
+          // them, and none was carried out. Opus seats left the field out and lost nothing.)
+          if (Array.isArray(r?.decisions) && clean.decisions.length) cur.decisions = clean.decisions;
           cur.messages.push(...sentNow.slice(0, Math.max(0, cfg.maxMessagesPerActor * 2 - cur.messages.length)));
           if (clean.monologue) cur.monologue = [cur.monologue, clean.monologue].filter(Boolean).join('\n\n');
           if (clean.notes) cur.notes = [cur.notes, clean.notes].filter(Boolean).join(' ');
@@ -327,7 +332,9 @@ export class Game {
     const outgoing = [];
     // Those who woke have read their mail: it is cleared now, before anything is carried out, so that what this quarter's acts send them
     // (an arrest order, a plot invitation, a blackmail note, an offer) is still there next morning. Someone who failed to answer has read nothing.
-    for (const ch of actors) if (!this.pending.actors[ch.id]?.fallback) { ch.newOutcomes = []; ch.inbox = []; }
+    // Somebody whose list was empty when the quarter closed is told so next morning: an order that never reached the clerks must not look
+    // like an order the clerks lost.
+    for (const ch of actors) { const r = this.pending.actors[ch.id]; if (r?.fallback) continue; ch.newOutcomes = r && !r._ops && !r.decisions?.length ? [`${w.date ?? quarterLabel(w.turn)}: No order of yours was put in hand: your list of decisions was empty when the quarter closed.`] : []; ch.inbox = []; }
     for (const ch of currentActors(w)) {
       const c = w.countries[ch.country];
       const ai = isAI(cfg, c, ch);
