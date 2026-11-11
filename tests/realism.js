@@ -189,7 +189,7 @@ chain('Default hits the creditor and damages relations', () => {
   const w = fresh(), c = w.countries.U1, o = w.countries.U2; const rel = o.relations.U1 ?? 0, bank = o.bankHealth; c.creditors.U2 = c.gdp; c.debt = c.gdp * 40; c.tax = { income: 0, land: 0, business: 0 }; c.treasury = 0;
   run(w, 3); assert.ok(c.defaulted); assert.ok(o.relations.U1 < rel && o.bankHealth < bank + 3);
 });
-import { answer } from '../agents/queries.js';
+import { answer, desk, alarms } from '../agents/queries.js';
 { const w = fresh(), c = w.countries.U1; const a = answer(w, w.characters[c.opposition], 'budget'), l = answer(w, ld(w, c), 'budget'); assert.ok(a.includes('not open to you')); assert.ok(l.includes('Treasury')); assert.ok(!answer(w, ld(w, c), 'nosuchtopic').includes('undefined')); }
 const lookups = async () => {
   const cfg = { ...base, agentRoles: ['leader'], maxLookupRounds: 2 }; const w = createWorld(cfg); w.status = 'playing'; let n = 0, sawAnswer = false;
@@ -428,6 +428,32 @@ ok('Names follow culture: country, person and province names come from the peopl
 await (async () => {
   const w = inherited(), store = tempStore(); w.status = 'playing'; beginTurn(w); stepWorld(w); store.commit(w, []); const line = JSON.parse(fs.readFileSync(store.file('positions.ndjson'), 'utf8').trim()); assert.ok(line.units.length && line.units[0].length === 6, 'unit position'); assert.ok(line.t === w.turn); assert.ok(line.provinces.length === Object.keys(w.provinces).length && line.provinces.every(p => p.length === 3 && w.provinces[p[0]].controller === p[2]), 'who owns and who holds every province, each quarter'); fs.rmSync(store.dir, { recursive: true, force: true }); console.log('passed  Unit and fleet positions and the political map are saved every turn');
 })();
+ok('Every seat finds its own business on its desk each morning, the rules of a matter are said where the matter is read, and every foreign state has its page in the yearbook', () => {
+  // World 12: the lighter models asked for almost nothing (8 lookups in 162 mornings) and governed from headlines; in five games nobody forged a
+  // paper, arranged a count or paid the underground, and nothing they could read said such things can be done.
+  const w = inherited(); w.status = 'playing'; run(w, 2); const c = w.countries.U1, seat = r => w.characters[c[r]], L = seat('leader'), G = seat('general'), O = seat('opposition'), M = seat('oligarch');
+  const dl = desk(w, L), dg = desk(w, G), dop = desk(w, O), dm = desk(w, M), unit = Object.values(w.units).find(u => u.country === 'U1');
+  assert.ok(dl.startsWith('The treasury:\nTreasury ') && dl.includes(answer(w, L, 'budget').split('\n')[1]) && /The country:\nLegitimacy \d+/.test(dl) && dl.includes(`${unit.id} `), 'the ruler: the treasury, the country and the army list, in the words of the full reports');
+  assert.ok(/^The army list:/.test(dg) && dg.includes(`${unit.id} `) && /Arsenal and pay:\nAmmunition: the arsenal holds/.test(dg) && /The frontiers:/.test(dg) && !/The treasury:/.test(dg), 'the chief of staff: his army list, his arsenal, his frontiers, and not the treasury');
+  assert.ok(!/The treasury:|The army list/.test(dop) && !/The treasury:|The army list/.test(dm), 'a party leader and a magnate do not find the state\'s books or the army list on their desks');
+  const mine = Object.values(w.firms).find(f => f.owner === M.id); assert.ok(/What the state takes from business:\nTax on business \d+%/.test(dm) && (!mine || dm.includes(mine.id)), 'the magnate: his works and what the state takes');
+  for (const [d, who] of [[dl, L], [dg, G], [dop, O], [dm, M]]) assert.ok(/People of note at home/.test(d) && d.includes(`${(who === L ? G : L).id} `), 'everyone has the names and ids of the people they deal with');
+  assert.ok(actorPrompt(w, G, [], false, { intro: false }).includes('On your desk this morning') && actorPrompt(w, G, [], false, { intro: false }).includes(dg), 'it is in the morning report');
+  O.status = 'imprisoned'; assert.equal(desk(w, O), '', 'there is no desk in a cell'); O.status = 'free';
+  // The rules, where they are read.
+  for (const [topic, words] of Object.entries({ plots: ['fund_plot', 'execute_plot', 'may leak'], justice: ['prosecute', 'forge_dossier'], money: ['print_money', 'devalue', 'default_debt'], labour: ['break_strike', 'set_labour_law'], parliament: ['lobby_bill', 'no_confidence', 'abstain'], parties: ['rig_election', 'ban_party'], unrest: ['fund_underground', 'persecute'], institutions: ['designate_successor', 'recognise_exile'] })) for (const x of words) assert.ok(answer(w, L, topic).includes(x), `${topic} says ${x}`);
+  assert.ok(actorPrompt(w, L, [], false, { intro: true }).includes('a count arranged'), 'the opening text names the quiet crimes beside the loud ones');
+  // The yearbook: free to every seat; what the secret service knows is added only for those it reports to.
+  const page = answer(w, M, 'country:U2'), staff = answer(w, G, 'country:U2'), o = w.countries.U2, keeper = Object.values(w.characters).find(x => x.alive && x.country === 'U2' && x.post === 'treasury');
+  assert.ok(/From the yearbooks:\nIts printed estimates/.test(page) && /Its peoples, by the census: /.test(page) && /Treaties it is openly party to/.test(page) && /What they live by/.test(page) && (!keeper || page.includes(`${keeper.name} (${keeper.id}) keeps the treasury`)), page.slice(-900));
+  assert.ok(!/Our service in that country/.test(page) && /Our service in that country/.test(staff) && !/How a trade is cut/.test(page), 'the service reports to the ruler and the staff');
+  assert.ok(!/From the yearbooks/.test(answer(w, L, 'country:U1')));
+  // A secret treaty is in no yearbook.
+  w.treaties.push({ id: 'A-s', kind: 'alliance', parties: ['U2', 'U3'], active: true, pending: false, secret: true, proposer: 'U2', terms: '', clauses: [], breaches: [] }); assert.ok(!/alliance with/.test(answer(w, M, 'country:U2')), 'a secret treaty is not printed');
+  // What hits a seat hardest is put before it.
+  c.elections = true; c.nextElection = w.turn + 1; assert.ok(alarms(w, L).some(x => /An election is due in Q\d 19\d\d/.test(x)));
+  const hot = countryProvinces(w, 'U1')[0]; hot.unrest = 70; assert.ok(alarms(w, G).some(x => x.includes(`${hot.name} (${hot.id}) is close to rising`)));
+});
 ok('The staff knows what another state lives by, by which road or water it comes and how such a trade is cut; the routes report says where our own runs; and the army report says what ground is worth', () => {
   const w = inherited(); w.status = 'playing'; run(w, 2); const c = w.countries.U1, g = w.characters[c.general];
   for (const o of aliveCountries(w).filter(x => x.id !== 'U1')) { const plan = answer(w, g, `war_plan:${o.id}`);
