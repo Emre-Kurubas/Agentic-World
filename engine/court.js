@@ -41,6 +41,7 @@ function serve(w, c) {
 // A letter passes through the hands of the state it is sent from and the state it is sent to. How much of the mail a state opens depends on
 // how good its secret service is and how far its courts let it go; a letter that crosses a border is looked at more closely, and a ruler's own
 // correspondence travels by courier and in cipher. What is copied goes to whoever governs, and into the file kept on the writer.
+import { watchedIn } from './standing.js';
 export function openPost(w, from, to, text) {
   const readers = [];
   // Someone nobody plays has no memory of his own: the last letters that passed between him and each correspondent are kept with him, so that
@@ -50,6 +51,8 @@ export function openPost(w, from, to, text) {
     const c = w.countries[cid], ruler = w.characters[c?.leader];
     if (!c?.alive || !ruler?.alive || ruler.status !== 'free' || ruler.id === from.id || ruler.id === to.id) continue;
     let p = watch(c) * (from.country !== to.country ? 1.4 : 1);
+    // Whoever the police have under their eye has his letters opened as a matter of course, where the law has not put the post out of their reach.
+    if (!c.postalSecrecy && (watchedIn(w, cid, from.id) || watchedIn(w, cid, to.id))) p = Math.max(p, .8);
     if (w.countries[from.country]?.leader === from.id) p *= .35;
     if (rand(w) >= p) continue;
     say(w, ruler, 'Black cabinet', `Copied in the post, a letter from ${from.name} (${w.countries[from.country]?.name}) to ${to.name} (${w.countries[to.country]?.name}): "${text}"`);

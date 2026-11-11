@@ -20,6 +20,8 @@ import { fundUnderground } from './underground.js';
 import { mobilize, demobilize, serviceOf, reserveAt, drillOf } from './frontier.js';
 import { prosecute, forge, forgeryFound } from './justice.js';
 import { shame, honourOf, aimsMet, aimsText, kindWord, dealsWith, maySign, tieOf, tieWord, stanceOf, seesTreaty, reveal, faithCost, bondSigned, deed, alarm } from './diplomacy.js';
+import { STANDING_OPS, standingOp, standingStep } from './standing.js';
+import { INQUIRY_OPS, inquiryOp } from './inquiry.js';
 import { foundPaper, papersOf, carry, MAX_PAPERS, setPaper, censor, paperWords, keptQuiet, findPaper } from './press.js';
 import { buyBonds, sellBonds } from './bonds.js';
 import { SHIPS, kindOf, ORDERS, friendlyPort, baseMap, readiness, enemyHolds, seaPath, refuge, bombard as shell, liftOf, LIFT, MERCHANT, demonstrate, seizeCustoms } from './navy.js';
@@ -53,14 +55,19 @@ const PRIVATE = ['capital_flight', 'repatriate', 'draw_institution', 'buy_bonds'
 // What the people around the seats can be made to do, what a note of hand is worth, and what a seat decides for itself: open to anyone at liberty.
 const NOTE_OPS = new Set(['buy_debt', 'sell_debt', 'ask_terms', 'borrow_private', 'extend_debt', 'call_debt']);
 const SEAT_OPS = new Set(['lead_rising', 'resign', 'go_abroad', 'return_home', 'name_deputy', 'retire']);
+// A watch, an order that waits for its day: open to every seat and to private people (each within what its own hands reach); leaving a power in
+// another's hands is the ruler's alone.
+const OPEN_STANDING = ['watch', 'standing_order', 'cancel_order', 'inquire'];
+QUIET.add('inquire').add('inspect');
 PRIVATE.push('denounce'); PERMISSIONS.general.add('stage_incident'); for (const seat of ['general', 'opposition', 'oligarch']) PERMISSIONS[seat].add('denounce');
 QUIET.add('denounce').add('stage_incident').add('turn_informant');
 const OWN = ['set_paper', 'incite', ...NOTE_OPS, ...SEAT_OPS];
 QUIET.add('lead_rising').add('name_deputy');
 for (const op of NOTE_OPS) QUIET.add(op);
-PRIVATE.push(...OWN);
+PRIVATE.push(...OWN, ...OPEN_STANDING);
+for (const op of STANDING_OPS) QUIET.add(op);
 PERMISSIONS.private = new Set(PRIVATE);
-for (const seat of ['general', 'opposition', 'oligarch']) for (const op of OWN) PERMISSIONS[seat].add(op);
+for (const seat of ['general', 'opposition', 'oligarch']) for (const op of [...OWN, ...OPEN_STANDING]) PERMISSIONS[seat].add(op);
 // The chief of staff also says who is paid first when the vote is short and how much of the arsenal an attack may not touch.
 for (const op of ['set_pay_priority', 'set_arsenal_reserve']) { PERMISSIONS.general.add(op); QUIET.add(op); }
 // The chief of staff directs where the army's units and squadrons stand and who commands them. Raising and disbanding troops, war and peace stay with the ruler.
@@ -173,6 +180,8 @@ function carryNode(w, ch, node, fresh) {
   if (r.ok && r.takes && more) { fresh.push({ turn: w.turn, actor: ch.id, country: ch.country, province: r.takes, then: node.then || [], else: node.else || [] }); return [line]; }
   return [line, ...((r.ok ? node.then : node.else) || []).flatMap(n => carryNode(w, ch, n, fresh))];
 }
+// Orders that were waiting for their day are given once every government's orders of the quarter are in, and before the world moves.
+export function carryStanding(w) { standingStep(w, applyOp); }
 export function carrySigned(w) {
   for (const a of (w.signing || []).splice(0)) {
     const ch = w.characters[a.actor], c = ch && w.countries[ch.country], o = w.countries[a.target]; if (!ch?.alive || !c?.alive || !o) continue;
@@ -502,6 +511,8 @@ export function applyOp(w, actor, op) {
   if (LABOUR_OPS.has(op.op)) return labourOp(w, actor, c, op, { fail, num, governs: governs(w, c, actor), tell, allowance });
   if (PEOPLE_OPS.has(op.op)) { const r = peopleOp(w, actor, c, op, { fail, num, pay, allowance, rules: governs(w, c, actor), leads: leadsParties(w, c, actor), leaveTrace, NO_FUNDS }); c._privilege = privilege(w, c); return r; }
   if (NOTE_OPS.has(op.op)) return noteOp(w, actor, c, op, { fail, num, governs: governs(w, c, actor), allowance });
+  if (STANDING_OPS.has(op.op)) return standingOp(w, actor, c, op, { fail, num, known: k => typeof k === 'string' && /^[a-z_]{3,}$/.test(k) });
+  if (INQUIRY_OPS.has(op.op)) return inquiryOp(w, actor, c, op, { fail, num, allowance: (key, cap, want) => allowance(w, c, key, cap, want), pays: m => treasuryPays(c, m), leads: leadsParties(w, c, actor).some(p => (p.seats ?? 0) > 0) });
   if (SEAT_OPS.has(op.op)) return seatOp(w, actor, c, op, { fail, num, governs: governs(w, c, actor), personFor });
   switch (op.op) {
     // A rate is ordered in a day and collected by offices: a capable state has the new rate in force at once, a thin one takes several quarters to get there.
@@ -658,6 +669,8 @@ export function applyOp(w, actor, op) {
       const p = c.parties.find(x => x.id === op.party && !x.banned) ?? leadsParties(w, c, actor)[0]; if (!p) return fail('No such party.');
       const state = op.state === true && governs(w, c, actor), want = num(op.amount, 0, 1e6, 0), m = state ? treasuryPays(c, allowance(w, c, 'party_funds', gdp * .002, want)) : Math.min(Math.max(actor.wealth, 0), want); if (!(m >= .5)) return fail('No money was given.');
       if (state) leaveTrace(w, actor, `Paid ${Math.round(m)} of the treasury's money into the funds of ${p.name}.`); else actor.wealth -= m;
+      // Who paid in is known to the party's treasurer, and to whoever has the party watched.
+      (p.gifts ||= []).push({ turn: w.turn, from: actor.id, amount: m }); p.gifts = p.gifts.slice(-12);
       p.funds = (p.funds || 0) + m; return { ok: true, msg: `${Math.round(m * 10) / 10} went into the funds of ${p.name}. A party spends a fifth of its funds each quarter on organisation; it holds what it is paid for.` };
     }
     case 'found_paper': {
@@ -1647,6 +1660,7 @@ const OPEN_WAY = {
   build: 'A private person builds with his own money: a new works is founded as a company (found_company, naming what it is to make or dig, the province and the capital put in), and a works he owns is enlarged (invest_company)',
   concession: 'Somebody who does not govern gives from his own purse, his company\'s till or his party\'s funds (relief), not from the treasury',
   repress: 'Troops keep order where their standing orders put them; to turn the police or the army on a town is for whoever governs',
+  inspect: 'The inspectors of works answer to whoever governs. An owner knows his own works, and anybody can have a works or another matter looked into (inquire)',
 };
 const fail = msg => ({ ok: false, msg });
 function applyOrder(w, c, u, to, named = true) {

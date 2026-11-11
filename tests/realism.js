@@ -3721,6 +3721,90 @@ chain('People can be told apart, and a state knows what it inherits: no two seat
   const p = Object.values(w.provinces).find(q => q.controller === 'U1' && q.rail); c.treasury = 1e6; c.stock.steel = 1e5; const r = applyOp(w, L, { op: 'build', province: p.id, kind: 'railway' }); assert.ok(!/requires the technology/.test(r.msg), `and is not refused a line for want of it: ${r.msg}`);
 });
 
+import { watchStep } from '../engine/standing.js';
+import { carryStanding } from '../engine/ops.js';
+import { openPost as postOf_ } from '../engine/court.js';
+chain('Standing matters: a watch sees what is done in secret and opens the post, a power can be left in another\'s hands, and an order waits for its day', () => {
+  // World 16: "have the police watch him" was ruled as a dossier that found nothing or as a spy who failed; "if they cross the frontier the
+  // chief of staff may call up the reserve" and "once their columns have left the pass, send the reservists home" were words.
+  const w = inherited(); run(w, 1); const c = w.countries.U1, L = ld(w, c), G = w.characters[c.general], O = w.characters[c.opposition], M = w.characters[c.oligarch];
+  const nextDoor = [...new Set(Object.values(w.provinces).filter(p => p.controller === 'U1').flatMap(p => p.neighbors.map(n => w.provinces[n].controller)))].find(id => id && id !== 'U1'), d = w.countries[nextDoor];
+  c.police = 60; c.postalSecrecy = false; c.intelligence = 20; c.courts = 80; O.power = 20;
+  const opened = () => { let n = 0; for (let i = 0; i < 40; i++) { const x = structuredClone(w); x.rng = 100 + i * 7919; const had = x.characters[L.id].inbox.length; postOf_(x, x.characters[O.id], x.characters[M.id], 'Meet me at the mill.'); if (x.characters[L.id].inbox.length > had) n++; } return n; }, unwatched = opened();
+  // A watch by the police.
+  const on = applyOp(w, L, { op: 'watch', character: O.id }); assert.ok(on.ok && /is under watch\. What [^]*is likely to be seen as it is done[^]*The watch stands until you take it off/.test(on.msg), on.msg);
+  assert.ok(/under watch already/.test(applyOp(w, L, { op: 'watch', character: O.id }).msg) && w.watches.length === 1, 'ordered again it is the same watch');
+  const watched = opened(); assert.ok(unwatched <= 8 && watched >= 26, `the letters of somebody under watch are opened as a matter of course (${watched} of 40 against ${unwatched})`);
+  let saw = 0, circle = 0; for (let i = 0; i < 30; i++) { const x = structuredClone(w); x.rng = 300 + i * 7919; const o = x.characters[O.id]; (o.secrets ||= []).push({ turn: x.turn, text: 'Took 20 from a foreign purse.' }); x.plots.push({ id: 'K-t', country: 'U1', kind: 'coup', leader: o.id, members: [], progress: 10, secrecy: .9, active: true, start: x.turn }); watchStep(x); const f = x.characters[L.id].dossiers[o.id]?.facts ?? []; if (f.includes('Took 20 from a foreign purse.')) saw++; if (f.some(t => /Gathers people about him in secret/.test(t))) circle++; }
+  assert.ok(saw >= 15 && circle >= 5 && circle < 25, `what he does in secret is likely seen as it is done (${saw} of 30), and a circle about him is sometimes noticed (${circle})`);
+  // Who may watch whom.
+  assert.ok(/The staff watches its own/.test(applyOp(w, G, { op: 'watch', character: O.id }).msg), 'the staff does not watch civilians');
+  M.wealth = 3; const hired = applyOp(w, O, { op: 'watch', character: M.id, amount: 2 }); assert.ok(hired.ok && /at 2 a quarter from your purse/.test(hired.msg), hired.msg); watchStep(w); assert.equal(M.wealth, 3); const had = O.wealth; watchStep(w); assert.ok(O.wealth === had - 2, 'hired watchers are paid each quarter');
+  O.wealth = 0; O.inbox = []; watchStep(w); assert.ok(!w.watches.some(x => x.by === O.id) && O.inbox.some(m => /have gone home unpaid/.test(m.text)), 'and go home when they are not');
+  assert.ok(applyOp(w, L, { op: 'watch', character: O.id, lift: true }).ok && !w.watches.some(x => x.by === L.id), 'a watch is taken off');
+  // The frontier.
+  const fw = applyOp(w, G, { op: 'watch', target: d.id }); assert.ok(fw.ok && /The staff counts what stands across that frontier each quarter/.test(fw.msg), fw.msg);
+  const over = Object.values(w.provinces).find(p => p.controller === d.id && p.neighbors.some(n => w.provinces[n].controller === 'U1')); soldier(w, d.id, over.id, 60); G.inbox = []; watchStep(w);
+  assert.ok(G.inbox.some(m => /The watch on the frontier with [^:]*: about \d+ thousand of their men now stand within a march of it; a quarter ago it was about \d+ thousand/.test(m.text)), 'the staff says at once when the number across the frontier changes much');
+  // A power left in another's hands.
+  assert.ok(!applyOp(w, G, { op: 'mobilize', men: 5 }).ok && !applyOp(w, G, { op: 'delegate', to: O.id, powers: ['mobilize'] }).ok, 'the chief of staff cannot call up, nor hand powers about');
+  const del = applyOp(w, L, { op: 'delegate', to: 'general', powers: ['mobilize', 'demobilize'] }); assert.ok(del.ok && /may now order as his own: mobilize, demobilize/.test(del.msg), del.msg);
+  assert.ok(applyOp(w, G, { op: 'mobilize', men: 5 }).ok, 'now he can');
+  assert.ok(/Left in your hands by [^\n]*: mobilize, demobilize/.test(desk(w, G)) && /Left in the hands of [^\n]*: mobilize, demobilize/.test(desk(w, L)), 'both desks show it');
+  assert.ok(applyOp(w, L, { op: 'delegate', to: 'general', revoke: true }).ok && !applyOp(w, G, { op: 'mobilize', men: 5 }).ok, 'and no longer once it is taken back');
+  // An order that waits for its day.
+  const bad = applyOp(w, L, { op: 'standing_order', when: { mood: 'bad' }, then: [{ op: 'mobilize', men: 10 }] }); assert.ok(!bad.ok && /Say the day the order waits for[^]*attacked[^]*troops/.test(bad.msg), 'a day the engine cannot know is refused, with the days it can');
+  const so = applyOp(w, L, { op: 'standing_order', when: { attacked: true, by: d.id }, then: [{ op: 'mobilize', men: 10 }], label: 'if they come' }); assert.ok(so.ok && /is entered and waits: the day [^,]* goes to war with us/.test(so.msg), so.msg);
+  assert.ok(/Order SO\d+, waiting: the day [^\n]* goes to war with us, then mobilize \("if they come"\)/.test(desk(w, L)), 'it stands on the desk');
+  const reserve = c.reserve; carryStanding(w); assert.equal(c.reserve, reserve, 'nothing is done before its day');
+  w.wars.push({ id: 'S-t', a: [d.id], b: ['U1'], civil: false, active: true, start: w.turn, name: 't' }); L.inbox = []; carryStanding(w);
+  assert.ok(c.reserve < reserve - 5 && L.inbox.some(m => /Order SO\d+ \("if they come"\) has come to its day[^]*mobilize: About 10 thousand reservists are called up/.test(m.text)) && !(w.standingOrders || []).length, `on the day it is given in his name and he is told: ${L.inbox.at(-1)?.text.slice(0, 200)}`);
+  // The staff's own: once their men there are few, stand down.
+  const u = Object.values(w.units).find(x => x.country === 'U1'); applyOp(w, G, { op: 'set_posture', posture: 'defensive', unit: u.id });
+  const s2 = applyOp(w, G, { op: 'standing_order', when: { troops: { province: over.id, country: d.id, below: 20 } }, then: [{ op: 'set_posture', posture: 'ordinary', unit: u.id }] }); assert.ok(s2.ok, s2.msg);
+  carryStanding(w); assert.equal(u.posture, 'defensive', 'while sixty thousand stand there the order waits'); for (const x of Object.values(w.units)) if (x.country === d.id && x.province === over.id) x.men = 2; carryStanding(w); assert.ok(u.posture !== 'defensive', 'and is given when they are gone');
+  const s3 = applyOp(w, G, { op: 'standing_order', when: { after: 3 }, then: [{ op: 'set_posture', posture: 'defensive', unit: u.id }] }), id = /SO\d+/.exec(s3.msg)[0]; assert.ok(applyOp(w, G, { op: 'cancel_order', id }).ok && !w.standingOrders.some(x => x.id === id), 'an order that waits can be withdrawn');
+  const doc = fs.readFileSync(new URL('../agents/prompts.js', import.meta.url), 'utf8'); assert.ok(/watch\{character\|party\|province\|target/.test(doc) && /delegate\{to,powers/.test(doc) && /standing_order\{when,then/.test(doc), 'the referee knows the three');
+  assert.ok(/kept under watch \(watch:/.test(String(answer(w, L, 'plots'))) && /standing_order/.test(String(answer(w, L, 'institutions'))), 'and the seats can read that such things are done');
+});
+
+import { inquiryStep } from '../engine/inquiry.js';
+chain('An inquiry finds what there is to find in a matter, an inspection holds owners nearer the law, and both leave papers a court can use', () => {
+  // World 16: inquiries into a depot's cost, a tax farm, an arms contract and a death, and "inspect every coal mine and publish it", were ordered
+  // some fifty times; the engine could look into one person at a time and nothing else.
+  const mk = () => { const w = inherited(); run(w, 1); const c = w.countries.U1; c.bureaucracy = 100; c.courts = 100; const keeper = Object.values(w.characters).find(x => x.alive && x.country === 'U1' && x.post === 'treasury'), banker = Object.values(w.characters).find(x => x.alive && x.country === 'U1' && x.post === 'house');
+    (w.offers ||= []).push({ id: 'OF9001', kind: 'lease', from: banker.id, to: ld(w, c).id, country: 'U1', amount: 20, drain: 7, turns: 12, status: 'running', text: 'the customs leased for three years' }); (keeper.secrets ||= []).push({ turn: w.turn, text: 'Skimmed 4 from the customs receipts.' });
+    return { w, c, L: ld(w, c), G: w.characters[c.general], O: w.characters[c.opposition], M: w.characters[c.oligarch], keeper, banker }; };
+  { const { w, c, L, G, M, keeper } = mk(); keeper.inbox = [];
+    const r = applyOp(w, L, { op: 'inquire', into: 'treasury' }); assert.ok(r.ok && /The inquiry into the treasury sits[^]*behind closed doors/.test(r.msg) && !keeper.inbox.length, `a closed inquiry is opened and those it touches are not told: ${r.msg}`);
+    assert.ok(!applyOp(w, L, { op: 'inquire', into: 'treasury' }).ok, 'the same matter is not opened twice'); assert.ok(/Inquiry into the treasury, sitting/.test(desk(w, L)), 'it stands on the desk while it sits');
+    assert.ok(!applyOp(w, G, { op: 'inquire', into: 'treasury' }).ok && applyOp(w, G, { op: 'inquire', into: 'army' }).ok, 'the chief of staff opens the army\'s books and not the treasury\'s');
+    const f = Object.values(w.firms).find(x => x.owner === M.id && x.status === 'open'); assert.ok(applyOp(w, M, { op: 'inquire', into: f.id }).ok && !applyOp(w, M, { op: 'inquire', into: 'moonshine' }).ok, 'an owner has his own works gone through; a matter nobody knows is refused');
+    let found = 0; for (let i = 0; i < 20; i++) { const x = structuredClone(w); x.rng = 500 + i * 7919; inquiryStep(x); const l = x.characters[L.id], rep = l.inbox.find(m => /inquiry into the treasury reports/.test(m.text)); assert.ok(rep && /The customs are leased under OF9001 to the house of [^,]*, which keeps about 7 a quarter/.test(rep.text), `the report says what the books plainly show: ${rep?.text.slice(0, 240)}`);
+      if ((l.dossiers[keeper.id]?.facts ?? []).includes('Skimmed 4 from the customs receipts.')) { found++; assert.ok(/brought this to light: [^]*Skimmed 4 from the customs receipts/.test(rep.text)); const p = applyOp(x, l, { op: 'prosecute', character: keeper.id, charge: 'peculation' }); assert.ok(p.ok && x.characters[keeper.id].trial.facts.includes('Skimmed 4 from the customs receipts.'), 'and a court can use what was found'); } }
+    assert.ok(found >= 14, `with good clerks, courts and auditors what was done is mostly found (${found} of 20)`);
+    c.bureaucracy = 10; c.courts = 10; w.inquiries.find(q => q.key === 'treasury').eye = .25; let poor = 0; for (let i = 0; i < 20; i++) { const x = structuredClone(w); x.rng = 500 + i * 7919; inquiryStep(x); if ((x.characters[L.id].dossiers[keeper.id]?.facts ?? []).length) poor++; } assert.ok(poor < found - 4, `a poor administration finds less (${poor})`); }
+  { const { w, c, L, O, keeper } = mk(); keeper.inbox = []; w.newsThisTurn = []; const legit = c.legitimacy;
+    const r = applyOp(w, L, { op: 'inquire', into: 'treasury', public: true }); assert.ok(r.ok && keeper.inbox.some(m => /An inquiry into the treasury has been opened[^]*in public/.test(m.text)) && w.newsThisTurn.some(e => /has opened an inquiry into the treasury/.test(e.text)), 'a public inquiry is known to those it touches and to the papers');
+    w.inquiries[0].eye = 1; inquiryStep(w); assert.ok(keeper.secrets.some(s => s.published) && w.newsThisTurn.some(e => new RegExp(`the inquiry into the treasury has reported\\. It names ${keeper.name}`).test(e.text)) && c.legitimacy < legit, 'its report is printed, what it found is out, and a government whose own keeper is named pays for it');
+    // The house, where there is one.
+    if (!c.parliament) assert.ok(!applyOp(w, O, { op: 'inquire', into: 'treasury' }).ok, 'without a house the opposition cannot open the state\'s books'); }
+  { // A death.
+    const { w, c, L, O } = mk(), victim = Object.values(w.characters).find(x => x.alive && x.country === 'U1' && x.post === 'police'); w.plots.push({ id: 'K-a', country: 'U1', kind: 'assassination', target: victim.id, leader: O.id, members: [], progress: 100, active: false, start: w.turn }); dieOf(w, victim, 'was shot in the street');
+    assert.ok(applyOp(w, L, { op: 'inquire', into: `death:${victim.id}` }).ok); w.inquiries[0].eye = 1; let named = 0; for (let i = 0; i < 20; i++) { const x = structuredClone(w); x.rng = 900 + i * 7919; inquiryStep(x); if ((x.characters[L.id].dossiers[O.id]?.facts ?? []).some(t => /Had a hand in the killing of [^,]*, and was at the head of it/.test(t))) named++; }
+    assert.ok(named >= 8 && named < 20, `the head of a killing is sometimes found, not always (${named} of 20)`); }
+  { // The inspectors.
+    const { w, c, L, G, M } = mk(), f = Object.values(w.firms).find(x => x.owner === M.id && x.status === 'open'); c.bureaucracy = 60; c.institutions = []; f.safety = .3; M.inbox = [];
+    assert.ok(/No law sets a floor/.test(applyOp(w, L, { op: 'inspect', id: f.id }).msg) && f.safety === .3, 'without a law there is nothing to hold an owner to');
+    assert.ok(applyOp(w, L, { op: 'set_labour_law', min_safety: .5 }).ok || c.parliament); c.labourLaw = { safety: .5, wage: 0 };
+    assert.ok(!applyOp(w, G, { op: 'inspect' }).ok, 'the inspectors answer to whoever governs');
+    w.newsThisTurn = []; const r = applyOp(w, L, { op: 'inspect', sector: f.sector === 'mine' ? 'mines' : 'works', public: true });
+    assert.ok(r.ok && f.safety > .4 && f.safety < .5 && new RegExp(`${f.id} [^;]*safety 0\\.3 -> 0\\.4\\d?[^;]*UNDER the legal floor`).test(r.msg), `an inspector on the spot holds an owner nearer the law than the law does from the capital: ${r.msg.slice(0, 300)}`);
+    assert.ok(M.inbox.some(m => /The inspectors were at /.test(m.text)) && (L.dossiers[M.id]?.facts ?? []).some(t => /Was found by the inspectors keeping safety/.test(t)) && w.newsThisTurn.some(e => /the inspectors of works report \d+ works under the legal floor/.test(e.text)), 'the owner is told, it is on the government\'s file, and the report is printed');
+    const again = applyOp(w, L, { op: 'inspect' }); assert.ok(/only counted/.test(again.msg), 'a second sweep in the same quarter only counts'); }
+  const doc = fs.readFileSync(new URL('../agents/prompts.js', import.meta.url), 'utf8'); assert.ok(/inquire\{into,public\?/.test(doc) && /inspect\{id\?\|sector/.test(doc), 'the referee knows both');
+});
+
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
   // The same fight, the same dice, the enemy warned both times: only the man in command differs.
   const hurt = skill => { const f = duel({ dug: 5, ground: { trench: 2 }, rng: 99, seen: true }); f.gen.skill = skill; const [b] = quarter(f.w); assert.ok(b, 'a battle'); assert.ok(!b.prisoners, 'nobody was routed'); return f.D - f.def.men; };
