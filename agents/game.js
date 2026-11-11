@@ -47,7 +47,11 @@ const shuffled = (xs, lot) => { const a = [...xs]; for (let i = a.length - 1; i 
 export function castModel(cfg, w, ch, lot = Math.random) {
   const pinned = pinnedFor(cfg, ch); if (pinned) return pinned;
   const cast = castOf(cfg); if (!cast.length) return ch.role === 'leader' ? cfg.models?.leader : cfg.models?.secondary;
-  return cast[Math.floor(lot() * cast.length)];
+  // Whoever comes to a seat later takes the model the table hears least, so that the four seats of a country never fall to one mind:
+  // where a model is missing he brings it, and where several are equally thin the lot decides among them.
+  const c = w.countries[ch.country], others = c ? ROLES.filter(r => r !== ch.role).map(r => w.characters[c[r]]).filter(x => x?.alive && x.id !== ch.id).map(x => x.model) : [];
+  const heard = m => others.filter(x => x === m).length, least = Math.min(...cast.map(heard)), thin = cast.filter(m => heard(m) === least);
+  return thin[Math.floor(lot() * thin.length)];
 }
 export function dealCast(cfg, w, lot = Math.random) {
   w.castDealt = true;

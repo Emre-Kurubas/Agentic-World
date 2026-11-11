@@ -1,8 +1,8 @@
 {
   "runName": "world-14",
-  "seed": 1848,
-  "countries": 5,
-  "provinces": 130,
+  "seed": 880749,
+  "countries": 8,
+  "provinces": 200,
   "maxTurns": 0,
   "backend": "claude",
   "port": 4173,
@@ -17,7 +17,11 @@
     "leader": "sonnet",
     "referee": "opus",
     "secondary": "haiku",
-    "cast": ["opus", "sonnet", "haiku"],
+    "cast": [
+      "opus",
+      "sonnet",
+      "haiku"
+    ],
     "assign": {}
   },
   "concurrency": 6,

@@ -1051,7 +1051,9 @@ await (async () => {
   // A seat that is pinned stays pinned, and the lot deals round it; someone who comes to a seat later draws for themselves.
   for (const ch of Object.values(w.characters)) delete ch.model; delete w.castDealt; dealCast(cfg, w, lot(5));
   assert.equal(w.characters[w.countries.U2.general].model, 'pinned'); assert.equal(new Set(seats('U2').map(x => x.model)).size, 4, 'the pinned seat does not cost the table one of the three');
-  const drawn = new Set(); for (let i = 0; i < 60; i++) drawn.add(castModel(free, w, { id: 'K999', country: 'U1', role: 'general' }, lot(i * 31 + 7))); assert.equal(drawn.size, 3, 'a newcomer may draw any of the three');
+  // Whoever comes to a seat later brings the model the table lacks: the four seats of a country never fall to one mind, however many of them change hands.
+  for (const c of aliveCountries(w)) for (const r of ROLES) for (let i = 0; i < 6; i++) { const m = castModel(free, w, { id: 'K999', country: c.id, role: r }, lot(i * 31 + 7)), table = [...ROLES.filter(x => x !== r).map(x => w.characters[c[x]].model), m]; assert.ok(['opus', 'sonnet', 'haiku'].every(x => table.includes(x)), `${c.id} ${r}: the table still hears all three: ${table}`); }
+  { const c = w.countries.U1; for (let n = 0; n < 12; n++) { const r = ROLES[n % 4], ch = w.characters[c[r]]; ch.model = castModel(free, w, { id: `K9${n}`, country: 'U1', role: r }, lot(n * 17 + 3)); assert.equal(new Set(ROLES.map(x => w.characters[c[x]].model)).size, 3, 'after twelve changes of seats one country still hears all three'); } }
   console.log('passed  Each character is played by their own model and keeps it for life; the cast is dealt by lot');
 })();
 // In five real games one letter in eight was lost: 482 of them went to "K12", the example in the answer format, and the writers were never told.

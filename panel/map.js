@@ -8,6 +8,8 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const rgb = hex => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
 const lighten = (hex, t) => { const [r, g, b] = rgb(hex); return `rgb(${Math.round(r + (255 - r) * t)},${Math.round(g + (255 - g) * t)},${Math.round(b + (255 - b) * t)})`; };
+// "Free Ports of Morovia" is Morovia on the map, "Terona Empire" is Terona.
+const mapName = c => { const n = String(c.rootName || c.name || ''), of = n.lastIndexOf(' of '); return c.rootName ? c.rootName : of >= 0 ? n.slice(of + 4) : n.split(' ')[0]; };
 const short = n => { const m = /^(.*?) \((.*)\)$/.exec(n), s = m ? m[1] : n; return s.length > 26 ? `${s.slice(0, 25)}…` : s; };
 
 function makeRandom(seed) { let s = seed >>> 0 || 1; return () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; }; }
@@ -320,12 +322,18 @@ export class WorldMap {
   labels(w, political) {
     let x = '';
     for (const p of Object.values(w.provinces)) x += `<g class="sym plabelg" style="--x:${p.cx}px;--y:${p.cy + 34}px"><text class="plabel">${esc(p.name)}</text></g>`;
+    const names = [];
     if (political) for (const c of Object.values(w.countries)) {
       if (!c.alive) continue;
       const ps = Object.values(w.provinces).filter(p => p.controller === c.id); if (!ps.length) continue;
-      const mx = ps.reduce((a, p) => a + p.cx, 0) / ps.length, my = ps.reduce((a, p) => a + p.cy, 0) / ps.length;
-      x += `<text class="clabel" x="${mx}" y="${my}">${esc(short(c.name))}</text>`;
+      // The name on the map is the country's own name, without its form of government (the list beside the map gives it in full); it stands on the
+      // province nearest the middle of the country, in letters as large as the country has room for, and moves aside where another name stands.
+      const mx = ps.reduce((a, p) => a + p.cx, 0) / ps.length, my = ps.reduce((a, p) => a + p.cy, 0) / ps.length, at = ps.reduce((b, p) => Math.hypot(p.cx - mx, p.cy - my) < Math.hypot(b.cx - mx, b.cy - my) ? p : b, ps[0]);
+      const name = mapName(c), xs = ps.map(p => p.cx), span = Math.max(...xs) - Math.min(...xs) + 60, size = Math.max(15, Math.min(30, span / (name.length * .62), 12 + Math.sqrt(ps.length) * 3.4));
+      names.push({ name, x: at.cx, y: at.cy, size, w: name.length * size * .66, n: ps.length });
     }
+    const placed = [], hit = (a, b) => Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.size + b.size) * .62;
+    for (const l of names.sort((a, b) => b.n - a.n)) { const y0 = l.y; for (const dy of [0, -1, 1, -2, 2, -3, 3, -4, 4]) { l.y = y0 + dy * l.size * 1.05; if (!placed.some(o => hit(l, o))) break; } placed.push(l); x += `<text class="clabel" style="font-size:${Math.round(l.size)}px" x="${l.x}" y="${l.y}">${esc(l.name)}</text>`; }
     return x;
   }
 }
