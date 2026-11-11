@@ -1,0 +1,27 @@
+// The goods side: how hard the works and pits run, how deep the stores are, how far prices move in quiet years, how each state fares, and
+// what happens when half the world's coal and iron workings shut. Nobody governs.
+// Run from the repository: node tools/balance/goods.mjs . [seeds] [quarters]     e.g. node tools/balance/goods.mjs . 1848,7,99 100
+import { pathToFileURL } from 'node:url';
+const root = pathToFileURL(process.argv[2] + '/').href, seeds = (process.argv[3] || '1848,7,99').split(',').map(Number), Q = +process.argv[4] || 100;
+const { createWorld, aliveCountries, countryProvinces, GOODS, RAW, BASE_PRICE } = await import(root + 'engine/world.js');
+const { beginTurn, stepWorld } = await import(root + 'engine/step.js');
+const { RECIPE } = await import(root + 'engine/economy.js');
+const cfg = { plainStates: false, countries: 5, provinces: 130, agentRoles: [], countryAgentRoles: {}, models: {}, concurrency: 2, wakeEvery: 1, wakeTension: 45, maxMessagesPerActor: 3, maxDecisionsPerActor: 5, limitRetryMinutes: 0, maxTurns: 0 };
+const sum = (xs, f = x => x) => xs.reduce((a, x) => a + f(x), 0), r = v => Math.round(v), r1 = v => Math.round(v * 10) / 10, p2 = v => (Math.round(v * 100) / 100).toFixed(2), step = w => { beginTurn(w); stepWorld(w); };
+const WATCH = ['grain', 'timber', 'coal', 'iron', 'copper', 'steel', 'machines', 'goods', 'arms', 'fertilizer'];
+const used = (cs, g) => sum(cs, c => (c._drawn?.[g] || 0) + (c._used?.[g] || 0));
+for (const seed of seeds) { const w = createWorld({ ...cfg, seed }), cs0 = aliveCountries(w), st = Object.fromEntries(cs0.map(c => [c.id, { type: c.archetype, food: 9, shops: 9, legit0: c.legitimacy, imp: 0, exp: 0, gdp: 0, gold0: c.reserves, def: 0, un: 0, n: 0 }]));
+  const range = Object.fromEntries(WATCH.map(g => [g, [9, 0, 0, 0]])), marks = {}, rows = []; let shock = null;
+  for (let t = 1; t <= Q; t++) { step(w); const cs = aliveCountries(w);
+    if (t === 8) { shock = structuredClone(w); let i = 0; for (const p of Object.values(shock.provinces)) for (const k of ['coal', 'iron']) if (p.deposits[k]?.mine > 0 && (i++ % 2)) { p.deposits[k].mine = 0; p.deposits[k].known = false; } }
+    if (shock && t > 8 && t <= 28) { step(shock); if ([10, 12, 16, 20, 28].includes(t)) { const ss = aliveCountries(shock); rows.push(`q${t}: coal ${p2(w.globalPrice.coal / BASE_PRICE.coal)}->${p2(shock.globalPrice.coal / BASE_PRICE.coal)} iron ${p2(w.globalPrice.iron / BASE_PRICE.iron)}->${p2(shock.globalPrice.iron / BASE_PRICE.iron)} steel ${p2(w.globalPrice.steel / BASE_PRICE.steel)}->${p2(shock.globalPrice.steel / BASE_PRICE.steel)}; steel made ${r(sum(cs, c => c._made?.steel || 0))}->${r(sum(ss, c => c._made?.steel || 0))}, arms ${r1(sum(cs, c => c._made?.arms || 0))}->${r1(sum(ss, c => c._made?.arms || 0))}, output ${r(sum(cs, c => c.realGdp))}->${r(sum(ss, c => c.realGdp))}`); } }
+    for (const g of WATCH) { const x = w.globalPrice[g] / BASE_PRICE[g], a = range[g]; a[0] = Math.min(a[0], x); a[1] = Math.max(a[1], x); if (x > 1.02) a[2]++; if (x < .98) a[3]++; }
+    for (const c of cs) { const s = st[c.id]; if (!s) continue; if (t === 1) s.gdp0 = c.realGdp; s.food = Math.min(s.food, c.foodRatio ?? 1); if (t > 2) s.shops = Math.min(s.shops, c.goodsRatio ?? 1); s.un += c.unemployment; s.n++; s.def += c.defaulted ? 1 : 0;
+      if (t <= 40) { s.imp += sum(GOODS, g => (c.lastBought?.[g] || 0) * w.globalPrice[g]); s.exp += sum(GOODS, g => (c.lastSold?.[g] || 0) * w.globalPrice[g]); s.gdp += c.gdp / (c.rate || 1); } s.last = c; }
+    if ([4, 40, Q].includes(t)) marks[t] = `works at ${['steel', 'machines', 'goods', 'arms'].map(pl => `${pl} ${r(sum(cs, c => c._made?.[pl] || 0) / Math.max(sum(cs, c => c._capAll?.[pl] || 0), .01) * 100)}%`).join(' ')} | pits at ${['coal', 'iron', 'copper'].map(g => `${g} ${r(sum(cs, c => c._raw?.[g] || 0) / Math.max(sum(cs, c => c._rawFull?.[g] || 0), .01) * 100)}%`).join(' ')} | quarters of real use in store: ${['timber', 'coal', 'iron', 'copper', 'steel', 'machines', 'goods'].map(g => `${g} ${r1(sum(cs, c => c.stock[g] || 0) / Math.max(used(cs, g), .01))}`).join(' ')} | left unmade for full stores, of output: ${cs.map(c => p2((c._idleV || 0) / Math.max(c.realGdp, 1))).join(' ')} | hands in the small trades: ${cs.map(c => p2((c._loose ?? 0) / Math.max(c._hands ?? 1, 1))).join(' ')}`; }
+  console.log(`\n== seed ${seed}, ${Q} quiet quarters; powers ${cs0.length} -> ${aliveCountries(w).length}`);
+  for (const [t, m] of Object.entries(marks)) console.log(`  q${t}: ${m}`);
+  console.log('  prices against the ordinary, lowest..highest (quarters above / below): ' + WATCH.map(g => `${g} ${p2(range[g][0])}..${p2(range[g][1])} (${range[g][2]}/${range[g][3]})`).join(', '));
+  for (const [id, s] of Object.entries(st)) { const c = s.last; console.log(`  ${id} ${s.type.padEnd(13)} ${w.countries[id]?.alive ? '' : 'GONE '}growth ${r1((Math.pow(c.realGdp / s.gdp0, 4 / Q) - 1) * 100)}%/yr, lowest food ${p2(s.food)} shops ${p2(s.shops)}, legitimacy ${r(s.legit0)}->${r(c.legitimacy)}, out of work ${r1(s.un / s.n * 100)}%, imports ${r1(s.imp / s.gdp * 100)}% exports ${r1(s.exp / s.gdp * 100)}% of GDP (first ten years), gold ${r(s.gold0)}->${r(c.reserves)}, debt ${r(c.debt / (c.gdp * 4) * 100)}%, books ${r1(c.lastBalance / c.gdp * 100)}%, quarters in default ${s.def}`); }
+  console.log('  half the coal and iron workings shut at quarter 8 (left alone -> shut):\n    ' + rows.join('\n    '));
+}

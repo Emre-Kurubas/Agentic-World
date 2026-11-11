@@ -216,14 +216,34 @@ export function createWorld(cfg) {
   const cIds = seeds.map((_, i) => `U${i + 1}`), fronts = {}, sizes = {}, cap = Math.ceil(main.length / cfg.countries) + 3;
   seeds.forEach((s, i) => { w.provinces[s].owner = cIds[i]; fronts[cIds[i]] = [s]; sizes[cIds[i]] = 1; });
   for (let changed = true; changed;) { changed = false; for (const c of [...cIds].sort((a, b) => sizes[a] - sizes[b])) { if (sizes[c] >= cap) continue; const opts = fronts[c].flatMap(p => w.provinces[p].neighbors).filter(n => !w.provinces[n].owner); if (!opts.length) continue; const n = pick(w, opts); w.provinces[n].owner = c; fronts[c].push(n); sizes[c]++; changed = true; } }
-  for (const p of Object.values(w.provinces)) if (!p.owner) { const near = Object.values(w.provinces).filter(x => x.owner).sort((a, b) => dist(a.id, p.id) - dist(b.id, p.id))[0]; p.owner = near.owner; }
+  // Land the states could not reach by growing (islands, and country hemmed in behind a neighbour) goes to the nearest state, province by
+  // province from the nearest shore, but not without bound: a state that already holds a fifth more than an even share takes no more, and
+  // the next nearest has it. (When every island went whole to whoever lay nearest, one state in a world was born with three or four times
+  // the land of another, and once with sixty provinces against seven.)
+  { const even = ids.length / cfg.countries, most = Math.ceil(even * 1.2);
+    for (let left = Object.values(w.provinces).filter(p => !p.owner); left.length; left = left.filter(p => !p.owner)) { const held = Object.values(w.provinces).filter(x => x.owner);
+      const reach = p => { const by = {}; for (const x of held) { const d = dist(x.id, p.id); if (!(d >= by[x.owner])) by[x.owner] = d; } return Object.entries(by).sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1)); };
+      const next = left.map(p => ({ p, by: reach(p) })).sort((a, b) => a.by[0][1] - b.by[0][1] || (a.p.id < b.p.id ? -1 : 1))[0], to = (next.by.find(([o]) => sizes[o] < most) ?? next.by[0])[0];
+      next.p.owner = to; sizes[to]++; }
+    // And no state is born a fraction of its neighbours: one left with less than four fifths of an even share by the lie of the land is given
+    // frontier provinces of its largest neighbour, nearest its own heartland first, until it has that much or there is nothing to give.
+    const least = Math.floor(even * .8), land = id => Object.values(w.provinces).filter(p => p.owner === id);
+    for (let guard = 0; guard < ids.length; guard++) { const small = [...cIds].sort((a, b) => sizes[a] - sizes[b] || (a < b ? -1 : 1))[0]; if (sizes[small] >= least) break;
+      const mine = new Set(land(small).map(p => p.id)), heart = seeds[cIds.indexOf(small)];
+      const give = Object.values(w.provinces).filter(p => p.owner !== small && !seeds.includes(p.id) && sizes[p.owner] > sizes[small] + 1 && p.neighbors.some(n => mine.has(n))).sort((a, b) => sizes[b.owner] - sizes[a.owner] || dist(a.id, heart) - dist(b.id, heart) || (a.id < b.id ? -1 : 1))[0];
+      if (!give) break; sizes[give.owner]--; give.owner = small; sizes[small]++; } }
   for (const p of Object.values(w.provinces)) p.controller = p.owner;
 
   cIds.forEach((id, i) => {
     const c = makeCountry(w, id); w.countries[id] = c;
     const mine = Object.values(w.provinces).filter(p => p.owner === id).sort((a, b) => (b.fertility + b.port + b.river) - (a.fertility + a.port + a.river));
-    // The capital stands on the country's main body of land, not on an outlying island.
-    const body = mainBody(w, mine); mine.sort((a, b) => body.has(b.id) - body.has(a.id));
+    // The capital stands on the country's main body of land, not on an outlying island; and not on the frontier where the country has anything
+    // behind the frontier: of the provinces that lie deepest (three steps from foreign soil if there are any, else two, else wherever it can)
+    // it is the best placed, by its land, its harbour and its river. (Four capitals in five lay next to a foreign province, and an army
+    // enters a neighbour's country a province a quarter.)
+    const body = mainBody(w, mine), deep = p => { const far = { [p.id]: 0 }, q = [p.id]; while (q.length) { const x = q.shift(); if (w.provinces[x].owner !== id) return far[x]; if (far[x] >= 3) continue; for (const n of w.provinces[x].neighbors) if (!(n in far)) { far[n] = far[x] + 1; q.push(n); } } return 3; };
+    const depth = Object.fromEntries(mine.map(p => [p.id, body.has(p.id) ? deep(p) : 0]));
+    mine.sort((a, b) => body.has(b.id) - body.has(a.id)); const seat = [...mine].sort((a, b) => depth[b.id] - depth[a.id])[0]; mine.splice(mine.indexOf(seat), 1); mine.unshift(seat);
     c.capital = mine[0].id;
     const eth = ETH[i % ETH.length], minor = ETH[(i + 5) % ETH.length], rel = REL[i % REL.length], minorRel = REL[(i + 3) % REL.length];
     mine.forEach((p, k) => {
@@ -233,6 +253,9 @@ export function createWorld(cfg) {
       p.pops = { peasants: { n: n * .56, sat: 52 }, workers: { n: n * .27, sat: 48 }, middle: { n: n * .14, sat: 55 }, elite: { n: n * .03, sat: 60 } };
       const urban = k === 0 ? 1 : k < mine.length / 3 ? .55 : .2;
       p.plants.goods = urban * between(w, .5, 1); p.plants.steel = (p.deposits.iron || p.deposits.coal) ? urban * between(w, .2, .8) : urban * .1; p.plants.machines = urban * between(w, .1, .4); p.plants.arms = urban * between(w, .1, .4);
+      // A works has places for hands in the measure of its size (economy.js extract): as the map makes a country, before anyone has inherited
+      // it, the works of every province together have places for all its working people, in the proportions drawn above.
+      { const all = Object.values(p.plants).reduce((a, v) => a + v, 0); if (all > 0 && all < 1) for (const k of Object.keys(p.plants)) p.plants[k] /= all; }
       p.rail = rand(w) < urban ? 1 : 0;
     });
     if (mine[0].coast) mine[0].port = 2;

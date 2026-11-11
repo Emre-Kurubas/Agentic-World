@@ -68,7 +68,10 @@ export function initFirms(w) {
     }
     spots.sort((a, b) => b.size - a.size);
     spots.slice(0, 7).forEach((s, i) => {
-      const owner = rand(w) < c.ownership ? STATE : i === 0 || i === 3 ? c.oligarch : null;
+      // What the state does not hold of the country's great houses belongs to its magnate: the largest mines and works of a country of 1900
+      // had an owner with a name, and he is that owner. (Five of every seven houses used to belong to nobody, and the seat held a fiftieth
+      // of the country's industry.) He may sell them, and others may found their own.
+      const owner = rand(w) < c.ownership ? STATE : c.oligarch;
       const f = makeFirm(w, c, s.p, s.sector, s.resource, owner, 1, '');
       f.name = `${s.p.name} ${sectorName(f)}`;
       f.cash = capacity(w, f) * 4;
@@ -76,6 +79,21 @@ export function initFirms(w) {
   }
 }
 
+// The hands at a company's works: its part of the places its mill or pit has, filled as far as the province has working people for them (economy.js extract).
+export function handsOf(w, f) {
+  const p = w.provinces[f.province]; if (!p) return 0;
+  const base = p.base ?? p.pops.workers.n, places = (Object.values(p.deposits).filter(d => d.known && d.mine > 0 && d.amount > 0).reduce((s, d) => s + d.mine, 0) + Object.values(p.plants).reduce((s, v) => s + v, 0)) * base;
+  return places > 0 ? capacity(w, f) * f.stake * Math.min(base, p.pops.workers.n * base / places) : 0;
+}
+// What one owner's houses are in the country: of all its mines and works turned out last quarter, at ordinary prices, the part that came out of his,
+// in all and good by good. The same figures the companies' profits were reckoned on.
+export function holdOf(w, c, owner) {
+  const good = f => f.sector === 'mine' ? f.resource : f.sector, mine = Object.values(w.firms || {}).filter(f => isOpen(f) && f.country === c.id && f.owner === owner), by = {}, of = {};
+  for (const f of mine) by[good(f)] = (by[good(f)] || 0) + (f.lastUnits || 0);
+  for (const g of Object.keys(BASE_PRICE)) { const all = g in PLANTS ? c._made?.[g] || 0 : ['grain', 'timber'].includes(g) ? 0 : c._raw?.[g] || 0; if (all > 0) of[g] = all; }
+  const value = o => Object.entries(o).reduce((s, [g, q]) => s + q * (g in of ? BASE_PRICE[g] : 0), 0), all = value(of);
+  return { firms: mine, share: all > 0 ? Math.min(1, value(by) / all) : 0, goods: Object.fromEntries(Object.entries(by).filter(([g, q]) => q > 0 && of[g] > 0).map(([g, q]) => [g, Math.min(1, q / of[g])])), hands: mine.reduce((s, f) => s + handsOf(w, f), 0) };
+}
 function resolveOwner(w, f, c) {
   if (f.owner === STATE || f.owner == null) return;
   const ch = w.characters[f.owner];
@@ -113,7 +131,7 @@ export function firmStep(w) {
     resolveOwner(w, f, c);
     // A works that stands still earns next to nothing, whoever else in the trade is busy.
     const idle = f.strike || f.lockout || f.halted > 0 ? .1 : 1, { units: full, margin } = unitProfit(c, f, p), units = full * idle, gross = units * f.stake * margin * SCALE, profit = gross > 0 ? gross * (1 - clamp(c.tax.business, 0, .7)) : gross;
-    f.lastProfit = +profit.toFixed(2); f.lastUnits = units * f.stake; f.earn = +((f.earn ?? profit) * .75 + profit * .25).toFixed(3);
+    f.lastProfit = +profit.toFixed(2); f.lastUnits = units * f.stake; f.lastTax = +(gross > 0 ? gross - profit : 0).toFixed(2); f.lastPrice = c.prices?.[f.sector === 'mine' ? f.resource : f.sector] ?? 0; f.earn = +((f.earn ?? profit) * .75 + profit * .25).toFixed(3);
     f.bad = profit < 0 ? f.bad + 1 : 0;
     if (profit > 0) {
       // Two fifths of a profit is paid out to whoever owns the company. One held in small parcels by people the story cannot name has nobody to pay:

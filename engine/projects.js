@@ -17,9 +17,10 @@ const GROUND = { plains: 1, desert: 1.15, forest: 1.25, hills: 1.45, tundra: 1.6
 export const ground = p => GROUND[p.terrain] ?? 1.2;
 // What a work costs the state is more than what it is worth, by what sticks to hands on the way and by how far the capital's eye reaches.
 export const wasteOf = (w, c, p) => w.friction ? 1 + c.corruption / 300 + Math.max(0, .5 - (p.admin ?? .5)) * .6 : 1;
-const people = p => Math.max(provincePop(p), 60), hands = p => Math.max(p.pops.workers.n, 15), tillers = p => Math.max(p.pops.peasants.n, 30);
+const people = p => Math.max(provincePop(p), 60), hands = p => Math.max(p.base ?? p.pops.workers.n, 15), tillers = p => Math.max(p.pops.peasants.n, 30);
 export const MAX_PLANT = 8, MAX_MINE = 4, MAX_INFRA = 1.8, MAX_SEAT = .25;
-// One step of a mill or pit equips the working people of its province, so it costs by their number, and takes machinery in the same measure.
+// One step of a mill or pit has places for as many hands as its province had working people when the world was handed over (p.base), so it costs
+// by that number, and takes machinery in the same measure.
 export const plantPrice = p => .92 * hands(p), minePrice = p => 1.85 * hands(p), machinesFor = p => hands(p) / 200;
 const fertileMax = p => p.fertileMax ?? p.fertility * 1.5, timberMax = p => p.timberMax ?? p.timber * 1.5;
 
