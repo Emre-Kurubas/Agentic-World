@@ -709,7 +709,8 @@ ok('An inherited state left alone for three years neither soars nor collapses, a
   const balances = [];
   for (const seed of [1848, 42, 7]) {
     const w = inherited(seed), start = Object.fromEntries(aliveCountries(w).map(c => [c.id, c.legitimacy])); run(w, 12);
-    for (const c of aliveCountries(w)) { assert.ok(Math.abs(c.legitimacy - start[c.id]) < 22, `${c.archetype} ${start[c.id]} -> ${c.legitimacy}`); balances.push(c.lastBalance / c.gdp); }
+    // The states that were handed over, that is: a ruler can die in three years and a claimant take provinces with him, and that is an event, not a drift.
+    for (const c of aliveCountries(w)) { if (!(c.id in start)) continue; assert.ok(Math.abs(c.legitimacy - start[c.id]) < 22, `${c.archetype} ${start[c.id]} -> ${c.legitimacy}`); balances.push(c.lastBalance / c.gdp); }
   }
   // Some lay money by, some live beyond their means; none starts with a hole that empties the treasury within the year.
   assert.ok(balances.some(b => b > .003) && balances.some(b => b < -.012) && balances.every(b => b > -.035), `balances ${balances.map(b => b.toFixed(3)).join(' ')}`);
@@ -1892,7 +1893,7 @@ chain('A war costs more than a peace and men abroad cost double; an army crosses
   const b = summer(); b.wars.push({ id: 'S-z', a: ['U1'], b: ['U2'], civil: false, active: true, start: b.turn, name: 'z' }); b.countries.U1.budget.military = b.countries.U2.budget.military = .3;
   const edge = countryProvinces(b, 'U1').find(p => p.neighbors.some(n => b.provinces[n].controller === 'U2' && n !== b.countries.U2.capital)), over = b.provinces[edge.neighbors.find(n => b.provinces[n].controller === 'U2' && n !== b.countries.U2.capital)];
   const host = makeUnit(b, 'U1', edge.id, 600); makeUnit(b, 'U2', over.id, 3); host.target = over.id; b.battles = []; militaryStep(b);
-  assert.ok(b.battles[0]?.attackerWon, 'the host carries the field'); assert.ok(600 - host.men < 1.5, `three thousand men do not kill twelve thousand: the host lost ${600 - host.men} thousand`);
+  assert.ok(b.battles[0]?.attackerWon, 'the host carries the field'); { const sick = b.countries.U1._sick ?? 0; assert.ok(600 - host.men - sick < 1.5 && b.battles[0].lossA <= 1, `three thousand men do not kill twelve thousand: the host lost ${600 - host.men - sick} thousand in the fight (and ${sick} to sickness in the field)`); }
   const held = b.countries.U1.captives?.U2 ?? 0, roll = b.countries.U2.reserve ?? 0; assert.ok(held > 0, 'a force routed at such odds leaves prisoners');
   const pax = applyOp(b, ld(b, b.countries.U1), { op: 'propose_treaty', target: 'U2', kind: 'peace' }); assert.ok(applyOp(b, ld(b, b.countries.U2), { op: 'accept_treaty', id: pax.treaty }).ok);
   assert.ok(!(b.countries.U1.captives?.U2 > 0) && Math.abs((b.countries.U2.reserve ?? 0) - roll - held) < 1e-6, 'and the peace sends them home');
@@ -2194,7 +2195,7 @@ chain('An offensive is one operation: columns sent against a place under one ord
   x.w.wars = []; const no = applyOp(x.w, x.gen, { op: 'offensive', to: x.over.id, units: [u.id] }); assert.ok(!no.ok && /no war/.test(no.msg), 'a chief of staff cannot start a war by attacking');
   // The timetable. Two columns already formed up; whether the second is on time is its commander's doing.
   const kept = skill => { let n = 0; for (let i = 0; i < 40; i++) { const t = twoRoads(skill); if (skill < 1) delete t.a.techs.radio; t.w.rng = 1000 + i * 7919; const u1 = soldier(t.w, 'U1', t.e1.id, 80), u2 = soldier(t.w, 'U1', t.e2.id, 60); soldier(t.w, 'U2', t.over.id, 60);
-      assert.ok(applyOp(t.w, t.gen, { op: 'offensive', to: t.over.id }).ok); const b = quarter(t.w); if (b[0]?.sides === 2) n++; else { assert.ok(/not up in time/.test(u2.march.held) && u2.province === t.e2.id && /was not up in time and took no part/.test(t.said()), `the late column stands where it was and the staff says so: ${u2.march.held}`); if (i === 0 || n === 0) { quarter(t.w); assert.ok(u2.province !== t.e2.id || !t.w.units[u2.id] || t.over.controller === 'U1', 'and goes in the quarter after'); } } } return n; };
+      assert.ok(applyOp(t.w, t.gen, { op: 'offensive', to: t.over.id }).ok); const b = quarter(t.w); if (b[0]?.sides === 2) n++; else { assert.ok(/not up in time/.test(u2.march.held) && u2.province === t.e2.id && /was not up in time and took no part/.test(t.said()), `the late column stands where it was and the staff says so: ${u2.march.held}`); if (i === 0 || n === 0) { const next = quarter(t.w); assert.ok(next.length === 1 || t.over.controller === 'U1', 'and goes in the quarter after, alone'); assert.ok(!u2.attack || u2.province === t.over.id && t.over.controller !== 'U1', 'an order that has been carried out, or has no objective left, is spent'); } } } return n; };
   const able = kept(1.6), poor = kept(.6); assert.ok(able >= 36 && poor <= 26 && poor >= 4, `an able commander with the wireless is nearly always on time, a poor one without it often late: ${able} and ${poor} of 40`);
 });
 
@@ -2259,7 +2260,7 @@ chain('The manner of an attack is the general\'s to choose: a reconnaissance in 
   { const f = twoRoads(1), atk = soldier(f.w, 'U1', f.e1.id, 60); soldier(f.w, 'U2', f.over.id, 2); applyOp(f.w, f.gen, { op: 'offensive', to: f.over.id, units: [atk.id], manner: 'probe' }); const b = quarter(f.w); assert.ok(b[0].manner === 'assault' && b[0].attackerWon && f.over.controller === 'U1', 'a reconnaissance that finds the place all but empty walks in'); }
   // Pressed regardless of loss.
   const a = go({ manner: 'all_out' }), ab = quarter(a.w); assert.ok(!ab[0].attackerWon && a.atk.province === a.over.id && a.atk.attack?.manner === 'all_out' && /go in again next quarter/.test(a.said()), `beaten, they are still there: ${a.said()}`);
-  assert.ok(60 - a.atk.men > (60 - (s.w.units[s.atk.id]?.men ?? 0)) * 1.15, 'and it has cost them more than an assault would have');
+  assert.ok(ab[0].lossA > sb[0].lossA * 1.15, `and it has cost them more dead than an assault would have: ${ab[0].lossA} thousand against ${sb[0].lossA}`);
   const ab2 = quarter(a.w); assert.ok(ab2.length === 1 && ab2[0].manner === 'all_out', 'next quarter they go in again without a new order');
   if (a.w.units[a.atk.id]?.attack) { const off = applyOp(a.w, a.gen, { op: 'offensive', to: a.over.id, cancel: true }); assert.ok(off.ok && !a.atk.attack, off.msg); }
   // Set for a later quarter.
@@ -2454,6 +2455,99 @@ chain('Ships as an argument in time of peace: a squadron shown off a coast is a 
   militaryStep(w); w.newsThisTurn = []; militaryStep(w); assert.ok(!(b.creditors.U1 > .5) && !w.seizures.length && w.newsThisTurn.some(x => /debt to .* is cleared/.test(x.text)), 'and when the debt is cleared the customs house is handed back');
   // Driven off.
   b.creditors.U1 = 500; assert.ok(applyOp(w, boss, { op: 'seize_customs', target: e }).ok); f.port = t.ha.id; w.newsThisTurn = []; militaryStep(w); assert.ok(!w.seizures.length && w.newsThisTurn.some(x => /no longer holds/.test(x.text)) && b.creditors.U1 > 400, 'when the ships go the customs house goes back with the debt unpaid');
-  const ref = refereePrompt(w, a, [{ actor: boss, decisions: ['Send the gunboats.'] }]); assert.ok(ref.includes('demonstrate{target,fleet?}') && ref.includes('seize_customs{target}') && ref.includes('kind:cruiser|battleship|torpedo|submarine|merchant'), 'the referee knows these orders');
+  const ref = refereePrompt(w, a, [{ actor: boss, decisions: ['Send the gunboats.'] }]); assert.ok(ref.includes('demonstrate{target,fleet?}') && ref.includes('seize_customs{target}') && ref.includes('kind:cruiser|battleship|dreadnought|torpedo|submarine|merchant'), 'the referee knows these orders');
+});
+import { planEdge as planFor, railWorks as lineRuns, supplyOf as fedAt } from '../engine/military.js';
+import { iced as frozen, SHIPS as SHIP_KINDS } from '../engine/navy.js';
+import { courtStep as courtQuarter } from '../engine/court.js';
+
+chain('An attack that is not seen coming is a surprise: a staff that knows its neighbour, with cavalry out, sees troops massing sooner, a screen of the attacker\'s own horse hides them longer, and a prepared attack is the likelier seen; cavalry rides down a beaten enemy in open country and marches faster than men on foot', () => {
+  // The same attack, many times: how often it falls as a surprise.
+  const tries = (prep, order = {}) => { let surprised = 0, warned = 0; for (let i = 0; i < 40; i++) { const t = twoRoads(1), { w, over, e1 } = t; w.rng = 11 + i * 5521; const atk = soldier(w, 'U1', e1.id, 150); soldier(w, 'U2', over.id, 60); prep(t);
+      applyOp(w, t.gen, { op: 'offensive', to: over.id, units: [atk.id], ...order }); let b = quarter(w); if (!b.length) b = quarter(w); if (b[0]?.surprise) surprised++; if (w.characters[t.d.general].inbox.some(m => /forming up opposite/.test(m.text))) warned++; } return { surprised, warned }; };
+  const blind = tries(t => { t.d.intel.U1 = 0; }), watchful = tries(t => { t.d.intel.U1 = 90; makeUnit(t.w, 'U2', t.over.id, 5, 1, 80, 'cavalry'); });
+  assert.ok(blind.surprised >= 28 && watchful.surprised <= blind.surprised - 10 && watchful.warned >= 15, `a blind staff is surprised most of the time, a watchful one far less: ${JSON.stringify(blind)} against ${JSON.stringify(watchful)}`);
+  const atOnce = tries(t => { t.d.intel.U1 = 30; }), prepared = tries(t => { t.d.intel.U1 = 30; }, { prepare: 1 }), screened = tries(t => { t.d.intel.U1 = 30; makeUnit(t.w, 'U1', t.e1.id, 5, 1, 80, 'cavalry'); }, { prepare: 1 });
+  assert.ok(prepared.surprised < atOnce.surprised - 5 && prepared.warned > atOnce.warned && screened.surprised > prepared.surprised, `a quarter of preparation is a quarter in which to be seen, and a cavalry screen hides some of it: at once ${JSON.stringify(atOnce)}, prepared ${JSON.stringify(prepared)}, screened ${JSON.stringify(screened)}`);
+  // What it is worth, and what the two staffs are told.
+  const one = seed => { const t = twoRoads(1); t.w.rng = seed; t.d.intel.U1 = 0; const atk = soldier(t.w, 'U1', t.e1.id, 150); soldier(t.w, 'U2', t.over.id, 60); applyOp(t.w, t.gen, { op: 'offensive', to: t.over.id, units: [atk.id] }); return { b: quarter(t.w)[0], t }; };
+  let hit = null; for (let i = 0; i < 12 && !hit; i++) { const r = one(900 + i); if (r.b.surprise) hit = r; } assert.ok(hit && /fell on them as a surprise/.test(hit.t.said()) && /took us by surprise/.test(hit.t.w.characters[hit.t.d.general].inbox.map(m => m.text).join(' ')), 'both staffs know it was a surprise');
+  // Pursuit: the same rout with and without horsemen among the victors.
+  const rout = horse => { const t = twoRoads(1); t.w.rng = 77; const us = [soldier(t.w, 'U1', t.e1.id, 190).id]; { const x = soldier(t.w, 'U1', t.e1.id, 10); if (horse) x.kind = 'cavalry'; us.push(x.id); } soldier(t.w, 'U2', t.over.id, 50); applyOp(t.w, t.gen, { op: 'offensive', to: t.over.id, units: us }); return quarter(t.w)[0]; };
+  const ridden = rout(true), onFoot = rout(false); assert.ok(ridden.attackerWon && onFoot.attackerWon && ridden.prisoners >= onFoot.prisoners + 2, `horsemen ride down what runs: ${ridden.prisoners} thousand prisoners against ${onFoot.prisoners}`);
+  // The march, the depot and the inherited army.
+  const y = fresh(); while (seasonOf(y) !== 'summer') y.turn++; for (const u of Object.values(y.units)) delete y.units[u.id]; for (const p of countryProvinces(y, 'U1')) { p.terrain = 'plains'; p.infra = 1.2; p.rail = 0; }
+  const k = y.countries.U1, hops = (from, to) => { let n = 0, cur = from; while (cur !== to && n < 40) { cur = routeStep(y, cur, to, 'U1'); n++; if (!cur) return 99; } return n; }, far = countryProvinces(y, 'U1').find(p => hops(k.capital, p.id) === 4);
+  if (far) { const foot = makeUnit(y, 'U1', k.capital, 20), ride = makeUnit(y, 'U1', k.capital, 5, 1, 80, 'cavalry'); foot.target = ride.target = far.id; militaryStep(y); assert.ok(ride.province === far.id && foot.province !== far.id, 'four provinces of good road in a quarter for cavalry, three for infantry'); }
+  k.treasury = k.gdp * 3; k.stock.arms = 500; const depot = countryProvinces(y, 'U1')[0], n0 = Object.keys(y.units).length; assert.ok(applyOp(y, ld(y, k), { op: 'recruit', province: depot.id, men: 4, unit_kind: 'cavalry' }).ok); run(y, 2); assert.ok(Object.values(y.units).some(u => u.kind === 'cavalry' && u.province === depot.id && Math.abs(u.men - 4) < .5) && Object.keys(y.units).length >= n0 + 1, 'cavalry is raised like any other arm, in two quarters');
+  const h = inherited(); assert.ok(aliveCountries(h).filter(c => Object.values(h.units).some(u => u.country === c.id && u.kind === 'cavalry')).length >= 3, 'an army handed over has its horsemen');
+});
+
+chain('What a campaign does to an army and to the country it crosses: men who come through a fight are better soldiers and drill makes soldiers of recruits; sickness thins an army in the field, most in marsh and least with modern medicine; a river is a line; an occupied province held by too few men cuts the railway behind the army; and siege guns shorten a siege', () => {
+  // Experience.
+  const t = twoRoads(1); t.w.rng = 5; const vet = soldier(t.w, 'U1', t.e1.id, 200), raw = soldier(t.w, 'U2', t.over.id, 40); applyOp(t.w, t.gen, { op: 'offensive', to: t.over.id, units: [vet.id] }); const b = quarter(t.w)[0];
+  assert.ok(b.attackerWon && vet.quality > 1.02 && /seasoned troops|B\d+/.test(lookUp(t.w, t.gen, 'army')), `troops that have fought and won are better for it: ${vet.quality}`);
+  const green = makeUnit(t.w, 'U1', t.e1.id, 10, .8, 80); t.w.wars = []; for (let i = 0; i < 12; i++) militaryStep(t.w); assert.ok(green.quality > .92 && green.quality < 1.001 && vet.quality < 1.03, `three years of drill make soldiers of recruits, and the veterans' edge wears off: ${green.quality}, ${vet.quality}`);
+  // Sickness.
+  const sick = (terrain, medicine) => { const s = twoRoads(1), camp = s.e1; camp.terrain = terrain; if (medicine) s.a.techs.antibiotics = 1; soldier(s.w, 'U1', camp.id, 100); soldier(s.w, 'U2', countryProvinces(s.w, 'U2').find(p => !p.neighbors.includes(camp.id)).id, 10); militaryStep(s.w); return s.a._sick; };
+  const plain = sick('plains'), marsh = sick('marsh'), cured = sick('marsh', true); assert.ok(plain > .3 && plain < .6 && marsh > plain * 3 && Math.abs(cured - marsh / 2) < .01, `a hundred thousand in the field lose some hundreds a quarter to sickness, thousands in a summer marsh, half that with modern medicine: ${plain}, ${marsh}, ${cured}`);
+  { const p = twoRoads(1); p.w.wars = []; soldier(p.w, 'U1', p.e1.id, 100); militaryStep(p.w); assert.equal(p.a._sick, 0, 'in barracks in peace the army keeps its health'); assert.ok(/loses men to sickness/.test(lookUp(p.w, p.gen, 'army'))); }
+  // A river line: the same attack, the same luck, across a river and across open ground; and across the ice.
+  const cross = (river, winter) => { const r = twoRoads(1); r.w.rng = 31; r.over.river = river; if (winter) while (seasonOf(r.w) !== 'winter') r.w.turn++; const atk = soldier(r.w, 'U1', r.e1.id, 150), def = soldier(r.w, 'U2', r.over.id, 100); r.w.strategic = r.w.strategic.filter(s => s.ref !== r.over.id); applyOp(r.w, r.gen, { op: 'offensive', to: r.over.id, units: [atk.id] }); const x = quarter(r.w)[0]; return { lossA: 150 - (r.w.units[atk.id]?.men ?? 0) - (r.a._sick || 0), lossD: 100 - (r.w.units[def.id]?.men ?? 0), x }; };
+  const dry = cross(0), wet = cross(.8), ice = cross(.8, true), frost = cross(0, true); assert.ok(wet.lossD < dry.lossD * .95 && wet.lossA > dry.lossA && Math.abs(ice.lossD - frost.lossD) < 1e-6, `a river costs whoever must cross it, unless it is frozen: defender lost ${wet.lossD} behind it against ${dry.lossD} without`);
+  // Bands behind the army.
+  const o = twoRoads(1), took = o.over, people = Object.values(took.pops).reduce((s, x) => s + x.n, 0), need = people / 400; soldier(o.w, 'U1', took.id, need * .5); takeProvince(o.w, took, 'U1'); o.w.turn += 3; militaryStep(o.w);
+  assert.ok(took.cut && !lineRuns(o.w, took) && /held by too few men for its people/.test(o.said()), `half the garrison a people calls for does not keep its railway running: ${need}`);
+  const beyond = took.neighbors.map(n => o.w.provinces[n]).find(p => p.controller === 'U2'), thin = fedAt(o.w, { country: 'U1', province: beyond.id }).depth; soldier(o.w, 'U1', took.id, need); militaryStep(o.w);
+  assert.ok(!took.cut && lineRuns(o.w, took) && fedAt(o.w, { country: 'U1', province: beyond.id }).depth < thin, 'with men enough in it the line runs again and the army beyond is fed again');
+  // Siege guns.
+  const siege = guns => { const s = twoRoads(1); s.over.fort = 3; soldier(s.w, 'U1', s.over.id, 120); if (guns) soldier(s.w, 'U1', s.over.id, 12).kind = 'artillery'; let n = 0; while (s.over.controller !== 'U1' && n < 12) { militaryStep(s.w); n++; } return n; };
+  const slow = siege(false), fast = siege(true); assert.ok(fast < slow && slow <= 6, `a fortress invested with siege guns falls sooner: ${fast} quarters against ${slow}`);
+});
+
+chain('A plan of campaign is a paper: drawn up in peace it lets the army open a war by timetable, and whoever holds a copy across the frontier is waiting where the blow falls; it can be handed over, which leaves a trace, or copied by a bought man on the staff; and a new plan makes an old copy worthless', () => {
+  const t = twoRoads(.6), { w, a, d } = t; delete a.techs.radio; const war = w.wars; w.wars = [];
+  assert.ok(/has no plan drawn up/.test(lookUp(w, t.gen, 'war_plan:U2')));
+  const made = applyOp(w, t.gen, { op: 'prepare_plan', target: 'U2', objective: t.over.id, text: 'Main weight through Glenara.' }); assert.ok(made.ok && /ready in two quarters/.test(made.msg), made.msg);
+  assert.ok(/being drawn up/.test(lookUp(w, t.gen, 'war_plan:U2')) && planFor(w, 'U1', 'U2') === 0); assert.equal(applyOp(w, w.characters[a.opposition], { op: 'prepare_plan', target: 'U2' }).ok, false, 'the staff\'s work is the staff\'s and the ruler\'s to order');
+  w.turn += 2; assert.ok(/lies ready, with .* as its first objective/.test(lookUp(w, t.gen, 'war_plan:U2')) && planFor(w, 'U1', 'U2') === 0, 'ready, and worth nothing until there is a war');
+  war[0].start = w.turn; w.wars = war; assert.equal(planFor(w, 'U1', 'U2'), 1);
+  // By timetable: two columns under a poor commander with no wireless, with the plan and without it.
+  const base = structuredClone(w), onTime = plan => { let n = 0; for (let i = 0; i < 40; i++) { const x = structuredClone(base); x.rng = 400 + i * 3571; if (!plan) delete x.countries.U1.plans; const u1 = soldier(x, 'U1', t.e1.id, 80), u2 = soldier(x, 'U1', t.e2.id, 60); soldier(x, 'U2', t.over.id, 60);
+      applyOp(x, x.characters[a.general], { op: 'offensive', to: t.over.id, units: [u1.id, u2.id] }); x.battles = []; militaryStep(x); if (x.battles[0]?.sides === 2) n++; } return n; };
+  const planned = onTime(true), unplanned = onTime(false); assert.ok(planned > unplanned + 5, `with a plan ready the columns keep time: ${planned} of 40 against ${unplanned}`);
+  // Handed over.
+  const leak = applyOp(w, t.gen, { op: 'leak_plan', against: 'U2', to: 'U2' }); assert.ok(leak.ok && d.stolen.U1.against === 'U2' && planFor(w, 'U1', 'U2') === -1, leak.msg);
+  assert.ok((t.gen.secrets || []).some(s => /Passed the general staff's plan/.test(s.text)) && ld(w, d).inbox.some(m => /A copy of the general staff's plan/.test(m.text) && /Main weight through Glenara/.test(m.text)) && /We hold a copy of a plan of theirs for war with us/.test(lookUp(w, w.characters[d.general], 'war_plan:U1')), 'the traitor is marked, and the other staff has the paper');
+  const atk = soldier(w, 'U1', t.e1.id, 150); soldier(w, 'U2', t.over.id, 60); applyOp(w, t.gen, { op: 'offensive', to: t.over.id, units: [atk.id] }); const b = quarter(w)[0]; assert.ok(!b.surprise && /they knew our plan of campaign/.test(t.said()) && /came where the copy of their plan in our hands said it would/.test(w.characters[d.general].inbox.map(m => m.text).join(' ')), 'an army that follows a betrayed plan surprises nobody, and both staffs know why');
+  // A new plan.
+  assert.ok(applyOp(w, t.gen, { op: 'prepare_plan', target: 'U2', text: 'Everything changed.' }).ok); assert.equal(planFor(w, 'U1', 'U2'), 0, 'the new plan is not ready'); w.turn += 2; w.wars[0].start = w.turn; assert.equal(planFor(w, 'U1', 'U2'), 1, 'and when it is, the old copy is worth nothing');
+  assert.ok(applyOp(w, t.gen, { op: 'prepare_plan', target: 'U3' }).ok && applyOp(w, t.gen, { op: 'prepare_plan', target: 'U4' }).ok && !a.plans.U2 && a.plans.U3 && a.plans.U4, 'a staff keeps two plans in order');
+  // Copied by a bought man on the staff.
+  let copied = 0, told = 0; for (let i = 0; i < 12; i++) { const x = structuredClone(base); x.rng = 70 + i * 811; delete x.countries.U2.stolen; const clerk = spawnCharacter(x, 'U1', 'official', x.countries.U1.axes, { power: 20 }); clerk.clerkOf = 'army'; clerk.handler = x.countries.U2.leader; clerk.loyalty = 10; clerk.stipend = 5; clerk.boughtAt = x.turn;
+    courtQuarter(x, applyOp); if (x.countries.U2.stolen?.U1?.against === 'U2') copied++; if (x.characters[x.countries.U2.leader].inbox.some(m => /He has copied the staff's plan for war with/.test(m.text))) told++; }
+  assert.ok(copied >= 6 && told === copied, `a clerk in foreign pay copies it for his paymaster's state: ${copied} of 12`);
+  const ref = refereePrompt(w, a, [{ actor: t.gen, decisions: ['Plan.'] }]); assert.ok(ref.includes('prepare_plan{target,objective?:province id of theirs,text?}') && ref.includes('leak_plan{against,to}'), 'the referee knows these orders');
+});
+
+chain('The sea has seasons and crews have tempers: a northern harbour freezes in winter and takes no ship or cargo until spring; the all-big-gun ship outclasses the battleship once the yards can build it; a squadron left unpaid in harbour mutinies, and one lying in the capital\'s harbour counts when the state is struck at', () => {
+  // Ice.
+  const t = twoNavies(), { w, ha } = t; w.wars = []; ha.terrain = 'tundra'; const f = t.ship('U1', ha.seas[0], 6, 'cruiser', ha), out = w.seas[ha.seas[0]].neighbors[0];
+  while (seasonOf(w) !== 'winter') w.turn++; assert.ok(frozen(w, ha) && applyOp(w, t.gen, { op: 'move_fleet', fleet: f.id, to: out }).ok); militaryStep(w); assert.ok(f.port === ha.id && /frozen in/.test(f.sailed) && /FROZEN IN until spring/.test(lookUp(w, t.gen, 'fleet')), `in winter the squadron stays where it is: ${f.sailed}`);
+  w.turn++; militaryStep(w); assert.ok(!f.port && f.sea === out && !frozen(w, ha), 'and sails with the thaw');
+  { const x = fresh(); updateRoutes(x); const k = Object.keys(x.routes).find(r => x.routes[r].mode === 'sea'); assert.ok(k); const [a1] = k.split('|'); for (const p of countryProvinces(x, a1)) if (p.port > 0) p.terrain = 'tundra'; while (seasonOf(x) !== 'winter') x.turn++; updateRoutes(x); assert.ok(x.routes[k]?.mode !== 'sea', 'a country whose harbours are all frozen does not trade by sea in winter'); x.turn++; updateRoutes(x); assert.equal(x.routes[k]?.mode, 'sea', 'and does again in spring'); }
+  // Dreadnoughts.
+  const y = twoNavies(), boss = ld(y.w, y.a); y.ha.port = 3; const no = applyOp(y.w, boss, { op: 'build_ship', province: y.ha.id, ships: 1, kind: 'dreadnought' }); assert.ok(!no.ok && /lack the technology \(All-big-gun battleships\)/.test(no.msg), no.msg);
+  y.a.techs.dreadnought = 1; assert.ok(applyOp(y.w, boss, { op: 'build_ship', province: y.ha.id, ships: 1, kind: 'dreadnought' }).ok); assert.ok(SHIP_KINDS.dreadnought.power >= SHIP_KINDS.battleship.power * 2 && /dreadnoughts \(a harbour of the third size/.test(lookUp(y.w, y.gen, 'fleet')));
+  let won = 0; for (let i = 0; i < 20; i++) { const z = twoNavies(); z.w.rng = 3 + i * 4001; z.ship('U1', z.meet, 2, 'dreadnought'); z.ship(z.e, z.meet, 3, 'battleship'); militaryStep(z.w); if (z.w.seaFights[0].winner === 'U1') won++; } assert.ok(won >= 13, `two of the new ships are a match for three of the old: ${won} of 20`);
+  // Mutiny.
+  const m = twoNavies(); m.w.wars = []; const idle = m.ship('U1', m.ha.seas[0], 8, 'battleship', m.ha); idle.morale = 36; soldier(m.w, 'U1', m.ha.id, 40); m.a.budget.military = 0; m.a.arrears = 5; const unrest = m.ha.unrest, cells = m.a.cells || 0; m.w.newsThisTurn = [];
+  for (let i = 0; i < 4 && !idle.mutiny; i++) militaryStep(m.w); assert.ok(idle.mutiny && m.w.newsThisTurn.some(x => /have mutinied/.test(x.text)) && /mutinied/.test(m.said('U1')), `unpaid crews in harbour mutiny: morale ${idle.morale}`);
+  militaryStep(m.w); assert.ok(m.ha.unrest > unrest && (m.a.cells || 0) > cells && /ITS CREWS HAVE MUTINIED/.test(lookUp(m.w, m.gen, 'fleet')), 'the port is in uproar and the underground gains');
+  applyOp(m.w, m.gen, { op: 'move_fleet', fleet: idle.id, to: m.ha.seas[0] }); militaryStep(m.w); assert.ok(idle.port === m.ha.id && /mutinied/.test(idle.sailed), 'a squadron in mutiny does not sail');
+  m.a.budget.military = .3; m.a.arrears = 0; for (let i = 0; i < 12 && idle.mutiny; i++) militaryStep(m.w); assert.ok(!idle.mutiny, 'paid again, the crews return to duty');
+  // The squadron in the capital's harbour.
+  const c = twoNavies(), cap = c.w.provinces[c.a.capital]; cap.port = Math.max(cap.port, 2); cap.seas = cap.seas.length ? cap.seas : [c.ha.seas[0]]; const flag = c.ship('U1', cap.seas[0], 10, 'battleship', cap), admiralOp = applyOp(c.w, ld(c.w, c.a), { op: 'appoint_commander', fleet: flag.id, name: 'Admiral Rosk' }); assert.ok(admiralOp.ok);
+  const plot = { leader: c.a.opposition, members: [] }, loyal = sidesOf(c.w, c.a, plot), turned = sidesOf(c.w, c.a, { leader: c.a.opposition, members: [flag.commander] }); assert.ok(loyal.pro + loyal.anti > 40 && turned.pro > loyal.pro + 8, `ten battleships in the capital's harbour weigh in a coup, and go with their admiral: ${JSON.stringify(loyal)} then ${JSON.stringify(turned)}`);
 });
 console.log('All checks passed.');

@@ -339,6 +339,10 @@ export function armySides(w, c, pl) {
     const share = 1 / (1 + Math.exp(-lean / 10));
     pro += u.men * share; anti += u.men * (1 - share);
   }
+  // A squadron lying in the capital's harbour has its guns on the palace: its crews go where their temper and their admiral take them, and a
+  // battleship there counts for some thousands of men in the streets.
+  for (const f of Object.values(w.fleets)) { if (f.country !== c.id || f.port !== c.capital) continue; const ad = w.characters[f.commander], weight = f.ships * ({ dreadnought: 7, battleship: 3.5, torpedo: .3, submarine: .6 }[f.kind] ?? 1) * 1.5;
+    const share = 1 / (1 + Math.exp(-((55 - f.morale) + (ad?.alive && inPlot.has(ad.id) ? 30 : 0) + (f.mutiny ? 20 : 0) + climate) / 10)); pro += weight * share; anti += weight * (1 - share); }
   return { pro, anti };
 }
 

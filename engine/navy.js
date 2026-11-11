@@ -5,12 +5,14 @@
 import { clamp, sum, news, between, rand } from './util.js';
 import { atWar, hasTreaty, countryProvinces, aliveCountries, makeFleet } from './world.js';
 import { hasTech } from './economy.js';
-import { fighting, commanderOf } from './military.js';
+import { fighting, commanderOf, season } from './military.js';
 import { die } from './politics.js';
 
 // power: what one hull counts for in a line of battle, a cruiser being one. speed: who can decline a fight. coal: what a hull burns in a
 // quarter at sea. cells: how far it steams in a quarter. reach: how many seas from a base it can keep station at all.
 export const SHIPS = {
+  // The all-big-gun ship with turbines: it outranges and outruns every battleship laid down before it, and makes a fleet of them yesterday's fleet.
+  dreadnought: { name: 'dreadnoughts', one: 'dreadnought', power: 7, speed: 1.4, coal: 1.3, cells: 10, reach: 14, port: 3, steel: 14, price: 11, turns: 7, tech: 'dreadnought' },
   battleship: { name: 'battleships', one: 'battleship', power: 3.5, speed: 1, coal: .9, cells: 8, reach: 14, port: 2, steel: 8, price: 6, turns: 6 },
   cruiser: { name: 'cruisers', one: 'cruiser', power: 1, speed: 2, coal: .3, cells: 12, reach: 16, port: 1, steel: 2, price: 1.5, turns: 3 },
   torpedo: { name: 'torpedo boats', one: 'torpedo boat', power: .3, speed: 2.4, coal: .06, cells: 6, reach: 3, port: 1, steel: .5, price: .4, turns: 2 },
@@ -44,9 +46,11 @@ export function strength(w, f) {
   const oil = hasTech(c, 'combustion_engine') && (c.fuelRatio ?? 1) < .5 ? .4 : 1;
   // Torpedo craft in their own waters come out at night and go home before morning; there they count for far more than their size.
   const home = kindOf(f) === 'torpedo' && d <= 2 ? 2.5 : 1;
-  return f.ships * k.power * f.quality * (f.morale / 70) * c.tech.mil * readiness(w, f, d) * oil * home * (admiral(w, f)?.skill ?? 1);
+  return f.ships * k.power * f.quality * (f.morale / 70) * c.tech.mil * readiness(w, f, d) * oil * home * (admiral(w, f)?.skill ?? 1) * (f.mutiny ? .2 : 1);
 }
-const atSea = f => !f.port && f.ships >= .5;
+const atSea = f => !f.port && f.ships >= .5 && !f.mutiny;
+// A harbour on a northern coast freezes in winter: nothing sails from it or into it until the ice breaks.
+export const iced = (w, p) => !!p && p.port > 0 && p.terrain === 'tundra' && season(w) === 'winter';
 const surface = f => kindOf(f) !== 'submarine';
 // Whether an enemy of this country commands a stretch of water: some state it is at war with has ships at sea there that outweigh its own
 // and its allies'. A neutral squadron lying in the same water commands nothing for anybody.
@@ -96,6 +100,14 @@ export function navalStep(w) {
   for (const f of fleets()) if (f.port && !friendlyPort(w, f.country, w.provinces[f.port])) { f.port = null; f.target ??= refuge(w, f)?.id ?? null; }
   for (const f of fleets()) sail(w, f);
   bunker(w);
+  // The temper of the crews settles where pay, arrears and a long war put it, as the army's does; a fight only knocks it about for a while. Crews
+  // left unpaid in harbour until their spirit is gone hoist the red flag: the squadron does not sail, the port is in uproar, and the armed
+  // underground has found friends with guns. It ends when they are paid and fed again.
+  for (const c of aliveCountries(w)) { const spirit = clamp(40 + (c.militaryFunding ?? 1) * 35 - (c.arrears || 0) * 6 - (c.warExhaustion || 0) * .3, 8, 95);
+    for (const f of fleets()) { if (f.country !== c.id) continue; f.morale = clamp(f.morale + (spirit - f.morale) * .15, 0, 100); const p = w.provinces[f.port];
+      if (!f.mutiny && p && f.morale < 30) { f.mutiny = w.turn; news(w, `${c.name}: the crews of the squadron at ${p.name} have mutinied; red flags fly from the ships.`, { kind: 'politics', countries: [c.id], province: p.id }); tell(w, c, `The crews of ${f.id} at ${p.name} have mutinied: unpaid and ill fed, they have put their officers ashore. The squadron will not sail or fight until its spirit is restored, which is a matter of pay and arrears (the military budget), and while it lasts the port is in uproar and the armed underground has friends with guns.`); }
+      else if (f.mutiny && (f.morale >= 45 || !p)) { delete f.mutiny; news(w, `${c.name}: the mutiny in the squadron${p ? ` at ${p.name}` : ''} is over.`, { kind: 'politics', countries: [c.id] }); }
+      if (f.mutiny && p) { p.unrest = clamp(p.unrest + 6, 0, 100); c.cells = clamp((c.cells || 0) + 1.5, 0, 100); } } }
   const bySea = {};
   for (const f of fleets()) if (atSea(f)) (bySea[f.sea] ||= []).push(f);
   const beaten = new Set();
@@ -146,6 +158,8 @@ export function navalStep(w) {
 function sail(w, f) {
   f.sailed = null;
   if (!f.target) return;
+  if (f.mutiny) { f.sailed = 'the crews have mutinied: it does not sail'; return; }
+  if (f.port && iced(w, w.provinces[f.port])) { f.sailed = 'its harbour is frozen in: it sails when the ice breaks'; return; }
   const port = w.provinces[f.target], goal = port ? (port.seas.includes(f.sea) ? f.sea : port.seas.find(s => seaPath(w, f.sea, s, f.country))) : f.target;
   if (!goal || !w.seas[goal] || (port && !friendlyPort(w, f.country, port))) { f.target = null; f.sailed = port ? 'that harbour is not open to it' : 'no such water'; return; }
   const path = seaPath(w, f.sea, goal, f.country);
@@ -158,6 +172,7 @@ function sail(w, f) {
   f.sea = path[i];
   if (f.sea !== goal) return;
   f.target = null;
+  if (port && iced(w, port)) { f.target = port.id; f.sailed = `the harbour of ${port.name} is closed by ice: it lies off it until the thaw`; return; }
   if (port && !meets(goal)) dock(w, f, port);
 }
 

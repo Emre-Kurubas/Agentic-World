@@ -33,7 +33,7 @@ const LABOUR_OPS = new Set(['set_wages', 'set_safety', 'lockout', 'agitate', 'ar
 const PRIVATE = ['capital_flight', 'repatriate', 'draw_institution', 'buy_bonds', 'sell_bonds', 'back_claim', 'renounce_claim', 'fund_party', 'found_paper', 'fund_paper', 'close_paper', 'forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution', 'propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'fund_plot', 'bribe', 'custom', 'propaganda', 'noop'];
 PERMISSIONS.private = new Set(PRIVATE);
 // The chief of staff directs where the army's units and squadrons stand and who commands them. Raising and disbanding troops, war and peace stay with the ruler.
-for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'appoint_commander', 'spy', 'build', 'set_posture', 'amphibious', 'offensive', 'fleet_orders', 'bombard', 'lay_mines']) PERMISSIONS.general.add(op);
+for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'appoint_commander', 'spy', 'build', 'set_posture', 'amphibious', 'offensive', 'fleet_orders', 'bombard', 'lay_mines', 'prepare_plan', 'leak_plan']) PERMISSIONS.general.add(op);
 for (const seat of ['general', 'opposition', 'oligarch']) for (const op of ['capital_flight', 'repatriate', 'draw_institution', 'buy_bonds', 'sell_bonds', 'back_claim', 'renounce_claim', 'fund_party', 'found_paper', 'fund_paper', 'close_paper', 'forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'noop', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution']) PERMISSIONS[seat].add(op);
 PERMISSIONS.exiled = new Set(PRIVATE.filter(x => !['found_party', 'execute_plot', 'gather_dossier'].includes(x)));
 for (const k of ['general', 'opposition', 'oligarch', 'private', 'exiled']) PERMISSIONS[k].add('publish_treaty');
@@ -632,7 +632,7 @@ export function applyOp(w, actor, op) {
         const note = pay(c, n * .6 * c.priceLevel, 'building'); if (note === null) return fail(NO_FUNDS); c.stock.steel -= n; c.stock.timber -= n * .5; queueProject(w, c, { kind: 'ship', province: p.id, ships: n, shipKind: 'merchant', label: `${n} merchant ships` });
         return { ok: true, msg: `${n} merchant ship${n > 1 ? 's' : ''} laid down at ${p.name}, ready in ${durationOf('ship', 'merchant')} quarters. They add ${n * MERCHANT} to the country's merchant tonnage (now ${Math.round(c.shipping ?? 0)}), which carries its coasting and foreign trade, earns freight where it is hired out, and puts troops across the sea: about ${n * MERCHANT * LIFT} thousand men more in a quarter.${note}` }; }
       const ships = Math.round(num(op.ships, 1, 30)), shipKind = has(SHIPS, op.kind) ? op.kind : 'cruiser', k = SHIPS[shipKind];
-      if (k.tech && !hasTech(c, k.tech)) return fail('Submarines need the internal combustion engine.');
+      if (k.tech && !hasTech(c, k.tech)) return fail(shipKind === 'submarine' ? 'Submarines need the internal combustion engine.' : `${k.name[0].toUpperCase()}${k.name.slice(1)} cannot be built yet: the yards lack the technology (${TECHS[k.tech]?.name ?? k.tech}).`);
       if (p.port < k.port) return fail(`A ${k.one} cannot be laid down at ${p.name}: its harbour is too small. It needs a harbour of the ${['first', 'second', 'third'][k.port - 1]} size (build a larger one, or use another port).`);
       if (c.stock.steel < ships * k.steel) return fail(`Not enough steel: ${count(ships, shipKind)} need ${Math.round(ships * k.steel * 10) / 10}, and ${Math.round(c.stock.steel)} is in store.`);
       const note = pay(c, ships * k.price * c.priceLevel, 'forces'); if (note === null) return fail(NO_FUNDS); c.stock.steel -= ships * k.steel;
@@ -692,7 +692,7 @@ export function applyOp(w, actor, op) {
       if (!atWar(w, c.id, p.controller)) return fail(`${p.name} is held by ${w.countries[p.controller]?.name}, with whom there is no war. Shelling it would be one, and war is declared by whoever governs (declare_war).`);
       if (hasTreaty(w, c.id, p.controller, 'armistice')) return fail('An armistice with them is in force: no ship fires while it lasts.');
       const off = Object.values(w.fleets).filter(f => f.country === c.id && !f.port && kindOf(f) !== 'submarine' && p.seas.includes(f.sea)), f = op.fleet ? off.find(x => x.id === op.fleet) : off.sort((a, b) => b.ships * SHIPS[kindOf(b)].power - a.ships * SHIPS[kindOf(a)].power)[0];
-      if (!f) return fail(`No surface ships of ours lie at sea off ${p.name} (${p.seas.join(' or ')}): a squadron must be sent there first (move_fleet).`);
+      if (!f) return fail(Object.values(w.fleets).some(x => x.country === c.id && p.seas.includes(x.target)) ? `Our ships are under orders for the water off ${p.name} but have not yet taken station there: they can shell it next quarter, once they lie at sea off it.` : `No surface ships of ours lie at sea off ${p.name} (${p.seas.join(' or ')}): a squadron must be sent there first (move_fleet).`);
       if (allowance(w, f, 'shell', 1, 1) <= 0) return fail(`${f.id} has fired off what it carries this quarter.`);
       return shell(w, c, f, p, { shame });
     }
@@ -774,14 +774,15 @@ export function applyOp(w, actor, op) {
     case 'recruit': {
       const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('No such province.');
       if (p.owner !== c.id) return fail('Troops cannot be raised from an occupied people.');
-      const kind = ['artillery', 'armor', 'air'].includes(op.unit_kind) ? op.unit_kind : 'infantry', hands = p.pops.peasants.n + p.pops.workers.n;
+      const kind = ['artillery', 'armor', 'air', 'cavalry'].includes(op.unit_kind) ? op.unit_kind : 'infantry', hands = p.pops.peasants.n + p.pops.workers.n;
       // A province gives so many men in a quarter, however many orders are written.
       const men = Math.round(Math.min(num(op.men, .1, 1e6), Math.max(0, Math.min(provincePop(p) * .08, hands - 2) - used(w, p, 'levy'))) * 10) / 10;
       if (men < .1) return fail(`${p.name} has given all the men it can this quarter.`);
       if (kind === 'armor' && !hasTech(c, 'armor')) return fail('You lack armor technology.'); if (kind === 'air' && !hasTech(c, 'aviation')) return fail('You lack aviation technology.');
       if (['armor', 'air'].includes(kind) && (c.stock.steel < men * .2 || c.stock.fuel < men * .05)) return fail('Not enough steel or fuel.');
       const arms = men * (kind === 'artillery' ? .12 : .05); if (c.stock.arms < arms) return fail('Not enough arms in stock.');
-      const note = pay(c, men * .4 * c.priceLevel, 'forces'); if (note === null) return fail(NO_FUNDS);
+      // A horseman costs his horse as well.
+      const note = pay(c, men * .4 * (kind === 'cavalry' ? 1.6 : 1) * c.priceLevel, 'forces'); if (note === null) return fail(NO_FUNDS);
       if (['armor', 'air'].includes(kind)) { c.stock.steel -= men * .2; c.stock.fuel -= men * .05; }
       c.stock.arms -= arms; allowance(w, p, 'levy', Infinity, men);
       for (const k of ['peasants', 'workers']) p.pops[k].n = Math.max(1, p.pops[k].n - men * p.pops[k].n / hands);
@@ -831,6 +832,26 @@ export function applyOp(w, actor, op) {
       const slow = Math.max(...went.map(u => marchQuarters(w, u, op.to) ?? 0));
       return { ok: true, msg: `${went.length} unit${went.length > 1 ? 's' : ''} (${went.map(u => u.id).join(', ')}) ordered to ${w.provinces[op.to].name}${slow ? `; the last should be there in about ${slow} quarter${slow > 1 ? 's' : ''} as the ground, the roads and the seasons stand` : ''}.${held}` }; }
     case 'set_posture': return setPosture(w, c, op);
+    // The staff draws up a plan for war with a named state. It takes two quarters, and a staff keeps two such plans in order at a time.
+    case 'prepare_plan': {
+      if (!target) return fail('Name the state the plan is against (target).');
+      const aim = has(w.provinces, op.objective) && w.provinces[op.objective].controller === target.id ? op.objective : null, old = (c.plans ||= {})[target.id], text = String(op.text ?? '').slice(0, 600);
+      if (old && old.objective === aim && !text) return fail(`The staff's plan for war with ${target.name} ${old.ready <= w.turn ? 'lies ready' : `will be ready in ${old.ready - w.turn} quarter${old.ready - w.turn > 1 ? 's' : ''}`}; nothing in it was changed.`);
+      const kept = Object.entries(c.plans).filter(([id]) => id !== target.id).sort((a, b) => a[1].since - b[1].since); let dropped = '';
+      if (kept.length >= 2) { delete c.plans[kept[0][0]]; dropped = ` The staff keeps two plans in order at a time: the plan against ${w.countries[kept[0][0]]?.name ?? kept[0][0]} is put away and is no longer current.`; }
+      c.plans[target.id] = { since: w.turn, ready: w.turn + 2, by: actor.id, objective: aim, text };
+      return { ok: true, msg: `The staff is drawing up a plan for war with ${target.name}${aim ? `, with ${w.provinces[aim].name} as its first objective` : ''}: railway timetables, concentration areas, the order of the first attacks. It is ready in two quarters. If war with them comes while it lies ready, the army opens by timetable for the first three quarters: columns in an offensive keep time far better and planned attacks go in as prepared. It is a paper: the officers and clerks of the staff handle it, and whoever comes by a copy across the frontier is waiting where the blow falls. A new plan against them makes an old copy worthless.${dropped}` };
+    }
+    // Handing the staff's plan to a foreign government. Whoever does it has done something that can be found out.
+    case 'leak_plan': {
+      const against = alive(w, op.against), plan = against && c.plans?.[against.id]; if (!plan) return fail('The staff holds no plan for war with that state.');
+      if (plan.ready > w.turn) return fail('That plan is not yet finished: there is nothing whole to hand over.');
+      const person = has(w.characters, op.to) ? w.characters[op.to] : null, to = alive(w, person?.alive ? person.country : op.to); if (!to || to.id === c.id) return fail('Name the foreign state, or the person abroad, who is to have it (to).');
+      (to.stolen ||= {})[c.id] = { against: against.id, turn: w.turn, objective: plan.objective ?? null, text: plan.text ?? '', from: actor.id };
+      leaveTrace(w, actor, `Passed the general staff's plan for war with ${against.name} to ${to.name}.`);
+      for (const ch of [w.characters[to.leader], w.characters[to.general]]) tell(w, ch, 'Intelligence', `A copy of the general staff's plan of ${c.name} for war with ${against.id === to.id ? 'us' : against.name} has reached us${person?.alive ? ` through ${person.name}` : ''}${plan.objective ? `: its first objective is ${w.provinces[plan.objective]?.name} (${plan.objective})` : ''}${plan.text ? `. It says: "${plan.text}"` : ''}. ${against.id === to.id ? 'While they follow this plan we know where they will come: their opening attacks lose their surprise and a tenth of their force. A new plan on their side would make this copy worthless.' : `It can be passed on to ${against.name}.`}`);
+      return { ok: true, msg: `A copy of the plan for war with ${against.name} is in the hands of ${to.name}. ${against.id === to.id ? 'While our army follows that plan they will be waiting for it.' : ''} It is the kind of thing that leaves a trace on whoever did it.` };
+    }
     case 'offensive': return offensive(w, c, op);
     case 'declare_war': {
       if (!target) return fail('War cannot be declared: no such country.');
@@ -1332,7 +1353,8 @@ function offensive(w, c, op) {
   const how = { probe: 'It is a reconnaissance in force: the troops feel out what stands there, break off before it costs much, come back to where they started and report what they met. It takes the place only if it finds it all but empty.', assault: 'It is an assault: beaten, the troops fall back; if they carry it the province is taken, or its fortress invested.', all_out: 'It is to be pressed regardless of loss: the attack hits harder and costs both sides more, the attacker most, and troops that are beaten stay on the field and go in again next quarter until the place falls, the order is changed or their spirit breaks.' }[manner];
   const guns = shelling ? 'The guns prepare it: a bombardment knocks in field works in the measure of the guns brought against the men behind them (the heavy pieces of artillery units count for much, the field guns that march with the infantry for little), and only heavy pieces tell against a fortress.' : 'No bombardment is ordered before it.';
   const timing = when === 0 ? 'The troops are formed up and go in this quarter.' : `They go in together ${prepare ? `no sooner than ${prepare} quarter${prepare > 1 ? 's' : ''} from now, which is time to bring up shells and study the ground${slow > prepare ? ', and not before the last column is up' : ''}` : 'when the last column is up'}${wait ? '; the staff waits up to three quarters for a column that is not up, and then goes with what it has' : '; no column waits for another'}.`;
-  const flank = cols.length > 1 ? ' Columns that come from different provinces and arrive together take the defender in flank and have more room to deploy; every column but the strongest keeps the timetable only as well as its commander can, and one that is late goes in a quarter after the rest, alone.' : '';
+  const other = to.neighbors.map(n => w.provinces[n]).filter(q => q.controller === c.id && !cols.some(col => col[0].at === q.id));
+  const flank = cols.length > 1 ? ' Columns that come from different provinces and arrive together take the defender in flank and have more room to deploy; every column but the strongest keeps the timetable only as well as its commander can, and one that is late goes in a quarter after the rest, alone.' : went.length > 1 && other.length ? ` All of them come up by the same road and strike from one side. To take the defender from two sides a unit would first have to be marched (move) to another province of ours that touches ${to.name} (${other.map(q => `${q.name} ${q.id}`).join(', ')}) and the offensive ordered with it standing there.` : '';
   return { ok: true, msg: `Offensive against ${to.name} (${to.terrain}${to.fort >= 1 ? ', a fortress' : ''}), held by ${foe.name}: ${went.length} unit${went.length > 1 ? 's' : ''}, ${menText(menAll)}, in ${cols.length} column${cols.length > 1 ? 's' : ''}: ${colText}. ${how} ${guns} ${timing}${flank} The attack will ask about ${Math.round(need * 10) / 10} of arms and ammunition a quarter of the arsenal, which holds ${Math.round(have)}${need > have ? ': not enough, and where the arsenal cannot send what the fight calls for the fire slackens' : ''}.${closedNow(w, to) ? ` ${to.name} is closed by ${season(w) === 'winter' ? 'snow' : 'mud'} this season: the attack waits for the roads.` : ''}${not.length ? ` Not part of it: ${not.join('; ')}.` : ''} What is known of the troops in ${to.name} is in the borders report; the staff reports after the fight what decided it.` };
 }
 const seaLabel = (w, id) => `${w.seas[id]?.name || 'the open sea'} (${id})`;

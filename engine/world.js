@@ -27,7 +27,8 @@ export const TECHS = {
   armor: { name: 'Armored vehicles', cost: 150, req: ['combustion_engine', 'automatic_weapons'] },
   aviation: { name: 'Aviation', cost: 170, req: ['combustion_engine'] },
   antibiotics: { name: 'Modern medicine', cost: 140, req: ['chemical_fertilizer'] },
-  rare_alloys: { name: 'Rare metal alloys', cost: 220, req: ['electricity', 'armor'] }
+  rare_alloys: { name: 'Rare metal alloys', cost: 220, req: ['electricity', 'armor'] },
+  dreadnought: { name: 'All-big-gun battleships', cost: 150, req: ['electricity'] }
 };
 
 export const word = w => { let s = ''; const n = 2 + Math.floor(rand(w) * 2); for (let i = 0; i < n; i++) s += pick(w, SYL); return s[0].toUpperCase() + s.slice(1); };

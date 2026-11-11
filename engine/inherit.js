@@ -20,6 +20,7 @@ import { distance } from './politics.js';
 import { writeChronicles, writeLives } from './chronicle.js';
 import { updateStrategic, updateRoutes, costOfCapacity, costOfPolice, settleBases } from './economy.js';
 import { outfitFleets } from './navy.js';
+import { outfitArmies } from './military.js';
 
 const R = (a, b) => [a, b];
 const ARCHETYPES = [
@@ -184,4 +185,6 @@ export function inheritStates(w) {
   settleBases(w);
   // Whatever armed underground such a state breeds is already there on the day it is handed over.
   settleUnderground(w);
+  // Last of all, so that nothing else about the day of handing over depends on it: every army has its horsemen.
+  outfitArmies(w);
 }

@@ -4,7 +4,7 @@ import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_LABEL, PLANTS, TECHS, countryProv
 import { dealsWith, tieOf } from './diplomacy.js';
 import { migrate } from './culture.js';
 import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding, USUAL_COVER, treasuryPays } from './money.js';
-import { blockadeOf, merchantStep } from './navy.js';
+import { blockadeOf, merchantStep, iced } from './navy.js';
 
 export const RECIPE = {
   steel: { iron: 1, coal: .8 }, fuel: { oil: 1.25 }, fertilizer: { phosphate: 1, coal: .2 },
@@ -22,8 +22,9 @@ function straitAt(w, sea) { return w.strategic.find(x => x.type === 'strait' && 
 function canalAdj(w, sea) { return w.canals.filter(k => k.a === sea || k.b === sea).map(k => k.a === sea ? k.b : k.a); }
 
 function seaRoute(w, a, b) {
-  const portsA = countryProvinces(w, a.id).filter(p => p.port > 0 && p.controller === a.id).flatMap(p => p.seas);
-  const targets = new Set(countryProvinces(w, b.id).filter(p => p.port > 0).flatMap(p => p.seas).filter(x => !seaLocked(w, x, a.id, b.id)));
+  // Harbours that are frozen in take no ships: a country whose only ports lie on a northern coast does not trade by sea in winter.
+  const portsA = countryProvinces(w, a.id).filter(p => p.port > 0 && p.controller === a.id && !iced(w, p)).flatMap(p => p.seas);
+  const targets = new Set(countryProvinces(w, b.id).filter(p => p.port > 0 && !iced(w, p)).flatMap(p => p.seas).filter(x => !seaLocked(w, x, a.id, b.id)));
   if (!portsA.length || !targets.size) return null;
   const prev = {}, q = [];
   for (const s of portsA) if (!(s in prev) && !seaLocked(w, s, a.id, b.id)) { prev[s] = null; q.push(s); }

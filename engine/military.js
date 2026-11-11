@@ -1,9 +1,9 @@
 import { clamp, sum, news, between, rand } from './util.js';
-import { CLASSES, atWar, hasTreaty, countryProvinces, aliveCountries, provincePop } from './world.js';
+import { CLASSES, atWar, hasTreaty, countryProvinces, aliveCountries, provincePop, makeUnit } from './world.js';
 import { hasTech } from './economy.js';
-import { die } from './politics.js';
+import { die, garrisonHold } from './politics.js';
 import { afflict, incapacitated } from './health.js';
-import { navalStep, portFalls, shipGuns, enemyHolds, SHIPS, kindOf } from './navy.js';
+import { navalStep, portFalls, shipGuns, enemyHolds, SHIPS, kindOf, iced } from './navy.js';
 
 // Two states at war fight unless an armistice between them is in force. Then the lines stand where they are: nobody attacks, nobody advances,
 // no fortress is pressed and no fleet engages, and the war is not over.
@@ -26,16 +26,16 @@ export function supplyNetwork(w, c) {
 }
 // A railway carries an army's bread and shells. A line that has just changed hands is no use to its new holder for a while: the bridges are
 // down, the engines are gone, and the track has to be relaid before a train runs on it.
-export const railWorks = (w, p) => p.rail > 0 && !((p.railOut ?? -1) > w.turn);
+export const railWorks = (w, p) => p.rail > 0 && !((p.railOut ?? -1) > w.turn) && !p.cut;
 // Where an army is fed from. The heads of its supply are the capital, every province joined to the capital by working rails through ground the
 // country can use, and its open harbours with whatever rails run inland from them. From a head the wagons go on by road, and horses eat what
 // they pull: each province costs what its ground and its roads cost a column, half that on the country's own soil, where there are depots and
 // a population that sells. An army within a march of a head wants for nothing; further out it gets less of everything, down to three fifths.
 const HAUL = { plains: 1, desert: 1.3, hills: 1.3, forest: 1.3, tundra: 1.5, marsh: 1.6, mountain: 2 };
-const haul = (c, p) => (HAUL[p.terrain] ?? 1.3) * roadFactor(p) * (p.owner === c.id && p.controller === c.id ? .5 : 1);
+const haul = (c, p) => (HAUL[p.terrain] ?? 1.3) * roadFactor(p) * (p.owner === c.id && p.controller === c.id ? .5 : 1) * (p.cut ? 1.5 : 1);
 export function supplyLines(w, c) {
   const net = supplyNetwork(w, c), depth = {}, head = {}, q = [];
-  const open = p => p.port > 0 && p.controller === c.id && p.seas.some(s => !enemyHolds(w, s, c.id));
+  const open = p => p.port > 0 && p.controller === c.id && !iced(w, p) && p.seas.some(s => !enemyHolds(w, s, c.id));
   const seed = id => { if (net.has(id) && !(id in depth)) { depth[id] = 0; head[id] = id; q.push(id); } };
   if (c.capital) seed(c.capital);
   // What comes by sea comes from home: a harbour on a far shore is a head only while some harbour of the country's own is open too.
@@ -74,7 +74,7 @@ export const TERRAIN_DEF = { plains: 1.05, hills: 1.35, forest: 1.25, mountain: 
 // How many thousand men can come to grips in one province. Beyond that the rest wait their turn, so numbers count for less in a mountain pass than on a plain.
 const FRONTAGE = { plains: 160, hills: 110, forest: 100, mountain: 60, marsh: 70, desert: 130, tundra: 100 };
 const crowding = (men, terrain, widen = 1) => { const room = (FRONTAGE[terrain] ?? 120) * widen; return men <= room ? 1 : (room + (men - room) * .4) / men; };
-const KIND = { infantry: 1, artillery: 1.7, armor: 3.2, air: 2.6 };
+const KIND = { infantry: 1, artillery: 1.7, armor: 3.2, air: 2.6, cavalry: .9 };
 
 export function pathStep(w, from, to, country) {
   if (from === to) return null;
@@ -125,7 +125,8 @@ const force = (w, u, def = 1, fire = 1, breach = 0) => {
   // The machine gun is a weapon of the man who waits: it adds a little to an advance and a great deal to a held line.
   const auto = hasTech(c, 'automatic_weapons') && u.kind === 'infantry' ? (standing ? 1.3 : 1.08) : 1;
   const motorized = ['armor', 'air'].includes(u.kind), fuel = motorized ? (c.fuelRatio ?? 1) >= .6 ? 1 : .35 : 1;
-  const terrainApplies = u.kind === 'air' ? 1 : (u.kind === 'armor' && ['mountain', 'marsh', 'forest'].includes(p.terrain) ? .55 : 1);
+  // Cavalry is for seeing, screening and riding down a beaten enemy: in a firefight it counts for less than the same men on foot, and in close country for little.
+  const terrainApplies = u.kind === 'air' ? 1 : u.kind === 'cavalry' ? (['mountain', 'marsh', 'forest'].includes(p.terrain) ? .5 : .8) : (u.kind === 'armor' && ['mountain', 'marsh', 'forest'].includes(p.terrain) ? .55 : 1);
   return u.men * u.equip * u.quality * c.tech.mil * (u.morale / 70) * supply * def * (KIND[u.kind] || 1) * auto * fuel * terrainApplies * dug * skill;
 };
 
@@ -144,13 +145,17 @@ export const marchCost = (from, to, w) => (GROUND[to.terrain] ?? 1.2) * roadFact
 const slowWord = (from, to, w) => [to.terrain !== 'plains' ? `the ${to.terrain === 'hills' ? 'hills' : to.terrain === 'mountain' ? 'mountains' : to.terrain} of ${to.name}` : '', roadFactor(to) > 1.05 ? `the poor roads of ${to.name}` : '', from.rail && to.rail && w && !(railWorks(w, from) && railWorks(w, to)) ? 'the railway there is wrecked and not yet relaid' : !(from.rail && to.rail) ? 'no railway through' : ''].filter(Boolean).join(', ') || `the distance to ${to.name}`;
 // About how many quarters a march will take as the roads and the seasons stand, for whoever gives the order. Enemy ground is one province a quarter.
 export function marchQuarters(w, u, to) {
-  const c = w.countries[u.country], motor = ['armor', 'air'].includes(u.kind) && (c?.fuelRatio ?? 1) >= .6, per = motor ? 4 : 3; let cur = u.province, left = per, q = 1, n = 0;
+  const c = w.countries[u.country], motor = ['armor', 'air'].includes(u.kind) && (c?.fuelRatio ?? 1) >= .6, per = motor || u.kind === 'cavalry' ? 4 : 3; let cur = u.province, left = per, q = 1, n = 0;
   while (cur !== to && n++ < 80) { const step = pathStep(w, cur, to, u.country); if (!step) return null; const from = w.provinces[cur], nx = w.provinces[step], hostile = fighting(w, u.country, nx.controller), cost = hostile ? (motor ? 2 : 3) : marchCost(from, nx, w);
     if (hostile ? left <= 1e-9 : left < cost - 1e-9) { q++; left = per; } left = Math.max(0, left - cost); cur = step; }
   return cur === to ? q : null;
 }
 
 export function militaryStep(w) {
+  // Behind an invading army the country it has overrun is not quiet. A province of the enemy's held by too few men for its people is a province
+  // where bands cut the railway and waylay the wagons: nothing passes it by rail, and by road only slowly.
+  for (const p of Object.values(w.provinces)) { const was = !!p.cut, pop = provincePop(p), thin = p.controller !== p.owner && w.countries[p.owner]?.alive && atWar(w, p.owner, p.controller) && garrisonHold(sum(Object.values(w.units).filter(u => u.province === p.id && u.country === p.controller && !u.barracks), u => u.men), pop) < 1;
+    if (thin) { p.cut = true; if (!was && w.countries[p.controller]?.alive) mark(w, w.countries[p.controller], `Behind the army, ${p.name} is held by too few men for its people: bands cut the railway and waylay the wagons there, and what passes through it to the front passes slowly. About ${Math.max(1, Math.ceil(pop / 400))} thousand men stationed in it would keep it quiet.`); } else delete p.cut; }
   lines = {}; supplied = Object.fromEntries(aliveCountries(w).map(c => [c.id, linesOf(w, c.id).net]));
   for (const c of aliveCountries(w)) c._shot = 0;
   if (season(w) === 'winter') for (const u of Object.values(w.units)) { const p = w.provinces[u.province]; if (!p) continue; const hard = WINTER[p.terrain] ? .05 : p.controller !== u.country && !railWorks(w, p) ? .03 : 0; if (hard) { u.men = Math.max(.05, u.men * (1 - hard)); u.morale = clamp(u.morale - (hard > .04 ? 6 : 4), 5, 100); } }
@@ -169,7 +174,7 @@ export function militaryStep(w) {
     // forest, marsh or mountain or on bad roads, and twice as many where the railway runs from one to the next. Into ground the enemy holds
     // it advances one province and no more that quarter (two with engines and fuel).
     const c = w.countries[u.country], motor = ['armor', 'air'].includes(u.kind) && (c.fuelRatio ?? 1) >= .6;
-    let left = motor ? 4 : 3;
+    let left = motor || u.kind === 'cavalry' ? 4 : 3;
     while (u.target && left > 1e-9) {
       const step = pathStep(w, u.province, u.target, u.country);
       if (!step || !canEnter(w, u.country, step)) { went.held = step ? `${w.provinces[step].name} is closed to it: no war, alliance or right of passage opens that road` : 'no road leads there'; u.target = null; break; }
@@ -210,7 +215,8 @@ export function militaryStep(w) {
     if ((p.fort || 0) >= 1) {
       p.siege = p.siege?.by === by ? { by, turns: p.siege.turns + 1 } : { by, turns: 1 };
       if (p.siege.turns === 1) news(w, `${w.countries[by].name} laid siege to the fortress at ${p.name}.`, { kind: 'war', countries: [by, p.controller] });
-      p.fort = Math.max(0, p.fort - .12);
+      // A fortress is worn down by investment, and far faster under siege guns.
+      p.fort = Math.max(0, p.fort - .12 - Math.min(.3, sum(occ.filter(u => u.country === by && u.kind === 'artillery'), u => u.men) / 40));
       if (p.siege.turns < Math.ceil(p.fort) + 1) continue;
     }
     delete p.siege; p.fort = Math.max(0, (p.fort || 0) - 1);
@@ -253,7 +259,7 @@ export function upkeepCost(w, c) {
   const forts = sum(countryProvinces(w, c.id), p => (p.fort || 0) * 3 + (p.battery || 0) * 2);
   return (men * .8 + ships * 3 + forts * 5) * c.priceLevel;
 }
-const UPKEEP = { infantry: 1, artillery: 1.5, armor: 3, air: 3 };
+const UPKEEP = { infantry: 1, artillery: 1.5, armor: 3, air: 3, cavalry: 1.4 };
 
 function upkeep(w, c) {
   const us = Object.values(w.units).filter(u => u.country === c.id);
@@ -272,9 +278,14 @@ function upkeep(w, c) {
   c.stock.arms = Math.max(0, c.stock.arms - consume);
   // Pay, arrears and a long war decide where the troops' spirit settles; a battle only knocks it about for a while.
   const spirit = clamp(40 + funded * 35 - c.arrears * 6 - c.warExhaustion * .3, 8, 95);
-  let gone = 0;
+  let gone = 0; const field = inWar && inTheField(w, c.id); c._sick = 0;
   for (const u of us) {
     u.morale = clamp(u.morale + (spirit - u.morale) * .2, 0, 100);
+    // Drill brings raw men up to the army's standard in a couple of years, and the edge of veterans wears off as they go home.
+    u.quality += (1 - u.quality) * .08;
+    // An army in the field loses men to sickness every quarter it stays there: most in marsh and in summer heat, in siege lines and on foreign
+    // soil; a medical service that knows what it is doing loses half as many.
+    if (field) { const p = w.provinces[u.province], sick = u.men * (.004 + (p.terrain === 'marsh' ? .012 : 0) + (season(w) === 'summer' && ['marsh', 'desert'].includes(p.terrain) ? .006 : 0) + (p.siege ? .008 : 0) + (p.controller !== u.country ? .004 : 0)) * (hasTech(c, 'antibiotics') ? .5 : 1); u.men -= sick; c._sick += sick; }
     // Soldiers who are not paid go home: the army shrinks toward what the budget can keep.
     if (funded < .85) { const left = u.men * clamp((.85 - funded) * .35, 0, .3); u.men -= left; gone += left; }
     u.equip = clamp(u.equip + (c.stock.arms > 0 ? .02 : -.05) * (funded > .6 ? 1 : .3), .2, 1.4);
@@ -284,6 +295,7 @@ function upkeep(w, c) {
     u.bond ??= u.loyalty - pull;
     u.loyalty = clamp(u.loyalty + (clamp(u.bond + pull, 0, 100) - u.loyalty) * .12, 0, 100);
   }
+  if (c._sick > 0) c.warExhaustion = clamp(c.warExhaustion + c._sick / Math.max(c._pop || 10000, 1) * 2500, 0, 100);
   // And home is where they arrive: back among the working people of their own provinces, not out of the world.
   if (gone > 0) { const provs = countryProvinces(w, c.id).filter(p => p.owner === c.id), pop = sum(provs, provincePop) || 1; for (const p of provs) p.pops.workers.n += gone * provincePop(p) / pop; }
 }
@@ -298,10 +310,13 @@ export const MANNERS = ['assault', 'probe', 'all_out'];
 function launch(w) {
   const groups = {}, engaged = u => Object.values(w.units).some(x => x.province === u.province && fighting(w, x.country, u.country));
   for (const u of Object.values(w.units)) {
-    if (!u.attack || u.province === u.attack.to) continue;
+    if (!u.attack) continue;
     const to = w.provinces[u.attack.to];
     // An objective that is no longer the enemy's needs no attack, and a unit sent elsewhere since is no longer part of one: the order lapses.
-    if (!to || !fighting(w, u.country, to.controller) || u.target !== to.id) { delete u.attack; continue; }
+    // A unit already inside its objective is still fighting for it.
+    if (!to || !fighting(w, u.country, to.controller)) { delete u.attack; continue; }
+    if (u.province === to.id) continue;
+    if (u.target !== to.id) { delete u.attack; continue; }
     (groups[`${u.country}|${to.id}`] ||= []).push(u);
   }
   for (const us of Object.values(groups)) {
@@ -310,19 +325,41 @@ function launch(w) {
     // Time spent formed up beside the objective is time to bring shells forward, register the guns and study the ground.
     for (const u of up) u.attack.ready = (u.attack.ready ?? -1) + 1;
     if (!up.length) continue;
-    if (w.turn < Math.max(...us.map(u => u.attack.start ?? 0))) { hold(up, 'it has formed up for the attack, which is set for a later quarter'); continue; }
-    if (closedNow(w, to)) { hold(up, `${season(w) === 'winter' ? 'snow' : 'mud'} closes ${to.name} this season: the attack waits`); continue; }
-    if (up.length < us.length && us.some(u => u.attack.wait !== false) && w.turn < Math.min(...us.map(u => u.attack.since ?? w.turn)) + PATIENCE) { hold(up, 'it has formed up for the attack and waits for the columns that are not yet up'); continue; }
+    // What the other staff sees of it. Troops massing beside a frontier are seen sooner or later, the sooner the better that staff's knowledge of
+    // its neighbour, with cavalry of its own out in front, or with aircraft; a screen of the attacker's own horse hides them longer. An attack that
+    // goes in before it has been seen falls as a surprise.
+    const foe = w.countries[to.controller], horse = (id, ps) => Object.values(w.units).some(x => x.country === id && x.kind === 'cavalry' && ps.includes(x.province));
+    const sight = clamp(.3 + (foe?.intel?.[us[0].country] ?? 15) / 150 + (horse(foe?.id, [to.id, ...to.neighbors]) ? .2 : 0) + (foe && hasTech(foe, 'aviation') ? .15 : 0) - (horse(us[0].country, up.map(u => u.province)) ? .15 : 0), .1, .95);
+    const spot = k => { if (us.some(u => u.attack.seen != null)) return true; if (!foe?.alive || rand(w) >= sight * k) return false; for (const u of us) u.attack.seen = w.turn;
+      mark(w, foe, `Enemy troops are forming up opposite ${to.name}: about ${about(sum(up, u => u.men))} thousand in ${[...new Set(up.map(u => w.provinces[u.province].name))].join(' and ')}. The staff takes it for an attack in preparation.`); return true; };
+    if (w.turn < Math.max(...us.map(u => u.attack.start ?? 0))) { hold(up, 'it has formed up for the attack, which is set for a later quarter'); spot(1); continue; }
+    if (closedNow(w, to)) { hold(up, `${season(w) === 'winter' ? 'snow' : 'mud'} closes ${to.name} this season: the attack waits`); spot(1); continue; }
+    if (up.length < us.length && us.some(u => u.attack.wait !== false) && w.turn < Math.min(...us.map(u => u.attack.since ?? w.turn)) + PATIENCE) { hold(up, 'it has formed up for the attack and waits for the columns that are not yet up'); spot(1); continue; }
+    const seen = spot(.6);
     const cols = Object.values(up.reduce((a, u) => ((a[u.province] ||= []).push(u), a), {})).sort((a, b) => sum(b, u => u.men) - sum(a, u => u.men));
     cols.forEach((col, i) => {
       const lead = commanderOf(w, [...col].sort((a, b) => b.men - a.men)[0]), c = w.countries[col[0].country];
-      const late = i > 0 && !col.some(u => u.attack.late != null) && rand(w) > clamp(.45 + ((lead?.skill ?? 1) - .75) * .7 + (hasTech(c, 'radio') ? .15 : 0), .2, .97);
+      const late = i > 0 && !col.some(u => u.attack.late != null) && rand(w) > clamp(.45 + ((lead?.skill ?? 1) - .75) * .7 + (hasTech(c, 'radio') ? .15 : 0) + (planEdge(w, c.id, to.controller) > 0 ? .2 : 0), .2, 1);
       if (late) { for (const u of col) { u.attack.late = w.turn; u.attack.wait = false; } hold(col, `it was not up in time for the attack on ${to.name}${lead ? ` (${lead.name} commands the column)` : ''} and goes in next quarter`); return; }
-      for (const u of col) { u.from = u.province; u.province = to.id; u.target = null; u.dug = 0; u.attack.go = w.turn; u.march = { turn: w.turn, from: u.from, to: to.id, provinces: 1, held: '', reached: to.id }; }
+      for (const u of col) { u.from = u.province; u.province = to.id; u.target = null; u.dug = 0; u.attack.go = w.turn; u.attack.surprise = !seen; u.march = { turn: w.turn, from: u.from, to: to.id, provinces: 1, held: '', reached: to.id }; }
     });
   }
 }
 
+const holds0 = (w, p, owners) => owners.includes(p.controller);
+// An army handed over with a state has its cavalry: about one man in twenty rides, in a body of its own beside the largest formation.
+export function outfitArmies(w) {
+  for (const c of aliveCountries(w)) { const big = Object.values(w.units).filter(u => u.country === c.id && u.kind === 'infantry').sort((a, b) => b.men - a.men)[0]; if (!big || big.men < 40) continue;
+    const n = Math.round(big.men * .05), h = makeUnit(w, c.id, big.province, n, big.quality, big.loyalty, 'cavalry'); h.morale = big.morale; h.equip = big.equip; big.men -= n; }
+}
+// A plan of campaign drawn up in peace. A staff that has one ready against the enemy it now fights opens the war by a timetable: for the first
+// three quarters its columns keep time better and its attacks go in as prepared. A plan is a paper, and a paper can be copied: if the enemy
+// holds the plan that is being carried out against him, he is waiting where the blow falls.
+export function planEdge(w, id, foe) {
+  const c = w.countries[id], plan = c?.plans?.[foe], war = w.wars.find(x => x.active && ((x.a.includes(id) && x.b.includes(foe)) || (x.b.includes(id) && x.a.includes(foe))));
+  if (!plan || plan.ready > w.turn || !war || w.turn - Math.max(war.start, plan.ready) >= 3) return 0;
+  const copy = w.countries[foe]?.stolen?.[id]; return copy && copy.against === foe && copy.turn >= plan.since ? -1 : 1;
+}
 // What a quarter's fighting burns, in the arsenal's own measure, for every thousand men who come into action: a reconnaissance little, an
 // assault a great deal, an attack pressed regardless of loss more still; men who hold a line fire less than men who must carry one; guns fire
 // three times what rifles do, and a bombardment ordered before the attack is paid for on top of all of it.
@@ -347,7 +384,9 @@ function resolve(w, pid, us) {
   const defCountry = defSide.includes(p.controller) ? p.controller : defSide[0];
   const D = us.filter(u => defSide.includes(u.country)), A = us.filter(u => atkSide.includes(u.country));
   const pass = w.strategic.find(s => s.ref === pid && s.type === 'pass'), bridge = !pass && w.strategic.find(s => s.ref === pid && s.type === 'bridge'), point = pass ? 1.5 : bridge ? 1.25 : 1;
-  const natural = TERRAIN_DEF[p.terrain] * (1 + p.infra * .08) * point, built = holds ? 1 + (p.fort || 0) * .3 + (p.trench || 0) * .15 : 1, men = xs => sum(xs, u => u.men);
+  // A river is a line to hold: whoever must cross it under fire pays for it, except when it is frozen.
+  const river = holds0(w, p, owners) && !bridge && !pass && (p.river || 0) >= .3 && season(w) !== 'winter' ? 1 + Math.min(.2, p.river * .25) : 1;
+  const natural = TERRAIN_DEF[p.terrain] * (1 + p.infra * .08) * point * river, built = holds ? 1 + (p.fort || 0) * .3 + (p.trench || 0) * .15 : 1, men = xs => sum(xs, u => u.men);
   // Troops told to fall back if pressed do not wait to be beaten by clearly stronger numbers: they give up the province and go back one toward
   // their own country, leaving stragglers and gear on the road. Whoever of their side was told nothing of the kind stays and fights without them.
   const weigh = (xs, def) => sum(xs, u => force(w, u, def)) * crowding(men(xs), p.terrain);
@@ -376,7 +415,9 @@ function resolve(w, pid, us) {
   const weight = sum(A, guns), shelled = weight > 0 ? sum(A, u => guns(u) * fire[u.country]) / weight : 0, heavy = sum(A.filter(u => u.kind === 'artillery'), guns);
   const breach = weight > 0 ? clamp(weight / Math.max(menD * .15, 1e-9), 0, 1) * .6 * shelled : 0, breachFort = heavy > 0 && p.fort >= 1 ? clamp(heavy / (8 * Math.ceil(p.fort)), 0, 1) * .5 * shelled : 0;
   const works = holds ? 1 + (p.fort || 0) * .3 * (1 - breachFort) + (p.trench || 0) * .15 * (1 - breach) : 1, terrain = natural * works;
-  const plan = (1 + .07 * ready) * (manner === 'all_out' ? 1.1 : 1) * (1 + .1 * flank), luckD = between(w, .85, 1.15), luckA = between(w, .85, 1.15);
+  // An army that follows a plan the enemy holds surprises nobody.
+  const paper = planned.length ? planEdge(w, atkSide[0], defCountry) : 0, surprise = paper >= 0 && planned.length > 0 && men(planned) >= menA * .5 && planned.every(u => u.attack.surprise);
+  const plan = (1 + .07 * ready) * (manner === 'all_out' ? 1.1 : 1) * (1 + .1 * flank) * (surprise && paper >= 0 ? 1.12 : 1) * (paper > 0 ? 1.08 : paper < 0 ? .9 : 1), luckD = between(w, .85, 1.15), luckA = between(w, .85, 1.15);
   // On a coast the ships' guns reach the field for whichever side has ships off it in water that is theirs.
   const gunsA = shipGuns(w, p, atkSide, menD), gunsD = shipGuns(w, p, defSide, menA);
   const fD = sum(D, u => force(w, u, terrain, fire[u.country], breach)) * crowdD * gunsD * luckD;
@@ -417,6 +458,8 @@ function resolve(w, pid, us) {
   const loser = probe ? [] : atkWins ? D : A, victor = w.countries[atkWins ? atkSide[0] : defCountry], odds = (atkWins ? fA : fD) / Math.max(atkWins ? fD : fA, 1e-9);
   // A beaten force that was badly outmatched leaves men in the victor's hands as it goes, more of them when it was taken from two sides; one
   // with no road home leaves far more. Prisoners are held by the victor until a peace sends them home.
+  // In open country a victor with horsemen rides down what runs.
+  const winners = atkWins ? A : D, ridden = !probe && ['plains', 'desert', 'hills'].includes(p.terrain) && men(winners.filter(u => u.kind === 'cavalry')) >= men(winners) * .04 ? .06 : 0;
   let taken = 0, stood = 0; const went = {};
   for (const u of loser) {
     // Not one step back, or an attack that is to be pressed whatever it costs: beaten but not broken, the unit is still on the field next quarter,
@@ -425,30 +468,33 @@ function resolve(w, pid, us) {
     if (pressing) { u.morale = clamp(u.morale - lossA * 20, 0, 100); if (lossA > .1) u.loyalty = clamp(u.loyalty - 2, 0, 100); }
     if ((u.posture === 'no_retreat' || pressing) && u.morale > 15 && u.men >= .2) { stood += u.men; continue; }
     const back = wayBack(w, u, pid);
-    const caught = u.men * (back ? clamp((odds - 2) * .1 + (atkWins ? flank * .06 : 0), 0, .36) : .4);
+    const caught = u.men * (back ? clamp((odds - 2) * .1 + (atkWins ? flank * .06 : 0) + ridden, 0, .4) : .4);
     if (back) { u.province = back; u.target = null; (went[u.country] ||= new Set()).add(w.provinces[back].name); } else u.morale *= .4;
     if (caught > 0) { u.men -= caught; taken += caught; const held = victor.captives ||= {}; held[u.country] = (held[u.country] || 0) + caught; const home = w.countries[u.country]; home.warExhaustion = clamp(home.warExhaustion + caught / Math.max(home._pop || 10000, 1) * 2500, 0, 100); }
   }
   // A reconnaissance goes back where it came from with what it has learned.
   if (probe) for (const u of A) { const back = u.from && w.provinces[u.from] && mayStand(w, u.country, u.from) ? u.from : wayBack(w, u, pid); if (back) { u.province = back; (went[u.country] ||= new Set()).add(w.provinces[back].name); } u.target = null; }
+  // Men who have been under fire and come through it are better soldiers; a unit shot to pieces has lost the men who made it one.
+  if (!probe) for (const [xs, loss] of [[D, lossD], [A, lossA]]) for (const u of xs) u.quality = clamp(u.quality + (loss < .3 ? .03 : -.03), .6, 1.35);
+  for (const u of A) if (u.attack) u.attack.surprise = false;
   const late = Object.values(w.units).filter(u => u.attack?.to === pid && u.attack.late === w.turn && atkSide.includes(u.country));
   for (const u of A) if (u.attack?.to === pid && !(press && !atkWins && u.province === pid)) delete u.attack;
   const head = probe ? `Reconnaissance in force at ${p.name}: ${w.countries[atkSide[0]].name} felt out the defences and drew off.` : `Battle of ${p.name}: ${atkWins ? w.countries[atkSide[0]].name : w.countries[defCountry].name} prevailed.`;
   news(w, `${head} Losses: attacker ${Math.round(da)}k, defender ${Math.round(dd)}k.${taken >= .5 ? ` About ${Math.round(taken)} thousand of the beaten side were taken prisoner.` : ''}${stood >= .5 ? ` About ${Math.round(stood)} thousand of the beaten side did not leave the field.` : ''}`, { kind: 'war', countries: [...atkSide, ...defSide], province: pid });
   // Each staff's own account of the day, for whoever gave the orders: its own figures as counted, the enemy's as estimated, and what told.
-  const ground = `the ${p.terrain === 'hills' ? 'hills' : p.terrain === 'mountain' ? 'mountains' : p.terrain} of ${p.name}${pass ? ', a pass' : bridge ? ', a river crossing' : ''}`;
+  const ground = `the ${p.terrain === 'hills' ? 'hills' : p.terrain === 'mountain' ? 'mountains' : p.terrain} of ${p.name}${pass ? ', a pass' : bridge ? ', a river crossing' : river > 1 ? ', behind its river' : ''}`;
   const worksText = [p.fort >= 1 && holds ? `a fortress of the ${['first', 'second', 'third'][Math.ceil(p.fort) - 1] ?? 'third'} order` : '', p.trench && holds ? `${p.trench > 1 ? 'two lines' : 'a line'} of prepared field works` : '', deepest >= 1 ? `trenches the troops had dug themselves over ${deepest >= 4 ? 'many months' : deepest >= 2 ? 'some months' : 'a few weeks'}` : ''].filter(Boolean).join(', ');
   const because = (key, us, mine, theirs) => {
     const lostIt = (told[key] > 1) !== (us === 'A'), pc = v => Math.round(v * 100);
     if (key === 'numbers') { const crowd = us === 'A' ? crowdA : crowdD, n = us === 'A' ? wasA : wasD; return lostIt ? (crowd < .9 && n > (us === 'A' ? wasD : wasA) ? `the ground let only about ${about(n * crowd)} thousand of our ${about(n)} thousand come into action at once` : 'they had more men in action than we did') : 'we had more men in action than they did'; }
-    if (key === 'ground') return p.terrain === 'plains' && !pass && !bridge ? (us === 'A' ? 'they stood on the defensive and we had to come at them over open ground' : 'we stood on the defensive and they had to come at us over open ground') : us === 'A' ? `${ground} fight for whoever holds them` : `${ground} fought for us`;
+    if (key === 'ground') return p.terrain === 'plains' && !pass && !bridge && river === 1 ? (us === 'A' ? 'they stood on the defensive and we had to come at them over open ground' : 'we stood on the defensive and they had to come at us over open ground') : us === 'A' ? `${ground} fight for whoever holds them` : `${ground} fought for us`;
     if (key === 'works') return us === 'A' ? `they fought from works (${worksText || 'what they had dug'})${weight > 0 ? `; our bombardment knocked in about ${pc(breach)} in the hundred of the field works${p.fort >= 1 && holds ? ` and ${pc(breachFort)} of the fortress` : ''}` : ', and we went in without a bombardment'}` : `we fought from our works (${worksText || 'what we had dug'})${weight > 0 ? `, though their guns knocked in about ${pc(breach)} in the hundred of the field works${p.fort >= 1 && holds ? ` and ${pc(breachFort)} of the fortress` : ''}` : ''}`;
     if (key === 'supply') { const s = supplyOf(w, far(lostIt ? mine : theirs)); return lostIt ? (s.linked ? `our troops were ${Math.round(s.depth * 10) / 10} marches of wagon road from their supply head at ${w.provinces[s.head]?.name} and short of everything` : 'our troops were cut off from supply altogether') : s.linked ? 'their troops were far from their railhead and ill supplied' : 'their troops were cut off from their supplies'; }
     if (key === 'shells') { const id = mine[0].country; return lostIt ? `the arsenal could send only ${pc(fire[id] ?? 1)} in the hundred of the cartridges and shells the fight called for` : 'their fire slackened as the fight went on: they are short of shells'; }
     if (key === 'command') return lostIt ? 'they were the better led' : 'we were the better led';
     if (key === 'spirit') return lostIt ? 'our men went in with less heart than theirs' : 'our men were in better heart than theirs';
     if (key === 'arms') return lostIt ? 'they were the better armed and trained' : 'we were the better armed and trained';
-    if (key === 'plan') return us === 'A' ? [flank ? `our columns came at them from ${flank + 1} sides together` : '', ready >= .5 ? 'the attack had been prepared' : '', press ? 'the attack was pressed regardless of loss' : ''].filter(Boolean).join(', and ') : [flank ? `they came at us from ${flank + 1} sides together` : '', ready >= .5 ? 'their attack had plainly been long prepared' : '', press ? 'they pressed it regardless of loss' : ''].filter(Boolean).join(', and ');
+    if (key === 'plan') return us === 'A' ? [flank ? `our columns came at them from ${flank + 1} sides together` : '', ready >= .5 ? 'the attack had been prepared' : '', surprise && paper >= 0 ? 'it fell on them as a surprise' : '', paper > 0 ? 'the opening moves followed a plan long prepared' : paper < 0 ? 'they knew our plan of campaign and were waiting where we came' : '', press ? 'the attack was pressed regardless of loss' : ''].filter(Boolean).join(', and ') : [flank ? `they came at us from ${flank + 1} sides together` : '', ready >= .5 ? 'their attack had plainly been long prepared' : '', surprise && paper >= 0 ? 'it took us by surprise: nothing had been seen of their preparations' : '', paper > 0 ? 'they opened by a plan long prepared' : paper < 0 ? 'we held their plan of campaign and were waiting where they came' : '', press ? 'they pressed it regardless of loss' : ''].filter(Boolean).join(', and ');
     if (key === 'fleet') return lostIt ? 'their ships\' guns reached the field from the sea' : 'our ships\' guns reached the field from the sea';
     return 'for the rest it could have gone either way';
   };
@@ -461,10 +507,10 @@ function resolve(w, pid, us) {
       const c = w.countries[id], here = Object.values(w.units).filter(u => u.country === id && mine.includes(u)), stayed = here.some(u => u.province === pid), to = [...(went[id] || [])].join(', ');
       const found = probe && us === 'A' ? ` The reconnaissance puts them at about ${about(their.was)} thousand${worksText ? `, in ${worksText}` : ', with no works to speak of'}${(fire[theirs[0].country] ?? 1) < .7 ? '; their guns answered thinly, as if short of shells' : ''}.` : '';
       const lateText = us === 'A' && late.some(u => u.country === id) ? ` The column of ${[...new Set(late.filter(u => u.country === id).map(u => u.id))].join(', ')} was not up in time and took no part; it goes in next quarter unless ordered otherwise.` : '';
-      mark(w, c, `${probe ? (us === 'A' ? `Our reconnaissance in force at ${p.name}` : `An enemy reconnaissance in force against ${p.name} was beaten off`) : us === 'A' ? `Our attack on ${p.name} ${won ? 'carried the place' : 'failed'}` : `${p.name} was attacked and ${won ? 'held' : 'lost'}`}. We had ${about(my.was)} thousand men there and lost ${Math.round(my.dead * 10) / 10} thousand${!won && taken >= .5 && !probe ? `, besides about ${about(taken)} thousand taken prisoner` : ''}; they had about ${about(their.was)} thousand and their loss is put at about ${about(their.dead)} thousand${won && taken >= .5 ? `, besides about ${about(taken)} thousand prisoners in our hands` : ''}.${found}${reasons.length ? ` What ${probe ? 'the fighting showed' : won ? 'told for us' : 'told against us'}: ${reasons.join('; ')}.` : ''}${lateText} The fight used ${Math.round((shot[id] || 0) * 10) / 10} of arms and ammunition; ${Math.round(c.stock.arms || 0)} remain in the arsenal.${to ? ` Our troops ${probe ? 'are back at' : 'fell back to'} ${to}.` : ''}${stayed && !won && !probe ? ` Our troops are still on the field at ${p.name}${us === 'A' && press ? ' under the order to press the attack, and go in again next quarter unless that order is changed' : ', under the order not to give a step'}.` : ''}`);
+      mark(w, c, `${probe ? (us === 'A' ? `Our reconnaissance in force at ${p.name}` : `An enemy reconnaissance in force against ${p.name} was beaten off`) : us === 'A' ? `Our attack on ${p.name} ${won ? 'carried the place' : 'failed'}` : `${p.name} was attacked and ${won ? 'held' : 'lost'}`}. We had ${about(my.was)} thousand men there and lost ${Math.round(my.dead * 10) / 10} thousand${!won && taken >= .5 && !probe ? `, besides about ${about(taken)} thousand taken prisoner` : ''}; they had about ${about(their.was)} thousand and their loss is put at about ${about(their.dead)} thousand${won && taken >= .5 ? `, besides about ${about(taken)} thousand prisoners in our hands` : ''}.${found}${reasons.length ? ` What ${probe ? 'the fighting showed' : won ? 'told for us' : 'told against us'}: ${reasons.join('; ')}.` : ''}${lateText}${paper < 0 ? (us === 'A' ? ' Their dispositions show that they knew our plan of campaign. Until a new one is drawn up (prepare_plan) the army cannot count on its own.' : ' Their attack came where the copy of their plan in our hands said it would.') : ''} The fight used ${Math.round((shot[id] || 0) * 10) / 10} of arms and ammunition; ${Math.round(c.stock.arms || 0)} remain in the arsenal.${to ? ` Our troops ${probe ? 'are back at' : 'fell back to'} ${to}.` : ''}${stayed && !won && !probe ? ` Our troops are still on the field at ${p.name}${us === 'A' && press ? ' under the order to press the attack, and go in again next quarter unless that order is changed' : ', under the order not to give a step'}.` : ''}`);
     }
   }
-  w.battles.push({ province: pid, attacker: atkSide[0], defender: defCountry, attackerWon: atkWins, lossA: Math.round(da), lossD: Math.round(dd), prisoners: Math.round(taken), manner, ...(flank ? { sides: flank + 1 } : {}), ...(weight > 0 ? { shelled: Math.round(breach * 100), ...(p.fort >= 1 && holds ? { breached: Math.round(breachFort * 100) } : {}) } : {}), why });
+  w.battles.push({ province: pid, attacker: atkSide[0], defender: defCountry, attackerWon: atkWins, lossA: Math.round(da), lossD: Math.round(dd), prisoners: Math.round(taken), manner, ...(flank ? { sides: flank + 1 } : {}), ...(surprise ? { surprise: true } : {}), ...(weight > 0 ? { shelled: Math.round(breach * 100), ...(p.fort >= 1 && holds ? { breached: Math.round(breachFort * 100) } : {}) } : {}), why });
 }
 
 export function capture(w, p, by) {

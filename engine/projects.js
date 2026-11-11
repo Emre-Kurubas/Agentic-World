@@ -5,7 +5,7 @@ import { restake } from './firms.js';
 import { MERCHANT } from './navy.js';
 
 const TURNS = { mine: 3, railway: 4, port: 4, dam: 6, farming: 2, forestry: 2, infrastructure: 2, fort: 5, battery: 4, trench: 2, administration: 3, unit: 1, ship: 3, canal: 12 };
-const UNIT_TURNS = { infantry: 1, artillery: 2, armor: 2, air: 3 }, SHIP_TURNS = { cruiser: 3, battleship: 6, submarine: 3, torpedo: 2, merchant: 3 };
+const UNIT_TURNS = { infantry: 1, artillery: 2, armor: 2, air: 3, cavalry: 2 }, SHIP_TURNS = { cruiser: 3, battleship: 6, submarine: 3, torpedo: 2, merchant: 3, dreadnought: 7 };
 export const DEFENSES = ['fort', 'battery', 'trench'];
 export const MAX_DEFENSE = { fort: 3, battery: 3, trench: 2 };
 export const WORKS = ['mine', 'railway', 'port', 'dam', 'farming', 'forestry', 'infrastructure', 'administration', ...DEFENSES];

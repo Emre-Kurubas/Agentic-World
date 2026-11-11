@@ -77,7 +77,7 @@ function fillPosts(w, c) {
   const flag = Object.values(w.fleets).filter(f => f.country === c.id).sort((a, b) => weightOf(b) - weightOf(a))[0], cur = flag && w.characters[flag.commander];
   if (flag && weightOf(flag) >= 3 && !(cur?.alive && cur.status === 'free' && cur.country === c.id) && room()) { const ch = spawnCharacter(w, c.id, 'officer', c.axes, { power: 28 }); flag.commander = ch.id; mine.push(ch); }
 }
-const weightOf = f => (f.ships + (f.damaged || 0)) * ({ battleship: 3.5, torpedo: .3, submarine: .6 }[f.kind] ?? 1);
+const weightOf = f => (f.ships + (f.damaged || 0)) * ({ dreadnought: 7, battleship: 3.5, torpedo: .3, submarine: .6 }[f.kind] ?? 1);
 
 // How a minor person stands toward the ruler settles where the state of the country puts it: a ruler people believe in, pay that arrives and
 // troops in good heart keep men loyal; each also has a bent of his own, and ambition wears loyalty thin. Favours raise it for a while.
@@ -277,6 +277,10 @@ function inform(w, c, ch) {
     const hc = w.countries[handler.country]; if (abroad && hc?.alive && [hc.leader, hc.general].includes(handler.id) && !t.parties.includes(hc.id) && !(t.known ||= []).includes(hc.id)) t.known.push(hc.id);
     text += ` He has also seen a paper that is kept secret: ${c.name} is bound by ${kindWord(t)} (${t.id}) with ${t.parties.filter(id => id !== c.id).map(id => w.countries[id]?.name).join(', ')}${t.terms ? `: "${t.terms}"` : ''}. You hold it now, and can make it public (publish_treaty).`;
   }
+  // The staff's plans of campaign pass under the hands of its officers and clerks.
+  if (u || ch.role === 'officer' || ch.clerkOf === 'army') for (const [id, plan] of Object.entries(c.plans || {})) { const foe = w.countries[id]; if (!foe?.alive || plan.ready > w.turn || (ch.shown ||= {})[id] === plan.since) continue; ch.shown[id] = plan.since;
+    text += ` He has copied the staff's plan for war with ${foe.name}${plan.objective ? `: its first objective is ${w.provinces[plan.objective]?.name} (${plan.objective})` : ''}${plan.text ? `; it says: "${plan.text}"` : ''}.`;
+    const hc = w.countries[handler.country]; if (hc?.alive && hc.id !== c.id) { (hc.stolen ||= {})[c.id] = { against: id, turn: w.turn, objective: plan.objective ?? null, text: plan.text ?? '', from: ch.id }; text += hc.id === id ? ' While they follow it, we know where they will come.' : ''; } }
   say(w, handler, `${ch.name} (your informant)`, `Word from ${ch.name} in ${c.name}: ${text}`);
   if (abroad) { const hc = w.countries[handler.country]; if (hc?.alive) hc.intel[c.id] = clamp((hc.intel[c.id] ?? 0) + 6, 0, 100); }
 }
