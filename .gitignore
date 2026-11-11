@@ -2,3 +2,6 @@
 .playwright-mcp/
 node_modules/
 *.log
+
+# Working copies of helpers (git worktrees) are not part of the game.
+.claude/worktrees/
