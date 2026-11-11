@@ -3721,7 +3721,7 @@ chain('People can be told apart, and a state knows what it inherits: no two seat
   const p = Object.values(w.provinces).find(q => q.controller === 'U1' && q.rail); c.treasury = 1e6; c.stock.steel = 1e5; const r = applyOp(w, L, { op: 'build', province: p.id, kind: 'railway' }); assert.ok(!/requires the technology/.test(r.msg), `and is not refused a line for want of it: ${r.msg}`);
 });
 
-import { watchStep } from '../engine/standing.js';
+import { watchStep, standingStep as standingStepOf } from '../engine/standing.js';
 import { carryStanding } from '../engine/ops.js';
 import { openPost as postOf_ } from '../engine/court.js';
 chain('Standing matters: a watch sees what is done in secret and opens the post, a power can be left in another\'s hands, and an order waits for its day', () => {
@@ -3764,6 +3764,10 @@ chain('Standing matters: a watch sees what is done in secret and opens the post,
   const s2 = applyOp(w, G, { op: 'standing_order', when: { troops: { province: over.id, country: d.id, below: 20 } }, then: [{ op: 'set_posture', posture: 'ordinary', unit: u.id }] }); assert.ok(s2.ok, s2.msg);
   carryStanding(w); assert.equal(u.posture, 'defensive', 'while sixty thousand stand there the order waits'); for (const x of Object.values(w.units)) if (x.country === d.id && x.province === over.id) x.men = 2; carryStanding(w); assert.ok(u.posture !== 'defensive', 'and is given when they are gone');
   const s3 = applyOp(w, G, { op: 'standing_order', when: { after: 3 }, then: [{ op: 'set_posture', posture: 'defensive', unit: u.id }] }), id = /SO\d+/.exec(s3.msg)[0]; assert.ok(applyOp(w, G, { op: 'cancel_order', id }).ok && !w.standingOrders.some(x => x.id === id), 'an order that waits can be withdrawn');
+  // An order kept for its day carries no inner switches: a tax in it goes before the house like a tax ordered this morning.
+  { const x = structuredClone(w), cx = x.countries.U1, lx = x.characters[L.id]; cx.parliament ||= { seats: 100 }; const rate = cx.tax.income, so4 = applyOp(x, lx, { op: 'standing_order', when: { after: 1 }, then: [{ op: 'set_tax', kind: 'income', rate: rate + .05, _law: true, _decree: true, _late: true }] }); assert.ok(so4.ok, so4.msg);
+    const kept = x.standingOrders.at(-1).then[0]; assert.ok(!('_law' in kept) && !('_decree' in kept) && !('_late' in kept), 'the marks of a law are struck from an order when it is entered');
+    kept._law = true; kept._decree = true; x.turn += 1; let given = null; standingStepOf(x, (_, __, o) => { given = o; return { ok: true, msg: 'seen' }; }); assert.ok(given && given.op === 'set_tax' && !('_law' in given) && !('_decree' in given), 'and again when it runs, so that what must pass the house still must'); }
   // What a ruler left in another's hands goes with the ruler: his successor did not give it, sees no stale grant at work, and the holder is told.
   assert.ok(applyOp(w, L, { op: 'delegate', to: 'general', powers: ['demobilize'] }).ok && c.delegations.length === 1); c.leader = O.id; G.inbox = [];
   assert.ok(/is not authorized for this operation: demobilize/.test(applyOp(w, G, { op: 'demobilize', men: 1 }).msg), 'a grant does not outlast the government that gave it'); watchStep(w);

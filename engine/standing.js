@@ -12,6 +12,9 @@ import { governs } from './polity.js';
 
 export const STANDING_OPS = new Set(['watch', 'delegate', 'standing_order', 'cancel_order']);
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
+// What comes from outside the engine carries no inner switches (game.js safeApply): an operation kept for its day is as much from outside as one
+// given this morning, so the marks by which the engine itself knows a law or a decree are struck from it when it is entered and again when it runs.
+const plainOp = o => { const { _law, _decree, _late, ...plain } = o ?? {}; return plain; };
 const nameOf = (w, id) => w.countries[id]?.name ?? id;
 const sum = (xs, f) => xs.reduce((a, x) => a + f(x), 0);
 const round5 = v => v >= 20 ? Math.round(v / 5) * 5 : Math.round(v);
@@ -81,7 +84,7 @@ export function standingOp(w, actor, c, op, h) {
     case 'standing_order': {
       const mine = (w.standingOrders ||= []).filter(x => x.by === actor.id); if (mine.length >= 8) return fail('Eight orders of yours are waiting for their day already; withdraw one first (cancel_order).');
       const k = normWhen(w, c, op.when); if (k.no) return fail(k.no);
-      const then = (Array.isArray(op.then) ? op.then : op.then ? [op.then] : []).filter(o => o?.op && !STANDING_OPS.has(o.op) && h.known(o.op)).slice(0, 6);
+      const then = (Array.isArray(op.then) ? op.then : op.then ? [op.then] : []).filter(o => o && typeof o === 'object' && !STANDING_OPS.has(o.op) && h.known(o.op)).map(plainOp).slice(0, 6);
       if (!then.length) return fail('Say what is to be done when the day comes: one or more operations (then).');
       const so = { id: nextId(w, 'SO'), by: actor.id, country: c.id, when: k.when, words: k.words, then, label: String(op.label ?? '').slice(0, 160), since: w.turn, again: op.again === true };
       w.standingOrders.push(so);
@@ -123,7 +126,7 @@ export function standingStep(w, apply) {
   for (const so of [...list]) { const ch = w.characters[so.by], c = w.countries[so.country];
     if (!ch?.alive || !c?.alive || ch.status === 'imprisoned' || w.turn - so.since > 20) { list.splice(list.indexOf(so), 1); if (ch?.alive && c?.alive) say(w, ch, 'Your secretary', `Order ${so.id} (${so.words}) has lapsed unused.`); continue; }
     if (so.firedAt === w.turn || !holds(w, so)) continue;
-    const results = so.then.map(o => { let r; try { r = apply(w, ch, { ...o }); } catch (e) { r = { ok: false, msg: `Error: ${e.message}` }; } return `${o.op}: ${r.ok === false ? 'NOT carried out: ' : ''}${r.msg ?? ''}`; });
+    const results = so.then.map(o => { let r; try { r = apply(w, ch, plainOp(o)); } catch (e) { r = { ok: false, msg: `Error: ${e.message}` }; } return `${o.op}: ${r.ok === false ? 'NOT carried out: ' : ''}${r.msg ?? ''}`; });
     say(w, ch, 'Your secretary', `Order ${so.id}${so.label ? ` ("${so.label}")` : ''} has come to its day (${so.words}) and was given in your name. ${results.join(' ')}`);
     (w.standingFired ||= []).push({ id: so.id, turn: w.turn, by: so.by, results });
     if (so.again) { so.firedAt = w.turn; so.since = w.turn + 1; } else list.splice(list.indexOf(so), 1); }
