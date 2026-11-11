@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { aliveCountries, ROLES, countryProvinces } from '../engine/world.js';
 import { beginTurn, stepWorld } from '../engine/step.js';
-import { applyOp } from '../engine/ops.js';
+import { applyOp, printable } from '../engine/ops.js';
 import { news, rand, clamp, quarterLabel } from '../engine/util.js';
 import { openPost, isMinor } from '../engine/court.js';
 import { burden } from '../engine/burdens.js';
@@ -216,7 +216,7 @@ export class Game {
       const unread = new Map();
       for (const from of [...actors]) {
         for (const m of this.pending.actors[from.id]?.messages ?? []) {
-          const target = reachable.get(recipient(w, m.to)?.id);
+          const target = reachable.get(recipient(w, m.to, from)?.id);
           if (m.read || !target || target.id === from.id || talk.skip[target.id] || this.pending.actors[target.id]?.fallback) continue;
           if (!unread.has(target.id)) unread.set(target.id, []);
           unread.get(target.id).push({ m, from });
@@ -280,7 +280,7 @@ export class Game {
     // Letters to people nobody plays are answered for them, country by country, from what the engine knows of each.
     if (this.backend.kind === 'mock') return;
     const mail = {};
-    for (const ch of actors) for (const m of this.pending.actors[ch.id]?.messages ?? []) { const to = recipient(w, m.to); if (to?.alive && to.status === 'free' && isMinor(to) && !to.aiControlled && to.id !== ch.id) (mail[to.country] ||= []).push({ from: ch, to, text: m.text }); }
+    for (const ch of actors) for (const m of this.pending.actors[ch.id]?.messages ?? []) { const to = recipient(w, m.to, ch); if (to?.alive && to.status === 'free' && isMinor(to) && !to.aiControlled && to.id !== ch.id) (mail[to.country] ||= []).push({ from: ch, to, text: m.text }); }
     const posts = Object.entries(mail).filter(([cid]) => w.countries[cid]?.alive && !this.pending.replies?.[cid]);
     if (!posts.length) return;
     this.setStatus('referee judging', `answering ${posts.reduce((a, [, l]) => a + l.length, 0)} letters to people around the seats`);
@@ -339,10 +339,11 @@ export class Game {
     // What the people around the seats wrote back goes by the same post as everyone's letters.
     for (const rs of Object.values(this.pending.replies || {})) for (const r of rs) { const from = w.characters[r.from], to = w.characters[r.to]; if (from?.alive && from.status === 'free' && isMinor(from) && !from.aiControlled && to?.alive) outgoing.push({ from, to: to.id, text: r.text, npc: true }); }
     for (const m of outgoing) {
-      const target = recipient(w, m.to);
+      const target = recipient(w, m.to, m.from);
+      if (!target?.alive || target.id === m.from.id) { m.undelivered = true; bounce(w, m, target); }
       if (target) m.to = target.id === w.countries[m.to]?.leader ? m.to : target.id;
-      if (!target?.alive) m.undelivered = true;
-      else if (!m.read) target.inbox.push({ turn: w.turn, from: `${m.from.name} (${w.countries[m.from.country]?.name})`, text: m.text, letter: true });
+      if (m.undelivered) continue;
+      if (!m.read) target.inbox.push({ turn: w.turn, from: `${m.from.name} (${m.from.id}, ${w.countries[m.from.country]?.name})`, text: m.text, letter: true });
       // A prisoner's letters pass through the censor's hands; how often they are copied depends on how good the state's eyes are.
       const home = w.countries[m.from.country], warden = w.characters[home?.leader];
       if (m.from.status === 'imprisoned' && target?.alive && warden?.alive && warden.id !== target.id && rand(w) < clamp(.25 + home.intelligence / 150, .25, .85)) { warden.inbox.push({ turn: w.turn, from: 'Prison censor', text: `Letter from the prisoner ${m.from.name} to ${target.name}: ${m.text}` }); m.intercepted = true; }
@@ -350,7 +351,7 @@ export class Game {
       else if (target?.alive) { const readers = openPost(w, m.from, target, m.text); if (readers.length) { m.intercepted = true; m.readBy = readers; } }
     }
     // Notes the engine's keeper left in the world file (a fault found and corrected, a save repaired) go into the record once, with the quarter they were read in.
-    return { trace, rulings, system: [...(w.engineNotes || []).splice(0), ...(this.sysLog ||= []).splice(0)], messages: outgoing.map(m => { const target = recipient(w, m.to); return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, intercepted: !!m.intercepted, readBy: m.readBy ?? [], npc: !!m.npc, read: !!m.read, round: m.round ?? 0 }; }) };
+    return { trace, rulings, system: [...(w.engineNotes || []).splice(0), ...(this.sysLog ||= []).splice(0)], messages: outgoing.map(m => { const target = recipient(w, m.to, m.from); return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, intercepted: !!m.intercepted, readBy: m.readBy ?? [], npc: !!m.npc, read: !!m.read, round: m.round ?? 0 }; }) };
   }
 
   // The dice are rolled only for what the engine cannot judge: an act that no operation carries (a go-between who may not get through, a letter
@@ -378,8 +379,11 @@ export class Game {
     // The ruling as a whole failed if the dice went against it and nothing else in it was done.
     const success = prob > 0 && (luck || results.some(r => !r.chance && !r.skipped && r.ok !== false));
     const refused = results.filter(r => r.ok === false), carried = success && (!results.length || refused.length < results.length), waits = results.some(r => r.waits);
-    // What is announced is what happened: an order the world refused does not make the papers as if it had been done.
-    if (narrative && pub && carried && source === 'referee') news(w, `${c?.name ?? ''}: ${narrative}`, { kind: 'politics', countries: [ch.country] });
+    // What is announced is what happened: an order the world refused does not make the papers as if it had been done. And what was never meant for the
+    // papers is not in them: the engine, not the referee's flag, keeps orders to troops, secret-service work and secret treaties out of print. A word
+    // or a gesture that no operation carries is printed where there is a press to print it; from a gagged country it travels as rumour does.
+    const printed = !!(narrative && pub && carried && source === 'referee' && printable(w, ops));
+    if (printed) news(w, `${c?.name ?? ''}: ${narrative}`, { kind: 'politics', countries: [ch.country], ...(ops.every(op => op?.op === 'custom') && (c?.pressFreedom ?? 50) < 35 && c?.leader !== ch.id ? { hush: true } : {}) });
     // The person who gave the order is told what actually came of it, in the engine's own words, not only what was intended.
     if (source === 'referee' && narrative) {
       const plain = m => m && !['Applied.', 'Recorded.'].includes(m), said = results.filter(r => plain(r.msg)).map(r => `${r.ok ? '' : `${r.op} was NOT carried out: `}${r.msg}`).join(' ');
@@ -387,7 +391,7 @@ export class Game {
       ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: ${verdict}: ${narrative}${said ? ` [${said.slice(0, 1500)}]` : ''}`); ch.outcomes = ch.outcomes.slice(-60); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
     }
     // What is recorded as the probability is the chance that was actually rolled; where the referee named one and no dice were due, its figure is kept beside it.
-    return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, probability: diced || prob <= 0 ? prob : 1, ...(prob > 0 && prob < 1 && !diced ? { refereeProbability: prob } : {}), success, results, source, decision, decisionText, ops };
+    return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, probability: diced || prob <= 0 ? prob : 1, ...(prob > 0 && prob < 1 && !diced ? { refereeProbability: prob } : {}), success, results, source, decision, decisionText, ops, printed };
   }
 
   async turn() {
@@ -431,11 +435,31 @@ export function toTable(w, ch, messages) {
     return seats.filter(id => id !== ch.country && w.countries[id]?.alive).map(id => ({ ...m, to: id, text: `[To the conference ${cf.id} on "${cf.question}"] ${m.text}` }));
   });
 }
-function recipient(w, to) {
-  const key = String(to ?? '').trim(), direct = w.characters[key] ?? w.characters[w.countries[key]?.leader];
-  if (direct) return direct;
-  const low = key.toLowerCase(), person = Object.values(w.characters).find(x => x.alive && x.name.toLowerCase() === low), state = Object.values(w.countries).find(c => c.alive && c.name.toLowerCase() === low);
-  return person ?? w.characters[state?.leader] ?? null;
+// Who a letter is for. An id is surest, but people address letters as people do: by a full name, by the way the sender of an incoming letter was
+// shown ("Name (K5, Country)"), by a name with a rank in front of it, by a seat ("my ruler", "the chief of staff of Laresh"), by a state (its ruler),
+// by a firm (its owner), or by a surname only one living person bears. In five games one letter in eight went to "K12", the example in the answer
+// format, and was lost without a word to the writer; what finds no one now comes back to whoever wrote it (see bounce).
+const SEATS = [['general', /\b(chief of (the )?(general )?staff|general staff|commander[- ]in[- ]chief)\b/], ['opposition', /\bopposition\b/], ['oligarch', /\b(magnate|oligarch)\b/], ['leader', /\b(ruler|leader|president|chairman|chairwoman|king|queen|prince|princess|premier|prime minister|head of state|sovereign|majesty|regent)\b/]];
+export function recipient(w, to, from = null) {
+  const key = String(to ?? '').trim(); if (!key) return null;
+  const direct = w.characters[key] ?? w.characters[w.countries[key]?.leader]; if (direct) return direct;
+  const ids = key.match(/\b[KU]\d+\b/g) || [], byId = ids.map(id => w.characters[id]).find(Boolean); if (byId) return byId;
+  const low = key.toLowerCase().replace(/^k[\s?\-:.]+/, ''), bare = low.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').replace(/[\s.,;:]+$/, '').trim(), living = Object.values(w.characters).filter(x => x.alive);
+  const named = living.find(x => x.name.toLowerCase() === bare); if (named) return named;
+  const states = Object.values(w.countries).filter(c => c.alive), state = states.find(c => c.name.toLowerCase() === bare) ?? ids.map(id => w.countries[id]).find(c => c?.alive) ?? states.find(c => low.includes(c.name.toLowerCase()));
+  const seat = SEATS.find(([, re]) => re.test(bare))?.[0], home = state ?? w.countries[from?.country];
+  if (seat && home?.alive && !living.some(x => bare.endsWith(x.name.toLowerCase()))) return w.characters[home[seat]] ?? null;
+  if (state && (bare === state.name.toLowerCase() || !bare)) return w.characters[state.leader] ?? null;
+  const titled = living.filter(x => bare.endsWith(x.name.toLowerCase())); if (titled.length === 1) return titled[0];
+  const firm = Object.values(w.firms || {}).find(f => f.name?.toLowerCase() === bare && w.characters[f.owner]?.alive); if (firm) return w.characters[firm.owner];
+  const sur = bare.split(' ').at(-1), same = living.filter(x => x.name.toLowerCase().split(' ').at(-1) === sur), near = same.filter(x => x.country === from?.country);
+  return near.length === 1 ? near[0] : same.length === 1 ? same[0] : null;
+}
+// A letter that finds no one comes back, so that nobody writes to a ruler for twenty quarters and takes the silence for an answer.
+function bounce(w, m, target) {
+  if (m.npc || !m.from?.alive) return;
+  const why = target && !target.alive ? `${target.name} is dead` : target?.id === m.from.id ? 'it was addressed to yourself' : 'nobody answers to that name or number';
+  m.from.inbox.push({ turn: w.turn, from: 'The post', text: `Your letter addressed to "${String(m.to).slice(0, 80)}" was not delivered: ${why}. It began: "${String(m.text).slice(0, 140)}". A letter reaches a person by the id or the full name given in people, and a state's ruler by the state's id.` });
 }
 
 // The decisions of each actor that have no ruling yet, with their original numbers.

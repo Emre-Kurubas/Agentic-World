@@ -236,7 +236,7 @@ export function billStep(w, apply) {
       if (b.status !== 'pending' || w.turn < b.voteAt) continue;
       if (!parliamentOpen(w, c)) { b.status = 'lapsed'; b.closedAt = w.turn; continue; }
       let yes = 0, no = 0; const seats = c.parliament.seats;
-      for (const p of c.parties) { const n = seats[p.id] || 0; if (!n || p.banned) continue; if (partyVotes(w, c, b, p)) yes += n; else no += n; }
+      for (const p of c.parties) { const n = seats[p.id] || 0; if (!n || p.banned) continue; if (b.votes[p.id] === 'abstain') continue; if (partyVotes(w, c, b, p)) yes += n; else no += n; }
       b.tally = { yes, no }; b.closedAt = w.turn;
       if (b.confidence) {
         b.status = yes > no ? 'passed' : 'rejected';

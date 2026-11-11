@@ -24,10 +24,20 @@ import { governmentSeats, institutionRoom, delegated, vetoedBy, makeInstitution,
 const FIRM_OPS = new Set(['found_company', 'invest_company', 'draw_company', 'sell_company', 'buy_company', 'nationalize_company', 'privatize_company']);
 const PERMISSIONS = {
   leader: null,
-  general: new Set(['propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'propose_law', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'embezzle', 'create_institution', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda']),
-  opposition: new Set(['propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'propose_law', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'create_institution', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda']),
+  general: new Set(['propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'propose_law', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'embezzle', 'create_institution', 'start_plot', 'fund_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda']),
+  opposition: new Set(['propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'propose_law', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'create_institution', 'start_plot', 'fund_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda']),
   oligarch: new Set(['propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'propose_law', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'lend_private', 'embezzle', 'create_institution', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda', 'capital_flight', 'invest', 'fund_plot'])
 };
+// What no newspaper prints, whatever the referee thinks of it: orders to troops and squadrons, the staff's plans, the secret service's work, money
+// under the table, plots, private bargains, and anything done under a treaty that is itself secret. In world 12 the papers of the world carried 889
+// of 2459 rulings, among them one attack order in three and a third of all standing orders; in world 13 they carried a secret alliance, and two
+// governments hunted for a traitor who was the printing press. A ruling is printed only if nothing in it is of this kind (printable).
+export const QUIET = new Set(['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'offensive', 'set_posture', 'fleet_orders', 'amphibious', 'lay_mines', 'prepare_plan', 'leak_plan',
+  'spy', 'steal_tech', 'gather_dossier', 'forge_dossier', 'recruit_informant', 'bribe', 'blackmail', 'embezzle', 'capital_flight', 'repatriate', 'fund_underground', 'fund_plot', 'rig_election', 'lobby_bill',
+  'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'accept_offer', 'decline_offer', 'propose_contract', 'accept_contract', 'cancel_contract', 'give', 'lend_private', 'repay_debt', 'forgive_debt',
+  'buy_bonds', 'sell_bonds', 'designate_successor', 'back_claim', 'draw_company', 'draw_institution', 'noop']);
+const secretPaper = (w, op) => op?.secret === true || [op?.treaty, op?.id].some(id => id && w.treaties.some(t => t.id === id && t.secret));
+export const printable = (w, ops) => !(ops || []).some(op => QUIET.has(op?.op) || secretPaper(w, op));
 // What anyone may do whatever their office: deal, lend, scheme, speak.
 const LABOUR_OPS = new Set(['set_wages', 'set_safety', 'lockout', 'agitate', 'arbitrate_strike', 'break_strike']);
 const PRIVATE = ['capital_flight', 'repatriate', 'draw_institution', 'buy_bonds', 'sell_bonds', 'back_claim', 'renounce_claim', 'fund_party', 'found_paper', 'fund_paper', 'close_paper', 'forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution', 'propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'fund_plot', 'bribe', 'custom', 'propaganda', 'noop'];
@@ -86,6 +96,8 @@ const tell = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.tur
 // given in the quarter the ships sail: a quarter is three months and the crossing a few days. The order then waits for the squadrons to move and is
 // carried out, or not, when they have (carryAwaited, called from the military step once the fleets have sailed and fought); whoever gave it is told
 // what came of it and why. It is the engine that says whether the way was open, not a roll of the referee's dice. Given again, an order replaces itself.
+// What a bill says, in words, for the members who must vote on it.
+const billWords = op => Object.entries(op).filter(([k, v]) => k !== 'op' && !k.startsWith('_') && v != null && v !== '').map(([k, v]) => `${k.replace(/_/g, ' ')} ${typeof v === 'number' ? (v > 0 && v < 1 ? `${Math.round(v * 1000) / 10}%` : Math.round(v * 100) / 100) : typeof v === 'object' ? JSON.stringify(v).replace(/[{}"]/g, '').replace(/,/g, ', ') : String(v)}`).join('; ').slice(0, 300) || 'as moved';
 const WAITED = { amphibious: 'landing', bombard: 'bombardment', lay_mines: 'laying of mines', demonstrate: 'naval demonstration', seize_customs: 'seizure of the customs' };
 function standBy(w, actor, op, key, msg) {
   const q = (w.awaiting ||= []), at = q.findIndex(x => x.key === key && x.actor === actor.id), entry = { turn: w.turn, actor: actor.id, key, op: { ...op } };
@@ -389,7 +401,7 @@ export function applyOp(w, actor, op) {
     const blocker = vetoedBy(w, c, actor, op.op);
     if (blocker) { news(w, `${c.name}: ${blocker.name} blocked the decision taken by ${actor.name}.`, { kind: 'politics', countries: [c.id] }); return fail(`${blocker.name} blocked it.`); }
     if (!op._law && mustPassParliament(w, c, op)) {
-      const bill = createBill(w, c, actor, { title: LAW_TITLE[op.op] ?? op.op, text: JSON.stringify({ ...op, op: undefined }).slice(0, 300), ops: [op] });
+      const bill = createBill(w, c, actor, { title: LAW_TITLE[op.op] ?? op.op, text: billWords(op), ops: [op] });
       return bill ? { ok: true, msg: `Referred to parliament: ${bill.id}`, bill: bill.id } : fail('The parliamentary agenda is full.');
     }
   }
@@ -841,7 +853,7 @@ export function applyOp(w, actor, op) {
       return { ok: true, msg: `${count} went home. ${u.id} keeps ${menText(u.men)} under arms.` };
     }
     case 'mobilize': return mobilize(w, c, num(op.share, .05, 1, 1), pay, fail);
-    case 'demobilize': return demobilize(w, c) ?? fail('No reservists are under arms.');
+    case 'demobilize': return demobilize(w, c, op.men != null ? num(op.men, 0, 1e6, 0) : op.share != null ? -num(op.share, 0, 1, 1) : null, op.unit) ?? fail('No reservists are under arms.');
     case 'move': {
       const u = w.units[op.unit]; if (!u || u.country !== c.id || !w.provinces[op.to]) return fail('Invalid movement order.');
       // A number sends a detachment and leaves the rest of the unit where it stands.
@@ -1184,7 +1196,7 @@ export function applyOp(w, actor, op) {
       if (!(parliamentOpen(w, c) && c.parliament.legislative)) { if (!governs(w, c, actor)) return fail('There is no legislature in session to put a bill to.'); const b = { id: nextId(w, 'Y'), title: String(op.title || 'Decree').slice(0, 100), text: String(op.text || '').slice(0, 2000), ops: Array.isArray(op.ops) ? op.ops.slice(0, 4) : [] }; const done = enactLaw(w, c, b, applyOp, 'decree'); news(w, `${c.name}: the "${b.title}" decree took effect.`, { kind: 'politics', countries: [c.id] }); return { ok: true, msg: `Decree ${b.id}.${done.length ? ` ${done.map(r => `${r.op}: ${r.msg}`).join(' ')}` : ''}` }; }
       const bill = createBill(w, c, actor, op); return bill ? { ok: true, msg: `Bill ${bill.id} goes to a vote next quarter.${Array.isArray(op.ops) && bill.ops.length < op.ops.length ? ' A law cannot arrest people, name heirs or move troops; those parts were left out.' : ''}`, bill: bill.id } : fail('The parliamentary agenda is full.');
     }
-    case 'vote_bill': { const b = (c.bills || []).find(x => x.id === op.bill && x.status === 'pending'); if (!b) return fail('No pending bill.'); const led = leadsParties(w, c, actor); if (!led.length) return fail('You do not lead a party.'); for (const p of led) b.votes[p.id] = op.vote === 'no' ? 'no' : 'yes'; return ok(); }
+    case 'vote_bill': { const b = (c.bills || []).find(x => x.id === op.bill && x.status === 'pending'); if (!b) return fail('No pending bill.'); const led = leadsParties(w, c, actor); if (!led.length) return fail('You do not lead a party.'); const vote = ['no', 'abstain', 'free'].includes(op.vote) ? op.vote : 'yes'; for (const p of led) { if (vote === 'free') delete b.votes[p.id]; else b.votes[p.id] = vote; } return { ok: true, msg: `${led.map(p => p.name).join(', ')}: ${vote === 'free' ? 'the members vote as they are inclined' : vote === 'abstain' ? 'will abstain; its seats count for neither side' : `will vote ${vote}`} on ${b.id} (${b.title}).` }; }
     case 'lobby_bill': { const b = (c.bills || []).find(x => x.id === op.bill && x.status === 'pending'); const p = c.parties.find(x => x.id === op.party); if (!b || !p) return fail('No such bill or party.'); const m = num(op.amount, 0, actor.wealth); if (m <= 0) return fail('No money.'); actor.wealth -= m; b.lobby[p.id] = (b.lobby[p.id] || 0) + (op.side === 'no' ? -m : m); leaveTrace(w, actor, `Spent ${Math.round(m)} on ${p.name} for the ${b.title} vote.`); return ok(); }
     // The state of relations with another government: the envoy at his post, recalled, or relations broken off.
     case 'set_relations': if (!target) return fail('No such country.'); return setRelations(w, c, target, op);

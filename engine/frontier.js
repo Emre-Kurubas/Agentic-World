@@ -92,11 +92,13 @@ export function mobilize(w, c, share, pay, fail) {
   return { ok: true, msg: `About ${called} thousand reservists are called up and form at ${depots.map(p => p.name).join(', ')}; ${Math.round(c.reserve)} thousand remain in the reserve. They left fields and works to come, they must be paid like the rest of the army, and every neighbour knows.${bill}${note}` };
 }
 // Sending the reservists home again.
-export function demobilize(w, c) {
-  const us = Object.values(w.units).filter(u => u.country === c.id && u.called); if (!us.length) return null;
-  const men = sum(us, u => u.men), provs = countryProvinces(w, c.id).filter(p => p.owner === c.id), pop = sum(provs, provincePop) || 1;
-  for (const u of us) { c.stock.arms = (c.stock.arms || 0) + u.men * .05 * clamp(u.equip ?? .8, 0, 1); delete w.units[u.id]; }
+// how: null stands every reservist down; a positive number is that many thousand men, a negative one that share of them; unit names one called-up body.
+export function demobilize(w, c, how = null, unit = null) {
+  const all = Object.values(w.units).filter(u => u.country === c.id && u.called), us = unit ? all.filter(u => u.id === unit) : all; if (!us.length) return null;
+  const under = sum(us, u => u.men), want = how == null ? under : how < 0 ? under * -how : Math.min(how, under), provs = countryProvinces(w, c.id).filter(p => p.owner === c.id), pop = sum(provs, provincePop) || 1;
+  let left = want, men = 0;
+  for (const u of us) { if (left <= 1e-9) break; const go = Math.min(u.men, left); c.stock.arms = (c.stock.arms || 0) + go * .05 * clamp(u.equip ?? .8, 0, 1); u.men -= go; left -= go; men += go; if (u.men < .05) delete w.units[u.id]; }
   goHome(provs, men); c.reserve = (c.reserve || 0) + men;
   news(w, `${c.name} has stood its reservists down: about ${Math.round(men)} thousand men are going home.`, { kind: 'war', countries: [c.id] });
-  return { ok: true, msg: `About ${Math.round(men * 10) / 10} thousand reservists went home and their rifles are back in the arsenal.` };
+  return { ok: true, msg: `About ${Math.round(men * 10) / 10} thousand reservists went home and their rifles are back in the arsenal${under - men > .05 ? `; ${Math.round((under - men) * 10) / 10} thousand called-up men stay under arms` : ''}.` };
 }

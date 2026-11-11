@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createWorld, aliveCountries, countryProvinces } from '../engine/world.js';
 import { beginTurn, stepWorld } from '../engine/step.js';
-import { applyOp, carryAwaited } from '../engine/ops.js';
+import { applyOp, carryAwaited, printable } from '../engine/ops.js';
 import { executePlot } from '../engine/politics.js';
 import { makeParliament, treatyStep } from '../engine/polity.js';
 import { currencyStep, displacedDemand, exportEdge, localPrices } from '../engine/money.js';
@@ -22,7 +22,7 @@ import { makeUnit, makeFleet } from '../engine/world.js';
 import { givenNames } from '../engine/names.js';
 import { spawnCharacter } from '../engine/world.js';
 const spawnHeir = (w, c) => spawnCharacter(w, c.id, 'oligarch', c.axes);
-import { Game, shouldWake, isAI, dealCast, castModel } from '../agents/game.js';
+import { Game, shouldWake, isAI, dealCast, castModel, recipient } from '../agents/game.js';
 import { LimitError, SessionLostError } from '../agents/backend.js';
 import { npcDecide } from '../agents/npc.js';
 import { actorPrompt } from '../agents/prompts.js';
@@ -71,6 +71,44 @@ ok('A ruling with probability 0 is not applied', () => {
   const w = fresh(), c = w.countries.U1, g = new Game({ world: w, cfg: base, backend: { kind: 'mock' }, store: nullStore() }); const rate = c.tax.income;
   const r = g.applyRuling(ld(w, c), { narrative: 'x', prob: 0, public: false, ops: [{ op: 'set_tax', kind: 'income', rate: .6 }], source: 'referee' });
   assert.equal(r.success, false); assert.equal(c.tax.income, rate);
+});
+ok('What was never meant for the papers is not in them: orders to troops, the secret service\'s work and secret treaties are not printed, whatever the referee marks; and a secret alliance is not in another staff\'s appreciation', () => {
+  const w = fresh(), c = w.countries.U1, g = new Game({ world: w, cfg: base, backend: { kind: 'mock' }, store: nullStore() }), L = ld(w, c), u = Object.values(w.units).find(x => x.country === 'U1'), printedText = re => w.newsThisTurn.some(n => !n.secret && re.test(n.text));
+  w.newsThisTurn = [];
+  // World 12 printed 889 of 2459 rulings, among them 232 standing orders; world 13 printed a secret alliance, and two governments hunted the traitor.
+  const order = g.applyRuling(L, { narrative: 'The corps is to stand on the defensive at the frontier', prob: 1, public: true, ops: [{ op: 'set_posture', posture: 'defensive', unit: u.id }], source: 'referee' });
+  assert.ok(order.results[0].ok && !order.printed && !printedText(/stand on the defensive/), 'a standing order is carried out and not printed');
+  const tax = g.applyRuling(L, { narrative: 'The income tax is raised by a point', prob: 1, public: true, ops: [{ op: 'set_tax', kind: 'income', rate: c.tax.income + .01 }], source: 'referee' });
+  assert.ok(tax.printed && printedText(/income tax is raised/), 'a tax is public business');
+  const quiet = g.applyRuling(L, { narrative: 'The same tax, said to be confidential', prob: 1, public: false, ops: [{ op: 'set_tax', kind: 'income', rate: c.tax.income + .01 }], source: 'referee' }); assert.ok(!quiet.printed, 'what the referee does not mark is not printed either');
+  for (const op of ['spy', 'gather_dossier', 'bribe', 'offensive', 'move', 'move_fleet', 'prepare_plan', 'start_plot', 'recruit_informant', 'embezzle']) assert.ok(!printable(w, [{ op }]), `${op} is never a newspaper item`);
+  assert.ok(printable(w, [{ op: 'set_budget' }]) && printable(w, [{ op: 'custom' }]) && printable(w, []));
+  // A secret alliance: offered, signed, and still in no newspaper and in no other staff's appreciation of a war with either signatory.
+  const offer = g.applyRuling(L, { narrative: 'The Chairman offers Laresh an alliance against the Free Ports, to be kept secret', prob: 1, public: true, ops: [{ op: 'propose_treaty', target: 'U2', kind: 'alliance', secret: true, terms: 'against U3' }], source: 'referee' });
+  const t = w.treaties.find(x => x.secret && x.kind === 'alliance'); assert.ok(offer.results[0].ok && t && !offer.printed, offer.results[0].msg);
+  const signed = g.applyRuling(ld(w, w.countries.U2), { narrative: 'The President signs the alliance offered by Morovia', prob: 1, public: true, ops: [{ op: 'accept_treaty', id: t.id }], source: 'referee' });
+  assert.ok(signed.results[0].ok && t.active && !signed.printed && !printedText(/alliance/i), `signed in secret, it is in no paper: ${w.newsThisTurn.filter(n => !n.secret).map(n => n.text).join(' | ')}`);
+  const third = w.characters[w.countries.U3.general], plan = answer(w, third, 'war_plan:U2'); assert.ok(/No one is bound to come to their side/.test(plan), `a staff outside the secret does not list the ally: ${plan.slice(-600)}`);
+  t.secret = false; assert.ok(new RegExp(`Bound to come to their side: [^.]*${c.name}`).test(answer(w, third, 'war_plan:U2')), 'an alliance openly signed is on every staff\'s list');
+});
+ok('A vote can be an abstention; a number in an order to stand men down is kept; a bill reads as words; a date is a date', () => {
+  const w = fresh(), c = w.countries.U1, L = ld(w, c);
+  // Abstention: the seats count for neither side.
+  c.elections = true; makeParliament(c, 'Assembly'); const big = [...c.parties].sort((a, b) => (c.parliament.seats[b.id] || 0) - (c.parliament.seats[a.id] || 0))[0];
+  const r = applyOp(w, L, { op: 'set_budget', category: 'military', share: c.budget.military + .004 }); assert.ok(r.bill, r.msg); const b = c.bills.find(x => x.id === r.bill);
+  assert.ok(!/[{}"]/.test(b.text) && /category military/.test(b.text) && /share \d/.test(b.text), `the bill is in words: ${b.text}`);
+  const whip = Object.values(w.characters).find(x => x.alive && x.country === c.id && c.parties.some(p => p.id === big.id && (p.leader === x.id || p.founder === x.id))) ?? L; b.votes[big.id] = 'abstain';
+  b.voteAt = w.turn; w.newsThisTurn = []; billsOf(w, applyOp); assert.ok(b.tally && b.tally.yes + b.tally.no === 100 - (c.parliament.seats[big.id] || 0), `abstaining seats are counted on neither side: ${JSON.stringify(b.tally)} of ${100 - c.parliament.seats[big.id]}`);
+  // Standing down a number of men, not all of them.
+  c.reserve = 200; c.stock.arms = 500; const up = applyOp(w, L, { op: 'mobilize', share: 1 }); assert.ok(up.ok, up.msg); const called = () => Object.values(w.units).filter(x => x.country === c.id && x.called).reduce((a, x) => a + x.men, 0), before = called();
+  const part = applyOp(w, L, { op: 'demobilize', men: 50 }); assert.ok(part.ok && Math.abs(before - called() - 50) < .5 && /stay under arms/.test(part.msg), `fifty thousand go home and no more: ${part.msg}`);
+  const half = called(); applyOp(w, L, { op: 'demobilize', share: .5 }); assert.ok(Math.abs(called() - half / 2) < .5, 'a share is a share'); assert.ok(applyOp(w, L, { op: 'demobilize' }).ok && called() < .1, 'and with no number all of them');
+  // Dates, not turn numbers: nobody in the world knows what "turn 12" is.
+  c.elections = true; c.nextElection = w.turn + 5; assert.ok(new RegExp(`Elections: the next is due in Q\\d 19\\d\\d`).test(answer(w, L, 'institutions')) && !/\bturn \d/.test(answer(w, L, 'institutions')), answer(w, L, 'institutions').slice(0, 300));
+  for (const topic of ['wars', 'debts', 'treaties', 'contracts', 'parliament']) assert.ok(!/\bturn \d/.test(answer(w, L, topic)), `${topic} speaks in dates`);
+  // A serving minister is not "no office".
+  const keeper = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'treasury'); if (keeper) assert.ok(/keeps the treasury/.test(answer(w, L, `person:${keeper.id}`)) && /keeps the treasury/.test(answer(w, L, `person:${keeper.name}`)), answer(w, L, `person:${keeper.id}`));
+  assert.ok(/This is you/.test(answer(w, L, `person:${L.id}`)));
 });
 ok('The dice are rolled only for what no operation carries: what an operation does the engine judges, and one order may hang on the engine\'s answer to another', () => {
   const w = fresh(), c = w.countries.U1, g = new Game({ world: w, cfg: base, backend: { kind: 'mock' }, store: nullStore() }), L = ld(w, c), rate = c.tax.income, never = 1e-12;
@@ -943,6 +981,25 @@ await (async () => {
   assert.equal(w.characters[w.countries.U2.general].model, 'pinned'); assert.equal(new Set(seats('U2').map(x => x.model)).size, 4, 'the pinned seat does not cost the table one of the three');
   const drawn = new Set(); for (let i = 0; i < 60; i++) drawn.add(castModel(free, w, { id: 'K999', country: 'U1', role: 'general' }, lot(i * 31 + 7))); assert.equal(drawn.size, 3, 'a newcomer may draw any of the three');
   console.log('passed  Each character is played by their own model and keeps it for life; the cast is dealt by lot');
+})();
+// In five real games one letter in eight was lost: 482 of them went to "K12", the example in the answer format, and the writers were never told.
+await (async () => {
+  const cfg = { ...base, maxLookupRounds: 0, negotiationRounds: 0, concurrency: 1 }, w = createWorld(cfg); w.status = 'playing';
+  const c = w.countries.U1, o = w.countries.U2, L = ld(w, c), G = w.characters[c.general], far = ld(w, o), to = (a, from = G) => recipient(w, a, from)?.id ?? null;
+  assert.equal(to(L.id), L.id); assert.equal(to('U2'), far.id, 'a state by its id is its ruler'); assert.equal(to(o.name), far.id, 'and by its name');
+  assert.equal(to(L.name.toUpperCase()), L.id, 'a full name'); assert.equal(to(`${L.name} (${L.id}, ${c.name})`), L.id, 'the way an incoming letter shows its sender');
+  assert.equal(to(`${far.name} (${o.name})`), far.id, 'a name with the country after it'); assert.equal(to(`K? ${L.name}`), L.id); assert.equal(to(`His Excellency ${far.name}`), far.id, 'a name with a title before it');
+  assert.equal(to('my ruler'), L.id, 'a seat, in the writer\'s own country'); assert.equal(to('the Chief of the General Staff', L), G.id); assert.equal(to(`the ruler of ${o.name}`), far.id, 'a seat abroad');
+  const sur = x => x.name.split(' ').at(-1), lone = Object.values(w.characters).find(x => x.alive && Object.values(w.characters).filter(y => y.alive && sur(y) === sur(x)).length === 1); assert.equal(to(sur(lone)), lone.id, 'a surname only one living person bears');
+  assert.equal(to('K999999'), null, 'a number nobody bears'); assert.equal(to('the printer'), null); assert.equal(to(''), null);
+  assert.ok(w.characters.K12 || !actorPrompt(w, G, [], false, { intro: true }).includes('K12'), 'no example address that can be copied out of the morning report');
+  // Through a whole quarter: the letter to nobody comes back to its writer the same quarter, the one to "my ruler" arrives, and the record says which.
+  const backend = { kind: 'claude', async ask(p) { if (p.includes('rulings')) return { rulings: [] }; return p.includes(`Your name: ${G.name}`) ? { decisions: [], messages: [{ to: 'K999999', text: 'Majesty, the army is not ready for this war.' }, { to: 'my ruler', text: 'A second letter, by another road.' }] } : { decisions: [], messages: [] }; } };
+  const g = new Game({ world: w, cfg, backend, store: memoryStore() }); await g.turn();
+  assert.ok(G.inbox.some(m => m.from === 'The post' && /"K999999" was not delivered: nobody answers to that name or number.*the army is not ready/.test(m.text)), 'the writer is told, with the opening of the letter');
+  assert.ok(L.inbox.some(m => m.letter && m.text === 'A second letter, by another road.' && m.from === `${G.name} (${G.id}, ${c.name})`), 'the letter to "my ruler" arrives, and shows the id an answer needs');
+  assert.ok(!L.inbox.some(m => /not ready for this war/.test(m.text)));
+  console.log('passed  A letter reaches whoever it was meant for, however a person would address it, and one that finds nobody comes back to its writer');
 })();
 
 await (async () => {
