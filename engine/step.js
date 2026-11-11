@@ -7,7 +7,7 @@ import { projectStep } from './projects.js';
 import { cultureStep } from './culture.js';
 import { adminStep } from './admin.js';
 import { contractStep } from './contracts.js';
-import { applyOp } from './ops.js';
+import { applyOp, carryAwaited } from './ops.js';
 import { courtStep } from './court.js';
 import { labourStep, labourEnd } from './labour.js';
 import { undergroundStep } from './underground.js';
@@ -21,7 +21,7 @@ import { countryProvinces, aliveCountries, provincePop } from './world.js';
 import { sum, quarterLabel } from './util.js';
 import { openCredit } from './money.js';
 
-export function beginTurn(w) { w.newsThisTurn = []; w.battles = []; w.seaFights = []; for (const c of aliveCountries(w)) openCredit(c); }
+export function beginTurn(w) { w.newsThisTurn = []; w.battles = []; w.seaFights = []; w.awaited = []; for (const c of aliveCountries(w)) openCredit(c); }
 
 export function stepWorld(w) {
   projectStep(w);
@@ -33,7 +33,7 @@ export function stepWorld(w) {
   firmStep(w);
   contractStep(w);
   bondStep(w);
-  militaryStep(w);
+  militaryStep(w, carryAwaited);
   frontierStep(w);
   institutionStep(w);
   cultureStep(w);

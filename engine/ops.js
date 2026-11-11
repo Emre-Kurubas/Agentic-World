@@ -82,6 +82,28 @@ const alive = (w, id) => { const c = w.countries[id]; return c?.alive ? c : null
 // A character's real traces that can be found: dossiers are made of these.
 const leaveTrace = (w, ch, text) => { (ch.secrets ||= []).push({ turn: w.turn, text }); ch.secrets = ch.secrets.slice(-12); };
 const tell = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
+// Orders that need ships on station (a landing, a bombardment, mines off an enemy's coast, a demonstration, the seizure of a customs house) may be
+// given in the quarter the ships sail: a quarter is three months and the crossing a few days. The order then waits for the squadrons to move and is
+// carried out, or not, when they have (carryAwaited, called from the military step once the fleets have sailed and fought); whoever gave it is told
+// what came of it and why. It is the engine that says whether the way was open, not a roll of the referee's dice. Given again, an order replaces itself.
+const WAITED = { amphibious: 'landing', bombard: 'bombardment', lay_mines: 'laying of mines', demonstrate: 'naval demonstration', seize_customs: 'seizure of the customs' };
+function standBy(w, actor, op, key, msg) {
+  const q = (w.awaiting ||= []), at = q.findIndex(x => x.key === key && x.actor === actor.id), entry = { turn: w.turn, actor: actor.id, key, op: { ...op } };
+  if (at >= 0) q[at] = { ...entry, then: q[at].then, else: q[at].else }; else q.push(entry);
+  return { ok: true, waits: key, msg };
+}
+const underOrders = (w, id, seas) => Object.values(w.fleets).filter(f => f.country === id && kindOf(f) !== 'submarine' && (seas.includes(f.target) || (!f.port && seas.includes(f.sea)) || w.provinces[f.target]?.seas?.some(s => seas.includes(s))));
+const squadronWord = (w, id, seas) => { const fs = underOrders(w, id, seas); return fs.length ? `${fs.map(f => f.id).join(', ')} ${fs.length === 1 ? 'is' : 'are'} under orders for that water` : 'no squadron of ours is under orders for that water yet: one has to be sent there this quarter (move_fleet), or nothing comes of this'; };
+export function carryAwaited(w) {
+  for (const a of (w.awaiting || []).splice(0)) {
+    const ch = w.characters[a.actor], c = ch && w.countries[ch.country]; if (!ch?.alive || !c?.alive) continue;
+    const r = applyOp(w, ch, { ...a.op, _late: true }), what = WAITED[a.op.op] ?? a.op.op, more = (r.ok ? a.then : a.else) || [];
+    const said = more.map(op => { const x = applyOp(w, ch, op); return `${op.op}${x.ok ? '' : ' was NOT carried out'}: ${x.msg}`; });
+    const text = `The ${what} ordered this quarter was ${r.ok ? '' : 'NOT '}carried out: ${r.msg}${said.length ? ` What was ordered ${r.ok ? 'to follow it' : 'in its place'}: ${said.join(' ')}` : ''}`;
+    for (const x of new Set([ch, w.characters[c.leader], w.characters[c.general]])) tell(w, x, 'Naval Staff', text);
+    (w.awaited ||= []).push({ turn: w.turn, actor: ch.id, country: c.id, op: a.op, ok: !!r.ok, text });
+  }
+}
 const openDebt = (w, id) => (w.debts || []).find(d => d.id === id && ['open', 'overdue'].includes(d.status));
 const NO_FUNDS = 'The treasury is empty and lenders will not cover it.';
 // A bench asked the same thing twice in a quarter gives the same answer twice: an order struck down is not carried by being signed again.
@@ -680,6 +702,7 @@ export function applyOp(w, actor, op) {
     case 'demonstrate': {
       if (!target) return fail('Name the state the squadron is to be shown to.'); if (atWar(w, c.id, target.id)) return fail('We are at war with them: ships at war do not demonstrate, they fight.');
       const theirs = s => w.seas[s].coast.some(id => w.provinces[id].controller === target.id), off = Object.values(w.fleets).filter(f => f.country === c.id && !f.port && kindOf(f) !== 'submarine' && theirs(f.sea) && (!op.fleet || f.id === op.fleet)), sea = off.sort((a, b) => b.ships * SHIPS[kindOf(b)].power - a.ships * SHIPS[kindOf(a)].power)[0]?.sea;
+      if (!sea && !op._late) return standBy(w, actor, { op: 'demonstrate', target: target.id, fleet: op.fleet }, `show:${target.id}`, `The squadron is to be shown off the coast of ${target.name} once it lies at sea there this quarter (${squadronWord(w, c.id, Object.keys(w.seas).filter(theirs))}). The staff reports what came of it.`);
       if (!sea) return fail(`No surface squadron of ours lies at sea off the coast of ${target.name}. One has to be sent there first (move_fleet to a sea off one of their harbours: ${[...new Set(countryProvinces(w, target.id).filter(p => p.port > 0).flatMap(p => p.seas))].slice(0, 6).join(', ') || 'they have none'}).`);
       if (allowance(w, c, `show:${target.id}`, 1, 1) <= 0) return fail('The squadron has been seen there this quarter already; the same ships say nothing new.');
       return demonstrate(w, c, target, off.filter(f => f.sea === sea), sea);
@@ -690,7 +713,8 @@ export function applyOp(w, actor, op) {
       if (!target.defaulted && !((target.extArrears || 0) > 0)) return fail(`${target.name} is paying what it owes (${Math.round(owed)} in gold to us): there is no default to collect on.`);
       if ((w.seizures || []).some(s => s.by === c.id && s.of === target.id)) return fail('Our officers sit in their customs house already.');
       for (const p of countryProvinces(w, target.id).filter(x => x.port > 0).sort((a, b) => b.port - a.port)) for (const s of p.seas) { const pw = w.seaPower?.[s] || {}; if ((pw[c.id] || 0) > 0 && (pw[c.id] || 0) > (pw[target.id] || 0)) return seizeCustoms(w, c, target, s, p, shame); }
-      return fail(`No squadron of ours commands the water off a harbour of ${target.name}. It has to lie at sea there (move_fleet), outweigh whatever of theirs is at sea in that water, and have been there since last quarter.`);
+      if (!op._late) return standBy(w, actor, { op: 'seize_customs', target: target.id }, `customs:${target.id}`, `Our officers are to take the customs of ${target.name} once a squadron of ours commands the water off one of its harbours this quarter (${squadronWord(w, c.id, countryProvinces(w, target.id).filter(x => x.port > 0).flatMap(x => x.seas))}). The staff reports what came of it.`);
+      return fail(`No squadron of ours commands the water off a harbour of ${target.name}. It has to lie at sea there (move_fleet) and outweigh whatever of theirs is at sea in that water.`);
     }
     case 'bombard': {
       const p = has(w.provinces, op.province) ? w.provinces[op.province] : null; if (!p?.coast) return fail('Name a province on a coast.');
@@ -698,7 +722,8 @@ export function applyOp(w, actor, op) {
       if (!atWar(w, c.id, p.controller)) return fail(`${p.name} is held by ${w.countries[p.controller]?.name}, with whom there is no war. Shelling it would be one, and war is declared by whoever governs (declare_war).`);
       if (hasTreaty(w, c.id, p.controller, 'armistice')) return fail('An armistice with them is in force: no ship fires while it lasts.');
       const off = Object.values(w.fleets).filter(f => f.country === c.id && !f.port && kindOf(f) !== 'submarine' && p.seas.includes(f.sea)), f = op.fleet ? off.find(x => x.id === op.fleet) : off.sort((a, b) => b.ships * SHIPS[kindOf(b)].power - a.ships * SHIPS[kindOf(a)].power)[0];
-      if (!f) return fail(Object.values(w.fleets).some(x => x.country === c.id && p.seas.includes(x.target)) ? `Our ships are under orders for the water off ${p.name} but have not yet taken station there: they can shell it next quarter, once they lie at sea off it.` : `No surface ships of ours lie at sea off ${p.name} (${p.seas.join(' or ')}): a squadron must be sent there first (move_fleet).`);
+      if (!f && !op._late) return standBy(w, actor, { op: 'bombard', province: p.id, fleet: op.fleet }, `shell:${p.id}:${op.fleet ?? ''}`, `${p.name} is to be shelled once our ships have taken station at sea off it this quarter (${squadronWord(w, c.id, p.seas)}). The staff reports what came of it.`);
+      if (!f) return fail(`No surface ships of ours ${op.fleet ? `(${op.fleet}) ` : ''}took station at sea off ${p.name} (${p.seas.join(' or ')}) this quarter: a squadron has to get there (move_fleet), and one that is stopped or beaten on the way shells nothing.`);
       if (allowance(w, f, 'shell', 1, 1) <= 0) return fail(`${f.id} has fired off what it carries this quarter.`);
       return shell(w, c, f, p, { shame });
     }
@@ -706,6 +731,7 @@ export function applyOp(w, actor, op) {
     case 'lay_mines': {
       const sea = has(w.seas, op.sea) ? w.seas[op.sea] : null; if (!sea) return fail('Name the sea (such as D12).');
       const ours = sea.coast.some(id => w.provinces[id].controller === c.id), foes = sea.coast.some(id => atWar(w, c.id, w.provinces[id].controller)), layer = Object.values(w.fleets).some(f => f.country === c.id && !f.port && f.sea === sea.id && ['cruiser', 'torpedo'].includes(kindOf(f)));
+      if (!ours && foes && !layer && !op._late) return standBy(w, actor, { op: 'lay_mines', sea: sea.id }, `mines:${sea.id}`, `Mines are to be laid in ${seaLabel(w, sea.id)} once cruisers or torpedo craft of ours lie at sea there this quarter (${squadronWord(w, c.id, [sea.id])}). The staff reports what came of it.`);
       if (!ours && !(layer && foes)) return fail('Mines are laid from the shore in water off our own coast, or by cruisers or torpedo craft of ours lying at sea off the coast of a state we are at war with.');
       const m = (w.mines ||= {})[sea.id]; if (m && m.by !== c.id) return fail('That water is mined already, and not by us.'); if ((m?.level ?? 0) >= 3) return fail('The field there is as thick as it can usefully be.');
       if (allowance(w, c, `mines:${sea.id}`, 1, 1) <= 0) return fail('One field is laid in one water in a quarter.');
@@ -725,13 +751,15 @@ export function applyOp(w, actor, op) {
       if (!atWar(w, c.id, p.controller) && !ours) return fail('You are not at war with whoever holds that coast, and it is not open to our troops (an alliance or a right of passage would open it).');
       if (p.controller !== c.id && hasTreaty(w, c.id, p.controller, 'armistice')) return fail('An armistice with them is in force: no landing while it lasts. It would have to be broken first (break_treaty).');
       const escort = Object.values(w.fleets).filter(f => f.country === c.id && kindOf(f) !== 'submarine' && !f.port && p.seas.includes(f.sea) && !enemyHolds(w, f.sea, c.id));
-      if (!ours && !escort.length) return fail('You need a surface fleet at sea, holding the water off the target coast (a squadron lying in harbour covers nothing).');
+      const wait = !ours && !escort.length && !op._late;
+      if (!ours && !escort.length && !wait) return fail('No surface squadron of ours took station at sea off the target coast and held that water this quarter (a squadron lying in harbour covers nothing, and one stopped or beaten on the way covers nothing either).');
       if (ours && p.seas.every(s => enemyHolds(w, s, c.id))) return fail(`The enemy commands the water off ${p.name}: no transport can put in there until it is driven off.`);
       const ways = from.seas.flatMap(s => p.seas.map(t => seaPath(w, s, t, c.id))).filter(Boolean).sort((a, b) => a.length - b.length), way = ways[0]; if (!way) return fail('No sea route joins the two coasts.');
       if (way.length - 1 > 12) return fail(`The crossing is ${way.length - 1} seas: too far for transports in one quarter. The troops must embark from a coast within twelve seas of the landing place.`);
-      { const held = way.find(s => enemyHolds(w, s, c.id)); if (held) return fail(`The enemy commands ${seaLabel(w, held)} on the way: transports cannot cross water an enemy squadron holds.`); }
+      if (!wait) { const held = way.find(s => enemyHolds(w, s, c.id)); if (held) return fail(`The enemy commands ${seaLabel(w, held)} on the way: transports cannot cross water an enemy squadron holds.`); }
       // The men cross in merchant ships taken up for the quarter: two thousand, with their horses and stores, to each unit of tonnage.
       const lift = liftOf(c, w); if (u.men > lift + 1e-9) return fail(`The merchant ships that can be taken up and loaded this quarter carry about ${Math.round(lift)} thousand men with their stores (${Math.round(c.shipping ?? 0)} of tonnage, ${LIFT} thousand men to each, and no more than our harbours can embark in a quarter); this unit has ${Math.round(u.men)} thousand. Send a detachment (move with men, then land that), wait for next quarter's ships, or lay down merchant ships (build_ship with kind merchant).`);
+      if (wait) return standBy(w, actor, { op: 'amphibious', unit: u.id, to: p.id }, `land:${u.id}`, `${u.id} (${menText(u.men)}) embarks at ${from.name} for ${p.name}, ${way.length - 1} sea${way.length === 2 ? '' : 's'} away. The landing goes in this quarter once a surface squadron of ours has taken station at sea off that coast and holds the water, with no enemy squadron holding water on the way (${squadronWord(w, c.id, p.seas)}). If the squadron does not get there or is beaten, the men stay at ${from.name}; the staff reports what came of it and why.`);
       c._lifted = (c._lifted || 0) + u.men / LIFT;
       if (ours) { u.from = 'sea'; delete u.attack; u.province = p.id; u.men *= p.port > 0 ? 1 : .98; u.morale = clamp(u.morale - 3, 0, 100); u.target = null; u.dug = 0; u.shipped = w.turn;
         return { ok: true, msg: `${menText(u.men)} were carried by sea to ${p.name}${p.port > 0 ? ' and landed at its quays' : ', and put ashore over the open beach'}. The merchant ships that carried them are out of trade for the quarter; the unit marches again next quarter.` }; }

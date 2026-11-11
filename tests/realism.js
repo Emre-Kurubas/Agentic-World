@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createWorld, aliveCountries, countryProvinces } from '../engine/world.js';
 import { beginTurn, stepWorld } from '../engine/step.js';
-import { applyOp } from '../engine/ops.js';
+import { applyOp, carryAwaited } from '../engine/ops.js';
 import { executePlot } from '../engine/politics.js';
 import { makeParliament, treatyStep } from '../engine/polity.js';
 import { currencyStep, displacedDemand, exportEdge, localPrices } from '../engine/money.js';
@@ -22,7 +22,7 @@ import { makeUnit, makeFleet } from '../engine/world.js';
 import { givenNames } from '../engine/names.js';
 import { spawnCharacter } from '../engine/world.js';
 const spawnHeir = (w, c) => spawnCharacter(w, c.id, 'oligarch', c.axes);
-import { Game, shouldWake, isAI } from '../agents/game.js';
+import { Game, shouldWake, isAI, dealCast, castModel } from '../agents/game.js';
 import { LimitError, SessionLostError } from '../agents/backend.js';
 import { npcDecide } from '../agents/npc.js';
 import { actorPrompt } from '../agents/prompts.js';
@@ -33,7 +33,8 @@ const fresh = () => { const w = createWorld(base); w.status = 'playing'; for (co
 const run = (w, n) => { for (let i = 0; i < n; i++) { beginTurn(w); stepWorld(w); } };
 const ld = (w, c) => w.characters[c.leader];
 // KEEP_GOING=1 runs every check and lists the ones that fail, instead of stopping at the first.
-let failed = 0; const attempt = (label, f) => { try { f(); console.log(`passed  ${label}`); } catch (e) { if (!process.env.KEEP_GOING) throw e; failed++; console.log(`FAILED  ${label} :: ${String(e.message).split(/\r?\n/)[0]}`); } };
+// ONLY=words runs the named checks alone, for the time one is being worked on.
+let failed = 0; const attempt = (label, f) => { if (process.env.ONLY && !label.toLowerCase().includes(process.env.ONLY.toLowerCase())) return; try { f(); console.log(`passed  ${label}`); } catch (e) { if (!process.env.KEEP_GOING) throw e; failed++; console.log(`FAILED  ${label} :: ${String(e.message).split(/\r?\n/)[0]}`); } };
 const ok = (name, f) => attempt(name, f);
 const nullStore = () => ({ savePending() {}, loadPending() { return null; }, clearPending() {}, commit() {} });
 
@@ -70,6 +71,28 @@ ok('A ruling with probability 0 is not applied', () => {
   const w = fresh(), c = w.countries.U1, g = new Game({ world: w, cfg: base, backend: { kind: 'mock' }, store: nullStore() }); const rate = c.tax.income;
   const r = g.applyRuling(ld(w, c), { narrative: 'x', prob: 0, public: false, ops: [{ op: 'set_tax', kind: 'income', rate: .6 }], source: 'referee' });
   assert.equal(r.success, false); assert.equal(c.tax.income, rate);
+});
+ok('The dice are rolled only for what no operation carries: what an operation does the engine judges, and one order may hang on the engine\'s answer to another', () => {
+  const w = fresh(), c = w.countries.U1, g = new Game({ world: w, cfg: base, backend: { kind: 'mock' }, store: nullStore() }), L = ld(w, c), rate = c.tax.income, never = 1e-12;
+  // World 13: a landing ordered "if a sea route can be found" was given six chances in ten and lost the roll. Nobody ever looked for the route.
+  const sure = g.applyRuling(L, { narrative: 'tax', prob: never, public: false, ops: [{ op: 'set_tax', kind: 'income', rate: rate + .02 }], source: 'referee' });
+  assert.ok(sure.success && c.tax.income > rate, 'no dice are rolled against an operation: the engine carried it out');
+  assert.equal(sure.probability, 1); assert.equal(sure.refereeProbability, never, 'the record keeps the figure the referee named beside the chance that applied');
+  // An act no operation carries is still a matter of chance, and so is a ruling with no operation at all.
+  const lost = g.applyRuling(L, { narrative: 'a go-between', prob: never, public: false, ops: [{ op: 'custom', label: 'a go-between' }], source: 'referee' });
+  assert.ok(!lost.success && lost.results[0].chance && lost.probability === never && /^[^:]+: Failed/.test(L.outcomes.at(-1)), L.outcomes.at(-1));
+  assert.equal(g.applyRuling(L, { narrative: 'a word', prob: never, public: false, ops: [], source: 'referee' }).success, false);
+  // Mixed: the errand fails, the decree stands.
+  const land = c.tax.land, mixed = g.applyRuling(L, { narrative: 'both', prob: never, public: false, ops: [{ op: 'custom', label: 'an errand' }, { op: 'set_tax', kind: 'land', rate: land + .02 }], source: 'referee' });
+  assert.ok(mixed.success && mixed.results[0].ok === false && mixed.results[1].ok && c.tax.land > land && /Only partly carried out/.test(L.outcomes.at(-1)), L.outcomes.at(-1));
+  // An order that hangs on another: the engine refuses the first, so what was ordered in its place is done and what was to follow it is not attempted.
+  const was = { ...c.tax }, hung = g.applyRuling(L, { narrative: 'march, or else', prob: 1, public: false, source: 'referee', ops: [{ op: 'move', unit: 'B-none', to: c.capital }, { op: 'set_tax', kind: 'land', rate: was.land + .03, if_refused: 0 }, { op: 'set_tax', kind: 'income', rate: .01, if_done: 0 }] });
+  assert.equal(hung.results.length, 3, 'one answer for each operation, in order');
+  assert.ok(hung.results[0].ok === false && hung.results[1].ok && !hung.results[1].skipped && c.tax.land > was.land, 'what was ordered in case of refusal is carried out');
+  assert.ok(hung.results[2].skipped && c.tax.income === was.income && /was not attempted/.test(L.outcomes.at(-1)), 'what hung on its success is not attempted, and whoever gave the order is told');
+  // And the other way: the first is done, so its sequel follows and the fallback is left alone.
+  const now = { ...c.tax }, done = g.applyRuling(L, { narrative: 'tax, then', prob: 1, public: false, source: 'referee', ops: [{ op: 'set_tax', kind: 'income', rate: now.income + .01 }, { op: 'set_tax', kind: 'land', rate: .01, if_refused: 0 }, { op: 'set_tax', kind: 'land', rate: now.land + .01, if_done: 0 }] });
+  assert.ok(done.results[1].skipped && done.results[2].ok && !done.results[2].skipped && c.tax.land > now.land, 'the sequel follows what was done');
 });
 ok('With only leaders selected the other characters play by rules', () => {
   const cfg = { ...base, agentRoles: ['leader'] }, w = fresh(), c = w.countries.U1;
@@ -365,8 +388,19 @@ ok('Names follow culture: country, person and province names come from the peopl
   assert.ok(!cs.some(c => /[çğıöşüÇĞİÖŞÜ]/.test(c.name)), 'English spelling');
 });
 await (async () => {
-  const w = inherited(), store = tempStore(); w.status = 'playing'; beginTurn(w); stepWorld(w); store.commit(w, []); const line = JSON.parse(fs.readFileSync(store.file('positions.ndjson'), 'utf8').trim()); assert.ok(line.units.length && line.units[0].length === 6, 'unit position'); assert.ok(line.t === w.turn); fs.rmSync(store.dir, { recursive: true, force: true }); console.log('passed  Unit and fleet positions are saved every turn');
+  const w = inherited(), store = tempStore(); w.status = 'playing'; beginTurn(w); stepWorld(w); store.commit(w, []); const line = JSON.parse(fs.readFileSync(store.file('positions.ndjson'), 'utf8').trim()); assert.ok(line.units.length && line.units[0].length === 6, 'unit position'); assert.ok(line.t === w.turn); assert.ok(line.provinces.length === Object.keys(w.provinces).length && line.provinces.every(p => p.length === 3 && w.provinces[p[0]].controller === p[2]), 'who owns and who holds every province, each quarter'); fs.rmSync(store.dir, { recursive: true, force: true }); console.log('passed  Unit and fleet positions and the political map are saved every turn');
 })();
+ok('The staff knows what another state lives by, by which road or water it comes and how such a trade is cut; the routes report says where our own runs; and the army report says what ground is worth', () => {
+  const w = inherited(); w.status = 'playing'; run(w, 2); const c = w.countries.U1, g = w.characters[c.general];
+  for (const o of aliveCountries(w).filter(x => x.id !== 'U1')) { const plan = answer(w, g, `war_plan:${o.id}`);
+    assert.ok(/What they live by, from the consuls' printed returns: they grow about \d+ in the hundred of the bread they eat/.test(plan) && /How a trade is cut\. By sea: .* By land: /.test(plan), `${o.name}: ${plan.slice(-700)}`); }
+  // Somewhere in the world a trade goes by sea, and the staff of a third state can name the waters it passes: that is where a raider or a blockade finds it.
+  const sea = Object.entries(w.routes).find(([k, r]) => r.mode === 'sea' && r.path.length && Object.values(w.tradeFlows?.[k] || {}).reduce((a, v) => a + v, 0) >= .5); assert.ok(sea, 'a trade by sea');
+  const [x, y] = sea[0].split('|'), watcher = aliveCountries(w).find(o => o.id !== x && o.id !== y), seen = answer(w, w.characters[watcher.general], `war_plan:${x}`);
+  assert.ok(seen.includes(`by sea through ${sea[1].path.join(' > ')}`), `the waters of their trade are named: ${seen.slice(-900)}`);
+  const roads = answer(w, ld(w, c), 'routes'); assert.ok(/overland, across their common frontier|by sea through D\d+/.test(roads) && /A sea route is only as open as its waters/.test(roads), roads);
+  const army = answer(w, g, 'army'); assert.ok(/Ground fights for whoever holds it/.test(army) && army.includes('75 in mountain') && army.includes('60 in mountain') && army.includes('160 on open plain'), 'the worth of ground and the room it gives, from the tables the battle uses');
+});
 ok('A ruler\'s schooling follows the state that produced them', () => {
   const w = inherited(), texts = aliveCountries(w).map(c => [c.archetype, w.characters[c.leader].life.find(e => e.text.startsWith('Educated')).text]);
   const junta = texts.find(([k]) => k === 'junta'); if (junta) assert.ok(/war college|cavalry|artillery/.test(junta[1]), junta[1]);
@@ -886,12 +920,29 @@ await (async () => {
   const backend = { kind: 'claude', async ask(p, model) { if (p.includes('rulings')) { used.referee = model; return { rulings: [] }; } const m = /Your name: [^(]+\((K\d+)\)/.exec(p); if (m) used[m[1]] = model; return { decisions: ['Wait'], messages: [] }; } };
   const g = new Game({ world: w, cfg, backend, store: memoryStore() }); await g.turn();
   const seats = id => ROLES.map(r => w.characters[w.countries[id][r]]);
-  assert.equal(new Set(seats('U1').map(x => x.model)).size, 3, 'one country hears all three models'); assert.equal(new Set(['U1', 'U2', 'U3'].map(id => w.characters[w.countries[id].leader].model)).size, 3, 'the rulers are not all one model');
+  assert.equal(new Set(seats('U1').map(x => x.model)).size, 3, 'one country hears all three models'); assert.ok(w.castDealt, 'the lot is drawn once, when the world first sits down');
   assert.equal(w.characters[w.countries.U2.general].model, 'pinned'); assert.equal(used.referee, 'ref');
   for (const ch of seats('U1')) assert.equal(used[ch.id], ch.model, 'each is asked on their own model');
   const heir = w.countries.U1.general, old = w.characters[w.countries.U1.leader], kept = w.characters[heir].model; w.countries.U1.succession = 'army'; die(w, old, 'died'); await g.turn();
   assert.equal(w.characters[heir].model, kept, 'a person keeps their model when their seat changes'); assert.ok(w.characters[w.countries.U1.general].model, 'the newcomer gets one');
-  console.log('passed  Each character is played by their own model and keeps it for life');
+  // The cast goes by lot and not by the order of the seats: over many deals every seat is played by every model about as often as by any other,
+  // every table hears all three, the world's seats are shared out evenly, and two lots do not deal the same world.
+  const lot = s => () => (s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296, free = { ...cfg, models: { ...cfg.models, assign: {} } }, tally = {}, deals = new Set(), N = 300;
+  for (let i = 0; i < N; i++) {
+    for (const ch of Object.values(w.characters)) delete ch.model; delete w.castDealt; dealCast(free, w, lot(i * 7919 + 13));
+    const all = aliveCountries(w).flatMap(c => seats(c.id)), n = m => all.filter(ch => ch.model === m).length, ns = ['opus', 'sonnet', 'haiku'].map(n);
+    for (const c of aliveCountries(w)) assert.equal(new Set(seats(c.id).map(x => x.model)).size, 3, 'every country hears all three models');
+    assert.ok(Math.max(...ns) - Math.min(...ns) <= 1 && ns[0] + ns[1] + ns[2] === all.length, `the seats of the world are shared out evenly: ${ns}`);
+    for (const ch of all) tally[`${ch.role}.${ch.model}`] = (tally[`${ch.role}.${ch.model}`] || 0) + 1;
+    deals.add(all.map(ch => ch.model[0]).join(''));
+  }
+  for (const r of ROLES) for (const m of ['opus', 'sonnet', 'haiku']) { const share = (tally[`${r}.${m}`] || 0) / (N * aliveCountries(w).length); assert.ok(share > .27 && share < .40, `no model owns a seat: ${m} plays the ${r} ${Math.round(share * 100)}% of the time`); }
+  assert.ok(deals.size > N * .95, `a new game deals a new cast: ${deals.size} different casts in ${N} deals`);
+  // A seat that is pinned stays pinned, and the lot deals round it; someone who comes to a seat later draws for themselves.
+  for (const ch of Object.values(w.characters)) delete ch.model; delete w.castDealt; dealCast(cfg, w, lot(5));
+  assert.equal(w.characters[w.countries.U2.general].model, 'pinned'); assert.equal(new Set(seats('U2').map(x => x.model)).size, 4, 'the pinned seat does not cost the table one of the three');
+  const drawn = new Set(); for (let i = 0; i < 60; i++) drawn.add(castModel(free, w, { id: 'K999', country: 'U1', role: 'general' }, lot(i * 31 + 7))); assert.equal(drawn.size, 3, 'a newcomer may draw any of the three');
+  console.log('passed  Each character is played by their own model and keeps it for life; the cast is dealt by lot');
 })();
 
 await (async () => {
@@ -2384,7 +2435,7 @@ chain('The fleet and the shore: ships shell a coast they lie off and the shore g
   assert.ok(!applyOp(w, t.gen, { op: 'bombard', province: hb.id, fleet: f.id }).ok, 'a squadron fires off what it carries once in a quarter');
   const open = countryProvinces(w, e).find(p => p.coast && p.id !== hb.id && p.seas.length && !p.battery && !p.fort); assert.ok(open, 'an undefended town on their coast');
   { const g = t.ship('U1', open.seas[0], 5), o = applyOp(w, t.gen, { op: 'bombard', province: open.id, fleet: g.id }); assert.ok(o.ok && /open town/.test(o.msg) && (a.honourLog || []).some(x => /undefended/.test(x.why)), o.msg); }
-  { const h = t.ship('U1', hb.seas[0], 3, 'cruiser'); h.port = t.ha.id; assert.ok(!applyOp(w, t.gen, { op: 'bombard', province: hb.id, fleet: h.id }).ok, 'ships in harbour shell nothing'); }
+  { const h = t.ship('U1', hb.seas[0], 3, 'cruiser'); h.port = t.ha.id; const o = applyOp(w, t.gen, { op: 'bombard', province: hb.id, fleet: h.id }); assert.ok(o.waits, 'the order waits for the ships'); carryAwaited(w); assert.ok(new RegExp(`bombardment ordered this quarter was NOT carried out: No surface ships of ours \\(${h.id}\\) took station`).test(t.said('U1')), `ships that stay in harbour shell nothing, and the staff says so: ${t.said('U1').slice(-260)}`); }
   // Guns from the sea in a battle on the coast: the same fight, the same luck, with and without battleships lying off it.
   const coast = ships => { const y = twoRoads(1), { over, e1 } = y; for (const g of Object.values(y.w.fleets)) delete y.w.fleets[g.id]; over.coast = true; over.seas = [countryProvinces(y.w, 'U1').find(p => p.port > 0 && p.seas.length).seas[0]]; if (ships) makeFleet(y.w, 'U1', over.seas[0], ships, 'battleship'); y.w.rng = 606;
     const atk = soldier(y.w, 'U1', e1.id, 120), def = soldier(y.w, 'U2', over.id, 100); applyOp(y.w, y.gen, { op: 'offensive', to: over.id, units: [atk.id] }); quarter(y.w); return { lostD: 100 - (y.w.units[def.id]?.men ?? 0), said: y.said() }; };
@@ -2395,12 +2446,39 @@ chain('The fleet and the shore: ships shell a coast they lie off and the shore g
   const shut = fall(true); assert.ok(!shut.w.fleets[shut.docked.id] && shut.w.newsThisTurn.some(x => /scuttled/.test(x.text)) && Object.values(shut.w.fleets).some(g => g.country === 'U1' && g.port === shut.hb.id && g.damaged > 1), 'shut in, they are scuttled, and the victor raises a few');
   // A landing.
   const l = twoNavies(), troops = soldier(l.w, 'U1', l.ha.id, 6), idle = l.ship('U1', l.hb.seas[0], 10, 'cruiser'); idle.port = l.ha.id;
-  assert.ok(/covers nothing/.test(applyOp(l.w, l.gen, { op: 'amphibious', unit: troops.id, to: l.hb.id }).msg), 'ships lying in harbour cover no landing');
+  { const o = applyOp(l.w, l.gen, { op: 'amphibious', unit: troops.id, to: l.hb.id }); assert.ok(o.waits && /no squadron of ours is under orders for that water yet/.test(o.msg), o.msg); carryAwaited(l.w); assert.ok(troops.province === l.ha.id && /landing ordered this quarter was NOT carried out[^\n]*covers nothing/.test(l.said('U1')), 'ships lying in harbour cover no landing: the men stay where they embarked'); }
   // Along one's own coast no squadron is needed: only ships, and water no enemy holds off the place.
   { const own = countryProvinces(l.w, 'U1').find(p => p.coast && p.seas.length && p.id !== l.ha.id && (basesOf(l.w, 'U1')[p.seas[0]]?.d ?? 99) <= 12); assert.ok(own, 'another stretch of our own coast'); const corps = soldier(l.w, 'U1', l.ha.id, 8), round = applyOp(l.w, l.gen, { op: 'amphibious', unit: corps.id, to: own.id });
     assert.ok(round.ok && corps.province === own.id && /carried by sea/.test(round.msg) && corps.men > 7.8, `troops go round by sea to our own coast with no squadron at sea: ${round.msg}`); l.a._lifted = 0;
     const foe = makeFleet(l.w, l.e, own.seas[0], 30, 'cruiser'); l.w.seaPower = Object.fromEntries(own.seas.map(x => [x, { [l.e]: 30 }])); const back = soldier(l.w, 'U1', l.ha.id, 4), shut = applyOp(l.w, l.gen, { op: 'amphibious', unit: back.id, to: own.id }); assert.ok(!shut.ok && /enemy commands/.test(shut.msg), shut.msg); delete l.w.fleets[foe.id]; l.w.seaPower = {}; l.a._lifted = 0; }
   delete idle.port; militaryStep(l.w); const landed = applyOp(l.w, l.gen, { op: 'amphibious', unit: troops.id, to: l.hb.id }); assert.ok(landed.ok && troops.province === l.hb.id && troops.from === 'sea', `with the squadron at sea off the beach the troops go ashore: ${landed.msg}`);
+});
+chain('A landing and a bombardment ordered in the quarter the squadron sails wait for it and go in when it has taken station; if it is beaten on the way nothing comes of them, and the staff says why: the engine answers, not the dice', () => {
+  // The squadron lies in our harbour. In one quarter: it is sent to the water off their harbour, the troops are ordered to land there, the ships to shell it.
+  const l = twoNavies(), troops = soldier(l.w, 'U1', l.ha.id, 6), g = l.ship('U1', l.ha.seas[0], 10, 'cruiser', l.ha), dev = l.hb.devastation || 0;
+  const early = applyOp(l.w, l.gen, { op: 'amphibious', unit: troops.id, to: l.hb.id }); assert.ok(early.ok && early.waits && troops.province === l.ha.id && /no squadron of ours is under orders/.test(early.msg), `ordered before the ships, it waits and says what is missing: ${early.msg}`);
+  assert.ok(applyOp(l.w, l.gen, { op: 'move_fleet', fleet: g.id, to: l.meet }).ok);
+  const land = applyOp(l.w, l.gen, { op: 'amphibious', unit: troops.id, to: l.hb.id }); assert.ok(land.ok && land.waits && new RegExp(`${g.id} is under orders`).test(land.msg), land.msg);
+  assert.equal(l.w.awaiting.filter(x => x.op.op === 'amphibious').length, 1, 'the order given again replaces itself');
+  const shell = applyOp(l.w, l.gen, { op: 'bombard', province: l.hb.id }); assert.ok(shell.ok && shell.waits && /once our ships have taken station/.test(shell.msg), shell.msg);
+  militaryStep(l.w, carryAwaited);
+  assert.ok(troops.province === l.hb.id && troops.from === 'sea', 'the squadron took station within the quarter and the men went ashore');
+  assert.ok((l.hb.devastation || 0) > dev, 'and the ships shelled the place');
+  assert.ok(/landing ordered this quarter was carried out/.test(l.said('U1')) && /bombardment ordered this quarter was carried out/.test(l.said('U1')), 'the staff reports both');
+  assert.equal(l.w.awaiting.length, 0); assert.equal(l.w.awaited.filter(x => x.ok).length, 2, 'what came of each is on record');
+  // The same orders, but a stronger squadron of theirs holds that water: ours is beaten, the men never sail, and the staff says so.
+  const n = twoNavies(), men = soldier(n.w, 'U1', n.ha.id, 6), weak = n.ship('U1', n.ha.seas[0], 3, 'cruiser', n.ha); n.ship(n.e, n.meet, 40, 'cruiser');
+  assert.ok(applyOp(n.w, n.gen, { op: 'move_fleet', fleet: weak.id, to: n.meet }).ok); assert.ok(applyOp(n.w, n.gen, { op: 'amphibious', unit: men.id, to: n.hb.id }).waits);
+  militaryStep(n.w, carryAwaited);
+  assert.ok(men.province === n.ha.id && /landing ordered this quarter was NOT carried out/.test(n.said('U1')), `beaten at sea, no landing: ${n.said('U1').slice(-400)}`);
+  // With no ships sent at all the order comes to nothing, and is said to have.
+  const z = twoNavies(), idle = soldier(z.w, 'U1', z.ha.id, 6); assert.ok(applyOp(z.w, z.gen, { op: 'amphibious', unit: idle.id, to: z.hb.id }).waits); militaryStep(z.w, carryAwaited);
+  assert.ok(idle.province === z.ha.id && /NOT carried out: No surface squadron of ours took station/.test(z.said('U1')), z.said('U1').slice(-300));
+  // What hangs on a landing that waits, waits with it: "if the landing cannot be made, the men dig in where they stand".
+  const h = twoNavies(), corps = soldier(h.w, 'U1', h.ha.id, 6), game = new Game({ world: h.w, cfg: base, backend: { kind: 'mock' }, store: nullStore() });
+  const r = game.applyRuling(h.gen, { narrative: 'land, or dig in', prob: .6, public: false, source: 'referee', ops: [{ op: 'amphibious', unit: corps.id, to: h.hb.id }, { op: 'set_posture', unit: corps.id, posture: 'defensive', if_refused: 0 }] });
+  assert.ok(r.success && r.probability === 1 && r.results[0].waits && r.results[1].waits && corps.posture !== 'defensive' && /waiting on the quarter/.test(h.gen.outcomes.at(-1)), h.gen.outcomes.at(-1));
+  militaryStep(h.w, carryAwaited); assert.ok(corps.province === h.ha.id && corps.posture === 'defensive' && /in its place: set_posture/.test(h.said('U1')), `no ships came, so the men dug in: ${h.said('U1').slice(-300)}`);
 });
 
 chain('A navy is handed over as a navy of its time and its staff knows how it works: battleships, cruisers and torpedo craft lying in harbour, an admiral over the heaviest squadron; the yards build each kind where the harbour allows; the staff\'s appreciation of a war covers the sea; and a chief of staff played by rule blockades when he is the stronger and keeps his ships in harbour when he is not', () => {
@@ -2471,7 +2549,7 @@ chain('A blockade closes a coast in the measure of its weight: a few cruisers of
 
 chain('Ships as an argument in time of peace: a squadron shown off a coast is a threat the other government must answer or swallow, and a creditor\'s squadron that commands the water off a defaulter\'s harbour takes his customs until the debt is cleared or the ships are gone', () => {
   const t = twoNavies(), { w, a, b, e, hb } = t, boss = ld(w, a); w.wars = [];
-  assert.ok(/No surface squadron of ours lies at sea off the coast/.test(applyOp(w, boss, { op: 'demonstrate', target: e }).msg), 'there has to be a squadron there');
+  { const o = applyOp(w, boss, { op: 'demonstrate', target: e }); assert.ok(o.waits && /once it lies at sea there this quarter/.test(o.msg), o.msg); carryAwaited(w); assert.ok(ld(w, a).inbox.some(m => /naval demonstration ordered this quarter was NOT carried out: No surface squadron of ours lies at sea off the coast/.test(m.text)), 'there has to be a squadron there: with none sent, the staff reports that nothing came of it'); }
   const f = t.ship('U1', t.meet, 6, 'battleship'); militaryStep(w); const heat = b.grudges?.U1?.incident ?? 0, rel = b.relations.U1 ?? 0;
   assert.equal(applyOp(w, t.gen, { op: 'demonstrate', target: e }).ok, false, 'a demonstration is the government\'s act, not the staff\'s');
   w.newsThisTurn = []; const r = applyOp(w, boss, { op: 'demonstrate', target: e }); assert.ok(r.ok && /fires on nothing/.test(r.msg), r.msg);

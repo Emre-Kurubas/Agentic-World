@@ -12,7 +12,6 @@ import { LimitError, SessionLostError } from './backend.js';
 import { snapshotState, buildEntries } from './ledger.js';
 import { isPaintable, portraitPrompt, paintingPrompt, parseArt, witnessFor } from './art.js';
 import { incapacitated } from '../engine/health.js';
-import { hashOf } from '../engine/names.js';
 
 export function rolesFor(cfg, c) {
   const root = c.parent ?? c.id;
@@ -36,16 +35,30 @@ export function currentActors(w) {
   return out;
 }
 
-// Which model plays whom. A cast list is dealt round the table so that every role is played by every model somewhere;
-// without one, leaders get one model and everyone else another. assign pins a person, a seat ("U2.general") or a role.
+// Which model plays whom is settled by lot, and the lot is not the world's seed: the same map dealt again seats different minds.
+// When a world first sits down every country hears each model of the cast before it hears any twice, the seat left over goes to
+// whichever model the world has heard least, and who gets which seat at the table is drawn. Nobody is always the general.
+// Someone who comes to a seat later draws for themselves, and a person keeps their model for life.
+// Without a cast list leaders get one model and everyone else another. assign pins a person, a seat ("U2.general") or a role.
 const FADE_AFTER = 16;
-export function castModel(cfg, w, ch) {
-  const m = cfg.models ?? {}, pinned = m.assign?.[ch.id] ?? m.assign?.[`${ch.country}.${ch.role}`] ?? m.assign?.[ch.role];
-  if (pinned) return pinned;
-  const cast = Array.isArray(m.cast) ? m.cast.filter(Boolean) : [];
-  if (!cast.length) return ch.role === 'leader' ? m.leader : m.secondary;
-  const ci = Object.keys(w.countries).indexOf(ch.country), ri = ROLES.indexOf(ch.role);
-  return cast[(w.turn <= 1 && ci >= 0 && ri >= 0 ? ci + ri : hashOf(ch.id)) % cast.length];
+const castOf = cfg => Array.isArray(cfg.models?.cast) ? cfg.models.cast.filter(Boolean) : [];
+const pinnedFor = (cfg, ch) => { const m = cfg.models ?? {}; return m.assign?.[ch.id] ?? m.assign?.[`${ch.country}.${ch.role}`] ?? m.assign?.[ch.role]; };
+const shuffled = (xs, lot) => { const a = [...xs]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(lot() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+export function castModel(cfg, w, ch, lot = Math.random) {
+  const pinned = pinnedFor(cfg, ch); if (pinned) return pinned;
+  const cast = castOf(cfg); if (!cast.length) return ch.role === 'leader' ? cfg.models?.leader : cfg.models?.secondary;
+  return cast[Math.floor(lot() * cast.length)];
+}
+export function dealCast(cfg, w, lot = Math.random) {
+  w.castDealt = true;
+  const cast = castOf(cfg); if (!cast.length) return;
+  const tables = aliveCountries(w).map(c => ROLES.filter(r => rolesFor(cfg, c).has(r)).map(r => w.characters[c[r]]).filter(ch => ch?.alive)), heard = Object.fromEntries(cast.map(m => [m, 0]));
+  for (const ch of tables.flat()) { ch.model ??= pinnedFor(cfg, ch); if (ch.model in heard) heard[ch.model]++; }
+  for (const table of shuffled(tables, lot)) {
+    const open = table.filter(ch => !ch.model), hand = [], here = m => table.filter(ch => ch.model === m).length + hand.filter(x => x === m).length;
+    while (hand.length < open.length) { const m = shuffled(cast, lot).sort((x, y) => here(x) - here(y) || heard[x] - heard[y])[0]; hand.push(m); heard[m]++; }
+    shuffled(hand, lot).forEach((m, i) => { open[i].model = m; });
+  }
 }
 
 export function shouldWake(w, cfg, ch) {
@@ -152,6 +165,7 @@ export class Game {
 
   async think() {
     const w = this.w, cfg = this.cfg;
+    if (!w.castDealt) dealCast(cfg, w);
     for (const ch of Object.values(w.characters)) {
       ch.aiControlled = !!w.countries[ch.country] && isAI(cfg, w.countries[ch.country], ch);
       if (ch.aiControlled && ch.alive) { ch.everAI = true; ch.model ??= castModel(cfg, w, ch); burden(w, ch); }
@@ -308,7 +322,7 @@ export class Game {
       for (const h of Array.isArray(r?.rulings) ? r.rulings : []) {
         const ch = w.characters[h.actor];
         if (!ch || !actors.some(a => a.id === ch.id)) continue;
-        rulings.push(this.applyRuling(ch, { narrative: String(h.narrative || '').slice(0, 1500), prob: clamp(Number(h.probability ?? .5), 0, 1), public: !!h.public, ops: Array.isArray(h.operations) ? h.operations.slice(0, 16) : [], decision: h.decision, decisionText: this.pending.actors[ch.id]?.decisions?.[h.decision], source: 'referee' }));
+        rulings.push(this.applyRuling(ch, { narrative: String(h.narrative || '').slice(0, 1500), prob: Number.isFinite(Number(h.probability ?? 1)) ? clamp(Number(h.probability ?? 1), 0, 1) : 1, public: !!h.public, ops: Array.isArray(h.operations) ? h.operations.slice(0, 16) : [], decision: h.decision, decisionText: this.pending.actors[ch.id]?.decisions?.[h.decision], source: 'referee' }));
       }
     }
     // What the referee still left without a ruling is written down and told to the person who decided it.
@@ -339,20 +353,41 @@ export class Game {
     return { trace, rulings, system: [...(w.engineNotes || []).splice(0), ...(this.sysLog ||= []).splice(0)], messages: outgoing.map(m => { const target = recipient(w, m.to); return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, intercepted: !!m.intercepted, readBy: m.readBy ?? [], npc: !!m.npc, read: !!m.read, round: m.round ?? 0 }; }) };
   }
 
+  // The dice are rolled only for what the engine cannot judge: an act that no operation carries (a go-between who may not get through, a letter
+  // that may be stopped). Whatever an operation does, the engine judges for itself: whether there is a road, money, ships on station, authority,
+  // whether men follow and whether a secret holds; a referee's doubt about such a fact is not a chance. (World 13: a landing ordered "if a sea
+  // route can be found" was given six chances in ten and lost the roll, so that nobody ever looked for the route.) A probability of nought is
+  // still the referee saying that the thing cannot be done at all.
+  // One operation of a ruling may hang on the engine's answer to an earlier one: if_done n is carried out only if operation n was, if_refused n
+  // only if the engine refused it ("land if the way is open; if not, dig in where they stand"). Where the earlier one waits on events of the
+  // quarter (ships still on their way), what hangs on it waits with it.
   applyRuling(ch, { narrative, prob, public: pub, ops, source, decision, decisionText }) {
     const w = this.w, c = w.countries[ch.country];
-    const success = prob >= 1 || rand(w) < prob;
-    const results = success ? ops.map(op => ({ op: op.op, ...safeApply(w, ch, op) })) : [];
-    const refused = results.filter(r => r.ok === false), carried = success && (!results.length || refused.length < results.length);
+    const chancy = op => op?.op === 'custom', diced = prob > 0 && prob < 1 && (!ops.length || ops.some(chancy)), luck = prob >= 1 || (prob > 0 && (!diced || rand(w) < prob));
+    const results = [];
+    if (prob > 0) ops.forEach((op, i) => {
+      const { if_done, if_refused, ...plain } = op ?? {}, hang = Number.isInteger(if_done) ? 'done' : Number.isInteger(if_refused) ? 'refused' : null, n = hang === 'done' ? if_done : if_refused, on = hang && n >= 0 && n < i ? results[n] : null;
+      if (on?.waits) {
+        const a = (w.awaiting || []).find(x => x.key === on.waits && x.actor === ch.id);
+        if (a) { (a[hang === 'done' ? 'then' : 'else'] ||= []).push(plain); results.push({ op: op.op, ok: true, waits: on.waits, msg: `${op.op} waits with ${ops[n].op}: it is carried out this quarter only if that ${hang === 'done' ? 'is carried out' : 'cannot be'}, and the staff reports which.` }); return; }
+      }
+      if (on && (hang === 'done' ? on.ok === false || on.skipped : on.ok !== false || on.skipped)) { results.push({ op: op.op, ok: true, skipped: true, msg: `${op.op} was not attempted: it was ordered only in case ${ops[n].op} ${hang === 'done' ? 'was carried out, and it was not' : 'was refused, and it was not'}.` }); return; }
+      if (chancy(op) && !luck) { results.push({ op: op.op, ok: false, chance: true, msg: 'It did not come off.' }); return; }
+      results.push({ op: op.op, ...safeApply(w, ch, plain) });
+    });
+    // The ruling as a whole failed if the dice went against it and nothing else in it was done.
+    const success = prob > 0 && (luck || results.some(r => !r.chance && !r.skipped && r.ok !== false));
+    const refused = results.filter(r => r.ok === false), carried = success && (!results.length || refused.length < results.length), waits = results.some(r => r.waits);
     // What is announced is what happened: an order the world refused does not make the papers as if it had been done.
     if (narrative && pub && carried && source === 'referee') news(w, `${c?.name ?? ''}: ${narrative}`, { kind: 'politics', countries: [ch.country] });
     // The person who gave the order is told what actually came of it, in the engine's own words, not only what was intended.
     if (source === 'referee' && narrative) {
       const plain = m => m && !['Applied.', 'Recorded.'].includes(m), said = results.filter(r => plain(r.msg)).map(r => `${r.ok ? '' : `${r.op} was NOT carried out: `}${r.msg}`).join(' ');
-      const verdict = !success ? 'Failed' : !refused.length ? 'Succeeded' : refused.length < results.length ? 'Only partly carried out' : 'Not carried out';
+      const verdict = !success ? 'Failed' : refused.length === results.length && results.length ? 'Not carried out' : refused.length ? 'Only partly carried out' : waits ? 'Ordered, and waiting on the quarter' : 'Succeeded';
       ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: ${verdict}: ${narrative}${said ? ` [${said.slice(0, 1500)}]` : ''}`); ch.outcomes = ch.outcomes.slice(-60); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
     }
-    return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, probability: prob, success, results, source, decision, decisionText, ops };
+    // What is recorded as the probability is the chance that was actually rolled; where the referee named one and no dice were due, its figure is kept beside it.
+    return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, probability: diced || prob <= 0 ? prob : 1, ...(prob > 0 && prob < 1 && !diced ? { refereeProbability: prob } : {}), success, results, source, decision, decisionText, ops };
   }
 
   async turn() {
@@ -414,7 +449,7 @@ function unruled(entries, r) {
 }
 
 // What comes from outside the engine carries no inner switches: only the engine itself marks an operation as law or decree.
-function safeApply(w, ch, op) { try { const { _law, _decree, ...plain } = op ?? {}; return applyOp(w, ch, plain); } catch (e) { return { ok: false, msg: `Error: ${e.message}` }; } }
+function safeApply(w, ch, op) { try { const { _law, _decree, _late, ...plain } = op ?? {}; return applyOp(w, ch, plain); } catch (e) { return { ok: false, msg: `Error: ${e.message}` }; } }
 
 function sanitize(r, cfg) {
   if (!r || r.fallback) return { fallback: true };

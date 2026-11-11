@@ -87,7 +87,7 @@ function hazard(w, gen, u, lost, p) {
 
 export const TERRAIN_DEF = { plains: 1.05, hills: 1.35, forest: 1.25, mountain: 1.75, desert: 1.1, marsh: 1.4, tundra: 1.2 };
 // How many thousand men can come to grips in one province. Beyond that the rest wait their turn, so numbers count for less in a mountain pass than on a plain.
-const FRONTAGE = { plains: 160, hills: 110, forest: 100, mountain: 60, marsh: 70, desert: 130, tundra: 100 };
+export const FRONTAGE = { plains: 160, hills: 110, forest: 100, mountain: 60, marsh: 70, desert: 130, tundra: 100 };
 const crowding = (men, terrain, widen = 1) => { const room = (FRONTAGE[terrain] ?? 120) * widen; return men <= room ? 1 : (room + (men - room) * .4) / men; };
 const KIND = { infantry: 1, artillery: 1.7, armor: 3.2, air: 2.6, cavalry: .9 };
 
@@ -172,7 +172,7 @@ export function marchQuarters(w, u, to) {
   return cur === to ? q : null;
 }
 
-export function militaryStep(w) {
+export function militaryStep(w, onStation = null) {
   // Behind an invading army the country it has overrun is not quiet. A province of the enemy's held by too few men for its people is a province
   // where bands cut the railway and waylay the wagons: nothing passes it by rail, and by road only slowly.
   for (const p of Object.values(w.provinces)) { const was = !!p.cut, pop = provincePop(p), thin = p.controller !== p.owner && w.countries[p.owner]?.alive && atWar(w, p.owner, p.controller) && garrisonHold(sum(Object.values(w.units).filter(u => u.province === p.id && u.country === p.controller && !u.barracks), u => u.men), pop) < 1;
@@ -216,6 +216,8 @@ export function militaryStep(w) {
   }
   launch(w);
   navalStep(w);
+  // What was ordered to wait for the squadrons (a landing, a bombardment, mines, a demonstration) is carried out now that they have sailed and fought.
+  onStation?.(w);
   for (const c of aliveCountries(w)) upkeep(w, c);
   const byProv = {};
   for (const u of Object.values(w.units)) (byProv[u.province] ||= []).push(u);
