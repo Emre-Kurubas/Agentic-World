@@ -3098,5 +3098,57 @@ chain('Fertilizer is bought by farmers at a price: when it is dear they put less
   assert.ok(cheap._raw.grain > dearer._raw.grain * 1.08, `and the harvest follows what was put on (${Math.round(dearer._raw.grain)} against ${Math.round(cheap._raw.grain)})`);
   assert.ok(dearer._need.fertilizer < cheap._need.fertilizer * .5, 'the want that bids the price up shrinks with the price');
 });
+// The states. Helpers: a state of a given kind in an inherited world, its people by rank, and its men under arms.
+const ofKind = (w, kind) => aliveCountries(w).find(c => c.archetype === kind), rankShare = (w, c, ranks) => { const ps = countryProvinces(w, c.id), all = ps.reduce((s, p) => s + popOf(p), 0); return ps.reduce((s, p) => s + ranks.reduce((a, k) => a + p.pops[k].n, 0), 0) / all; }, underArms = (w, c) => Object.values(w.units).filter(u => u.country === c.id).reduce((s, u) => s + u.men, 0) / countryProvinces(w, c.id).reduce((s, p) => s + popOf(p), 0);
+chain('Only the junta and the poor agrarian state are handed over in the red: a throne and a temple keep their books level, a party state runs a little short, republics and merchants lay by; and each kind of state is where its kind keeps its books from the first year', () => {
+  const want = { merchant: .010, republic: .003, federation: .001, monarchy: 0, theocracy: 0, revolutionary: -.003, agrarian: -.009, junta: -.016 }, seen = {};
+  for (const seed of [1848, 9001]) { const w = inherited(seed), sum = {}; for (let t = 0; t < 4; t++) { run(w, 1); for (const c of aliveCountries(w)) sum[c.id] = (sum[c.id] || 0) + c.lastBalance / c.gdp / 4; }
+    for (const c of aliveCountries(w)) { seen[c.archetype] = sum[c.id]; assert.ok(Math.abs(sum[c.id] - want[c.archetype]) < .006, `seed ${seed}: the ${c.archetype} state's books stand at ${(sum[c.id] * 100).toFixed(1)}% of output in its first year, where its kind keeps them (${(want[c.archetype] * 100).toFixed(1)}%)`); } }
+  assert.ok(seen.junta < -.01 && seen.agrarian < -.004, `the junta and the agrarian state live beyond their means (${(seen.junta * 100).toFixed(1)}%, ${(seen.agrarian * 100).toFixed(1)}%)`);
+  assert.ok(Math.abs(seen.monarchy) < .004 && Math.abs(seen.theocracy) < .004 && seen.revolutionary > -.008, `throne, temple and party do not (${(seen.monarchy * 100).toFixed(1)}%, ${(seen.theocracy * 100).toFixed(1)}%, ${(seen.revolutionary * 100).toFixed(1)}%)`);
+});
+chain('States differ in what they are made of: a republic of merchants is a country of townsmen and counting-houses and turns out more a head, an agrarian principality one of peasants with a thin middle; the capital holds more townspeople than the back country; and whoever governs is told who his people are', () => {
+  const w = inherited(1848), m = ofKind(w, 'merchant'), a = ofKind(w, 'agrarian'), j = ofKind(w, 'junta'); assert.ok(m && a && j, 'the kinds are there');
+  assert.ok(rankShare(w, m, ['workers', 'middle']) > rankShare(w, a, ['workers', 'middle']) + .18, `townsmen: merchant ${(rankShare(w, m, ['workers', 'middle']) * 100).toFixed(0)} in the hundred, agrarian ${(rankShare(w, a, ['workers', 'middle']) * 100).toFixed(0)}`);
+  assert.ok(rankShare(w, m, ['middle']) > rankShare(w, a, ['middle']) * 1.8 && rankShare(w, a, ['peasants']) > .66 && rankShare(w, j, ['peasants']) > rankShare(w, m, ['peasants']) + .1, 'the middle ranks are thick in the one and thin in the other');
+  const cap = w.provinces[a.capital], back = countryProvinces(w, a.id).filter(p => p.id !== a.capital && !p.rail && p.port < 2)[0], towns = p => (p.pops.workers.n + p.pops.middle.n) / popOf(p); assert.ok(towns(cap) > towns(back) + .1, `the capital is more of a town than the back country (${towns(cap).toFixed(2)} against ${towns(back).toFixed(2)})`);
+  run(w, 4); const head = c => c.realGdp / countryProvinces(w, c.id).reduce((s, p) => s + popOf(p), 0);
+  assert.ok(head(m) > head(a) * 1.1, `the merchant republic turns out more a head than the agrarian principality (${(head(m) * 1000).toFixed(0)} against ${(head(a) * 1000).toFixed(0)} a thousand people)`);
+  const told = lookUp(w, ld(w, a), 'population'); assert.ok(/peasants|Peasants/.test(told), 'the census says who the people are: ' + told.slice(0, 300));
+});
+chain('Frontiers come with their fortresses: every inherited state keeps works on its land frontier where the road to its capital is barred, the states with small armies more and stronger ones, none in the quiet interior but the walled capitals; the works cost their keep, are in the chronicle, and whoever commands is told where they stand', () => {
+  for (const seed of [1848, 9001]) { const w = inherited(seed);
+    for (const c of aliveCountries(w)) { const ps = countryProvinces(w, c.id), forts = ps.filter(p => p.fort > 0), edge = p => p.neighbors.some(n => w.provinces[n].controller !== c.id), anyEdge = ps.some(p => p.id !== c.capital && edge(p));
+      if (anyEdge) assert.ok(forts.some(p => p.id !== c.capital && edge(p)), `seed ${seed}: ${c.archetype} has works on its frontier`);
+      assert.ok(forts.every(p => p.id === c.capital || edge(p)), `seed ${seed}: ${c.archetype} has none in the quiet interior`); assert.ok(forts.reduce((s, p) => s + p.fort, 0) <= 6, 'and not a wall of them'); } }
+  const w = inherited(1848), m = ofKind(w, 'merchant'), j = ofKind(w, 'junta'), levels = c => countryProvinces(w, c.id).reduce((s, p) => s + (p.fort || 0), 0);
+  assert.ok(levels(m) >= 4 && levels(m) > levels(j) + 2 && w.provinces[m.capital].fort >= 1, `the trading republic has stone where the junta has men (${levels(m)} against ${levels(j)}), its capital included`);
+  assert.ok(w.past.some(e => /keeps fortress works at/.test(e.text) && e.countries.includes(m.id)), 'the works are in the chronicle');
+  const bare = structuredClone(w); for (const p of countryProvinces(bare, m.id)) p.fort = 0; assert.ok(upkeepCost(w, m) > upkeepCost(bare, bare.countries[m.id]) + 30, 'they cost their keep every quarter');
+  assert.ok(/fort/.test(lookUp(w, w.characters[m.general], 'fortifications')), 'the general staff knows where they stand');
+});
+chain('Stone buys time: the junta falls on the trading republic with all it has, and where the republic\'s frontier fortress stands the first province does not fall in the first quarter; with the works razed it does', () => {
+  const world = inherited(1848), j0 = ofKind(world, 'junta'), m0 = ofKind(world, 'merchant'), fortress = countryProvinces(world, m0.id).find(p => p.fort > 0 && p.id !== m0.capital && p.neighbors.some(n => world.provinces[n].controller === j0.id)); assert.ok(fortress, 'the republic has a fortress facing the junta');
+  const fall = raze => { const w = structuredClone(world), j = w.countries[j0.id], m = w.countries[m0.id], target = w.provinces[fortress.id]; if (raze) target.fort = 0;
+    assert.ok(applyOp(w, ld(w, j), { op: 'declare_war', target: m.id, _law: true }).ok); const from = countryProvinces(w, j.id).find(p => p.neighbors.includes(target.id)), us = Object.values(w.units).filter(u => u.country === j.id); for (const u of us) u.province = from.id;
+    const r = applyOp(w, ld(w, j), { op: 'offensive', to: target.id, units: us.map(u => u.id), manner: 'assault' }); assert.ok(r.ok, r.msg); run(w, 1); return { target, m }; };
+  const held = fall(false), razed = fall(true);
+  assert.equal(held.target.controller, held.m.id, 'behind its works the province is still held after the first quarter');
+  assert.notEqual(razed.target.controller, razed.m.id, 'with the works razed it is gone');
+});
+chain('Peace establishments are those of the age: the junta keeps the most men under arms and no longer one man in forty, the trading republic the fewest and no longer one in a hundred and seventy; the strongest land power has two or three men for the weakest one\'s one, not four or five', () => {
+  const shares = {}; for (const seed of [1848, 9001, 99]) { const w = inherited(seed); for (const c of aliveCountries(w)) (shares[c.archetype] ||= []).push(underArms(w, c)); } const of = k => shares[k].reduce((a, b) => a + b, 0) / shares[k].length;
+  assert.ok(of('junta') > .015 && of('junta') < .023, `junta ${(of('junta') * 100).toFixed(2)} in the hundred of its people`); assert.ok(of('merchant') > .0065 && of('merchant') < .011, `merchant ${(of('merchant') * 100).toFixed(2)}`);
+  assert.ok(Object.keys(shares).every(k => of(k) <= of('junta') + 1e-9 && of(k) >= of('merchant') - .002), 'the others lie between'); assert.ok(of('junta') / of('merchant') > 1.8 && of('junta') / of('merchant') < 3.2, `the spread is ${(of('junta') / of('merchant')).toFixed(1)} to one`);
+});
+chain('Literacy stands where the schools hold it: a state left alone keeps the readers it inherited, one that doubles its vote for schools has more of them every year and settles higher, one that halves it loses them slowly; and the treasury says what the vote will hold', () => {
+  const play = times => { const w = inherited(1848), c = ofKind(w, 'agrarian'), was = c.literacy; if (times !== 1) assert.ok(applyOp(w, ld(w, c), { op: 'set_budget', category: 'education', share: c.budget.education * times, _law: true }).ok); const path = []; for (let t = 0; t < 40; t++) { c.treasury = Math.max(c.treasury, c.gdp * .5); c.arrears = 0; run(w, 1); path.push(c.literacy); } return { w, c, was, path }; };
+  const calm = play(1), more = play(4), less = play(.25);
+  assert.ok(Math.abs(calm.c.literacy - calm.was) < 1, `left alone it keeps its readers (${calm.was.toFixed(1)} -> ${calm.c.literacy.toFixed(1)} in ten years)`);
+  assert.ok(more.c.literacy > calm.c.literacy + 3 && more.path[39] > more.path[19] && more.path[19] > more.path[3], `four times the vote makes readers year after year (${more.was.toFixed(1)} -> ${more.c.literacy.toFixed(1)})`);
+  assert.ok(less.c.literacy < calm.c.literacy - .3 && calm.c.literacy - less.c.literacy < (more.c.literacy - calm.c.literacy), `a quarter of it loses them, more slowly (${less.c.literacy.toFixed(1)})`);
+  for (const kind of ['junta', 'merchant', 'republic']) { const w = inherited(1848), c = ofKind(w, kind), was = c.literacy; run(w, 24); assert.ok(Math.abs(c.literacy - was) < 1.5, `the ${kind} state left alone neither gains nor loses readers (${was.toFixed(1)} -> ${c.literacy.toFixed(1)})`); }
+  const told = lookUp(more.w, ld(more.w, more.c), 'budget'); assert.ok(/vote for schools[^.]*holds literacy at about \d+/.test(told), 'the treasury says what the vote for schools will hold: ' + told.slice(-400));
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

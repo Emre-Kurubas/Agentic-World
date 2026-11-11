@@ -511,20 +511,27 @@ function fiscal(w, c) {
   // Intelligence work grows out of the police; whatever the state built on top of that stays on top.
   c.intelBase ??= c.intelligence - c.police * .5;
   c.intelligence = clamp(c.intelligence + (clamp(c.intelBase + c.police * .5, 5, 95) - c.intelligence) * .03, 0, 100);
-  // Schools add readers quickly; a starved school system loses them only as the old die.
-  const school = (b.education * paid - .015) * 25;
-  c.literacy = clamp(c.literacy + (school < 0 ? school * .2 : school), 5, 99);
+  // Literacy stands where the schools hold it. A country was handed over with as many readers as its vote for schools had made in a generation
+  // (c.litBase under c.schoolShare): at that vote it keeps them. A larger vote settles it higher, some fifteen readers in the hundred for every
+  // point of output spent, and gets there as children grow up, a fiftieth of the way a quarter; a smaller one lets it sink, but slowly, for
+  // people do not forget their letters and the old die one by one. A level, not a counter. (It used to fall in six kinds of state out of eight
+  // whatever they did, because only a vote above one and a half parts in a hundred added any readers at all.)
+  c.litBase ??= c.literacy; c.schoolShare ??= b.education;
+  const reads = literacyAt(c, b.education * paid);
+  c.literacy = clamp(c.literacy + (reads - c.literacy) * (reads > c.literacy ? .02 : .006), 5, 99);
 }
 // The levels a country inherited are where its habits and its spending had brought it. They are fixed when the world is made, before anyone gives an order,
 // so that the first decree of a new ruler moves the country from where it stood and is not itself taken for the country's ordinary state.
 export function settleBases(w) {
   for (const c of aliveCountries(w)) {
-    c.graftBase ??= c.corruption + c.pressFreedom * .3 + c.courts * .35; c.intelBase ??= c.intelligence - c.police * .5; c.roadShare ??= c.budget.infrastructure;
+    c.graftBase ??= c.corruption + c.pressFreedom * .3 + c.courts * .35; c.intelBase ??= c.intelligence - c.police * .5; c.roadShare ??= c.budget.infrastructure; c.litBase = c.literacy; c.schoolShare = c.budget.education;
     c.profitBase = 1 - (c.taxTarget?.business ?? c.tax.business); c.upkeep = 1; c.builtBase = clamp(c.built ?? 1, .3, 1); c.goldBase = Math.max(0, c.reserves); c.goldFloor = c.goldBase * .6;
     { const ps = countryProvinces(w, c.id), n = sum(ps, p => p.pops.workers.n); if (n > 0) c.workBase ??= sum(ps, p => p.pops.workers.sat * p.pops.workers.n) / n; }
     for (const p of countryProvinces(w, c.id)) p.infraBase ??= p.infra;
   }
 }
+// Where a vote for schools of that share of output would hold the country's literacy in the long run.
+export const SCHOOLS = 1500, literacyAt = (c, share) => clamp((c.litBase ?? c.literacy) + (share - (c.schoolShare ?? c.budget.education)) * SCHOOLS, 5, 99);
 // The level of administration or policing that a given share of GDP sustains, and the share that a given level costs.
 export const capacityFor = share => clamp(10 + share * 2400, 10, 95);
 export const policeFor = share => clamp(5 + share * 3200, 5, 95);

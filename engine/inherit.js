@@ -2,7 +2,7 @@
 // Only facts live here; the character is not told how to think, and the leader can change everything.
 import { clamp, rand, pick, between, nextId } from './util.js';
 import { countryProvinces, aliveCountries, GOOD_LABEL, GOODS, RAW, makeUnit, provincePop } from './world.js';
-import { countryRoot } from './names.js';
+import { countryRoot, hashOf } from './names.js';
 import { initGroups } from './culture.js';
 import { initAdmin } from './admin.js';
 import { partyStep, satisfactionStep } from './politics.js';
@@ -26,8 +26,8 @@ import { RESERVE } from './frontier.js';
 
 const R = (a, b) => [a, b];
 const ARCHETYPES = [
-  { key: 'junta', suffix: ['Military Government of {}', '{} National Salvation Council'], regime: ['Military junta'], ideology: ['Order nationalism', 'Barracks statism'], elections: false, press: R(5, 20), axes: { econ: R(-10, 30), auth: R(70, 95), nation: R(60, 90), faith: R(-10, 30) }, budget: { military: 0.048, welfare: 0.005, infrastructure: 0.005, education: 0.004 }, tax: { income: 0.2, land: 0.17, business: 0.18 }, tariff: 0.15, treasury: 0.03, reserves: .15, debt: 1.5, army: 2.2, fleet: .6, industry: .6, arms: 2, literacy: R(16, 28), bureaucracy: 40, corruption: 52, police: 72, intelligence: 60, legitimacy: 38, courts: 12, unions: false, ownership: .1, loyalty: 88, rise: ['Took power in a night coup six years ago; the members of the previous government are in exile.', 'The officers who won the civil war declared them head of state.'] },
-  { key: 'merchant', suffix: ['Merchant Republic of {}', 'Free Ports of {}'], regime: ['Merchants\' council'], ideology: ['Free trade', 'Merchant oligarchy'], elections: true, press: R(50, 75), axes: { econ: R(60, 90), auth: R(-10, 30), nation: R(-40, 0), faith: R(-20, 10) }, budget: { military: 0.017, welfare: 0.006, infrastructure: 0.016, education: 0.009 }, tax: { income: 0.15, land: 0.08, business: 0.15 }, tariff: 0.05, treasury: 0.5, reserves: 1.4, debt: 0.6, army: .5, fleet: 2, industry: 1.6, arms: .6, literacy: R(50, 65), bureaucracy: 65, corruption: 28, police: 35, intelligence: 50, legitimacy: 60, courts: 65, unions: true, ownership: 0, loyalty: 62, rise: ['Elected council president by the majority of the great trading houses.'] },
+  { key: 'junta', suffix: ['Military Government of {}', '{} National Salvation Council'], regime: ['Military junta'], ideology: ['Order nationalism', 'Barracks statism'], elections: false, press: R(5, 20), axes: { econ: R(-10, 30), auth: R(70, 95), nation: R(60, 90), faith: R(-10, 30) }, budget: { military: 0.048, welfare: 0.005, infrastructure: 0.005, education: 0.004 }, tax: { income: 0.2, land: 0.17, business: 0.18 }, tariff: 0.15, treasury: 0.03, reserves: .15, debt: 1.5, army: 1.6, fleet: .6, industry: .6, arms: 2, literacy: R(16, 28), bureaucracy: 40, corruption: 52, police: 72, intelligence: 60, legitimacy: 38, courts: 12, unions: false, ownership: .1, loyalty: 88, rise: ['Took power in a night coup six years ago; the members of the previous government are in exile.', 'The officers who won the civil war declared them head of state.'] },
+  { key: 'merchant', suffix: ['Merchant Republic of {}', 'Free Ports of {}'], regime: ['Merchants\' council'], ideology: ['Free trade', 'Merchant oligarchy'], elections: true, press: R(50, 75), axes: { econ: R(60, 90), auth: R(-10, 30), nation: R(-40, 0), faith: R(-20, 10) }, budget: { military: 0.017, welfare: 0.006, infrastructure: 0.016, education: 0.009 }, tax: { income: 0.15, land: 0.08, business: 0.15 }, tariff: 0.05, treasury: 0.5, reserves: 1.4, debt: 0.6, army: .7, fleet: 2, industry: 1.6, arms: .6, literacy: R(50, 65), bureaucracy: 65, corruption: 28, police: 35, intelligence: 50, legitimacy: 60, courts: 65, unions: true, ownership: 0, loyalty: 62, rise: ['Elected council president by the majority of the great trading houses.'] },
   { key: 'monarchy', suffix: ['Kingdom of {}', '{} Empire', 'Crown of {}'], regime: ['Absolute monarchy', 'Nominally constitutional monarchy'], ideology: ['Sanctity of the throne', 'Dynastic loyalty'], elections: false, press: R(10, 30), axes: { econ: R(10, 40), auth: R(65, 90), nation: R(20, 50), faith: R(40, 80) }, budget: { military: 0.028, welfare: 0.004, infrastructure: 0.006, education: 0.004 }, tax: { income: 0.1, land: 0.2, business: 0.1 }, tariff: 0.12, treasury: 0.3, reserves: .5, debt: 1.2, army: 1.2, fleet: 1, industry: .8, arms: 1.2, literacy: R(24, 36), bureaucracy: 55, corruption: 40, police: 55, intelligence: 45, legitimacy: 70, courts: 25, unions: false, ownership: 0, loyalty: 80, advisory: 'Council of Notables', rise: ['Took the throne on a parent\'s death; the dynasty has ruled for two centuries.', 'Succeeded a childless uncle with the approval of the court notables.'] },
   { key: 'republic', suffix: ['Republic of {}'], regime: ['Parliamentary republic'], ideology: ['Liberal republicanism', 'Social reformism'], elections: true, press: R(75, 92), axes: { econ: R(-30, 30), auth: R(-55, -20), nation: R(-20, 15), faith: R(-40, 0) }, budget: { military: 0.022, welfare: 0.028, infrastructure: 0.018, education: 0.02 }, tax: { income: 0.18, land: 0.1, business: 0.2 }, tariff: 0.08, treasury: 0.15, reserves: .5, debt: 1.5, army: .8, fleet: 1, industry: 1.2, arms: .8, literacy: R(50, 62), bureaucracy: 65, corruption: 22, police: 35, intelligence: 40, legitimacy: 62, courts: 70, unions: true, ownership: .05, loyalty: 60, rise: ['Won the last election by a narrow margin; the opposition still disputes the result.', 'Became prime minister after coalition talks that dragged on for months.'] },
   { key: 'revolutionary', suffix: ["{} People's State", 'Revolutionary Republic of {}'], regime: ['One-party state'], ideology: ['Revolutionary socialism', 'Peasant-worker rule'], elections: false, press: R(5, 20), axes: { econ: R(-90, -60), auth: R(55, 85), nation: R(-10, 30), faith: R(-85, -50) }, budget: { military: 0.036, welfare: 0.035, infrastructure: 0.022, education: 0.025 }, tax: { income: 0.22, land: 0.2, business: 0.25 }, tariff: 0.25, treasury: 0.1, reserves: .3, debt: 0.5, army: 1.4, fleet: .5, industry: 1, arms: 1.3, literacy: R(35, 46), bureaucracy: 60, corruption: 35, police: 75, intelligence: 65, legitimacy: 50, courts: 10, unions: true, ownership: .6, loyalty: 78, rise: ['Was among the leaders of the uprising that toppled the old regime; the party elected them general secretary.'] },
@@ -43,7 +43,22 @@ const jitter = (w, v, by = .18) => v * between(w, 1 - by, 1 + by);
 const inRange = (w, [a, b]) => between(w, a, b);
 function shuffled(w, list) { const a = [...list]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rand(w) * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 
+// What kind of people each kind of state is made of: of every hundred, how many live on the land, by their hands in the towns, in the middle
+// ranks and at the top. A republic of merchants is a country of townsmen and counting-houses, an agrarian principality one of peasants with a
+// thin middle; a party state has its workers and few rich. It is a fact the state inherits, like its debt: whoever governs changes it only as
+// the engine lets anyone change it, by the works that draw people to the towns, by schools, by what happens to the land. Within a country the
+// capital, the great harbours and the railway towns hold more of the townspeople and the back country more of the peasants.
+const SOCIETY = { merchant: [.44, .31, .21, .04], republic: [.50, .29, .18, .03], federation: [.54, .27, .16, .03], revolutionary: [.56, .31, .11, .02], monarchy: [.60, .25, .12, .03], theocracy: [.62, .24, .11, .03], junta: [.62, .25, .10, .03], agrarian: [.70, .18, .09, .03] };
+function settleSociety(w, c, a) {
+  const [land, town, mid, top] = SOCIETY[a.key] ?? [.56, .27, .14, .03], ps = countryProvinces(w, c.id), townish = p => p.id === c.capital ? 1 : (p.port >= 2 ? .5 : 0) + (p.rail ? .3 : 0);
+  const all = ps.reduce((s, p) => s + provincePop(p), 0) || 1, mean = ps.reduce((s, p) => s + townish(p) * provincePop(p), 0) / all;
+  for (const p of ps) { const n = provincePop(p), peasants = clamp(land - .25 * (townish(p) - mean), .15, .9), rest = (1 - peasants) / (1 - land);
+    p.pops.peasants.n = n * peasants; p.pops.workers.n = n * town * rest; p.pops.middle.n = n * mid * rest; p.pops.elite.n = n * top * rest; }
+  // What the country turns out, reckoned as the map reckoned it (world.js bootEconomy), so that what it inherits in money is in proportion to what it is.
+  const gdp = ps.reduce((s, p) => s + p.pops.peasants.n * p.fertility * .02 * 10 + p.pops.workers.n * .5 + p.pops.middle.n, 0); c.gdp = gdp; c.realGdp = gdp; c.money = gdp * 2;
+}
 function applyArchetype(w, c, a, index) {
+  settleSociety(w, c, a);
   const gdp = Math.max(c.gdp, 1), root = countryRoot(c.majorityEth, c.id);
   Object.assign(c, {
     rootName: root, name: pick(w, a.suffix).replace('{}', root), regime: pick(w, a.regime), ideology: pick(w, a.ideology), archetype: a.key, motto: '', colors: [COLORS[index % COLORS.length], '#efe6c9'],
@@ -163,7 +178,9 @@ function specialise(w, cs) {
       const buysBread = short(c) > 0, now = (buysBread ? a.cap : a.made) / a.used, want = buysBread ? Math.max(now, 1.15 - lean) : 1 - TERMS * bread * (over(c) / spare) / size(c), k = clamp(Math.pow(want / Math.max(now, .05), .8), .5, 2); for (const p of ps) p.plants.goods *= k; }
   }
 }
-const BOOKS = { merchant: .010, republic: .003, federation: .001, monarchy: -.002, theocracy: -.003, revolutionary: -.007, agrarian: -.009, junta: -.016 };
+// (Only the junta and the poor agrarian state are handed over plainly in the red: that is those states' character. A throne and a temple keep
+// their books level, a party state runs a little short. When five kinds in eight started in deficit, most treasuries in any world were always red.)
+const BOOKS = { merchant: .010, republic: .003, federation: .001, monarchy: .001, theocracy: .001, revolutionary: -.003, agrarian: -.009, junta: -.016 };
 // A state that buys its coal or its ore, or its bread, has long since found something to pay with: its workshops make for the foreigner what
 // its mines and fields do not yield, and a state that sells coal and grain buys its cloth and boots abroad with the proceeds instead of
 // making them all. Each state's works for consumer goods are set so that, over ordinary years, its gold neither drains away nor piles up.
@@ -210,8 +227,8 @@ function balance(w, cs) {
     w.globalPrice = { ...trial.globalPrice }; }
   // The books are read over the first year and a half as it will actually be lived, now that stores, trade and prices start where they had
   // settled: the state's books stand where its kind of state keeps them from the first quarter, not only from the sixth.
-  // Twice over: the first reading sets the rates, the second corrects for what those rates themselves changed.
-  for (let pass = 0; pass < 2; pass++) {
+  // Three times over: the first reading sets the rates, the others correct for what those rates themselves changed.
+  for (let pass = 0; pass < 3; pass++) {
     const trial = structuredClone(w), got = {}; trial.status = 'playing';
     for (let i = 0; i < 6; i++) { beginTurn(trial); stepWorld(trial); for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive || !(t.lastRevenue > 0)) continue; const a = (got[c.id] ||= { rev: 0, bal: 0, gdp: 0 }); a.rev += t.lastRevenue; a.bal += t.lastBalance; a.gdp += t.gdp; } }
     for (const c of cs) {
@@ -266,12 +283,32 @@ function dealFields(w, cs) {
   for (const c of cs) { if (Object.keys(FIELDS).some(k => holds(c, k))) continue; const ps = countryProvinces(w, c.id), k = ['coal', 'iron'].find(g => ps.some(p => p.deposits[g])); if (k) for (const p of ps) if (p.deposits[k]) Object.assign(p.deposits[k], { known: true, mine: .8 }); }
 }
 
+// Frontiers come with their fortresses. Every state has put stone where it was most afraid: on the frontier province that bars the road to its
+// capital, in a pass or behind a river where there is one, facing the neighbour it has fought or quarrelled with. States that keep small
+// armies keep more and stronger works (a fortress is what a rich state has instead of a large army), and the old thrones and the trading
+// republics have works round their capitals as well. The works are inherited fact: they cost their keep every quarter, and whoever governs
+// may let them go or build more. (No map had a single fortress, and an army entered its neighbour's country a province a quarter.)
+const FORTS = { merchant: [2, 1, 1], republic: [2, 1], federation: [2, 1], monarchy: [2, 1], theocracy: [1, 1], agrarian: [1], revolutionary: [1], junta: [1] }, WALLED = ['merchant', 'republic', 'monarchy'];
+function fortify(w, cs) {
+  for (const c of cs) { const ps = countryProvinces(w, c.id), own = new Set(ps.map(p => p.id)), far = { [c.capital]: 0 }, q = [c.capital];
+    while (q.length) { const x = q.shift(); for (const n of w.provinces[x].neighbors) if (own.has(n) && !(n in far)) { far[n] = far[x] + 1; q.push(n); } }
+    const foes = p => [...new Set(p.neighbors.map(n => w.provinces[n].controller))].filter(id => id !== c.id && w.countries[id]?.alive), pass = p => w.strategic.some(s => s.type === 'pass' && s.ref === p.id);
+    const worth = p => (pass(p) ? 3 : 0) + (['mountain', 'hills'].includes(p.terrain) ? 1.5 : 0) + (p.river >= .3 ? 1.5 : 0) + Math.max(0, ...foes(p).map(id => -(c.relations[id] ?? 0))) / 20 + 4 / (1 + (far[p.id] ?? 8)) + (p.lostBy && p.lostBy !== c.id ? 1 : 0);
+    const frontier = ps.filter(p => p.id !== c.capital && foes(p).length).sort((a, b) => worth(b) - worth(a) || (a.id < b.id ? -1 : 1)), built = [];
+    for (const level of FORTS[c.archetype] ?? [1]) { const p = frontier.find(x => !built.includes(x) && !built.some(b => b.neighbors.includes(x.id))) ?? frontier.find(x => !built.includes(x)); if (!p) break; p.fort = level; built.push(p); }
+    if (WALLED.includes(c.archetype) && w.provinces[c.capital]) w.provinces[c.capital].fort = Math.max(w.provinces[c.capital].fort || 0, 1);
+    if (built.length) { const facing = [...new Set(built.flatMap(foes))].map(id => w.countries[id]); w.past.push({ year: 1870 + (hashOf(c.id) % 25), text: `${c.name} keeps fortress works at ${built.map(p => p.name).join(', ')}, on its frontier with ${facing.map(o => o.name).join(' and ')}${WALLED.includes(c.archetype) ? ', and round its capital' : ''}.`, countries: [c.id, ...facing.map(o => o.id)] }); }
+  }
+  w.past.sort((a, b) => a.year - b.year);
+}
+
 export function inheritStates(w) {
   const cs = aliveCountries(w), bag = shuffled(w, ARCHETYPES);
   dealFields(w, cs);
   cs.forEach((c, i) => applyArchetype(w, c, bag[i % bag.length], i));
   initGroups(w);
   w.past = makePast(w);
+  fortify(w, cs);
   initAdmin(w);
   writeChronicles(w); writeLives(w);
   initFirms(w);
