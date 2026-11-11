@@ -29,6 +29,13 @@ const ldir = path.join(dir, 'ledger'), entries = [];
 for (const name of fs.existsSync(ldir) ? fs.readdirSync(ldir).filter(x => x.endsWith('.ndjson.gz')).sort() : []) for (const line of zlib.gunzipSync(fs.readFileSync(path.join(ldir, name))).toString('utf8').split('\n')) { if (!line.trim()) continue; try { const e = JSON.parse(line); if ((e.t ?? 0) >= from && (e.t ?? 0) <= to) entries.push(e); } catch {} }
 const by = {}; for (const e of entries) by[e.k] = (by[e.k] || 0) + 1;
 console.log(`== LEDGER turns ${from}-${to}: ${entries.length} entries: ${Object.entries(by).map(([k, n]) => `${k} ${n}`).join(', ')}`);
+// Who woke and had nothing ruled on. A seat that thinks every quarter and is never ruled on is giving orders that are being lost somewhere
+// between its answer and the referee. (World 16: an empty list of decisions in a reply wiped 446 orders in seventeen quarters, a declaration
+// of war among them, and nothing in this report showed it; the president's inner voice did: "every order I gave seems to have dissolved".)
+{ const woke = {}, ruled = {}; for (const e of entries) { const a = e.a?.[0]; if (!a) continue; if (e.k === 'thought' && e.s === 'agent') (woke[a] ||= new Set()).add(e.t); if (e.k === 'ruling') (ruled[a] ||= new Set()).add(e.t); }
+  const idle = Object.entries(woke).map(([a, ts]) => ({ ch: w.characters[a], none: [...ts].filter(t => !ruled[a]?.has(t)), n: ts.size })).filter(x => x.none.length).sort((a, b) => b.none.length - a.none.length);
+  console.log(`== WOKE AND HAD NO RULING (${idle.length} characters; one or two quiet quarters are ordinary, a run of them means orders are being lost):`);
+  for (const x of idle) console.log(`  ${x.ch?.name}/${nm(x.ch?.country)} ${x.ch?.model ?? ''} ${x.ch?.role}: ${x.none.length} of ${x.n} turns (t${x.none.join(', t')})`); }
 const ops = {}, refused = [], empty = [];
 for (const e of entries.filter(e => e.k === 'ruling' || e.k === 'rule')) {
   const list = e.x?.ops || [], res = e.x?.results || [];

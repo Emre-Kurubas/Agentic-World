@@ -3584,6 +3584,18 @@ chain('Whoever holds no office may leave the stage of his own will, and only of 
   assert.ok(/retire\{words\?\}/.test(fs.readFileSync(new URL('../agents/prompts.js', import.meta.url), 'utf8')), 'the referee knows the order');
 });
 
+chain('Troops sent to a place this quarter are the troops of that place for their commander and for their spades too', () => {
+  // World 16, Q3 1903: "detach 5 thousand from B23 to Tolhanir, under Demirhan, to dig a second line" gave the detachment its posture and
+  // refused it the commander and the trench, because nobody stood at Tolhanir yet.
+  const w = fresh(), c = w.countries.U1, L = ld(w, c), gen = w.characters[c.general], u = Object.values(w.units).filter(x => x.country === 'U1').sort((a, b) => b.men - a.men)[0];
+  const to = w.provinces[w.provinces[u.province].neighbors.find(n => w.provinces[n].controller === 'U1' && !Object.values(w.units).some(x => x.province === n))]; assert.ok(to, 'an empty province of ours next door'); to.trench = 0;
+  const officer = Object.values(w.characters).find(x => x.country === 'U1' && x.alive && x.status === 'free' && !['leader', 'general', 'opposition', 'oligarch'].includes(x.role)); assert.ok(officer, 'somebody to command');
+  const none = applyOp(w, gen, { op: 'build', province: to.id, kind: 'trench' }); assert.ok(!none.ok && /none have been ordered there this quarter/.test(none.msg), `with nobody there and nobody on the way the spades are refused: ${none.msg}`);
+  const sent = applyOp(w, L, { op: 'move', unit: u.id, to: to.id, men: 5 }); assert.ok(sent.ok, sent.msg); const det = Object.values(w.units).find(x => x.country === 'U1' && x.id !== u.id && x.target === to.id && x.marchSince === w.turn); assert.ok(det, 'a detachment is on its way');
+  const named = applyOp(w, L, { op: 'appoint_commander', province: to.id, character: officer.id }); assert.ok(named.ok && det.commander === officer.id, `the commander named for the place commands the troops sent there: ${named.msg}`);
+  const dug = applyOp(w, gen, { op: 'build', province: to.id, kind: 'trench' }); assert.ok(dug.ok, `the chief of staff has them dig where they are sent: ${dug.msg}`);
+});
+
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
   // The same fight, the same dice, the enemy warned both times: only the man in command differs.
   const hurt = skill => { const f = duel({ dug: 5, ground: { trench: 2 }, rng: 99, seen: true }); f.gen.skill = skill; const [b] = quarter(f.w); assert.ok(b, 'a battle'); assert.ok(!b.prisoners, 'nobody was routed'); return f.D - f.def.men; };

@@ -558,7 +558,9 @@ export function applyOp(w, actor, op) {
     case 'appoint_commander': { if (op.fleet) { const f = w.fleets[op.fleet]; if (!f || f.country !== c.id) return fail('No such fleet of yours.'); const ch = personFor(w, c, op, 'officer'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); f.commander = ch.id; tell(w, ch, c.name, `You now command the squadron ${f.id}.`); return { ok: true, msg: `${ch.name} (${ch.id}) commands the squadron ${f.id}.` }; }
       // "The reservists forming at Ordgaron are placed under Colonel Aksoy": the unit may be named by where it stands (the largest of ours there
       // that has no commander of its own, else the largest).
-      const here = !op.unit && w.provinces[op.province] ? Object.values(w.units).filter(x => x.country === c.id && x.province === op.province).sort((a, b) => (w.characters[a.commander]?.alive ? 1 : 0) - (w.characters[b.commander]?.alive ? 1 : 0) || b.men - a.men)[0] : null;
+      // Troops sent there this very quarter count as the troops of that place (world 16: "detach five thousand to Tolhanir under Demirhan"
+      // was answered "no unit of ours stands at Tolhanir" for the commander and for the digging, and obeyed for the posture).
+      const here = !op.unit && w.provinces[op.province] ? Object.values(w.units).filter(x => x.country === c.id && (x.province === op.province || (x.target === op.province && x.marchSince === w.turn))).sort((a, b) => (w.characters[a.commander]?.alive ? 1 : 0) - (w.characters[b.commander]?.alive ? 1 : 0) || b.men - a.men)[0] : null;
       const u = w.units[op.unit] ?? here; if (!u || u.country !== c.id) return fail(op.unit ? 'No such unit.' : op.province ? `No unit of ours stands at ${w.provinces[op.province]?.name ?? op.province}.` : 'Say which troops he is to command: the unit (unit), the squadron (fleet), or the province where the troops stand (province).'); const ch = personFor(w, c, op, 'officer'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); u.commander = ch.id; tell(w, ch, c.name, `You now command unit ${u.id}.`); return { ok: true, msg: `${ch.name} (${ch.id}) commands ${u.id}.` }; }
     case 'propose_contract': { const k = proposeContract(w, actor, op, num); return k ? { ok: true, msg: `Contract offered: ${k.id}`, contract: k.id } : fail('No such counterparty.'); }
     case 'accept_contract': { const k = acceptContract(w, actor, op.id, op.from, op.state) ?? (op.state === true ? toStateAccount(w, actor, op.id) : null); return k ? { ok: true, msg: `Contract ${k.id} is in force${k.purse?.[actor.id] ? ", on the treasury's account" : ''}.` } : fail('No such offer is waiting for you.'); }
@@ -1605,7 +1607,7 @@ function build(w, c, op, actor) {
   // The chief of staff may have his own troops dig in where they stand; everything else that is built is the government's to order.
   if (actor && !governs(w, c, actor) && !delegated(c, actor, 'build')) {
     if (kind !== 'trench') return fail('Public works are for the government to order; the chief of staff may only have troops dig field works where they stand.');
-    if (!Object.values(w.units).some(u => u.country === c.id && u.province === p.id)) return fail(`No troops stand at ${p.name} to dig.`);
+    if (!Object.values(w.units).some(u => u.country === c.id && (u.province === p.id || (u.target === p.id && u.marchSince === w.turn)))) return fail(`No troops stand at ${p.name} to dig, and none have been ordered there this quarter.`);
   }
   const q = quote(w, c, p, kind, op.resource); if (q.no) return fail(q.no);
   if (!(q.room > .005)) return fail(q.piece ? `${p.name} already has ${kind === 'dam' ? 'a dam' : `as much ${{ railway: 'railway', port: 'harbour', fort: 'fortress', battery: 'coastal battery', trench: 'field works' }[kind]} as it can hold`}.` : `The ${q.what} at ${p.name} cannot be carried further.`);
