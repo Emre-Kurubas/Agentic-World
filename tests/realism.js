@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createWorld, aliveCountries, countryProvinces } from '../engine/world.js';
 import { beginTurn, stepWorld } from '../engine/step.js';
-import { applyOp, carryAwaited, carryTaken, printable } from '../engine/ops.js';
+import { applyOp, carryAwaited, carryTaken, carrySigned, printable } from '../engine/ops.js';
 import { executePlot } from '../engine/politics.js';
 import { makeParliament, treatyStep } from '../engine/polity.js';
 import { currencyStep, displacedDemand, exportEdge, localPrices } from '../engine/money.js';
@@ -1522,7 +1522,7 @@ chain('A state has a reserve of trained men: discharge fills it and returns the 
 });
 import { justiceStep as justiceOf } from '../engine/justice.js';
 import { rand as rollOf } from '../engine/util.js';
-import { billStep as billsOf, governmentSeats as benchOf, leadsParties as leadsOf } from '../engine/polity.js';
+import { billStep as billsOf, governmentSeats as benchOf, leadsParties as leadsOf, whipCount as whipsOf } from '../engine/polity.js';
 import { voiceOf as voiceIn, standOf as standIn } from '../engine/press.js';
 import { rivalParty as rivalIn } from '../engine/polity.js';
 chain('A paper has a line and its owner sets it: whom it serves moves the government\'s standing and a party\'s following one way or the other, its reporters go after whom they are told and leave alone whom they are told, a find held back lies in the owner\'s file until he uses it, and a censor short of closing strikes the piece, costs the press some of its freedom and leaves what was struck in the owner\'s hands and the government\'s', () => {
@@ -3373,6 +3373,57 @@ chain('A call-up is for as many men as the order says and they form where it say
   const few = stage(); few.c.stock.arms = 1; const thin = applyOp(few.w, few.L, { op: 'mobilize', men: 40 }); assert.ok(thin.ok && Math.abs(sum(few.called()) - 20) < .11 && /40 thousand were ordered: the arsenal has rifles for no more than 20/.test(thin.msg), thin.msg.slice(0, 300));
   assert.ok(/mobilize\{men\?,share\?,all\?,at\?\}/.test(fs.readFileSync(new URL('../agents/prompts.js', import.meta.url), 'utf8')), 'the referee is told the order carries a number of men');
   assert.ok(/A call-up is for as many as the order says/.test(answer(a.w, a.L, 'army')), 'and the army report says so to those who give it');
+});
+
+chain('A bill is its mover\'s until the house votes: he can take it back and nobody else can; a government bill carries the government\'s benches, and one that the governing party is told to vote against is voted down by the partners who sit with it', () => {
+  // World 15: the President of Hazland, attacked by Morovia, wanted his declaration of war on Akulia withdrawn. No operation could withdraw it; he
+  // had his own party (22 seats) told to vote against it; his coalition partners (41 seats) voted for the government's bill all the same and with
+  // the opposition carried it 78 to 22, and Hazland was at war with Akulia against the will of everyone who governed it.
+  const house = () => { const w = fresh(), c = w.countries.U1; makeParliament(c, 'The House', true); c.rulingParty = c.parties[0].id; c.legitimacy = 60; c.parliament.seats = Object.fromEntries(c.parties.map((p, i) => [p.id, [22, 37, 25, 16][i] ?? 0])); for (const p of c.parties) p.support = c.parliament.seats[p.id];
+    const head = ld(w, c), rival = w.characters[c.opposition], theirs = leadsOf(w, c, rival)[0], partners = c.parties.filter(p => p.id !== c.rulingParty && p.id !== theirs.id);
+    for (const p of partners) { p.axes = { ...c.axes }; assert.ok(applyOp(w, head, { op: 'coalition', party: p.id }).ok); }
+    const id = applyOp(w, head, { op: 'propose_law', title: 'Frontier Act', text: 'The frontier is to be watched.' }).bill, bill = c.bills.find(b => b.id === id); assert.ok(bill?.byGov && benchOf(c) > 50, 'a government bill, and a government with a majority');
+    return { w, c, head, rival, theirs, bill, vote: () => { w.turn++; billsOf(w, applyOp); return bill; } }; };
+  const a = house(); assert.equal(a.vote().status, 'passed', 'the government\'s benches carry the government\'s bill');
+  const b = house(); assert.ok(applyOp(b.w, b.head, { op: 'vote_bill', bill: b.bill.id, vote: 'no' }).ok && applyOp(b.w, b.rival, { op: 'vote_bill', bill: b.bill.id, vote: 'yes' }).ok);
+  assert.ok(whipsOf(b.c, b.bill).no >= 60, `the whips count the partners with the government: ${JSON.stringify(whipsOf(b.c, b.bill))}`);
+  const voted = b.vote(); assert.ok(voted.status === 'rejected' && voted.tally.no > voted.tally.yes, `told to vote against its own bill, the government and its partners vote it down: ${JSON.stringify(voted.tally)}`);
+  const d = house(); const no = applyOp(d.w, d.rival, { op: 'withdraw_bill', bill: d.bill.id }); assert.ok(!no.ok && /not yours to withdraw/.test(no.msg), no.msg);
+  const out = applyOp(d.w, d.head, { op: 'withdraw_bill' }); assert.ok(out.ok && d.bill.status === 'withdrawn', out.msg); const laws = (d.c.laws || []).length; d.vote(); assert.ok(d.bill.status === 'withdrawn' && !d.bill.tally && (d.c.laws || []).length === laws, 'a bill withdrawn is not voted and nothing in it is done');
+  assert.ok(!applyOp(d.w, d.head, { op: 'withdraw_bill', bill: d.bill.id }).ok, 'and it cannot be withdrawn twice');
+  assert.ok(/withdraw_bill\{bill\}/.test(fs.readFileSync(new URL('../agents/prompts.js', import.meta.url), 'utf8')) && /take it back \(withdraw_bill\)/.test(answer(d.w, d.head, 'parliament')), 'the referee and the seats are told');
+});
+
+chain('A signature ordered for a treaty that has not yet arrived waits for it and is given when it does; a peace signed puts an end to the other peace papers between the two; and an order may wait for a place that a peace is to bring back', () => {
+  // World 15: three times a ruler ordered "sign the peace they are sending" in the quarter it was sent, the order reached the engine before the
+  // proposal did, and it was answered with "which proposal?"; each peace was signed a quarter late. And "once Hazmark is handed back the corps moves
+  // in" was refused because no attack on Hazmark was in hand, though the peace then on the table was to hand it back.
+  const s = twoRoads(1), { w, a, d } = s, la = ld(w, a), lb = ld(w, d);
+  const stale = applyOp(w, la, { op: 'propose_treaty', target: 'U2', kind: 'peace', terms: 'An older offer.' }); assert.ok(stale.ok, stale.msg); const old = w.treaties.at(-1);
+  const early = applyOp(w, la, { op: 'accept_treaty', target: 'U2' }); assert.ok(early.ok && early.waits === 'sign:U2' && /signature is ready/.test(early.msg) && atWarOf(w, 'U1', 'U2'), early.msg);
+  applyOp(w, la, { op: 'accept_treaty', target: 'U2' }); assert.equal(w.signing.length, 1, 'ordered twice it is one signature');
+  assert.ok(applyOp(w, lb, { op: 'propose_treaty', target: 'U1', kind: 'peace', terms: 'As things stand.' }).ok); carrySigned(w);
+  assert.ok(!atWarOf(w, 'U1', 'U2') && /arrived, and it was signed as you had ordered/.test(la.inbox.at(-1).text) && !w.signing.length, la.inbox.at(-1).text);
+  assert.ok(!old.pending && !old.active, 'the older offer of peace between the two is no longer on the table');
+  const n = twoRoads(1), ln = ld(n.w, n.a); assert.ok(applyOp(n.w, ln, { op: 'accept_treaty', target: 'U2' }).waits); carrySigned(n.w);
+  assert.ok(atWarOf(n.w, 'U1', 'U2') && /Nothing was signed with .* this quarter/.test(ln.inbox.at(-1).text) && !n.w.signing.length, ln.inbox.at(-1).text);
+  // A province of our own that the enemy holds: the reserve is ordered in "once it is handed back", with no attack in hand.
+  const t = twoRoads(1), lost = t.e1, lt = ld(t.w, t.a), lu = ld(t.w, t.d), reserve = soldier(t.w, 'U1', t.e2.id, 30), game = new Game({ world: t.w, cfg: base, backend: { kind: 'mock' }, store: nullStore() }); lost.controller = 'U2'; soldier(t.w, 'U2', lost.id, 20);
+  const r = game.applyRuling(t.gen, { narrative: 'in when it is ours', prob: 1, public: false, source: 'referee', ops: [{ op: 'move', unit: reserve.id, to: lost.id, once_taken: lost.id }, { op: 'set_posture', unit: reserve.id, posture: 'defensive', if_done: 0 }] });
+  assert.ok(r.results[0].waits === `take:${lost.id}` && /come back into our hands, by a peace or by arms/.test(r.results[0].msg) && r.results[1].waits && !reserve.target, r.results[0].msg);
+  const turn = () => { t.w.battles = []; t.w.newsThisTurn = []; militaryStep(t.w, carryAwaited, carryTaken); t.w.turn++; };
+  turn(); assert.ok(t.w.hanging.length === 1 && !reserve.target, 'while the enemy holds it and a peace may bring it back, the order waits');
+  assert.ok(applyOp(t.w, lu, { op: 'propose_treaty', target: 'U1', kind: 'peace', terms: 'Every province goes back.' }).ok && applyOp(t.w, lt, { op: 'accept_treaty', target: 'U2' }).ok && lost.controller === 'U1');
+  turn(); assert.ok((reserve.target === lost.id || reserve.province === lost.id) && !t.w.hanging.length && /is in our hands\. What was ordered to follow/.test(t.said()), `handed back, the reserve is ordered in: ${reserve.province} -> ${reserve.target}; ${t.said().slice(-500)}`);
+  // "Move in and stand on the defensive there" is a march and then a standing order: the march is not cancelled by it.
+  assert.ok(/takes effect where the march ends/.test(t.said()) && reserve.posture !== 'defensive', t.said().slice(-300)); for (let i = 0; i < 3 && reserve.province !== lost.id; i++) turn();
+  assert.ok(reserve.province === lost.id && reserve.posture === 'defensive' && !reserve.digAt, `it marched there and dug in: ${reserve.province} ${reserve.posture}`);
+  // The same two orders given in one quarter by hand; and an order to hold given a quarter after the march was ordered still cancels it.
+  const m = twoRoads(1), corps = soldier(m.w, 'U1', m.a.capital, 40), far = m.e1; assert.ok(applyOp(m.w, m.gen, { op: 'move', unit: corps.id, to: far.id }).ok); const dig = applyOp(m.w, m.gen, { op: 'set_posture', unit: corps.id, posture: 'defensive' });
+  assert.ok(corps.target === far.id && corps.posture !== 'defensive' && /dig in there/.test(dig.msg) && /stand on the defensive where its march ends/.test(answer(m.w, m.gen, 'army')), dig.msg.slice(-260));
+  { const g2 = new Game({ world: m.w, cfg: base, backend: { kind: 'mock' }, store: nullStore() }), put = soldier(m.w, 'U1', m.e2.id, 20), rr = g2.applyRuling(m.gen, { narrative: 'hold it', prob: 1, public: false, source: 'referee', ops: [{ op: 'move', unit: put.id, to: m.e2.id }, { op: 'set_posture', unit: put.id, posture: 'defensive', if_done: 0 }] });
+    assert.ok(rr.results[0].ok && /already, and stays/.test(rr.results[0].msg) && !rr.results[1].skipped && put.posture === 'defensive', `ordered to hold the place it stands in, it does: ${JSON.stringify(rr.results.map(x => x.msg.slice(0, 80)))}`); }
+  m.w.turn++; const halt = applyOp(m.w, m.gen, { op: 'set_posture', unit: corps.id, posture: 'defensive' }); assert.ok(!corps.target && corps.posture === 'defensive' && /from an earlier quarter; those are cancelled/.test(halt.msg), halt.msg.slice(-300));
 });
 
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {

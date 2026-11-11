@@ -7,7 +7,7 @@ import { projectStep } from './projects.js';
 import { cultureStep } from './culture.js';
 import { adminStep } from './admin.js';
 import { contractStep } from './contracts.js';
-import { applyOp, carryAwaited, carryTaken } from './ops.js';
+import { applyOp, carryAwaited, carryTaken, carrySigned } from './ops.js';
 import { courtStep } from './court.js';
 import { labourStep, labourEnd } from './labour.js';
 import { undergroundStep } from './underground.js';
@@ -24,6 +24,8 @@ import { openCredit } from './money.js';
 export function beginTurn(w) { w.newsThisTurn = []; w.battles = []; w.seaFights = []; w.awaited = []; for (const c of aliveCountries(w)) openCredit(c); }
 
 export function stepWorld(w) {
+  // Signatures ordered for papers that had not yet arrived are given now that every government's orders of the quarter are in.
+  carrySigned(w);
   projectStep(w);
   adminStep(w);
   treatyStep(w);

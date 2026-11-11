@@ -125,7 +125,7 @@ const mayStand = (w, country, pid) => canEnter(w, country, pid) || atWar(w, coun
 // the ground another quarter at a heavier price in men, until it breaks). Besides these, troops can be told to hold their fire on a frontier
 // (frontier.js) and to stay in barracks when the state turns on its own people (labour.js, politics.js, ops.js).
 export const POSTURES = ['ordinary', 'hold_fire', 'defensive', 'fall_back', 'no_retreat', 'barracks'];
-export const postureWords = u => [u.posture === 'defensive' ? 'standing on the defensive' : u.posture === 'fall_back' ? 'to fall back if pressed' : u.posture === 'no_retreat' ? 'not one step back' : '', u.holdFire ? 'holding fire on the frontier' : '', u.barracks ? 'kept in barracks' : ''].filter(Boolean).join(', ');
+export const postureWords = u => [u.digAt && u.posture !== 'defensive' ? 'to stand on the defensive where its march ends' : '', u.posture === 'defensive' ? 'standing on the defensive' : u.posture === 'fall_back' ? 'to fall back if pressed' : u.posture === 'no_retreat' ? 'not one step back' : '', u.holdFire ? 'holding fire on the frontier' : '', u.barracks ? 'kept in barracks' : ''].filter(Boolean).join(', ');
 // Where a unit goes when it gives up a province: toward its own country, the nearest of its own provinces to the capital, else an ally's.
 function wayBack(w, u, pid) {
   const cap = w.provinces[w.countries[u.country]?.capital], near = n => cap ? Math.hypot(w.provinces[n].cx - cap.cx, w.provinces[n].cy - cap.cy) : 0, ns = w.provinces[pid].neighbors;
@@ -182,7 +182,9 @@ export function militaryStep(w, onStation = null, afterFight = null) {
   for (const c of aliveCountries(w)) c._shot = 0;
   if (season(w) === 'winter') for (const u of Object.values(w.units)) { const p = w.provinces[u.province]; if (!p) continue; const hard = WINTER[p.terrain] ? .05 : p.controller !== u.country && !railWorks(w, p) ? .03 : 0; if (hard) { u.men = Math.max(.05, u.men * (1 - hard)); u.morale = clamp(u.morale - (hard > .04 ? 6 : 4), 5, 100); } }
   for (const u of Object.values(w.units)) {
-    // Troops on the defensive do not march: they dig, and deeper than troops who expect to be moved on.
+    // Troops on the defensive do not march: they dig, and deeper than troops who expect to be moved on. Troops ordered to stand on the defensive
+    // where their march ends do so when they are there; if the march was given up, so is that.
+    if (u.digAt && (u.province === u.digAt || !u.target)) { if (u.province === u.digAt) { u.posture = 'defensive'; u.target = null; } delete u.digAt; }
     if (u.posture === 'defensive') u.target = null;
     if (!u.target) { u.dug = Math.min(u.posture === 'defensive' ? 5 : 3, (u.dug || 0) + (u.posture === 'defensive' ? 2 : 1)); continue; }
     // What became of the quarter's march is kept on the unit, so that whoever ordered it can see how far it got and what held it.
@@ -214,6 +216,7 @@ export function militaryStep(w, onStation = null, afterFight = null) {
     }
     if (u.target && !went.held) went.held = slowWord(w.provinces[went.from], w.provinces[u.province], w);
     went.reached = u.province;
+    if (u.digAt && u.province === u.digAt) { u.posture = 'defensive'; u.target = null; delete u.digAt; }
   }
   launch(w);
   navalStep(w);

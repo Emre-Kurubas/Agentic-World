@@ -221,7 +221,11 @@ function leanOf(c, b, p) {
   let s = 30 - distance(p.axes, b.axes) * .5 + (b.lobby[p.id] || 0) * .4;
   if (b.party === p.id) s += 35;
   s += billLean(c, b, p);
-  if (b.byGov) s += p.id === c.rulingParty ? 30 : (c.coalition || []).includes(p.id) ? 18 : -10;
+  // A government bill carries the government's benches. One that the governing party has been told to vote against is the government's no longer:
+  // its partners follow the government, not the paper, and the other parties judge it on what it says.
+  const against = b.votes[c.rulingParty] === 'no', partner = (c.coalition || []).includes(p.id);
+  if (against && (b.byGov || partner || p.id === c.rulingParty)) s += p.id === c.rulingParty ? -30 : partner ? -45 : 0;
+  else if (b.byGov) s += p.id === c.rulingParty ? 30 : partner ? 18 : -10;
   // The government's own benches do not carry the opposition's bills unless something moves them.
   else if (p.id === c.rulingParty && b.party !== p.id) s -= 28;
   return s;

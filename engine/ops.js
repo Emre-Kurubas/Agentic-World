@@ -29,9 +29,9 @@ import { governmentSeats, institutionRoom, delegated, vetoedBy, makeInstitution,
 const FIRM_OPS = new Set(['found_company', 'invest_company', 'draw_company', 'sell_company', 'buy_company', 'nationalize_company', 'privatize_company']);
 const PERMISSIONS = {
   leader: null,
-  general: new Set(['propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'propose_law', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'embezzle', 'create_institution', 'start_plot', 'fund_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda']),
-  opposition: new Set(['propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'propose_law', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'create_institution', 'start_plot', 'fund_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda']),
-  oligarch: new Set(['propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'propose_law', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'lend_private', 'embezzle', 'create_institution', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda', 'capital_flight', 'invest', 'fund_plot'])
+  general: new Set(['propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'propose_law', 'withdraw_bill', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'embezzle', 'create_institution', 'start_plot', 'fund_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda']),
+  opposition: new Set(['propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'propose_law', 'withdraw_bill', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'create_institution', 'start_plot', 'fund_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda']),
+  oligarch: new Set(['propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'propose_law', 'withdraw_bill', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'lend_private', 'embezzle', 'create_institution', 'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda', 'capital_flight', 'invest', 'fund_plot'])
 };
 // What no newspaper prints, whatever the referee thinks of it: orders to troops and squadrons, the staff's plans, the secret service's work, money
 // under the table, plots, private bargains, and anything done under a treaty that is itself secret. In world 12 the papers of the world carried 889
@@ -146,6 +146,9 @@ export function carryAwaited(w) {
 // which it was. Given again in a later quarter, what hangs on a place replaces what hung on it; nothing multiplies. (World 15, the fourth quarter:
 // "B71 and the cavalry take Brunmarka; if it falls B71 goes on against Hazburga" was carried out as two attack orders to the same unit on the same
 // day, the second replacing the first, so that the army went against Hazburga and Brunmarka was left to five thousand horsemen.)
+// A place may come into a country's hands without an attack: a province of its own that the enemy holds comes back with a peace, and a treaty on
+// the table may name a province to be given to it.
+const promised = (w, c, p) => p.owner === c.id || (w.treaties || []).some(t => t.pending && (t.parties || t.invited || []).includes(c.id) && (t.multi ? (t.grants || []).some(g => g.province === p.id && g.to === c.id) : (t.cede || []).includes(p.id) && p.owner !== c.id));
 const inHand = (w, c, p) => p.siege?.by === c.id || Object.values(w.units).some(u => u.country === c.id && (u.attack?.to === p.id || u.target === p.id || u.province === p.id));
 export function hangOn(w, actor, pid, side, node) {
   const q = (w.hanging ||= []);
@@ -159,10 +162,10 @@ export function hangOn(w, actor, pid, side, node) {
 export function onceTaken(w, actor, pid, op) {
   const c = w.countries[actor.country], p = w.provinces[pid]; if (!p) return { ok: false, msg: `No such province to wait for: ${pid}.` };
   if (p.controller === c?.id) return null;
-  if (!atWar(w, c.id, p.controller)) return { ok: false, msg: `${p.name} is held by ${cname(w, p.controller)}, with whom there is no war: there is no attack on it for this order to wait on.` };
-  if (!inHand(w, c, p)) return { ok: false, msg: `No attack of ours on ${p.name} is in hand, so there is nothing for this order to wait on: order the attack first (offensive, or a move against it), and then what is to follow its capture.` };
-  const node = hangOn(w, actor, p.id, 'then', { op, then: [], else: [] });
-  return { ok: true, waits: `take:${p.id}`, node, msg: `${op.op} waits for ${p.name} to fall: it is ordered once the place is in our hands, and lapses if the attack on it is beaten off or given up. The staff reports which.` };
+  const attack = atWar(w, c.id, p.controller) && inHand(w, c, p), due = promised(w, c, p);
+  if (!attack && !due) return { ok: false, msg: atWar(w, c.id, p.controller) ? `No attack of ours on ${p.name} is in hand and no treaty on the table gives it to us, so there is nothing for this order to wait on: order the attack first (offensive, or a move against it), or propose the treaty, and then what is to follow.` : `${p.name} is held by ${cname(w, p.controller)}, with whom there is no war, and no treaty on the table gives it to us: there is nothing for this order to wait on.` };
+  const node = hangOn(w, actor, p.id, 'then', { op, then: [], else: [], any: true });
+  return { ok: true, waits: `take:${p.id}`, node, msg: attack ? `${op.op} waits for ${p.name} to fall: it is ordered once the place is in our hands, and lapses if the attack on it is beaten off or given up${due ? ' and no treaty brings it back' : ''}. The staff reports which.` : `${op.op} waits for ${p.name} to come back into our hands${p.owner === c.id ? ', by a peace or by arms' : ' by the treaty proposed'}: it is ordered on that day. The staff reports it.` };
 }
 function carryNode(w, ch, node, fresh) {
   const r = applyOp(w, ch, { ...node.op, _late: true }), line = `${node.op.op}${r.ok ? '' : ' was NOT carried out'}: ${r.msg}`, more = (node.then?.length || 0) + (node.else?.length || 0);
@@ -170,13 +173,24 @@ function carryNode(w, ch, node, fresh) {
   if (r.ok && r.takes && more) { fresh.push({ turn: w.turn, actor: ch.id, country: ch.country, province: r.takes, then: node.then || [], else: node.else || [] }); return [line]; }
   return [line, ...((r.ok ? node.then : node.else) || []).flatMap(n => carryNode(w, ch, n, fresh))];
 }
+export function carrySigned(w) {
+  for (const a of (w.signing || []).splice(0)) {
+    const ch = w.characters[a.actor], c = ch && w.countries[ch.country], o = w.countries[a.target]; if (!ch?.alive || !c?.alive || !o) continue;
+    const r = applyOp(w, ch, { op: 'accept_treaty', target: o.id, _late: true });
+    const text = r.ok ? `The proposal of ${o.name} arrived, and it was signed as you had ordered. ${r.msg}` : `Nothing was signed with ${o.name} this quarter: ${/^No proposal|^Which proposal/.test(r.msg) ? `no single proposal of theirs reached us (${r.msg})` : r.msg} The order to sign does not stand over: it has to be given again when their paper is on the table.`;
+    for (const x of new Set([ch, w.characters[c.leader]])) tell(w, x, 'Foreign Ministry', text);
+    (w.awaited ||= []).push({ turn: w.turn, actor: ch.id, country: c.id, op: { op: 'accept_treaty', target: o.id }, ok: !!r.ok, text });
+  }
+}
 export function carryTaken(w) {
   const keep = [], fresh = [];
   for (const h of (w.hanging || [])) {
     const ch = w.characters[h.actor], c = ch && w.countries[ch.country], p = w.provinces[h.province]; if (!ch?.alive || !c?.alive || c.id !== h.country || !p) continue;
-    const ours = p.controller === c.id, foe = !ours && atWar(w, c.id, p.controller);
-    if (foe && inHand(w, c, p) && w.turn - h.turn <= 12) { keep.push(h); continue; }
-    const said = (ours ? h.then : foe ? h.else : []).flatMap(n => carryNode(w, ch, n, fresh)), lost = (ours ? h.else : foe ? h.then : [...h.then, ...h.else]).map(n => n.op.op);
+    const ours = p.controller === c.id, foe = !ours && atWar(w, c.id, p.controller), young = w.turn - h.turn <= 12;
+    if (foe && inHand(w, c, p) && young) { keep.push(h); continue; }
+    // With no attack in hand, what was ordered for the place however it comes (once_taken) still waits while a peace or a treaty may bring it.
+    const stay = !ours && young && promised(w, c, p) ? h.then.filter(n => n.any) : []; if (stay.length) keep.push({ ...h, then: stay, else: [] });
+    const said = (ours ? h.then : foe ? h.else : []).flatMap(n => carryNode(w, ch, n, fresh)), lost = (ours ? h.else : foe ? h.then : [...h.then, ...h.else]).filter(n => !stay.includes(n)).map(n => n.op.op);
     if (!said.length && !lost.length) continue;
     const head = ours ? `${p.name} is in our hands.` : foe ? `The attack on ${p.name} did not carry the place, and no attack of ours on it is in hand any more.` : `${p.name} is no longer the enemy's to take (${cname(w, p.controller)} holds it).`;
     const text = `${head}${said.length ? ` What was ordered ${ours ? 'to follow its capture' : 'for that case'}: ${said.join(' ')}` : ''}${lost.length ? ` What was ordered ${ours ? 'for the case that the attack failed' : foe ? 'to follow its capture' : 'to hang on it'} lapses (${lost.join(', ')}).` : ''}`;
@@ -1191,6 +1205,11 @@ export function applyOp(w, actor, op) {
     }
     case 'accept_treaty': {
       const waiting = w.treaties.filter(x => (x.pending && x.parties.includes(c.id) && x.proposer !== c.id && !(x.signed || []).includes(c.id)) || (x.multi && x.active && (x.open || []).includes(c.id))), from = waiting.filter(x => !target || x.proposer === target.id), t = waiting.find(x => x.id === op.id) ?? (from.length === 1 ? from[0] : null);
+      // A signature ordered for a paper that has not arrived yet waits for it: in a quarter two governments agree by letter, one sends the treaty and
+      // the other signs, and which of the two orders reaches the engine first is chance. It is given when the quarter's proposals are all in
+      // (carrySigned, before the quarter is played), and whoever ordered it is told what came of it.
+      if (!t && target && !from.length && !op._late) { const q = (w.signing ||= []), at = q.findIndex(x => x.actor === actor.id && x.target === target.id), entry = { turn: w.turn, actor: actor.id, target: target.id }; if (at >= 0) q[at] = entry; else q.push(entry);
+        return { ok: true, waits: `sign:${target.id}`, msg: `No proposal from ${target.name} has reached us yet${waiting.length ? ` (what lies on the table, ${waiting.map(x => x.id).join(', ')}, is not theirs)` : ''}. The signature is ready: it is given to whatever single proposal of theirs arrives this quarter, and if none comes nothing is signed. The Foreign Ministry reports which.` }; }
       if (!t) return fail(waiting.length ? `Which proposal? Waiting: ${waiting.map(x => x.id).join(', ')}.` : 'No proposal is waiting.');
       if (t.multi) return signMany(w, c, t);
       const other = alive(w, t.proposer); if (!other) { t.pending = false; return fail('The other party is gone.'); }
@@ -1210,7 +1229,7 @@ export function applyOp(w, actor, op) {
         news(w, `${p.name} passed from ${giver.name} to ${taker.name} by treaty.`, { kind: 'diplomacy', countries: [giver.id, taker.id], province: pid });
       }
       // The war is wound up once the land has changed hands, not before (see settleTerms): troops standing in what the treaty gives their country stay.
-      if (t.kind === 'peace') { endWar(w, c.id, other.id, t.annex); peaceRecognises(w, c, other); }
+      if (t.kind === 'peace') { endWar(w, c.id, other.id, t.annex); peaceRecognises(w, c, other); for (const x of w.treaties) if (x !== t && x.pending && !x.multi && ['peace', 'armistice'].includes(x.kind) && x.parties.includes(c.id) && x.parties.includes(other.id)) x.pending = false; }
       if (t.cede?.length) settleOccupations(w);
       if (t.reparations) {
         // Paid in gold as far as there is gold; the rest is owed.
@@ -1405,6 +1424,14 @@ export function applyOp(w, actor, op) {
       const bill = createBill(w, c, actor, op); return bill ? { ok: true, msg: `Bill ${bill.id} goes to a vote next quarter.${Array.isArray(op.ops) && bill.ops.length < op.ops.length ? ' A law cannot arrest people, name heirs or move troops; those parts were left out.' : ''}`, bill: bill.id } : fail('The parliamentary agenda is full.');
     }
     case 'vote_bill': { const b = (c.bills || []).find(x => x.id === op.bill && x.status === 'pending'); if (!b) return fail('No pending bill.'); const led = leadsParties(w, c, actor); if (!led.length) return fail('You do not lead a party.'); const vote = ['no', 'abstain', 'free'].includes(op.vote) ? op.vote : 'yes'; for (const p of led) { if (vote === 'free') delete b.votes[p.id]; else b.votes[p.id] = vote; } return { ok: true, msg: `${led.map(p => p.name).join(', ')}: ${vote === 'free' ? 'the members vote as they are inclined' : vote === 'abstain' ? 'will abstain; its seats count for neither side' : `will vote ${vote}`} on ${b.id} (${b.title}).` }; }
+    // A bill is its mover's until the house has voted on it: he may take it off the order paper, and so may the head of government a bill his own
+    // government moved. (World 15: the President of Hazland, attacked from another side, wanted his declaration of war on Akulia withdrawn; no
+    // operation could do it, his own party was told to vote against it, and his coalition partners carried it with the opposition, 78 to 22.)
+    case 'withdraw_bill': { const mine = x => x.status === 'pending' && (x.proposer === actor.id || (x.byGov && c.leader === actor.id)), own = (c.bills || []).filter(mine), b = op.bill ? (c.bills || []).find(x => x.id === op.bill && x.status === 'pending') : own.length === 1 ? own[0] : null;
+      if (!b) return fail(op.bill ? `No bill ${op.bill} is before the house.` : own.length ? `Which bill? Yours before the house: ${own.map(x => `${x.id} (${x.title})`).join(', ')}.` : 'No bill of yours is before the house.');
+      if (!mine(b)) return fail(`${b.id} is not yours to withdraw: a bill is taken off the order paper by whoever moved it, or by the head of government if his government moved it. A party can be told to vote against it (vote_bill).`);
+      b.status = 'withdrawn'; b.closedAt = w.turn; news(w, `${c.name}: ${actor.name} has withdrawn the bill "${b.title}" (${b.id}) before the vote.`, { kind: 'politics', countries: [c.id] });
+      return { ok: true, msg: `${b.id} (${b.title}) is withdrawn: it will not be voted, and nothing in it is done.` }; }
     case 'lobby_bill': { const b = (c.bills || []).find(x => x.id === op.bill && x.status === 'pending'); const p = c.parties.find(x => x.id === op.party); if (!b || !p) return fail('No such bill or party.'); const m = num(op.amount, 0, actor.wealth); if (m <= 0) return fail('No money.'); actor.wealth -= m; b.lobby[p.id] = (b.lobby[p.id] || 0) + (op.side === 'no' ? -m : m); leaveTrace(w, actor, `Spent ${Math.round(m)} on ${p.name} for the ${b.title} vote.`); return ok(); }
     // The state of relations with another government: the envoy at his post, recalled, or relations broken off.
     case 'set_relations': if (!target) return fail('No such country.'); return setRelations(w, c, target, op);
@@ -1573,7 +1600,10 @@ function build(w, c, op, actor) {
 const ok = () => ({ ok: true, msg: 'Applied.' });
 const fail = msg => ({ ok: false, msg });
 function applyOrder(w, c, u, to, named = true) {
-  if (u.province === to) return fail('Already there.'); if (!pathStep(w, u.province, to, c.id)) return fail('No route.');
+  // An order to be where the unit already stands is an order carried out, not one refused: it stays (a march elsewhere is given up), and what
+  // was ordered to follow its arrival follows. ("Hold B22 at Steinburga on the defensive" comes as move, then set_posture if the move was done.)
+  if (u.province === to) { const was = u.target && u.target !== to ? ` Its march to ${w.provinces[u.target]?.name ?? u.target} is given up.` : ''; u.target = null; delete u.digAt; return { ok: true, msg: `${u.id} stands at ${w.provinces[to].name} already, and stays.${was}` }; }
+  if (!pathStep(w, u.province, to, c.id)) return fail('No route.');
   if (u.posture === 'defensive' && !named) return fail(`${u.id} stands on the defensive and stays.`);
   // A commander who has lost faith in the government obeys when it suits him.
   // So does one who has been paid or frightened into keeping his men where they stand.
@@ -1581,7 +1611,7 @@ function applyOrder(w, c, u, to, named = true) {
   // A march order and an order to hold the ground cannot both stand. The one given to the unit by name, and last, is the one that does.
   let lifted = ''; if (u.posture === 'defensive') { delete u.posture; lifted = ` ${u.id} had been standing on the defensive: this order lifts that one, and it leaves its works.`; }
   const off = u.attack ? ` It leaves the offensive against ${w.provinces[u.attack.to]?.name ?? 'its objective'} it had been ordered into.` : ''; delete u.attack;
-  u.target = to; const q = marchQuarters(w, u, to), still = postureWords(u);
+  u.target = to; u.marchSince = w.turn; delete u.digAt; const q = marchQuarters(w, u, to), still = postureWords(u);
   const road = roadTo(w, u.province, to, c.id) || [], foes = road.filter(id => { const o = w.provinces[id].controller; return o !== c.id && atWar(w, c.id, o); }), through = foes.filter(id => id !== to).map(id => w.provinces[id].name);
   const fight = foes.includes(to) ? ` ${w.provinces[to].name} is held by the enemy: the unit attacks it as it arrives, by itself${through.length ? `, after fighting its way through ${through.join(', ')}` : ''}. (An offensive order would have it form up, wait for the others and go in to a plan.)` : through.length ? ` No road leads there over ground we hold or may cross: the way runs through ${through.join(', ')}, which the enemy holds, and the unit will have to fight its way through.` : '';
   return { ok: true, ...(foes.includes(to) ? { takes: to } : {}), msg: `${u.id} marches for ${w.provinces[to].name}${q ? `: about ${q} quarter${q > 1 ? 's' : ''} as the ground, the roads and the seasons stand (the army report shows how far it got each quarter and what held it)` : ''}.${fight}${lifted}${off}${still ? ` Its standing orders go with it: ${still}.` : ''}` };
@@ -1650,15 +1680,19 @@ function setPosture(w, c, op) {
   const frontier = toward && ['hold_fire', 'ordinary'].includes(kind);
   if (!us.length && !frontier) return fail(`No troops of yours stand there (${where}).`);
   if (frontier) { c.holdFire ||= {}; if (kind === 'hold_fire' && on) c.holdFire[toward.id] = true; else delete c.holdFire[toward.id]; }
-  const halted = [];
+  const halted = [], later = [];
   for (const u of us) {
-    if (kind === 'ordinary') { delete u.posture; delete u.holdFire; delete u.barracks; }
+    if (kind === 'ordinary') { delete u.posture; delete u.holdFire; delete u.barracks; delete u.digAt; }
     else if (kind === 'hold_fire') { if (on) u.holdFire = true; else delete u.holdFire; }
     else if (kind === 'barracks') { if (on) u.barracks = true; else delete u.barracks; }
-    else if (on) { u.posture = kind; if (kind === 'defensive' && u.target) { halted.push(u.id); u.target = null; delete u.attack; } }
+    // A unit told to stand on the defensive while it is under an order of this same quarter to march somewhere is to stand on the defensive there:
+    // it goes, and digs in where it arrives (u.digAt). Only a march ordered in an earlier quarter is cancelled by the order to hold. (World 15: "B465
+    // to Waldlanda, to stand with B45 on the defensive" came as move, then set_posture, and the corps dug in where it stood and never marched.)
+    else if (on && kind === 'defensive' && u.target && u.marchSince === w.turn && !u.attack) { u.digAt = u.target; later.push(`${u.id} (at ${w.provinces[u.target]?.name ?? u.target})`); }
+    else if (on) { u.posture = kind; delete u.digAt; if (kind === 'defensive' && u.target) { halted.push(u.id); u.target = null; delete u.attack; } }
     else if (u.posture === kind) delete u.posture;
   }
   const names = us.length ? `${us.slice(0, 12).map(u => u.id).join(', ')}${us.length > 12 ? ` and ${us.length - 12} more` : ''}` : 'no unit stands there now';
   const what = on ? POSTURE_SAYS[kind] : `That standing order (${kind.replace('_', ' ')}) is lifted from them; their other standing orders, if any, stand.`;
-  return { ok: true, msg: `Standing order to ${where} (${names}): ${on ? kind.replace('_', ' ') : `${kind.replace('_', ' ')} lifted`}. ${what}${frontier && kind === 'hold_fire' && on ? ` It is the standing order for the whole frontier with ${toward.name}: troops sent there later come under it.` : ''}${halted.length ? ` ${halted.join(', ')} had orders to march; those are cancelled, since troops on the defensive stay where they are.` : ''}${us.length && kind !== 'ordinary' ? ' A unit raised or detached later has the ordinary orders until it is told otherwise.' : ''}` };
+  return { ok: true, msg: `Standing order to ${where} (${names}): ${on ? kind.replace('_', ' ') : `${kind.replace('_', ' ')} lifted`}. ${what}${frontier && kind === 'hold_fire' && on ? ` It is the standing order for the whole frontier with ${toward.name}: troops sent there later come under it.` : ''}${later.length ? ` ${later.join(', ')} ${later.length > 1 ? 'are' : 'is'} on the march by an order of this quarter: the standing order takes effect where the march ends, and they dig in there.` : ''}${halted.length ? ` ${halted.join(', ')} had orders to march from an earlier quarter; those are cancelled, since troops on the defensive stay where they are. (To have them dig in somewhere else, order the march and the standing order in the same quarter.)` : ''}${us.length && kind !== 'ordinary' ? ' A unit raised or detached later has the ordinary orders until it is told otherwise.' : ''}` };
 }
