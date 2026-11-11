@@ -5,7 +5,7 @@
 import { clamp, rand, news, sum } from './util.js';
 import { aliveCountries, countryProvinces, atWar, hasTreaty, provincePop, makeUnit, goHome } from './world.js';
 import { groupsOf } from './culture.js';
-import { fighting } from './military.js';
+import { fighting, upkeepCost, inTheField } from './military.js';
 import { answered, tieOf } from './diplomacy.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
@@ -87,7 +87,9 @@ export function mobilize(w, c, share, pay, fail) {
   for (const o of aliveCountries(w)) { if (o.id === c.id) continue; const near = countryProvinces(w, o.id).some(p => p.neighbors.some(n => w.provinces[n].controller === c.id)); if (!near) continue;
     o.relations[c.id] = clamp((o.relations[c.id] ?? 0) - 10, -100, 100);
     for (const ch of [w.characters[o.leader], w.characters[o.general]]) if (ch?.alive) say(w, ch, 'General Staff', `${c.name} is mobilising: about ${Math.round(called)} thousand reservists called to the colours, on top of the standing army. They will be under arms within the quarter. Whether it is meant for us is not known.`); }
-  return { ok: true, msg: `About ${called} thousand reservists are called up and form at ${depots.map(p => p.name).join(', ')}; ${Math.round(c.reserve)} thousand remain in the reserve. They left fields and works to come, they must be paid like the rest of the army, and every neighbour knows.${note}` };
+  // Whoever calls them up is told at once what he has taken on: what the forces now cost a quarter, and how much of that the vote for the army covers.
+  const cost = upkeepCost(w, c), voted = c.budget.military * c.gdp * (c.paidRatio ?? 1), bill = ` With them the forces cost about ${Math.round(cost)} a quarter${inTheField(w, c.id) ? '' : ' in barracks, and twice that once they take the field'}; the military budget provides ${Math.round(voted)}, which is ${Math.round(voted / Math.max(cost, 1) * 100)} in the hundred of it. Below about 85 in the hundred men who are not paid go home, and the rest lose heart.`;
+  return { ok: true, msg: `About ${called} thousand reservists are called up and form at ${depots.map(p => p.name).join(', ')}; ${Math.round(c.reserve)} thousand remain in the reserve. They left fields and works to come, they must be paid like the rest of the army, and every neighbour knows.${bill}${note}` };
 }
 // Sending the reservists home again.
 export function demobilize(w, c) {

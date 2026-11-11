@@ -2832,7 +2832,8 @@ chain('Capital that is taxed past what it is used to does not all stay to be tax
 });
 chain('A man who leaves the army goes back to what he was: a reserve called from the fields and the works and sent home again leaves as many peasants and as many workers as there were, and a state cannot fill its factories by passing its villages through the barracks', () => {
   const w = fresh(), c = w.countries.U1, count = k => countryProvinces(w, 'U1').reduce((s, p) => s + p.pops[k].n, 0); c.reserve = 200; c.stock.arms = 500; c.treasury = c.gdp;
-  const land = count('peasants'), town = count('workers'); assert.ok(applyOp(w, ld(w, c), { op: 'mobilize' }).ok); assert.ok(count('peasants') < land - 50, 'most of those called come from the land');
+  const land = count('peasants'), town = count('workers'), called = applyOp(w, ld(w, c), { op: 'mobilize' }); assert.ok(called.ok); assert.ok(count('peasants') < land - 50, 'most of those called come from the land');
+  assert.ok(/military budget provides/.test(called.msg) && /in the hundred/.test(called.msg), 'whoever calls them up is told what the army now costs against what is voted for it: ' + called.msg);
   assert.ok(applyOp(w, ld(w, c), { op: 'demobilize' }).ok);
   assert.ok(Math.abs(count('peasants') / land - 1) < .005 && Math.abs(count('workers') / town - 1) < .005, `they go back where they came from (peasants ${Math.round(land)} -> ${Math.round(count('peasants'))}, workers ${Math.round(town)} -> ${Math.round(count('workers'))})`);
 });
