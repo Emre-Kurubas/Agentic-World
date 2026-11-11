@@ -3810,6 +3810,48 @@ chain('An inquiry finds what there is to find in a matter, an inspection holds o
   const doc = fs.readFileSync(new URL('../agents/prompts.js', import.meta.url), 'utf8'); assert.ok(/inquire\{into,public\?/.test(doc) && /inspect\{id\?\|sector/.test(doc), 'the referee knows both');
 });
 
+import { meansStep, duesOf } from '../engine/means.js';
+import { answered as answeredTo } from '../engine/diplomacy.js';
+chain('The smaller means of a seat: relief for people nobody names, a province let off its tax, a party\'s dues, a note of protest, a clerk moved to another desk, a paper burned', () => {
+  // World 16: each of these was ordered a dozen times or more and each was words ("no operation pays private money to unnamed families").
+  const w = inherited(); run(w, 1); const c = w.countries.U1, L = ld(w, c), G = w.characters[c.general], O = w.characters[c.opposition], M = w.characters[c.oligarch];
+  const nextDoor = [...new Set(Object.values(w.provinces).filter(p => p.controller === 'U1').flatMap(p => p.neighbors.map(n => w.provinces[n].controller)))].find(id => id && id !== 'U1'), d = w.countries[nextDoor];
+  // Relief: an owner to the men of his works, a party to a province, the treasury only by whoever governs.
+  const f = Object.values(w.firms).find(x => x.owner === M.id && x.status === 'open'); f.temper = 70; f.cash = 50; M.wealth = 100; const cash = f.cash;
+  const r = applyOp(w, M, { op: 'relief', to: f.id, amount: 10, from: f.id }); assert.ok(r.ok && f.cash === cash - 10 && f.temper < 70 && /was paid out of the till of [^]*Their temper stands at \d+ of 100 \(it was 70\)/.test(r.msg), `an owner pays the families out of the works' till and the men are the calmer for it: ${r.msg}`);
+  const t1 = f.temper; for (let i = 0; i < 20; i++) applyOp(w, M, { op: 'relief', to: f.id, amount: 5 }); assert.ok(f.temper >= t1 - 25 - 1e-9 && f.temper >= 70 - 25 - 1e-9, `money given twenty times in a quarter buys no more calm than the quarter can hold: ${f.temper}`);
+  const p = Object.values(w.provinces).find(q => q.controller === 'U1' && q.id !== c.capital); p.unrest = 60; const party = leadsOf(w, c, O)[0]; party.funds = 30; const sup = party.support;
+  const r2 = applyOp(w, O, { op: 'relief', to: p.id, amount: 20, from: 'party' }); assert.ok(r2.ok && party.funds === 10 && p.unrest < 60 && party.support >= sup && /out of the chest of the/.test(r2.msg), `a party gives from its chest and is remembered for it: ${r2.msg}`);
+  assert.ok(!applyOp(w, O, { op: 'relief', to: p.id, amount: 5, from: 'treasury' }).ok && applyOp(w, L, { op: 'relief', to: p.id, amount: 5, from: 'treasury' }).ok && !applyOp(w, O, { op: 'relief', to: 'nowhere', amount: 5 }).ok, 'the treasury pays only on the order of whoever governs, and relief wants somebody to go to');
+  // A province let off its land tax, and grain sent.
+  assert.ok(/whoever governs/.test(applyOp(w, O, { op: 'relieve_province', province: p.id, remit: .5 }).msg), 'only whoever governs remits a tax');
+  p.unrest = 60; c.stock.grain = 500; const rp = applyOp(w, L, { op: 'relieve_province', province: p.id, remit: .5, quarters: 3, grain: 20 });
+  assert.ok(rp.ok && p.remit.share === .5 && p.remit.until === w.turn + 3 && c.stock.grain === 480 && p.unrest < 60 && /50 in the hundred of the land tax of [^]* is forgiven until[^]*costs the treasury about [\d.]+ a quarter[^]*of grain went to/.test(rp.msg), rp.msg);
+  const tre = c.treasury, un = p.unrest; meansStep(w); assert.ok(c.treasury < tre && p.unrest < un && /Land tax remitted: /.test(desk(w, L)), 'while it lasts the treasury pays for it and the province is quieter, and it stands on the desk');
+  w.turn += 3; meansStep(w); assert.ok(!p.remit, 'and it ends on its day'); w.turn -= 3;
+  // Dues.
+  const d0 = applyOp(w, O, { op: 'set_dues', rate: 1 }); assert.ok(d0.ok && party.dues === 1 && duesOf(c, party) > 0 && /collects dues from its following/.test(d0.msg), d0.msg);
+  party.funds = 0; run(w, 1); assert.ok(party.funds > 0, `dues come in each quarter: ${party.funds}`);
+  // A note.
+  d.grudges ||= {}; (c.grudges ||= {})[d.id] = { incident: 30, kin: 0 }; const before = answeredTo(w, c, d.id); w.newsThisTurn = []; ld(w, d).inbox = [];
+  const nt = applyOp(w, L, { op: 'note', target: d.id, text: 'The government protests the firing at the frontier.' }); assert.ok(nt.ok && answeredTo(w, c, d.id) > before && ld(w, d).inbox.some(m => /A note from the government of [^:]*: "The government protests/.test(m.text)) && w.newsThisTurn.some(e => /has sent [^]* a note of protest/.test(e.text)), `a note answers a little of what the country holds against them: ${nt.msg}`);
+  assert.ok(!applyOp(w, G, { op: 'note', target: d.id }).ok, 'notes are the government\'s');
+  // A clerk moved to another desk.
+  const clerk = Object.values(w.characters).find(x => x.alive && x.country === 'U1' && x.post === 'treasury'), loy = clerk.loyalty;
+  assert.ok(/appoint_minister/.test(applyOp(w, L, { op: 'post_person', character: clerk.id, office: 'police' }).msg));
+  const pp = applyOp(w, L, { op: 'post_person', character: clerk.id, office: 'customs', province: p.id, promote: true }); assert.ok(pp.ok && !clerk.post && clerk.clerkOf === 'treasury' && /customs at/.test(clerk.office) && clerk.loyalty > loy, `posted to the customs with promotion: ${pp.msg}`);
+  assert.ok(applyOp(w, G, { op: 'post_person', character: clerk.id, office: 'staff' }).ok && clerk.clerkOf === 'army' && !applyOp(w, G, { op: 'post_person', character: clerk.id, office: 'customs' }).ok, 'the chief of staff takes a man onto his staff, and fills no other office');
+  const out = applyOp(w, G, { op: 'post_person', character: clerk.id, dismiss: true }); assert.ok(out.ok && !clerk.clerkOf && !clerk.office && /sees nothing more of what passed over his desk/.test(out.msg), out.msg);
+  // Papers burned.
+  M.secrets = [{ turn: w.turn, text: 'Paid a commission on the army contract.' }, { turn: w.turn, text: 'Kept a second set of books at the works.' }]; L.dossiers[M.id] = { turn: w.turn, about: M.name, facts: ['Paid a commission on the army contract.'] };
+  let gone = 0, kept = 0; for (let i = 0; i < 30; i++) { const x = structuredClone(w); x.rng = 700 + i * 7919; const m = x.characters[M.id], rr = applyOp(x, m, { op: 'destroy_evidence', about: 'books' }); assert.ok(rr.ok, rr.msg); assert.ok(m.secrets.some(s => /commission on the army contract/.test(s.text)), 'what was not named is left alone'); if (!m.secrets.some(s => /second set of books/.test(s.text))) gone++; else { kept++; assert.ok(m.secrets.some(s => /Had papers destroyed to hide/.test(s.text)), 'a page kept by the hand that was to burn it is a new thing to be found'); } }
+  assert.ok(gone >= 14 && kept >= 4, `what is burned is mostly gone, not always (${gone} gone, ${kept} kept)`);
+  const copy = applyOp(w, M, { op: 'destroy_evidence', about: 'commission' }); assert.ok(copy.ok && /a copy lies in somebody else's file already/.test(copy.msg) && M.secrets.some(s => /commission/.test(s.text)), 'what somebody else holds a copy of cannot be reached');
+  assert.ok(!applyOp(w, M, { op: 'destroy_evidence' }).ok, 'the stove is lit once a quarter');
+  const doc = fs.readFileSync(new URL('../agents/prompts.js', import.meta.url), 'utf8'); for (const k of ['relief{to,amount', 'relieve_province{province', 'set_dues{rate}', 'note{target', 'post_person{character', 'destroy_evidence{about']) assert.ok(doc.includes(k), `the referee knows ${k}`);
+  assert.ok(/relieve_province/.test(String(answer(w, L, 'unrest'))) && /set_dues/.test(String(answer(w, O, 'parties'))) && /note:/.test(String(answer(w, L, 'diplomacy'))) && /post_person/.test(String(answer(w, L, 'ministers'))) && /destroy_evidence/.test(String(answer(w, M, 'my_secrets'))), 'and each seat can read of it where the matter is read');
+});
+
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
   // The same fight, the same dice, the enemy warned both times: only the man in command differs.
   const hurt = skill => { const f = duel({ dug: 5, ground: { trench: 2 }, rng: 99, seen: true }); f.gen.skill = skill; const [b] = quarter(f.w); assert.ok(b, 'a battle'); assert.ok(!b.prisoners, 'nobody was routed'); return f.D - f.def.men; };

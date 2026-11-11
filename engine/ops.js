@@ -22,6 +22,7 @@ import { prosecute, forge, forgeryFound } from './justice.js';
 import { shame, honourOf, aimsMet, aimsText, kindWord, dealsWith, maySign, tieOf, tieWord, stanceOf, seesTreaty, reveal, faithCost, bondSigned, deed, alarm } from './diplomacy.js';
 import { STANDING_OPS, standingOp, standingStep } from './standing.js';
 import { INQUIRY_OPS, inquiryOp } from './inquiry.js';
+import { MEANS_OPS, meansOp } from './means.js';
 import { foundPaper, papersOf, carry, MAX_PAPERS, setPaper, censor, paperWords, keptQuiet, findPaper } from './press.js';
 import { buyBonds, sellBonds } from './bonds.js';
 import { SHIPS, kindOf, ORDERS, friendlyPort, baseMap, readiness, enemyHolds, seaPath, refuge, bombard as shell, liftOf, LIFT, MERCHANT, demonstrate, seizeCustoms } from './navy.js';
@@ -57,7 +58,8 @@ const NOTE_OPS = new Set(['buy_debt', 'sell_debt', 'ask_terms', 'borrow_private'
 const SEAT_OPS = new Set(['lead_rising', 'resign', 'go_abroad', 'return_home', 'name_deputy', 'retire']);
 // A watch, an order that waits for its day: open to every seat and to private people (each within what its own hands reach); leaving a power in
 // another's hands is the ruler's alone.
-const OPEN_STANDING = ['watch', 'standing_order', 'cancel_order', 'inquire'];
+const OPEN_STANDING = ['watch', 'standing_order', 'cancel_order', 'inquire', 'relief', 'set_dues', 'destroy_evidence'];
+QUIET.add('destroy_evidence');
 QUIET.add('inquire').add('inspect');
 PRIVATE.push('denounce'); PERMISSIONS.general.add('stage_incident'); for (const seat of ['general', 'opposition', 'oligarch']) PERMISSIONS[seat].add('denounce');
 QUIET.add('denounce').add('stage_incident').add('turn_informant');
@@ -70,6 +72,7 @@ PERMISSIONS.private = new Set(PRIVATE);
 for (const seat of ['general', 'opposition', 'oligarch']) for (const op of [...OWN, ...OPEN_STANDING]) PERMISSIONS[seat].add(op);
 // The chief of staff also says who is paid first when the vote is short and how much of the arsenal an attack may not touch.
 for (const op of ['set_pay_priority', 'set_arsenal_reserve']) { PERMISSIONS.general.add(op); QUIET.add(op); }
+PERMISSIONS.general.add('post_person');
 // The chief of staff directs where the army's units and squadrons stand and who commands them. Raising and disbanding troops, war and peace stay with the ruler.
 for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'appoint_commander', 'spy', 'build', 'set_posture', 'amphibious', 'offensive', 'fleet_orders', 'bombard', 'lay_mines', 'prepare_plan', 'leak_plan']) PERMISSIONS.general.add(op);
 for (const seat of ['general', 'opposition', 'oligarch']) for (const op of ['capital_flight', 'repatriate', 'draw_institution', 'buy_bonds', 'sell_bonds', 'back_claim', 'renounce_claim', 'fund_party', 'found_paper', 'fund_paper', 'close_paper', 'forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'noop', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution']) PERMISSIONS[seat].add(op);
@@ -513,6 +516,7 @@ export function applyOp(w, actor, op) {
   if (NOTE_OPS.has(op.op)) return noteOp(w, actor, c, op, { fail, num, governs: governs(w, c, actor), allowance });
   if (STANDING_OPS.has(op.op)) return standingOp(w, actor, c, op, { fail, num, known: k => typeof k === 'string' && /^[a-z_]{3,}$/.test(k) });
   if (INQUIRY_OPS.has(op.op)) return inquiryOp(w, actor, c, op, { fail, num, allowance: (key, cap, want) => allowance(w, c, key, cap, want), pays: m => treasuryPays(c, m), leads: leadsParties(w, c, actor).some(p => (p.seats ?? 0) > 0) });
+  if (MEANS_OPS.has(op.op)) return meansOp(w, actor, c, op, { fail, num, target, pay: (cost, what) => pay(c, cost, what), allowance: (who, key, cap, want) => allowance(w, who, key, cap, want), personFor, noPerson });
   if (SEAT_OPS.has(op.op)) return seatOp(w, actor, c, op, { fail, num, governs: governs(w, c, actor), personFor });
   switch (op.op) {
     // A rate is ordered in a day and collected by offices: a capable state has the new rate in force at once, a thin one takes several quarters to get there.
@@ -1660,6 +1664,8 @@ const OPEN_WAY = {
   build: 'A private person builds with his own money: a new works is founded as a company (found_company, naming what it is to make or dig, the province and the capital put in), and a works he owns is enlarged (invest_company)',
   concession: 'Somebody who does not govern gives from his own purse, his company\'s till or his party\'s funds (relief), not from the treasury',
   repress: 'Troops keep order where their standing orders put them; to turn the police or the army on a town is for whoever governs',
+  relieve_province: 'Taxes are remitted and the state\'s stores opened by whoever governs. Anybody can give money of his own, his company\'s or his party\'s to the people of a province or the men of a works (relief)',
+  note: 'Notes between governments are sent by whoever governs',
   inspect: 'The inspectors of works answer to whoever governs. An owner knows his own works, and anybody can have a works or another matter looked into (inquire)',
 };
 const fail = msg => ({ ok: false, msg });

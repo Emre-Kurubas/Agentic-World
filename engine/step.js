@@ -10,6 +10,7 @@ import { contractStep } from './contracts.js';
 import { applyOp, carryAwaited, carryTaken, carrySigned, carryStanding } from './ops.js';
 import { watchStep } from './standing.js';
 import { inquiryStep } from './inquiry.js';
+import { meansStep } from './means.js';
 import { courtStep } from './court.js';
 import { labourStep, labourEnd } from './labour.js';
 import { undergroundStep } from './underground.js';
@@ -35,6 +36,7 @@ export function stepWorld(w) {
   diplomacyStep(w);
   labourStep(w);
   economyStep(w);
+  meansStep(w);
   firmStep(w);
   contractStep(w);
   bondStep(w);

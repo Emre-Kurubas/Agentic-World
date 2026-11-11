@@ -84,6 +84,8 @@ export function answered(w, c, id) {
   if ((c.aimed?.[id] ?? -1) >= (c.tariff ?? 0) + .1) left *= .85;
   if ((c.embargo || []).includes(id)) left *= .55; else if (c.bans?.[id] && (c.bans[id].sell.length || c.bans[id].buy.length)) left *= .8;
   if (c.casus?.[id] != null || w.treaties.some(t => t.pending && t.ultimatum && t.proposer === c.id && t.parties.includes(id))) left *= .8;
+  // A note of protest within the year is the least of answers, and still one.
+  if (w.turn - (c.noted?.[id] ?? -99) <= 3) left *= .92;
   // A squadron shown off their coast within the year is an answer of a kind too.
   if (w.turn - (c.shown?.[id] ?? -99) <= 3) left *= .85;
   return 1 - Math.max(left, .3);
