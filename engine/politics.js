@@ -575,6 +575,8 @@ export function lifeStep(w) {
 
 // Code only carries out the fact: when a debt falls due both parties learn of it, what follows is their decision.
 export function debtStep(w) {
+  // An offer for a note stands a year, and dies with the note.
+  if (w.bids) w.bids = w.bids.filter(b => w.turn - b.turn < 4 && w.debts?.some(d => d.id === b.debt && ['open', 'overdue'].includes(d.status)));
   for (const d of w.debts ||= []) {
     if (!['open', 'overdue'].includes(d.status)) continue;
     const debtor = w.characters[d.debtor], creditor = w.characters[d.creditor];

@@ -12,6 +12,9 @@ const trace = (w, ch, text) => { if (!ch) return; (ch.secrets ||= []).push({ tur
 const hash = s => { let h = 7; for (const x of String(s)) h = (h * 31 + x.codePointAt(0)) >>> 0; return h; };
 const when = w => w.date ?? quarterLabel(w.turn);
 export const isMinor = ch => !!ch && !ROLES.includes(ch.role) && ch.role !== 'former_leader';
+// What someone nobody plays has done for a person, or refused him, is kept with the date: he has no memory of his own, and whoever writes his
+// letters has to know what he did.
+export const deal = (w, ch, other, text) => { if (!ch || ch.aiControlled) return; (ch.dealt ||= []).push({ turn: w.turn, with: other?.id ?? null, text }); ch.dealt = ch.dealt.slice(-12); };
 const minorsOf = (w, c) => Object.values(w.characters).filter(x => x.alive && x.country === c.id && isMinor(x));
 const unitsOf = (w, c) => Object.values(w.units).filter(u => u.country === c.id);
 const commandOf = (w, ch) => Object.values(w.units).filter(u => u.commander === ch.id && u.country === ch.country).sort((a, b) => b.men - a.men)[0];
@@ -183,6 +186,24 @@ function payLeases(w, c) {
 }
 // The banking house wants its money. When an old debt falls due unpaid it first names a price for forgetting it; if nothing comes of that
 // it takes what it can reach, and lets the town know.
+// The favour the house would take in place of money: from whoever governs the lease of the customs, from the chief of staff the army's
+// contracts. It is put on the table as an offer that forgets the debt; from anyone else the house wants nothing but money.
+export function favourFor(w, c, banker, who, d) {
+  const kind = c.leader === who.id ? 'lease' : c.general === who.id ? 'supply' : null;
+  if (!kind || who.status !== 'free' || (w.offers ||= []).some(o => o.status === 'open' && o.to === who.id)) return null;
+  const g = Math.max(c.gdp, 1), o = { id: nextId(w, 'OF'), kind, from: banker.id, to: who.id, country: c.id, amount: 0, forgive: d.id, turn: w.turn, status: 'open', drain: g * (kind === 'lease' ? .0012 : .0008), turns: kind === 'lease' ? 12 : 8, shoddy: kind === 'supply' };
+  o.text = `your debt ${d.id} of ${Math.round(d.owed)} forgotten, if ${kind === 'lease' ? `the collection of the customs is leased to the banking house of ${banker.name} for three years (the house would keep about ${Math.round(o.drain)} a quarter of what the treasury now receives)` : `for two years the army's boots, cloth and rifles are bought from the suppliers the house stands behind (about ${Math.round(o.drain)} a quarter more than the army pays now, for goods that are not the best)`}`;
+  w.offers.push(o); return o;
+}
+// What the law gives a creditor whose note is overdue: what the debtor has within reach, up to what is owed. It is done in the open, and the
+// debtor's name is the worse for it.
+export function seize(w, d, by) {
+  const who = w.characters[d.debtor], holder = w.characters[d.creditor], c = w.countries[who.country], took = Math.min(Math.max(who.wealth - (by ? who.abroad || 0 : 0), 0), d.owed);
+  who.wealth -= took; holder.wealth += took; d.seized = w.turn;
+  who.power = clamp(who.power - 8, 0, 100); if (c?.alive && c.leader === who.id) c.legitimacy = clamp(c.legitimacy - 2, 0, 100);
+  if (c?.alive) news(w, `${c.name}: ${holder.post === 'house' ? `the banking house of ${holder.name}` : holder.name} has called in the debts of ${who.name} and seized what ${holder.post === 'house' ? 'it' : 'the law'} could.`, { kind: 'economy', countries: [c.id] });
+  return took;
+}
 function duns(w, c) {
   const banker = minorsOf(w, c).find(x => x.post === 'house' && x.status === 'free'); if (!banker) return;
   for (const d of (w.debts || []).filter(x => x.creditor === banker.id && x.status === 'overdue')) {
@@ -190,16 +211,11 @@ function duns(w, c) {
     // Someone nobody plays pays what he owes when he has it.
     if (!who.aiControlled && who.wealth >= d.owed) { who.wealth -= d.owed; banker.wealth += d.owed; d.status = 'paid'; d.closedAt = w.turn; continue; }
     if (d.dunned == null) {
-      d.dunned = w.turn; const kind = c.leader === who.id ? 'lease' : c.general === who.id ? 'supply' : null;
-      if (kind && who.status === 'free' && !(w.offers ||= []).some(o => o.status === 'open' && o.to === who.id)) {
-        const g = Math.max(c.gdp, 1), o = { id: nextId(w, 'OF'), kind, from: banker.id, to: who.id, country: c.id, amount: 0, forgive: d.id, turn: w.turn, status: 'open', drain: g * (kind === 'lease' ? .0012 : .0008), turns: kind === 'lease' ? 12 : 8, shoddy: kind === 'supply' };
-        o.text = `your debt ${d.id} of ${Math.round(d.owed)} forgotten, if ${kind === 'lease' ? `the collection of the customs is leased to the banking house of ${banker.name} for three years (the house would keep about ${Math.round(o.drain)} a quarter of what the treasury now receives)` : `for two years the army's boots, cloth and rifles are bought from the suppliers the house stands behind (about ${Math.round(o.drain)} a quarter more than the army pays now, for goods that are not the best)`}`;
-        w.offers.push(o); say(w, who, banker.name, `Your debt ${d.id} of ${Math.round(d.owed)} to my house is past due. There is a way to settle it without money: ${o.text}. It is offer ${o.id}. Otherwise I shall take what the law gives me, and such things do not stay quiet.`);
-      } else say(w, who, banker.name, `Your debt ${d.id} of ${Math.round(d.owed)} to my house is past due. Pay it, or I shall take what the law gives me, and such things do not stay quiet.`);
+      d.dunned = w.turn; const o = favourFor(w, c, banker, who, d);
+      if (o) say(w, who, banker.name, `Your debt ${d.id} of ${Math.round(d.owed)} to my house is past due. There is a way to settle it without money: ${o.text}. It is offer ${o.id}. Otherwise I shall take what the law gives me, and such things do not stay quiet.`);
+      else say(w, who, banker.name, `Your debt ${d.id} of ${Math.round(d.owed)} to my house is past due. Pay it, or I shall take what the law gives me, and such things do not stay quiet. What I would take to give you time, or to call it settled, you may ask (ask_terms).`);
     } else if (w.turn - d.dunned >= 3) {
-      const took = Math.min(Math.max(who.wealth, 0), d.owed); who.wealth -= took; banker.wealth += took; d.status = took >= d.owed - .5 ? 'paid' : 'forgiven'; d.closedAt = w.turn;
-      who.power = clamp(who.power - 8, 0, 100); if (c.leader === who.id) c.legitimacy = clamp(c.legitimacy - 2, 0, 100);
-      news(w, `${c.name}: the banking house of ${banker.name} has called in the debts of ${who.name} and seized what it could.`, { kind: 'economy', countries: [c.id] });
+      const owed = d.owed, took = seize(w, d); d.status = took >= owed - .5 ? 'paid' : 'forgiven'; d.closedAt = w.turn;
       say(w, who, banker.name, `I have taken ${Math.round(took)} against your debt ${d.id} and written off the rest. The town knows.`);
     }
   }
@@ -266,7 +282,9 @@ function inform(w, c, ch) {
   else if (u || ch.role === 'officer' || ch.clerkOf === 'army') text = `the army stands as follows: ${units.map(x => `${x.id} ${x.kind} ${Math.round(x.men)} thousand at ${w.provinces[x.province]?.name}${x.target ? `, under orders for ${w.provinces[x.target]?.name}` : ''}, loyalty ${Math.round(x.loyalty)}`).join('; ') || 'no units'}. Pay and supply cover ${Math.round((c.militaryFunding ?? 1) * 100)}% of what the forces need.`;
   else if (ch.post === 'treasury' || ch.clerkOf === 'treasury') text = `the treasury holds ${Math.round(c.treasury)}; last quarter closed at ${Math.round(c.lastBalance ?? 0)}; the debt is ${Math.round(c.debt / Math.max(c.gdp * 4, 1) * 100)}% of a year's output and lenders would still put up about ${Math.round(creditLeft(c))}; the gold reserve is ${Math.round(c.reserves)}.`;
   else if (ch.post === 'police' || ch.clerkOf === 'police') { const known = w.plots.filter(p => p.active && p.country === c.id && p.exposed), held = Object.values(w.characters).filter(x => x.alive && x.country === c.id && x.status === 'imprisoned'); text = `the police know of ${known.length ? known.map(p => `a ${p.kind} plot around ${w.characters[p.leader]?.name}`).join(' and ') : 'no plot'}; ${held.length ? `${held.map(x => x.name).join(', ')} ${held.length > 1 ? 'are' : 'is'} in prison` : 'the prisons hold no one of note'}; about ${Math.round(watch(c) * 100)} letters in a hundred are opened in the post.`; }
-  else if (ch.post === 'house' || ch.clerkOf === 'house') { const house = ch.post === 'house' ? ch : minorsOf(w, c).find(x => x.post === 'house'), took = (w.offers || []).filter(o => o.from === house?.id && ['running', 'taken', 'finished', 'ended'].includes(o.status)); text = took.length ? `the house has paid ${took.map(o => `${w.characters[o.to]?.name ?? 'someone'} ${o.amount} (${o.kind === 'lease' ? 'for the customs lease' : o.kind === 'supply' ? 'for the army contracts' : 'for goodwill'}, ${quarterLabel(o.turn)})`).join('; ')}.` : 'the house has paid no one in office so far.'; }
+  else if (ch.post === 'house' || ch.clerkOf === 'house') { const house = ch.post === 'house' ? ch : minorsOf(w, c).find(x => x.post === 'house'), took = (w.offers || []).filter(o => o.from === house?.id && ['running', 'taken', 'finished', 'ended'].includes(o.status)); text = took.length ? `the house has paid ${took.map(o => `${w.characters[o.to]?.name ?? 'someone'} ${o.amount} (${o.kind === 'lease' ? 'for the customs lease' : o.kind === 'supply' ? 'for the army contracts' : 'for goodwill'}, ${quarterLabel(o.turn)})`).join('; ')}.` : 'the house has paid no one in office so far.';
+        // And the notes of hand that lie in its strongbox: who owes it, how much, and when.
+        const notes = (w.debts || []).filter(d => d.creditor === house?.id && ['open', 'overdue'].includes(d.status) && w.characters[d.debtor]?.alive); if (notes.length) text += ` In its strongbox lie notes of hand on ${notes.map(d => `${w.characters[d.debtor].name} for ${Math.round(d.owed)} (${d.id}, ${d.status === 'overdue' ? 'overdue' : `due ${quarterLabel(d.due)}`})`).join('; ')}. A note is a paper the house may sell.`; }
   else { const p = Object.values(w.provinces).find(x => x.governor === ch.id); text = p ? `in ${p.name} unrest stands at ${Math.round(p.unrest)} of 100 and the state's hold on the province at ${Math.round((p.admin ?? .5) * 100)} of 100.` : 'nothing of weight passed under his hands this quarter.'; }
   // A paper kept secret passes under some hands: a treaty that concerns the army under those of its officers and staff clerks, one about trade
   // or money under those of the treasury and the banking house. A bought man in the right place sees it, and then his paymaster holds it.
