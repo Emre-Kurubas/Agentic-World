@@ -2264,7 +2264,12 @@ chain('The manner of an attack is the general\'s to choose: a reconnaissance in 
   const ab2 = quarter(a.w); assert.ok(ab2.length === 1 && ab2[0].manner === 'all_out', 'next quarter they go in again without a new order');
   if (a.w.units[a.atk.id]?.attack) { const off = applyOp(a.w, a.gen, { op: 'offensive', to: a.over.id, cancel: true }); assert.ok(off.ok && !a.atk.attack, off.msg); }
   // Set for a later quarter.
-  const l = go({ prepare: 1 }); assert.ok(/no sooner than 1 quarter from now/.test(l.r.msg), l.r.msg); assert.equal(quarter(l.w).length, 0); assert.ok(/set for a later quarter/.test(l.atk.march.held) && l.atk.province === l.e1.id, l.atk.march.held); assert.equal(quarter(l.w).length, 1, 'it goes in when its day comes');
+  const l = go({ prepare: 1 }); assert.ok(/no sooner than 1 quarter from now/.test(l.r.msg), l.r.msg); assert.equal(quarter(l.w).length, 0); assert.ok(/set for a later quarter/.test(l.atk.march.held) && l.atk.province === l.e1.id, l.atk.march.held);
+  // Ordered again the quarter after, in the same words: the day it was set for stands, and the quarter spent preparing is not lost.
+  { const twice = applyOp(l.w, l.gen, { op: 'offensive', to: l.over.id, units: [l.atk.id], prepare: 1 }); assert.ok(twice.ok && /already in hand/.test(twice.msg) && l.atk.attack.ready === 0, twice.msg); }
+  assert.equal(quarter(l.w).length, 1, 'it goes in when its day comes');
+  // An order that has been carried out is spent: troops that walk into an undefended objective are not left 'attacking' it.
+  { const e = twoRoads(1), walk = soldier(e.w, 'U1', e.e1.id, 40); applyOp(e.w, e.gen, { op: 'offensive', to: e.over.id, units: [walk.id] }); quarter(e.w); assert.ok(e.over.controller === 'U1' && walk.province === e.over.id && !walk.attack, 'the place taken, the order is spent'); }
   // A march order takes a unit out of the operation; so does an order to stand on the defensive.
   const m = go({}), back = m.w.provinces[m.e1.neighbors.find(n => m.w.provinces[n].controller === 'U1')], mv = applyOp(m.w, m.gen, { op: 'move', unit: m.atk.id, to: back.id }); assert.ok(mv.ok && !m.atk.attack && /leaves the offensive/.test(mv.msg), mv.msg);
   const dfn = go({}); assert.ok(applyOp(dfn.w, dfn.gen, { op: 'set_posture', unit: dfn.atk.id, posture: 'defensive' }).ok && !dfn.atk.attack && !dfn.atk.target, 'troops told to stand do not attack');
@@ -2333,6 +2338,10 @@ chain('A sea fight is not arithmetic: the heavier line wins more often than not 
   // Avoiding battle.
   const slips = (kind, hunters) => { let n = 0; for (let i = 0; i < 60; i++) { const y = twoNavies(); y.w.rng = 97 + i * 6007; const prey = y.ship(y.e, y.meet, 4, kind), hunt = y.ship('U1', y.meet, 6, hunters); prey.orders = 'evade'; hunt.orders = 'seek'; militaryStep(y.w); if (prey.slipped === y.w.turn) n++; } return n; };
   const fast = slips('cruiser', 'battleship'), slow = slips('battleship', 'cruiser'); assert.ok(fast > slow + 10 && fast >= 30, `cruisers get away from battleships far more often than battleships from cruisers: ${fast} and ${slow} of 60`);
+  // Squadrons that sail together arrive together, at the pace of the slowest.
+  { const v = twoNavies(); v.w.wars = []; const bases = basesOf(v.w, 'U1'), far = Object.keys(bases).find(x => bases[x].d === 10) ?? Object.keys(bases).find(x => bases[x].d >= 9 && bases[x].d <= 12); assert.ok(far, 'water nine to twelve seas from home');
+    const heavy = v.ship('U1', v.ha.seas[0], 2, 'battleship', v.ha), light = v.ship('U1', v.ha.seas[0], 4, 'cruiser', v.ha), alone = v.ship(v.e, v.hb.seas[0], 4, 'cruiser', v.hb); for (const f of [heavy, light]) assert.ok(applyOp(v.w, v.gen, { op: 'move_fleet', fleet: f.id, to: far }).ok);
+    militaryStep(v.w); assert.ok(heavy.sea === light.sea && heavy.sea !== far && !heavy.port, `cruisers ordered out with battleships keep company with them: ${heavy.sea} and ${light.sea}`); militaryStep(v.w); assert.ok(heavy.sea === far && light.sea === far, 'and they arrive together'); }
   // A neutral squadron, however large, commands nothing: the blockade stands.
   const n = twoNavies(), block = n.ship('U1', n.meet, 10); n.ship(n.third, n.meet, 60); militaryStep(n.w);
   assert.ok(n.w.seaControl[n.meet] === n.third && heldByEnemy(n.w, n.meet, n.e) && !heldByEnemy(n.w, n.meet, n.third), 'the water is closed to the blockaded state whoever else lies in it');

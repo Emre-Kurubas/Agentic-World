@@ -226,6 +226,8 @@ export function militaryStep(w) {
     capture(w, p, by);
   }
   settleOccupations(w);
+  // An attack order whose objective is no longer the enemy's has been carried out, or overtaken: it is spent.
+  for (const u of Object.values(w.units)) if (u.attack && !fighting(w, u.country, w.provinces[u.attack.to]?.controller)) delete u.attack;
 }
 
 // An occupation does not outlive the war that made it: land held by a power no longer at war with its owner goes back, and troops left where they have no right to be go home.

@@ -98,7 +98,9 @@ export function navalStep(w) {
   const fleets = () => Object.values(w.fleets);
   // Ships whose harbour is no longer open to them put to sea.
   for (const f of fleets()) if (f.port && !friendlyPort(w, f.country, w.provinces[f.port])) { f.port = null; f.target ??= refuge(w, f)?.id ?? null; }
-  for (const f of fleets()) sail(w, f);
+  // Squadrons that leave the same water for the same place steam in company, at the pace of the slowest of them.
+  const pace = {}, convoy = f => `${f.country}|${f.sea}|${f.target}`; for (const f of fleets()) if (f.target) pace[convoy(f)] = Math.min(pace[convoy(f)] ?? 99, SHIPS[kindOf(f)].cells);
+  for (const f of fleets()) sail(w, f, f.target ? pace[convoy(f)] : 99);
   bunker(w);
   // The temper of the crews settles where pay, arrears and a long war put it, as the army's does; a fight only knocks it about for a while. Crews
   // left unpaid in harbour until their spirit is gone hoist the red flag: the squadron does not sail, the port is in uproar, and the armed
@@ -155,7 +157,7 @@ export function navalStep(w) {
   gunboatStep(w);
 }
 
-function sail(w, f) {
+function sail(w, f, pace = 99) {
   f.sailed = null;
   if (!f.target) return;
   if (f.mutiny) { f.sailed = 'the crews have mutinied: it does not sail'; return; }
@@ -167,7 +169,7 @@ function sail(w, f) {
   if (path.length > 1 || !port) f.port = null;
   // One cannot steam past an enemy squadron: where the road crosses water an enemy's surface ships hold, the two meet there.
   const meets = s => Object.values(w.fleets).some(x => atSea(x) && surface(x) && x.sea === s && fighting(w, x.country, f.country));
-  let i = 0; const cells = SHIPS[kindOf(f)].cells;
+  let i = 0; const cells = Math.min(SHIPS[kindOf(f)].cells, pace);
   while (i < path.length - 1 && i < cells) { i++; if (meets(path[i]) && path[i] !== goal) { f.sailed = `it met the enemy in ${seaName(w, path[i])} on its way`; break; } }
   f.sea = path[i];
   if (f.sea !== goal) return;
@@ -231,7 +233,7 @@ function fight(w, sea, fs, beaten) {
     if (!won && rd < their - .08) why.push(coaled < .8 ? `our bunkers were ${Math.round(coaled * 100)} in the hundred full` : `we fought ${far} seas from our nearest base`); if (won && their < rd - .08) why.push('their ships were far from a base or short of coal');
     if (theirs.some(f => kindOf(f) === 'torpedo' && fromBase(w, f).d <= 2) && !won) why.push('their torpedo craft came out from their own coast'); if (own.some(f => kindOf(f) === 'torpedo' && fromBase(w, f).d <= 2) && won) why.push('our torpedo craft fought in their own waters');
     if (won ? luck > 1.12 : luck < .9) why.push('the day went ' + (won ? 'our' : 'their') + ' way'); if (!why.length) why.push(won ? 'ship for ship we shot and steamed the better' : 'ship for ship they shot and steamed the better');
-    tell(w, c, `Battle in ${seaName(w, sea)} (${sea}): ${won ? 'we hold the water' : 'we were beaten'}. We had ${lineOf(own.map(f => ({ ...f, ships: f.ships / (1 - (won ? lossW : lossL)) })))} there. Sunk on our side: ${sunkText(t)}${hurtText(t) ? `; ${hurtText(t)} are badly damaged and fight no more until a dock has had them (a harbour mends about three cruisers' weight of ship a quarter for each size it has)` : ''}. Of theirs about ${Math.round(seen)} ships were seen sunk or disabled. What told: ${why.join('; ')}.${!won && ran[id] ? ` Our ships ran for ${ran[id]} and lie in harbour there.` : !won ? ' No harbour of ours could be reached: they are still at sea.' : ''}`);
+    tell(w, c, `Battle in ${seaName(w, sea)} (${sea}): ${won ? 'we hold the water' : 'we were beaten'}. We had ${lineOf(own.map(f => ({ ...f, ships: f.ships / (1 - (won ? lossW : lossL)) })))} there. ${sunkText(t) !== 'nothing' ? `Sunk on our side: ${sunkText(t)}` : 'No ship of ours was sunk'}${hurtText(t) ? `; ${hurtText(t)} are badly damaged and fight no more until a dock has had them (a harbour mends about three cruisers' weight of ship a quarter for each size it has)` : sunkText(t) === 'nothing' ? `, but the squadron was knocked about: it is worth about ${Math.round((1 - (won ? lossW : lossL)) * 100)} in the hundred of what it was` : ''}. ${seen >= .5 ? `Of theirs about ${Math.round(seen)} ships were seen sunk or disabled` : 'No ship of theirs was seen to sink'}. What told: ${why.join('; ')}.${!won && ran[id] ? ` Our ships ran for ${ran[id]} and lie in harbour there.` : !won ? ' No harbour of ours could be reached: they are still at sea.' : ''}`);
   }
 }
 
