@@ -2725,6 +2725,7 @@ chain('The business tax is paid out of what would have renewed the works: a stat
   run(a, 11); run(b, 11); run(k, 11);
   assert.ok(worksOf(cb) < worksOf(ca) * .93 && worksOf(cb) > worksOf(ca) * .7, `three years on the works turn out a tenth or two less than they would have (${(worksOf(cb) / worksOf(ca)).toFixed(2)})`);
   assert.ok(worksOf(ck) > worksOf(ca) * 1.02, `and under a light tax more (${(worksOf(ck) / worksOf(ca)).toFixed(2)})`);
+  assert.ok(cb.unemployment > ca.unemployment + .01, `works that are not kept up employ fewer hands (${(ca.unemployment * 100).toFixed(1)}% out of work -> ${(cb.unemployment * 100).toFixed(1)}%)`); assert.ok(/let run down/.test(lookUp(b, ld(b, cb), 'economy')), 'and the report on work says why');
   run(a, 28); run(b, 28);
   assert.ok(worksOf(cb) < worksOf(ca) * .82 && worksOf(cb) > worksOf(ca) * .5, `ten years on a quarter less, and no further: the owners keep up what still pays (${(worksOf(cb) / worksOf(ca)).toFixed(2)})`);
   assert.ok(/renew/.test(lookUp(b, ld(b, cb), 'economy')), 'the economy report says what the tax is doing to the works');

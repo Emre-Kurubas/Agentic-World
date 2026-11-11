@@ -362,8 +362,11 @@ function consume(w, c, prev) {
   c.idleShare = clamp(c._idleV / Math.max(real + c._idleV, 1), 0, 1);
   // Building is work for hands. What is being spent this quarter on works in hand, the state's or a company's, takes people off the streets while it lasts.
   const works = clamp((c._works || 0) / Math.max(real, 1) * .6, 0, .1);
-  c.lastJobs = { inputs: (1 - c.inputRatio) * .3, damage: c._dev * .3, slump: Math.max(0, -g) * .9, idle: c.idleShare * .13, works };
-  c.unemployment += (clamp(.06 + (1 - c.inputRatio) * .3 + c._dev * .3 + Math.max(0, -g) * .9 + c.idleShare * .13 - works, .02, .6) - c.unemployment) * .4;
+  // Works that are not kept up employ fewer hands: what private owners have let run down under the tax on business puts people on the street
+  // long before the country runs short of what those works made. (Works being extended take a few on.)
+  const rundown = clamp((1 - (c.upkeep ?? 1)) * (1 - c.ownership) * .35, -.03, .2);
+  c.lastJobs = { inputs: (1 - c.inputRatio) * .3, damage: c._dev * .3, slump: Math.max(0, -g) * .9, idle: c.idleShare * .13, rundown, works };
+  c.unemployment += (clamp(.06 + (1 - c.inputRatio) * .3 + c._dev * .3 + Math.max(0, -g) * .9 + c.idleShare * .13 + rundown - works, .02, .6) - c.unemployment) * .4;
   // Resource-rent dependence: easy money feeds corruption and oligarchs and weakens industry.
   c.rentShare = clamp((c._rent || 0) / Math.max(real, 1), 0, 1);
   if (c.rentShare > .22) { c.corruption = clamp(c.corruption + (c.rentShare - .22) * 2.2, 2, 95); const o = w.characters[c.oligarch]; if (o?.alive) { o.wealth += c.rentShare * 5; o.power = clamp(o.power + c.rentShare * .3, 0, 95); } for (const p of countryProvinces(w, c.id)) if (p.eth !== c.majorityEth && Object.values(p.deposits).some(d => d.known && d.mine > 0)) p.unrest = clamp(p.unrest + 2.2, 0, 100); }

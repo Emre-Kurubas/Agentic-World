@@ -49,7 +49,7 @@ function worksText(c) {
 }
 function jobsText(c) {
   const k = c.lastJobs; if (!k) return '';
-  const names = { inputs: 'works standing idle for want of materials', damage: 'war damage', slump: 'a shrinking economy', idle: 'more hands than the works and land in use can employ' };
+  const names = { inputs: 'works standing idle for want of materials', damage: 'war damage', slump: 'a shrinking economy', idle: 'more hands than the works and land in use can employ', rundown: 'private works their owners have let run down under the tax on business' };
   const parts = Object.entries(k).filter(([key, v]) => key !== 'works' && v >= .005).sort((a, b) => b[1] - a[1]).map(([key]) => names[key]);
   return `${parts.length ? ` What keeps people out of work, heaviest first: ${parts.join(', ')}.` : ''}${k.works >= .002 ? ` Building now in hand gives work: without it unemployment would stand about ${round(k.works * 100, 1)} points higher, for as long as the works last.` : ''}`;
 }
