@@ -3494,6 +3494,34 @@ chain('Creed, kind and record count between states: a war on a state of the coun
   assert.ok(!ld(t.w, loser).inbox.some(x => /The staff does not say that we are next/.test(x.text)), 'the state that lost the land needs no telling');
 });
 
+chain('An order reaches the troops it was meant for though they were formed or sent the same day: where no road leads the troops go by sea; a standing order for a place goes with the troops sent there; a commander is named for the troops at a place; and what cannot be done says why', () => {
+  // World 16, the first four turns: "detach six thousand and ship them to Ordona" was answered "No route" five times; "detach four thousand to
+  // Kasona, to hold fire there" sent the men without the order, because nobody stood at Kasona yet; "the reservists forming at Ordgaron are placed
+  // under Colonel Aksoy" failed for want of a unit number; and a chief of staff who called up reservists "by Her Majesty's written order" was told
+  // only that he was not authorized.
+  const n = twoNavies(), w = n.w, c = w.countries.U1, L = ld(w, c), G = n.gen, home = n.ha, own = countryProvinces(w, 'U1'), isle = own.find(p => p.id !== home.id && p.coast) ?? own[1];
+  // an island of ours: cut every road to it
+  for (const p of Object.values(w.provinces)) p.neighbors = p.neighbors.filter(x => x !== isle.id); isle.neighbors = []; w.wars = []; c.shipping = Math.max(c.shipping || 0, 40); const corps = soldier(w, 'U1', home.id, 30);
+  const ship = applyOp(w, L, { op: 'move', unit: corps.id, to: isle.id, men: 6 }), sent = Object.values(w.units).find(u => u.country === 'U1' && u.province === isle.id && Math.abs(u.men - 6) < .2);
+  assert.ok(ship.ok && /No road leads from .* to .*: the troops went by sea/.test(ship.msg) && sent && Math.abs(corps.men - 24) < .01, `six thousand detached and shipped where no road leads: ${ship.msg.slice(0, 260)}`);
+  c.shipping = 0; const none = applyOp(w, L, { op: 'move', unit: corps.id, to: isle.id, men: 6 }); assert.ok(!none.ok && /would have to go by sea, and could not/.test(none.msg) && Math.abs(corps.men - 24) < .01 && Object.values(w.units).filter(u => u.country === 'U1' && u.province === home.id && u.id !== corps.id && Math.abs(u.men - 6) < .2).length === 0, `with no ships the detachment is not made, and the reason is said: ${none.msg.slice(0, 220)}`);
+  // a standing order for a place goes with the troops sent there this quarter
+  const f = twoRoads(1), far = f.e1, post = soldier(f.w, 'U1', f.a.capital, 40), det = applyOp(f.w, f.gen, { op: 'move', unit: post.id, to: far.id, men: 4 }); assert.ok(det.ok, det.msg);
+  const hold = applyOp(f.w, f.gen, { op: 'set_posture', posture: 'hold_fire', province: far.id }), d = Object.values(f.w.units).find(u => u.country === 'U1' && u.target === far.id && Math.abs(u.men - 4) < .2);
+  assert.ok(hold.ok && d?.holdFire && /or ordered there this quarter/.test(hold.msg), `the detachment carries its standing order with it: ${hold.msg.slice(0, 200)}`);
+  const dig = applyOp(f.w, f.gen, { op: 'set_posture', posture: 'defensive', province: far.id }); assert.ok(dig.ok && d.target === far.id && d.digAt === far.id && d.posture !== 'defensive', 'told to stand on the defensive there, it goes and digs in when it arrives');
+  const empty = Object.values(f.w.provinces).find(p => p.controller === 'U1' && !Object.values(f.w.units).some(u => u.province === p.id || u.target === p.id)); assert.ok(!applyOp(f.w, f.gen, { op: 'set_posture', posture: 'hold_fire', province: empty.id }).ok, 'where nobody stands and nobody is sent there is still nobody to order');
+  // a commander for the troops at a place
+  const who = Object.values(f.w.characters).find(x => x.country === 'U1' && x.alive && x.status === 'free' && x.id !== f.a.leader && x.id !== f.gen.id), garrison = soldier(f.w, 'U1', f.e2.id, 20);
+  const named = applyOp(f.w, f.gen, { op: 'appoint_commander', character: who.id, province: f.e2.id }); assert.ok(named.ok && garrison.commander === who.id, `named by where the troops stand: ${named.msg}`);
+  const vague = applyOp(f.w, f.gen, { op: 'appoint_commander', character: who.id }); assert.ok(!vague.ok && /Say which troops he is to command/.test(vague.msg), vague.msg);
+  // refusals that say why
+  const no = applyOp(f.w, f.gen, { op: 'mobilize', men: 20 }); assert.ok(!no.ok && /It is for whoever governs to order: a word or a letter from the ruler does not carry it/.test(no.msg), no.msg);
+  const plot = applyOp(f.w, f.gen, { op: 'invite_plot', plot: 'new', character: who.id }); assert.ok(!plot.ok && /You lead no plot to invite anyone into: one has to be begun first \(start_plot\)/.test(plot.msg), plot.msg);
+  // (World 16: a chief of staff began a coup and in the same quarter invited a corps commander into "the new plot"; the invitation was refused as invalid.)
+  const begun = applyOp(f.w, f.gen, { op: 'start_plot', kind: 'coup' }); assert.ok(begun.ok, begun.msg); const asked = applyOp(f.w, f.gen, { op: 'invite_plot', plot: 'new', character: who.id }); assert.ok(asked.ok || !/No such plot|You lead no plot/.test(asked.msg), `with one plot in hand, an invitation into "the new plot" is an invitation into that one: ${asked.msg}`);
+});
+
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
   // The same fight, the same dice, the enemy warned both times: only the man in command differs.
   const hurt = skill => { const f = duel({ dug: 5, ground: { trench: 2 }, rng: 99, seen: true }); f.gen.skill = skill; const [b] = quarter(f.w); assert.ok(b, 'a battle'); assert.ok(!b.prisoners, 'nobody was routed'); return f.D - f.def.men; };

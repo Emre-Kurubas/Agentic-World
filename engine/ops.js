@@ -485,7 +485,7 @@ export function applyOp(w, actor, op) {
   const c = alive(w, actor.country);
   if (!c || !op?.op) return { ok: false, msg: 'Invalid operation.' };
   const perm = permissionsOf(c, actor, w), held = actor.status === 'imprisoned' || actor.status === 'exiled';
-  if (perm && !perm.has(op.op) && (held || !delegated(c, actor, op.op))) return { ok: false, msg: held ? `Someone who is ${actor.status} cannot do this: ${op.op}` : `${c[actor.role] === actor.id ? actor.role : 'A private person'} is not authorized for this operation: ${op.op}` };
+  if (perm && !perm.has(op.op) && (held || !delegated(c, actor, op.op))) return { ok: false, msg: held ? `Someone who is ${actor.status} cannot do this: ${op.op}` : `${c[actor.role] === actor.id ? actor.role : 'A private person'} is not authorized for this operation: ${op.op}${c.general === actor.id && ['mobilize', 'demobilize', 'recruit', 'disband', 'declare_war', 'build_ship'].includes(op.op) ? '. It is for whoever governs to order: a word or a letter from the ruler does not carry it, the ruler has to give the order as his own decision' : ''}` };
   // A law passed by a legislature is above a veto; a decree is not.
   if (!op._law || op._decree) {
     const blocker = vetoedBy(w, c, actor, op.op);
@@ -556,7 +556,10 @@ export function applyOp(w, actor, op) {
     }
     case 'appoint_governor': { const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('Province not yours.'); if (op.remove) { tell(w, w.characters[p.governor], c.name, `You are removed as governor of ${p.name}.`); p.governor = null; return ok(); } const ch = personFor(w, c, op, 'governor'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); p.governor = ch.id; tell(w, ch, c.name, `You are appointed governor of ${p.name}.`); return { ok: true, msg: `${ch.name} (${ch.id}) governs ${p.name}.` }; }
     case 'appoint_commander': { if (op.fleet) { const f = w.fleets[op.fleet]; if (!f || f.country !== c.id) return fail('No such fleet of yours.'); const ch = personFor(w, c, op, 'officer'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); f.commander = ch.id; tell(w, ch, c.name, `You now command the squadron ${f.id}.`); return { ok: true, msg: `${ch.name} (${ch.id}) commands the squadron ${f.id}.` }; }
-      const u = w.units[op.unit]; if (!u || u.country !== c.id) return fail('No such unit.'); const ch = personFor(w, c, op, 'officer'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); u.commander = ch.id; tell(w, ch, c.name, `You now command unit ${u.id}.`); return { ok: true, msg: `${ch.name} (${ch.id}) commands ${u.id}.` }; }
+      // "The reservists forming at Ordgaron are placed under Colonel Aksoy": the unit may be named by where it stands (the largest of ours there
+      // that has no commander of its own, else the largest).
+      const here = !op.unit && w.provinces[op.province] ? Object.values(w.units).filter(x => x.country === c.id && x.province === op.province).sort((a, b) => (w.characters[a.commander]?.alive ? 1 : 0) - (w.characters[b.commander]?.alive ? 1 : 0) || b.men - a.men)[0] : null;
+      const u = w.units[op.unit] ?? here; if (!u || u.country !== c.id) return fail(op.unit ? 'No such unit.' : op.province ? `No unit of ours stands at ${w.provinces[op.province]?.name ?? op.province}.` : 'Say which troops he is to command: the unit (unit), the squadron (fleet), or the province where the troops stand (province).'); const ch = personFor(w, c, op, 'officer'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); u.commander = ch.id; tell(w, ch, c.name, `You now command unit ${u.id}.`); return { ok: true, msg: `${ch.name} (${ch.id}) commands ${u.id}.` }; }
     case 'propose_contract': { const k = proposeContract(w, actor, op, num); return k ? { ok: true, msg: `Contract offered: ${k.id}`, contract: k.id } : fail('No such counterparty.'); }
     case 'accept_contract': { const k = acceptContract(w, actor, op.id, op.from, op.state) ?? (op.state === true ? toStateAccount(w, actor, op.id) : null); return k ? { ok: true, msg: `Contract ${k.id} is in force${k.purse?.[actor.id] ? ", on the treasury's account" : ''}.` } : fail('No such offer is waiting for you.'); }
     // The state pays a person: a salary, a grant, a reward, a reimbursement, compensation. It is done in the open, and the money really leaves the treasury.
@@ -1051,13 +1054,17 @@ export function applyOp(w, actor, op) {
     case 'move': {
       const u = w.units[op.unit]; if (!u || u.country !== c.id || !w.provinces[op.to]) return fail('Invalid movement order.');
       // A number sends a detachment and leaves the rest of the unit where it stands.
-      const asked = Number(op.men); if (!(Number.isFinite(asked) && asked >= .1 && asked < u.men - .05)) return applyOrder(w, c, u, op.to, true);
-      const stays = u.province === op.to; if (!stays && !pathStep(w, u.province, op.to, c.id)) return fail('No route.');
+      // Where no road leads (an island, a possession across the sea) the troops go by ship, as a landing on a friendly coast does: "detach six
+      // thousand and ship them to Ordona" is a march order to whoever writes it. (World 16: five such orders were answered "No route.")
+      const dest = w.provinces[op.to], dry = u.province !== op.to && !pathStep(w, u.province, op.to, c.id), bySea = x => { const r = applyOp(w, actor, { op: 'amphibious', unit: x.id, to: op.to }); return { ...r, msg: `No road leads from ${w.provinces[x.province === op.to ? u.province : x.province]?.name ?? 'there'} to ${dest.name}: ${r.ok ? 'the troops went by sea' : 'the troops would have to go by sea, and could not'}. ${r.msg}${r.ok ? '' : ' (Troops embark from a province of ours on the coast; the crossing wants merchant tonnage and water no enemy holds.)'}` }; };
+      const asked = Number(op.men); if (!(Number.isFinite(asked) && asked >= .1 && asked < u.men - .05)) return dry ? bySea(u) : applyOrder(w, c, u, op.to, true);
+      const stays = u.province === op.to;
       const men = Math.round(asked * 10) / 10, d = makeUnit(w, c.id, u.province, men, u.quality, u.loyalty, u.kind); if (u.eth) { d.eth = u.eth; d.rel = u.rel; }
       d.morale = u.morale; d.equip = u.equip; if (u.bond != null) d.bond = u.bond; u.men -= men;
       // Picked men formed into a body of their own where they stand: a guard, a garrison, a cadre.
       if (stays) return { ok: true, msg: `${d.id}, ${menText(men)}, was formed out of ${u.id} and stays at ${w.provinces[op.to].name}. ${u.id} keeps ${menText(u.men)}.` };
-      d.target = op.to;
+      if (dry) { const r = bySea(d); if (!r.ok) { u.men += d.men; delete w.units[d.id]; return r; } return { ...r, msg: `${d.id}, ${menText(men)}, was detached from ${u.id}. ${r.msg} ${u.id} keeps ${menText(u.men)}.` }; }
+      d.target = op.to; d.marchSince = w.turn;
       return { ok: true, msg: `${d.id}, ${menText(men)}, was detached from ${u.id} and ordered to ${w.provinces[op.to].name}. ${u.id} keeps ${menText(u.men)}.` };
     }
     case 'merge_units': {
@@ -1366,7 +1373,9 @@ export function applyOp(w, actor, op) {
     case 'rig_election': { const was = c.rigging || 0; c.rigging = num(op.amount, 0, 25, 10); if (c.rigging > was) c.legitimacy = clamp(c.legitimacy - (c.rigging - was) * .15, 0, 100); if (!(actor.secrets || []).some(s => /returns of the election/.test(s.text) && !s.published && w.turn - s.turn < 16)) leaveTrace(w, actor, 'Ordered the returns of the election to be arranged.');
       return { ok: true, msg: `The count will be arranged by about ${Math.round(c.rigging)} points, as far as officials and police can deliver it (${Math.round(clamp((c.bureaucracy + c.police) / 110, .35, 1) * 100)}% of what is ordered, with the offices as they are). ${c.pressFreedom >= 50 || c.courts >= 50 ? 'With the press and the courts as free as they are here, it may well come out' : 'Few here are in a position to prove it'}. If it comes out, the vote will count for nothing and your name will be on it.` }; }
     case 'start_plot': { const kind = ['coup', 'assassination', 'uprising'].includes(op.kind) ? op.kind : 'coup'; if (w.plots.some(x => x.active && x.leader === actor.id)) return fail('You already have a plot.'); if (actor.id === c.leader && kind !== 'assassination') return fail('A ruler does not plot against their own government.'); const mark = kind === 'assassination' ? (op.character ? w.characters[op.character] : w.characters[c.leader]) : null; if (kind === 'assassination' && (!mark?.alive || mark.id === actor.id)) return fail('There is no such person to strike at.'); const id = nextId(w, 'K-'); w.plots.push({ id, country: c.id, kind, leader: actor.id, members: [], target: mark?.id ?? null, progress: 5, secrecy: num(op.secrecy, 0, 1, .5), exposed: false, active: true, start: w.turn }); leaveTrace(w, actor, mark ? `Secretly began preparing the killing of ${mark.name}.` : `Secretly began preparing a plot (${kind}).`); return { ok: true, msg: `Plot started: ${id}${mark ? `, against ${mark.name}` : ''}. It gains ground each quarter; execute_plot carries it out.`, plot: id }; }
-    case 'invite_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && x.leader === actor.id); const ch = w.characters[op.character]; if (!pl || !ch?.alive || ch.country !== c.id || (ch.id === c.leader && pl.kind !== 'assassination') || ch.id === actor.id) return fail('Invalid invitation.');
+    // A plot begun the same quarter has no number its leader could know: whoever leads one plot and one only means that one, whatever he calls it.
+    case 'invite_plot': { const led = w.plots.filter(x => x.active && x.leader === actor.id), pl = led.find(x => x.id === op.plot) ?? (led.length === 1 ? led[0] : null); const ch = w.characters[op.character]; if (!pl) { const mine = w.plots.filter(x => x.active && x.leader === actor.id); return fail(mine.length ? `No such plot of yours: ${op.plot}. Yours: ${mine.map(x => `${x.id} (${x.kind})`).join(', ')}.` : 'You lead no plot to invite anyone into: one has to be begun first (start_plot), and people are then drawn into it by its id.'); }
+      if (!ch?.alive || ch.country !== c.id || (ch.id === c.leader && pl.kind !== 'assassination') || ch.id === actor.id) return fail(!ch?.alive ? 'No such person.' : ch.country !== c.id ? 'A plot draws in people of this country only.' : ch.id === actor.id ? 'You lead it already.' : 'The ruler is not invited into a plot against his own government.');
       // Someone who is in is in, and someone who has answered this quarter has answered: asking again brings neither a second man nor a second throw of the dice.
       if (pl.members.includes(ch.id) || pl.leader === ch.id) return fail(`${ch.name} is in the plot already.`);
       if ((pl.asked ||= {})[ch.id] === w.turn) return fail(`${ch.name} has had your offer this quarter; nothing changes by asking again before the next.`); pl.asked[ch.id] = w.turn;
@@ -1688,7 +1697,9 @@ function setPosture(w, c, op) {
   const kind = POSTURES.includes(op.posture) ? op.posture : null; if (!kind) return fail(`The standing orders are: ${POSTURES.join(', ')}.`);
   const mine = Object.values(w.units).filter(u => u.country === c.id), on = op.on !== false || kind === 'ordinary'; let us, where, toward = null;
   if (op.unit) { us = mine.filter(u => u.id === op.unit); where = op.unit; if (!us.length) return fail('No such unit of yours.'); }
-  else if (op.province) { if (!w.provinces[op.province]) return fail('No such province.'); us = mine.filter(u => u.province === op.province); where = `every unit at ${w.provinces[op.province].name}`; }
+  // A standing order for a place is for the troops that stand there and for those sent there this quarter ("detach four thousand to Kasona, to
+  // hold fire there"): the order goes with them.
+  else if (op.province) { if (!w.provinces[op.province]) return fail('No such province.'); us = mine.filter(u => u.province === op.province || (u.target === op.province && u.marchSince === w.turn)); where = `every unit at ${w.provinces[op.province].name}${us.some(u => u.province !== op.province) ? ' or ordered there this quarter' : ''}`; }
   else if (op.facing) { toward = w.countries[op.facing]; if (!toward?.alive || toward.id === c.id) return fail('No such neighbour.'); us = mine.filter(u => w.provinces[u.province]?.neighbors.some(n => w.provinces[n].controller === toward.id)); where = `every unit facing ${toward.name}`; }
   else if (op.all) { us = mine; where = 'the whole army'; }
   else return fail('Say which troops: unit, province, facing (a neighbouring country) or all.');
