@@ -315,7 +315,9 @@ export function plotStep(w) {
     pl.members = [...new Set(pl.members)].filter(x => x !== pl.leader);
     pl.progress = clamp(pl.progress + 9 + pl.members.length * 7, 0, 100);
     const leak = clamp(.03 + pl.members.length * .05 + (c.police + c.intelligence) / 100 * .1 - pl.secrecy * .12, .02, .75);
-    if (!pl.exposed && rand(w) < leak) {
+    // A chief of police who has been paid or frightened into looking away from the ringleader's affairs seldom hears of them.
+    const chief = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'police' && x.status === 'free'), away = !!chief?.blind && chief.blind.until >= w.turn && chief.blind.for === pl.leader;
+    if (!pl.exposed && rand(w) < leak * (away ? .3 : 1)) {
       pl.exposed = true;
       // The leak reaches whoever the plot is aimed at: the ruler, or the person marked for death.
       const victim = pl.kind === 'assassination' ? w.characters[pl.target] : null, warned = victim?.alive && victim.id !== c.leader ? victim : w.characters[c.leader];
@@ -331,11 +333,14 @@ export function plotStep(w) {
 export function armySides(w, c, pl) {
   const inPlot = new Set([pl.leader, ...pl.members]);
   const generalIn = inPlot.has(c.general), climate = (50 - c.legitimacy) * .5 + (50 - (c.blocs?.army?.sat ?? 50)) * .4;
+  const aside = x => !!x?.aside && x.aside.until >= w.turn && inPlot.has(x.aside.for);
   let pro = 0, anti = 0;
   for (const u of Object.values(w.units)) {
     if (u.country !== c.id) continue;
     // Men follow the officer who commands them: a commander in the plot brings most of his unit with him, and one who stands by the government holds his together.
     const chief = w.characters[u.commander], led = chief?.alive && chief.status === 'free' && chief.country === c.id;
+    // A commander who has been paid or frightened into standing aside for one of the plotters keeps his men in barracks: they count for neither side.
+    if (led && aside(chief)) continue;
     // An officer on a plotter's private payroll leans the way his paymaster goes.
     const lean = (55 - u.loyalty) + (generalIn ? 14 : 0) + (led ? (inPlot.has(chief.id) ? 30 : inPlot.has(chief.payroll) ? 18 : chief.id !== c.general && (chief.loyalty ?? 50) >= 55 ? -10 : 0) : 0) + climate;
     const share = 1 / (1 + Math.exp(-lean / 10));
@@ -343,7 +348,7 @@ export function armySides(w, c, pl) {
   }
   // A squadron lying in the capital's harbour has its guns on the palace: its crews go where their temper and their admiral take them, and a
   // battleship there counts for some thousands of men in the streets.
-  for (const f of Object.values(w.fleets)) { if (f.country !== c.id || f.port !== c.capital) continue; const ad = w.characters[f.commander], weight = f.ships * ({ dreadnought: 7, battleship: 3.5, torpedo: .3, submarine: .6 }[f.kind] ?? 1) * 1.5;
+  for (const f of Object.values(w.fleets)) { if (f.country !== c.id || f.port !== c.capital) continue; const ad = w.characters[f.commander]; if (ad?.alive && ad.status === 'free' && aside(ad)) continue; const weight = f.ships * ({ dreadnought: 7, battleship: 3.5, torpedo: .3, submarine: .6 }[f.kind] ?? 1) * 1.5;
     const share = 1 / (1 + Math.exp(-((55 - f.morale) + (ad?.alive && inPlot.has(ad.id) ? 30 : 0) + (f.mutiny ? 20 : 0) + climate) / 10)); pro += weight * share; anti += weight * (1 - share); }
   return { pro, anti };
 }

@@ -9,7 +9,8 @@ import { firmOp, seizeFirm, STATE } from './firms.js';
 import { queueProject, durationOf, WORKS, quote, ground, projectYield, wasteOf } from './projects.js';
 import { LANGUAGE_POLICY, FAITH_POLICY, groupsOf, removePeople, settlePeople } from './culture.js';
 import { incapacitated } from './health.js';
-import { isMinor, recruitInformant, takeOffer, refuseOffer } from './court.js';
+import { isMinor, recruitInformant, takeOffer, refuseOffer, standing } from './court.js';
+import { approach, openTo } from './deeds.js';
 import { labourOp } from './labour.js';
 import { noteOp } from './notes.js';
 import { quarterLabel } from './util.js';
@@ -487,8 +488,9 @@ export function applyOp(w, actor, op) {
       const state = governs(w, c, actor), want = num(op.amount, 0, 1e6, 0), m = state ? treasuryPays(c, allowance(w, c, 'secret_funds', gdp * .002, want)) : Math.min(Math.max(actor.wealth, 0), want);
       if (!(m >= 1)) return fail('No money was put behind the approach.');
       const r = recruitInformant(w, actor, ch, m); if (r.ok && !state) actor.wealth -= m; if (!r.ok && state) c.treasury += m;
-      // A clerk nobody had heard of, who would not be bought, stays nobody.
-      if (ch.nobody) { if (r.ok) delete ch.nobody; else delete w.characters[ch.id]; }
+      // A clerk nobody had heard of, who would not be bought and said nothing, stays nobody. One who went to his ruler with it has been named
+      // to the ruler and is a person from then on: the ruler he reported to can reward him, promote him or use him.
+      if (ch.nobody) { if (r.ok || r.told) delete ch.nobody; else delete w.characters[ch.id]; }
       return r.ok ? r : fail(r.msg);
     }
     // Money for the armed underground, at home or (with target) in another country. From the actor's own purse.
@@ -807,7 +809,14 @@ export function applyOp(w, actor, op) {
       if (rand(w) > clamp(means * reach, .05, .8)) return fail(`No evidence could be found for a dossier${fee ? `; the ${Math.round(fee * 10) / 10} paid to those who asked the questions is spent` : ''}.`); // What somebody is paid or placed to keep out of sight is not found while he keeps it; and what a person owes on notes of hand is found with the rest.
       const owes = (w.debts || []).filter(d => d.debtor === ch.id && ['open', 'overdue'].includes(d.status) && !d.known && w.characters[d.creditor]?.alive).map(d => `Owes ${Math.round(d.owed)} to ${w.characters[d.creditor].name} on a note of hand (${d.id}), ${d.status === 'overdue' ? 'overdue' : `due ${quarterLabel(d.due)}`}.`);
       const facts = [...(ch.secrets || []).filter(s => !s.published && !keptQuiet(w, s)).slice(-5).map(s => s.text), ...owes.slice(0, 3)]; actor.dossiers[ch.id] = { turn: w.turn, about: ch.name, facts }; return { ok: true, msg: facts.length ? `Dossier opened, ${facts.length} facts found.` : 'Dossier opened, but nothing that is not already known came up.' }; }
-    case 'blackmail': { const ch = w.characters[op.character], file = actor.dossiers[ch?.id]; if (!ch?.alive || !file) return fail('You hold no dossier.'); if (!file.facts?.length) return fail('There is nothing usable in the dossier.'); tell(w, ch, actor.name, `I have a dossier on you: ${file.facts.join(' ')} I expect you to do this: ${String(op.demand || 'Support me.').slice(0, 300)}`); leaveTrace(w, actor, `Blackmailed ${ch.name}.`); if (!ch.aiControlled) ch.loyalty = clamp(ch.loyalty - 5, 0, 100); return ok(); }
+    case 'blackmail': { const ch = w.characters[op.character], file = actor.dossiers[ch?.id]; if (!ch?.alive || !file) return fail('You hold no dossier.'); if (!file.facts?.length) return fail('There is nothing usable in the dossier.');
+      const what = op.for ?? op.deed, small = isMinor(ch) && !ch.aiControlled;
+      // Someone nobody plays who is shown a file and told what to do gives way or refuses at once, by what the file holds and what he is.
+      if (what != null && small) { const r = approach(w, actor, ch, op, 'blackmail', { file, allowance }); return r.ok ? r : fail(r.msg); }
+      tell(w, ch, actor.name, `I have a dossier on you: ${file.facts.join(' ')} I expect you to do this: ${String(op.demand || 'Support me.').slice(0, 300)}`); leaveTrace(w, actor, `Blackmailed ${ch.name}.`);
+      if (ch.aiControlled) return { ok: true, msg: `The demand, and what you hold, are in ${ch.name}'s hands. What ${ch.name} does about it is ${ch.name}'s own decision, and it may not be what you asked.` };
+      ch.loyalty = clamp(ch.loyalty - 5, 0, 100);
+      return { ok: true, msg: `The demand is in ${ch.name}'s hands, and he thinks the less of the government he serves for being used so. ${small ? `But a demand in words binds him to nothing: he gives way or refuses when he is told what he is to do. What a man in his place can be made to do: ${openTo(w, ch, actor, 'blackmail').join(', ')} (blackmail with for).` : 'What he does about it is his own affair.'}` }; }
     case 'publish_dossier': { const ch = w.characters[op.character], file = actor.dossiers[ch?.id]; if (!ch?.alive || !file?.facts?.length) return fail('No dossier to publish.'); const home = w.countries[ch.country], n = file.facts.length;
       // Forged pages in the file may be recognised once they are in print, and then it is the publisher who pays.
       if (home && forgeryFound(w, home, file)) { news(w, `${home.name}: papers published against ${ch.name} were shown to be forgeries. They came from ${actor.name}.`, { kind: 'plot', countries: [...new Set([ch.country, actor.country])] }); ch.power = clamp(ch.power + 8, 0, 100); if (c.leader === actor.id) c.legitimacy = clamp(c.legitimacy - 5 * (.4 + c.pressFreedom / 100), 0, 100); else actor.power = clamp(actor.power - 10, 0, 100); leaveTrace(w, actor, `Published forged papers against ${ch.name}.`); delete actor.dossiers[ch.id]; return { ok: true, msg: `The papers were printed, and within weeks shown to be forgeries. It is you the country talks about now, not ${ch.name}.` }; } news(w, `Leaked documents: about ${ch.name}: ${file.facts.join(' ')}`, { kind: 'plot', countries: [ch.country] }); { const far = carry(c, actor, ch.id); if (home?.leader === ch.id) home.legitimacy = clamp(home.legitimacy - (2 + n * 1.5) * (.4 + home.pressFreedom / 100) * far, 0, 100); else ch.power = clamp(ch.power - (6 + n * 2) * far, 0, 100); } for (const s of ch.secrets || []) if (file.facts.includes(s.text)) s.published = true; for (const d of w.debts || []) if (d.debtor === ch.id && file.facts.some(f => f.includes(`(${d.id})`))) d.known = true; delete actor.dossiers[ch.id]; return ok(); }
@@ -1134,7 +1143,8 @@ export function applyOp(w, actor, op) {
       // Someone who slipped the police or stood them off this quarter is not taken by the same order written out again.
       const gotAway = quarterBook(w, c).gotAway ||= {}; if (gotAway[ch.id]) return fail(`${gotAway[ch.id]} The police will not get another chance at ${ch.name} before next quarter.`);
       // An order of arrest passes through the police. A chief of police who has lost faith in the ruler lets it be known in time.
-      { const chief = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'police' && x.status === 'free'); if (w.friction && chief && chief.id !== ch.id && chief.loyalty < 30 && !inCustody && rand(w) < .4) { tell(w, ch, 'A friend in the police', `An order for your arrest has been signed by ${actor.name}. You were warned in time; they will come again.`); leaveTrace(w, chief, `Warned ${ch.name} of the order of arrest.`); gotAway[ch.id] = `${ch.name} could not be found when the police came: someone gave warning.`; return fail(gotAway[ch.id]); } }
+      { const chief = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'police' && x.status === 'free'); // One who has been paid or frightened into it by the person concerned does so for certain.
+        if ((chief && chief.id !== ch.id && !inCustody && standing(w, chief, 'warns') && chief.warns.for === ch.id) || (w.friction && chief && chief.id !== ch.id && chief.loyalty < 30 && !inCustody && rand(w) < .4)) { tell(w, ch, 'A friend in the police', `An order for your arrest has been signed by ${actor.name}. You were warned in time; they will come again.`); leaveTrace(w, chief, `Warned ${ch.name} of the order of arrest.`); gotAway[ch.id] = `${ch.name} could not be found when the police came: someone gave warning.`; return fail(gotAway[ch.id]); } }
       const seated = c[ch.role] === ch.id, risk = seated && ch.role === 'general' ? c.blocs.army.power / 100 : .15;
       if (!inCustody && rand(w) < risk * .45) { news(w, `${ch.name} resisted arrest in ${c.name}.`, { kind: 'plot', countries: [c.id] }); ch.loyalty = 0; gotAway[ch.id] = 'The arrest met resistance.'; return fail(gotAway[ch.id]); }
       if (seated && ch.role === 'general') Object.values(w.units).filter(u => u.country === c.id).forEach(u => u.loyalty = clamp(u.loyalty - 8, 0, 100));
@@ -1179,7 +1189,16 @@ export function applyOp(w, actor, op) {
     case 'betray_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && x.country === c.id); if (!pl) return fail('No such plot.'); pl.exposed = true; actor.loyalty = clamp(actor.loyalty + 20, 0, 100); w.characters[c.leader].inbox.push({ turn: w.turn, from: actor.name, text: `Plot report ${pl.id}: ${pl.kind}, ringleader ${w.characters[pl.leader].name}.` }); return ok(); }
     case 'execute_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && [x.leader, ...x.members].includes(actor.id)); if (!pl) return fail('No such plot.'); if (actor.id === w.countries[pl.country]?.leader && pl.kind !== 'assassination') return fail('A ruler cannot carry out a plot against their own government.'); return { ok: true, msg: executePlot(w, pl, { fate: op.fate }) }; }
     case 'fund_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && x.country === c.id); if (!pl) return fail('No such plot.'); const m = num(op.amount, 0, actor.wealth); actor.wealth -= m; pl.progress = clamp(pl.progress + m * .5, 0, 100); return ok(); }
-    case 'bribe': { const ch = w.characters[op.character]; if (!ch?.alive || ch.id === actor.id) return fail('No such target.'); const m = num(op.amount, 0, actor.wealth); if (m <= 0) return fail('No money to give.'); actor.wealth -= m; ch.wealth += m; leaveTrace(w, actor, `Paid ${ch.name} a bribe of ${Math.round(m)}.`); leaveTrace(w, ch, `Took a bribe of ${Math.round(m)} from ${actor.name}.`); if (ch.aiControlled) tell(w, ch, actor.name, `Sent you ${Math.round(m)} in money.`); else ch.loyalty = clamp(ch.loyalty + (op.direction === 'down' ? -1 : 1) * m * .25 * ch.greed / 50, 0, 100); return ok(); }
+    case 'bribe': { const ch = w.characters[op.character]; if (!ch?.alive || ch.id === actor.id) return fail('No such target.'); const m = num(op.amount, 0, actor.wealth); if (m <= 0) return fail('No money to give.');
+      const what = op.for ?? op.deed, small = isMinor(ch) && !ch.aiControlled;
+      // Money that is to buy a named deed from someone nobody plays is answered at once and by what he is: he takes it and does the thing, or leaves it.
+      if (what != null && small) { const r = approach(w, actor, ch, op, 'bribe', { amount: m, allowance }); return r.ok ? r : fail(r.msg); }
+      actor.wealth -= m; ch.wealth += m; leaveTrace(w, actor, `Paid ${ch.name} a bribe of ${Math.round(m)}.`); leaveTrace(w, ch, `Took a bribe of ${Math.round(m)} from ${actor.name}.`);
+      // Someone who is played is nobody's creature: the money arrives, with what is asked for it, and the rest is theirs to decide.
+      if (ch.aiControlled) { tell(w, ch, actor.name, `Sent you ${Math.round(m)} in money.${what != null ? ` What is asked for it: ${String(what).slice(0, 200)}.` : ''}`); return { ok: true, msg: `${Math.round(m * 10) / 10} reached ${ch.name}. What ${ch.name} does for it is ${ch.name}'s own decision; nothing binds them but their word. Both of you now have something to hide.` }; }
+      // With no deed named the money buys goodwill, or ill will toward the government, and nothing else.
+      const stands = v => v >= 65 ? 'loyal' : v >= 40 ? 'wavering' : 'without faith in the government', was = ch.loyalty, down = op.direction === 'down'; ch.loyalty = clamp(ch.loyalty + (down ? -1 : 1) * m * .25 * ch.greed / 50, 0, 100);
+      return { ok: true, msg: `${ch.name} took the ${Math.round(m * 10) / 10}. No deed was named, so it bought none: it leaves him ${Math.abs(ch.loyalty - was) < 1 ? 'much as he was' : down ? 'worse disposed' : 'better disposed'} toward the government he serves (${stands(was) === stands(ch.loyalty) ? `still ${stands(was)}` : `${stands(was)} before, ${stands(ch.loyalty)} now`}), the more so the fonder he is of money.${small ? ` What a man in his place can be paid to do: ${openTo(w, ch, actor, 'bribe').join(', ') || 'nothing'} (bribe with for).` : ''} Both of you now have something to hide.` }; }
     case 'capital_flight': {
       // A fortune is moved abroad as gold: it leaves the country's reserve, and once out it is beyond the state's reach.
       if (c.capitalClosed) return fail('Capital controls blocked moving the money out.');
@@ -1389,7 +1408,8 @@ function applyOrder(w, c, u, to, named = true) {
   if (u.province === to) return fail('Already there.'); if (!pathStep(w, u.province, to, c.id)) return fail('No route.');
   if (u.posture === 'defensive' && !named) return fail(`${u.id} stands on the defensive and stays.`);
   // A commander who has lost faith in the government obeys when it suits him.
-  const chief = w.characters[u.commander]; if (w.friction && chief?.alive && isMinor(chief) && chief.loyalty < 25 && rand(w) < .4) return fail(`${u.id} did not march: ${chief.name}, who commands it, finds reasons for delay.`);
+  // So does one who has been paid or frightened into keeping his men where they stand.
+  const chief = w.characters[u.commander]; if ((standing(w, chief, 'aside') && isMinor(chief)) || (w.friction && chief?.alive && isMinor(chief) && chief.loyalty < 25 && rand(w) < .4)) return fail(`${u.id} did not march: ${chief.name}, who commands it, finds reasons for delay.`);
   // A march order and an order to hold the ground cannot both stand. The one given to the unit by name, and last, is the one that does.
   let lifted = ''; if (u.posture === 'defensive') { delete u.posture; lifted = ` ${u.id} had been standing on the defensive: this order lifts that one, and it leaves its works.`; }
   const off = u.attack ? ` It leaves the offensive against ${w.provinces[u.attack.to]?.name ?? 'its objective'} it had been ordered into.` : ''; delete u.attack;
@@ -1428,7 +1448,7 @@ function offensive(w, c, op) {
   const staging = u => { let cur = u.province, n = 0; while (!to.neighbors.includes(cur) && n++ < 80) { const step = pathStep(w, cur, to.id, c.id); if (!step || step === to.id) return step ? cur : null; cur = step; } return to.neighbors.includes(cur) ? cur : null; };
   for (const u of us) {
     const at = u.province === to.id ? to.id : staging(u); if (!at) { not.push(`${u.id} has no road to it`); continue; }
-    const chief = w.characters[u.commander]; if (w.friction && chief?.alive && isMinor(chief) && chief.loyalty < 25 && rand(w) < .4) { not.push(`${u.id} did not stir: ${chief.name}, who commands it, finds reasons for delay`); continue; }
+    const chief = w.characters[u.commander]; if ((standing(w, chief, 'aside') && isMinor(chief)) || (w.friction && chief?.alive && isMinor(chief) && chief.loyalty < 25 && rand(w) < .4)) { not.push(`${u.id} did not stir: ${chief.name}, who commands it, finds reasons for delay`); continue; }
     if (u.posture === 'defensive') delete u.posture;
     if (u.attack && u.attack.to !== to.id && w.provinces[u.attack.to]) left.push(`${u.id} (${w.provinces[u.attack.to].name})`);
     // An attack already in hand keeps its day: ordering it again changes how it is to be made, not when, and what its preparation has bought stays bought.
