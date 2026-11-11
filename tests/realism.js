@@ -1432,6 +1432,7 @@ chain('A state has a reserve of trained men: discharge fills it and returns the 
 import { justiceStep as justiceOf } from '../engine/justice.js';
 import { rand as rollOf } from '../engine/util.js';
 import { billStep as billsOf, governmentSeats as benchOf, leadsParties as leadsOf } from '../engine/polity.js';
+// [people, press, seats] checks of the small people, the press and what a seat decides for itself are added above this line.
 chain('A trial is the lawful road and it can fail: a free court convicts on evidence and acquits without it, a tame court convicts anyone, forged papers may be found out, and a sentence runs out', () => {
   const run = (courts, real, forged = 0, n = 50) => { let guilty = 0, found = 0, legit = 0; for (let i = 0; i < n; i++) { const w = fresh(), c = w.countries.U1, boss = ld(w, c), opp = w.characters[c.opposition]; for (let j = 0; j < i * 3 + 1; j++) rollOf(w);
       c.courts = courts; c.pressFreedom = 60; boss.dossiers[opp.id] = { turn: w.turn, about: opp.name, facts: Array.from({ length: real }, (_, k) => `Took a bribe, receipt ${k}.`) };
@@ -2972,4 +2973,5 @@ chain('A man who leaves the army goes back to what he was: a reserve called from
   assert.ok(applyOp(w, ld(w, c), { op: 'demobilize' }).ok);
   assert.ok(Math.abs(count('peasants') / land - 1) < .005 && Math.abs(count('workers') / town - 1) < .005, `they go back where they came from (peasants ${Math.round(land)} -> ${Math.round(count('peasants'))}, workers ${Math.round(town)} -> ${Math.round(count('workers'))})`);
 });
+// [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');
