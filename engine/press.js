@@ -5,6 +5,7 @@
 import { clamp, rand, news, nextId, sum } from './util.js';
 import { aliveCountries, ROLES } from './world.js';
 import { rivalParty, onBenches, leadsParties } from './polity.js';
+import { cameOut } from './intrigue.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 // A paper put into somebody's file: once, and the file keeps the latest eight.
@@ -131,6 +132,8 @@ export function pressStep(w) {
       if (n.print === 'hold') { fileOn(w, owner, mark, s.text); say(w, owner, n.name, `Your reporters at ${n.name} have found this about ${mark.name} and, as ordered, have not printed it: ${s.text} It lies in your file on ${mark.name}, to be kept, shown to ${mark.name}, passed on or printed (publish_dossier) as you choose.`); continue; }
       s.published = true;
       news(w, `${c.name}: ${n.name} has printed that ${mark.name}: ${s.text}`, { kind: 'plot', countries: [c.id] });
+      // Some things cost more than the person when they come out: a staged incident the state's word, foreign money a party its following.
+      cameOut(w, mark, s);
       if (mark.id === c.leader) c.legitimacy = clamp(c.legitimacy - 3.5 * (.4 + c.pressFreedom / 100), 0, 100); else mark.power = clamp(mark.power - 8, 0, 100);
       say(w, mark, n.name, `${n.name}, the paper of ${owner.name}, has printed this about you: ${s.text}`); if (ruler?.alive && ruler.id !== mark.id && ruler.id !== n.owner) say(w, ruler, 'Press office', `${n.name} (${owner.name}) has printed about ${mark.name}: ${s.text}`);
     }

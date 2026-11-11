@@ -63,6 +63,21 @@ export function forge(w, actor, ch, claim) {
   trace(w, actor, `Had a document forged against ${ch.name}.`);
   return { ok: true, msg: `The paper is in your file on ${ch.name}, with the real ones. A free press or an honest court may find it out if it is used.` };
 }
+// An amnesty is one act: the cells are opened and those who were driven out may come home. It gives the government back a little of the
+// standing that arrests cost it (never as much: the arrests also cost the press its freedom, and that does not come back with the
+// prisoners), takes from the armed underground part of what the state's violence had given it, and is felt for a year by the classes the
+// prisoners came from. A second amnesty within two years frees whoever is held and earns nothing more.
+export function amnesty(w, c, actor, op) {
+  const mine = Object.values(w.characters).filter(x => x.alive && x.country === c.id && x.id !== actor.id), held = mine.filter(x => x.status === 'imprisoned'), away = op.exiles === false ? [] : mine.filter(x => x.status === 'exiled' && x.wentAbroad == null);
+  if (!held.length && !away.length) return { ok: false, msg: 'There is nobody in the cells to set free and nobody banished to call home.' };
+  const all = [...held, ...away], weight = clamp(all.reduce((a, x) => a + (x.everAI || x.power >= 40 ? 1 : .3), 0), 0, 4), again = c.amnestyAt != null && w.turn - c.amnestyAt < 8;
+  for (const x of held) { x.status = 'free'; x.sentence = null; x.trial = null; x.outSince = w.turn; say(w, x, c.name, `An amnesty has been declared by ${actor.name}. You are free.`); }
+  for (const x of away) { x.status = 'free'; x.host = null; x.recognisedBy = []; x.outSince = w.turn; say(w, x, c.name, `An amnesty has been declared by ${actor.name}. The order that banished you is lifted, and you are home.`); }
+  c.amnestyAt = w.turn;
+  if (!again) { c.legitimacy = clamp(c.legitimacy + weight * .7 * (.5 + c.pressFreedom / 100), 0, 100); c.blood = (c.blood || 0) * .6; for (const k of ['sat.workers', 'sat.middle']) c.mods.push({ key: k, delta: weight * .8, turns: 4, label: 'The amnesty' }); }
+  news(w, `${c.name}: an amnesty. ${held.length ? `${held.length} prisoner${held.length > 1 ? 's were' : ' was'} set free` : 'No prisoners were held'}${away.length ? ` and ${away.length} of the banished may come home` : ''}${all.length <= 6 ? `: ${all.map(x => x.name).join(', ')}` : ''}.`, { kind: 'politics', countries: [c.id] });
+  return { ok: true, msg: `The amnesty is declared: ${held.length} set free${away.length ? `, ${away.length} called home` : ''} (${all.map(x => x.name).slice(0, 8).join(', ')}). ${again ? 'It is the second within two years and earns the government nothing beyond their freedom.' : 'The country takes it well in the measure of who they were, and the armed underground loses part of what the state\'s violence had given it.'} They are free people again, each with what they remember.` };
+}
 // When a file goes to the papers, forged pages in it may be recognised.
 export function forgeryFound(w, c, file) {
   const forged = (file.forged ?? []).filter(f => file.facts.includes(f));

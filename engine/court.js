@@ -295,18 +295,38 @@ export function postReport(w, c, ch) {
   else { const p = Object.values(w.provinces).find(x => x.governor === ch.id); text = p ? `in ${p.name} unrest stands at ${Math.round(p.unrest)} of 100 and the state's hold on the province at ${Math.round((p.admin ?? .5) * 100)} of 100.` : 'nothing of weight passed under his hands this quarter.'; }
   return text;
 }
+// What a turned man sends: the same kind of letter as before, with the figures his ruler wants believed. Shown strong, the army is half as
+// large again and content; shown weak, it is thin and unpaid. His paymaster cannot tell, and what a foreign paymaster's state knows of this
+// one rots with every report instead of growing.
+function feed(w, c, ch, handler, abroad) {
+  const strong = ch.turned.show !== 'weak', k = strong ? 1.5 : .6, army = commandOf(w, ch) || ch.role === 'officer' || ch.clerkOf === 'army';
+  const text = army ? `the army stands as follows: ${unitsOf(w, c).map(x => `${x.id} ${x.kind} ${Math.round(x.men * k)} thousand at ${w.provinces[x.province]?.name}, loyalty ${strong ? 88 : 41}`).join('; ') || 'no units'}. Pay and supply cover ${strong ? 100 : 68}% of what the forces need.`
+    : strong ? 'the treasury is well filled, the offices are quiet, and nothing stirs against the government.' : 'the treasury is all but empty, pay is behind, and the offices talk of little but who will follow the government.';
+  say(w, handler, `${ch.name} (your informant)`, `Word from ${ch.name} in ${c.name}: ${text}`);
+  if (abroad) { const hc = w.countries[handler.country]; if (hc?.alive) hc.intel[c.id] = clamp((hc.intel[c.id] ?? 0) - 6, 0, 100); }
+}
 function inform(w, c, ch) {
-  const handler = w.characters[ch.handler]; if (!handler?.alive || ch.status !== 'free') { ch.handler = null; return; }
+  const handler = w.characters[ch.handler]; if (!handler?.alive || ch.status !== 'free') { ch.handler = null; delete ch.caught; delete ch.turned; return; }
   const ruler = w.characters[c.leader], abroad = handler.country !== c.id;
+  // A man who was found out and turned goes on writing to his paymaster, and writes what he is told to.
+  if (ch.turned) return feed(w, c, ch, handler, abroad);
   // A chief of police who has been paid or frightened into looking away from the paymaster's affairs seldom finds his men.
   const chief = minorsOf(w, c).find(x => x.post === 'police' && x.status === 'free'), away = standing(w, chief, 'blind') && chief.blind.for === handler.id && chief.id !== ch.id;
-  if (rand(w) < clamp(.02 + c.intelligence / 800, .02, .14) * (away ? .3 : 1)) {
+  const arrest = () => {
     ch.handler = null; sideline(w, ch, 'imprisoned'); trace(w, handler, `Ran ${ch.name} as an informant in ${c.name}.`);
     news(w, `${c.name}: ${ch.name} was arrested for passing state papers to ${abroad ? `an agent of ${w.countries[handler.country]?.name}` : 'a private paymaster'}.`, { kind: 'plot', countries: abroad ? [c.id, handler.country] : [c.id] });
-    if (ruler?.alive && ruler.id !== handler.id) { say(w, ruler, 'Police', `${ch.name} was taken with papers meant for ${handler.name} (${handler.id})${abroad ? ` of ${w.countries[handler.country]?.name}` : ''}, who has been paying him since ${quarterLabel(ch.boughtAt ?? w.turn)}.`); const file = ruler.dossiers[handler.id] ||= { turn: w.turn, about: handler.name, facts: [] }; file.facts.push(`Paid ${ch.name} to pass on state papers.`); file.facts = file.facts.slice(-8); }
+    if (ruler?.alive && ruler.id !== handler.id) { say(w, ruler, 'Police', `${ch.name} was taken with papers meant for ${handler.name} (${handler.id})${abroad ? ` of ${w.countries[handler.country]?.name}` : ''}, who has been paying him since ${quarterLabel(ch.boughtAt ?? w.turn)}.`); const file = ruler.dossiers[handler.id] ||= { turn: w.turn, about: handler.name, facts: [] }, t = `Paid ${ch.name} to pass on state papers.`; if (!file.facts.includes(t)) { file.facts.push(t); file.facts = file.facts.slice(-8); } }
     say(w, handler, 'A warning', `${ch.name}, your informant in ${c.name}, has been arrested. Your name was on the papers found with him.`);
     if (abroad) { const hc = w.countries[handler.country]; if (hc?.alive && [hc.leader, hc.general].includes(handler.id)) c.relations[hc.id] = clamp((c.relations[hc.id] ?? 0) - 12, -100, 100); }
-    return;
+  };
+  // Found out last quarter, and whoever governs let it be: the police take him now.
+  if (ch.caught) { delete ch.caught; arrest(); return; }
+  if (rand(w) < clamp(.02 + c.intelligence / 800, .02, .14) * (away ? .3 : 1)) {
+    // Where somebody plays the ruler, the police come to him first: the man can be taken, which his paymaster hears of at once, or turned. He does
+    // not know he is watched and goes on as before; if nothing is ordered he is arrested next quarter, as he always was.
+    if (!(ruler?.alive && ruler.aiControlled && ruler.status === 'free' && ruler.id !== handler.id)) { arrest(); return; }
+    ch.caught = { for: handler.id, turn: w.turn }; const file = ruler.dossiers[handler.id] ||= { turn: w.turn, about: handler.name, facts: [] }; file.facts.push(`Paid ${ch.name} to pass on state papers.`); file.facts = file.facts.slice(-8);
+    say(w, ruler, 'Police', `${ch.name} (${ch.id})${postOf(w, ch) ? `, who ${postOf(w, ch)},` : ''} has been found passing state papers to ${handler.name} (${handler.id})${abroad ? ` of ${w.countries[handler.country]?.name}` : ''}, who has been paying him since ${quarterLabel(ch.boughtAt ?? w.turn)}. He does not know that we know. He can be arrested, which his paymaster will learn at once; or turned (turn_informant): he then goes on writing to his paymaster and writes what we choose, so that what ${abroad ? 'they know of us' : 'his paymaster knows'} grows worse instead of better. If nothing is ordered, the police take him next quarter.`);
   }
   const u = commandOf(w, ch);
   // A clerk sees the papers of his office, but not all of them and not always the latest.

@@ -245,7 +245,7 @@ function leavePlots(w, ch) {
 export function sideline(w, ch, fate = 'imprisoned') {
   // A name counts for less from a cell or from abroad.
   if (ch.status === 'free') ch.power = Math.round(ch.power * .6);
-  ch.status = fate; ch.alive = true; ch.heldSince = w.turn; ch.outSince = w.turn;
+  ch.status = fate; ch.alive = true; ch.heldSince = w.turn; ch.outSince = w.turn; delete ch.wentAbroad;
   stripPosts(w, ch); leavePlots(w, ch);
 }
 
