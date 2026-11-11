@@ -334,7 +334,7 @@ export class Game {
     // (an arrest order, a plot invitation, a blackmail note, an offer) is still there next morning. Someone who failed to answer has read nothing.
     // Somebody whose list was empty when the quarter closed is told so next morning: an order that never reached the clerks must not look
     // like an order the clerks lost.
-    for (const ch of actors) { const r = this.pending.actors[ch.id]; if (r?.fallback) continue; ch.newOutcomes = r && !r._ops && !r.decisions?.length ? [`${w.date ?? quarterLabel(w.turn)}: No order of yours was put in hand: your list of decisions was empty when the quarter closed.`] : []; ch.inbox = []; }
+    for (const ch of actors) { const r = this.pending.actors[ch.id]; if (r?.fallback) continue; ch.newOutcomes = r && !r._ops && !r.decisions?.length ? [`${w.date ?? quarterLabel(w.turn)}: No order of yours was put in hand: your list of decisions was empty when the quarter closed.`] : []; ch.inbox = []; delete ch.reportsDue; }
     for (const ch of currentActors(w)) {
       const c = w.countries[ch.country];
       const ai = isAI(cfg, c, ch);
@@ -411,6 +411,7 @@ export class Game {
       }
       if (on && (hang === 'done' ? on.ok === false || on.skipped : on.ok !== false || on.skipped)) { results.push({ op: op.op, ok: true, skipped: true, msg: `${op.op} was not attempted: it was ordered only in case ${ops[n].op} ${hang === 'done' ? 'was carried out, and it was not' : 'was refused, and it was not'}.` }); return; }
       if (chancy(op) && !luck) { results.push({ op: op.op, ok: false, chance: true, msg: 'It did not come off.' }); return; }
+      if (plain.op === 'report') { results.push({ op: 'report', ...orderReport(w, ch, plain) }); return; }
       results.push({ op: op.op, ...safeApply(w, ch, plain) });
     });
     // The ruling as a whole failed if the dice went against it and nothing else in it was done.
@@ -424,7 +425,10 @@ export class Game {
     // The person who gave the order is told what actually came of it, in the engine's own words, not only what was intended.
     if (source === 'referee' && narrative) {
       const plain = m => m && !['Applied.', 'Recorded.'].includes(m), said = results.filter(r => plain(r.msg)).map(r => `${r.ok ? '' : `${r.op} was NOT carried out: `}${r.msg}`).join(' ');
-      const verdict = !success ? 'Failed' : refused.length === results.length && results.length ? 'Not carried out' : refused.length ? 'Only partly carried out' : waits ? (results.some(r => String(r.waits).startsWith('take:')) ? 'Ordered; part of it waits on the fighting' : 'Ordered, and waiting on the quarter') : 'Succeeded';
+      // A decision that no operation carried (an instruction to one's people, a resolve, a speech) is told back as what it was. (World 16: such
+      // rulings came back "Succeeded", and a ruler waited ten quarters for an account he had "successfully" ordered.)
+      const words = !said && !results.some(r => !['custom', 'noop'].includes(r.op));
+      const verdict = !success ? 'Failed' : refused.length === results.length && results.length ? 'Not carried out' : refused.length ? 'Only partly carried out' : waits ? (results.some(r => String(r.waits).startsWith('take:')) ? 'Ordered; part of it waits on the fighting' : 'Ordered, and waiting on the quarter') : words ? (printed ? 'Said, and it is in the papers; nothing else was set in motion' : 'Recorded as words only; nothing was set in motion') : 'Succeeded';
       ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: ${verdict}: ${narrative}${said ? ` [${said.slice(0, 1500)}]` : ''}`); ch.outcomes = ch.outcomes.slice(-60); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
     }
     // What is recorded as the probability is the chance that was actually rolled; where the referee named one and no dice were due, its figure is kept beside it.
@@ -512,6 +516,17 @@ function unruled(entries, r) {
 
 // What comes from outside the engine carries no inner switches: only the engine itself marks an operation as law or decree.
 function safeApply(w, ch, op) { try { const { _law, _decree, _late, ...plain } = op ?? {}; return applyOp(w, ch, plain); } catch (e) { return { ok: false, msg: `Error: ${e.message}` }; } }
+
+// "Have the treasury bring me the accounts", "the staff is to report on the frontier": an order to one's own people to lay a matter before one
+// is a lookup ordered for the next morning. It is answered then, fresh, from the same reports and under the same limits as a lookup.
+function orderReport(w, ch, op) {
+  const topics = [...new Set([].concat(op.topic ?? op.topics ?? []).map(t => String(t).trim()).filter(Boolean))].slice(0, 6);
+  if (!topics.length) return { ok: false, msg: 'Say what is to be laid before you: a matter a lookup can ask for (budget, army, borders, building:P12, person:K12, war_plan:U3 and the like).' };
+  const bad = topics.filter(t => /^No information on /.test(String(answer(w, ch, t))));
+  if (bad.length) return { ok: false, msg: `Nobody in your offices keeps a report under that head: ${bad.join(', ')}. What your people can lay before you is what a lookup can ask for.` };
+  ch.reportsDue = [...new Set([...(ch.reportsDue || []), ...topics])].slice(0, 8);
+  return { ok: true, msg: `Your people will lay it on your desk tomorrow morning: ${topics.join(', ')}.` };
+}
 
 function sanitize(r, cfg) {
   if (!r || r.fallback) return { fallback: true };

@@ -498,6 +498,10 @@ const WAYS = {
 // and every line is taken from the report it belongs to, so that desk and report cannot disagree. Everything else is still asked for.
 // (World 12: the characters played by the lighter models asked for almost nothing, 8 lookups in 162 mornings, and governed from headlines;
 // in world 13 a chief of staff who had never opened his own army list gave orders to a neighbour's cavalry.)
+// Standing arrangements kept elsewhere in the engine that belong on a desk (filled as such arrangements are added).
+const STANDING = [];
+export const standingFor = (w, ch) => STANDING.flatMap(f => f(w, ch) || []);
+export const addStanding = f => { STANDING.push(f); };
 export function desk(w, ch) {
   const c = w.countries[ch.country]; if (!c?.alive || !ch.alive || ch.status === 'imprisoned') return '';
   const rules = ch.status === 'free' && governs(w, c, ch), seat = inOffice(w, ch) ? ch.role : rules ? 'leader' : null;
@@ -534,6 +538,27 @@ export function desk(w, ch) {
     put('What the state takes from business:', `Tax on business ${Math.round(c.tax.business * 100)}%, general tariff ${Math.round(c.tariff * 100)}%.`);
   }
   if (rules || seat === 'oligarch' || seat === 'opposition') put('The markets and the wars:', marketsAndWars(w, c));
+  // What stands until it is changed is laid out as that, so that no morning is spent giving the same orders again. (World 16: of 553 orders of
+  // posture 378 ordered what already stood, and a third of the rulings that were only words said "everything stays as it is".)
+  const stand = [], nmc = id => w.countries[id]?.name ?? id;
+  if (seat === 'general' || rules) {
+    const by = {}; for (const u of Object.values(w.units)) if (u.country === c.id) { const k = [u.posture && u.posture !== 'ordinary' ? u.posture.replace(/_/g, ' ') : '', u.holdFire ? 'hold fire' : ''].filter(Boolean).join(', '); if (k) (by[k] ||= []).push(u.id); }
+    for (const [k, ids] of Object.entries(by)) stand.push(`Troops under the order "${k}": ${ids.join(', ')}.`);
+    const quiet = Object.keys(c.holdFire || {}).filter(id => w.countries[id]?.alive); if (quiet.length) stand.push(`No first shot on the frontier with ${quiet.map(nmc).join(', ')}.`);
+    const fl = Object.values(w.fleets).filter(f => f.country === c.id && f.orders); if (fl.length) stand.push(`Squadrons: ${fl.map(f => `${f.id} ${f.orders}`).join(', ')}; the others patrol.`);
+    if (c.payFirst?.length) stand.push(`Paid and supplied first: ${c.payFirst.join(', ')}.`);
+    if (c.arsenalReserve > 0) stand.push(`Kept back in the arsenal from any attack: ${Math.round(c.arsenalReserve)}.`);
+    const plans = Object.entries(c.plans || {}).filter(([id]) => w.countries[id]?.alive); if (plans.length) stand.push(`Plans of campaign: ${plans.map(([id, p]) => `against ${nmc(id)} (${p.ready <= w.turn ? 'ready' : `ready in ${quarterLabel(p.ready)}`})`).join(', ')}.`);
+    const held = heldOrders(w, c).trim(); if (held) stand.push(held);
+  }
+  if (seat === 'oligarch') { const mine = Object.values(w.firms || {}).filter(f => f.owner === ch.id && isOpen(f)); if (mine.length) stand.push(`At your works: ${mine.map(f => `${f.id} pays ${round(f.wage ?? 1, 2)} of the going wage and spends ${round(f.safety ?? .3, 2)} of 1 on safety`).join('; ')}.`); }
+  for (const n of (c.papers || []).filter(n => n.owner === ch.id && !n.closed)) if (n.serves || n.print === 'hold' || n.targets?.length || n.spare?.length) stand.push(`${n.name}: ${[n.serves ? `serves ${n.serves}` : '', n.targets?.length ? `goes after ${n.targets.join(', ')}` : '', n.spare?.length ? `spares ${n.spare.join(', ')}` : '', n.print === 'hold' ? 'holds what it finds for your file' : ''].filter(Boolean).join(', ')}.`);
+  for (const o of standingFor(w, ch)) stand.push(o);
+  put('Standing orders in force (they stand until you change them; there is no need to give them again):', stand);
+  // What was offered and not yet taken up is not in force: said so, by number, to whoever offered it. (World 16: a ruler counted for five
+  // quarters on a treaty that had only been proposed, and moved fifteen thousand men off that frontier.)
+  const mineOut = [...(rules ? w.treaties.filter(t => t.pending && t.proposer === c.id).map(t => `${t.id}, ${t.kind.replace(/_/g, ' ')} with ${(t.invited || t.parties).filter(id => id !== c.id).map(nmc).join(', ')}, proposed in ${quarterLabel(t.turn)}: ${t.multi ? `signed so far by ${(t.signed || []).map(nmc).join(', ') || 'no one'}` : 'not signed by the other side'}`) : []), ...(w.contracts || []).filter(k => k.status === 'proposed' && k.a === ch.id).map(k => `${k.id}, offered to ${w.characters[k.b]?.name ?? k.b}: not accepted`)];
+  put('Papers of yours that still wait for the other signature (until it is given by a decision of theirs, nothing in them is in force):', mineOut);
   put('What you owe and are owed:', owed);
   if (seat === 'oligarch' || rules) put('Contracts in your name:', deals);
   if (ch.status !== 'exiled') put('People of note at home (a letter or an order wants the id; person:<id> says more):', ls('people')[0]);
@@ -559,6 +584,12 @@ export const alarms = (w, ch) => {
   if ((w.debts || []).some(d => d.status === 'overdue' && d.debtor === ch.id)) out.push('You have an overdue debt.');
   if ((w.debts || []).some(d => d.status === 'overdue' && d.creditor === ch.id)) out.push('You are owed an overdue debt.');
   if (w.epidemics.some(e => e.active && Object.keys(e.provinces).some(id => w.provinces[id].controller === c.id))) out.push('There is an epidemic in the country.');
+  // A declaration of war laid before a parliament is not yet a war: both sides are told where it stands. (World 16: "the declaration goes before
+  // Parliament as a bill" was proclaimed by its target as a war declared, and a third state called up its reserve and borrowed on that.)
+  if (['leader', 'general'].includes(role)) for (const o of aliveCountries(w)) for (const b of o.bills || []) if (b.status === 'pending') for (const x of b.ops || []) if (x?.op === 'declare_war') {
+    if (x.target === c.id) out.push(`The government of ${o.name} has laid a declaration of war on us before its parliament (${b.id}). It is not war yet: the house votes in ${quarterLabel(b.voteAt)}, and until then the bill can be withdrawn or voted down.`);
+    else if (o.id === c.id) out.push(`The declaration of war on ${w.countries[x.target]?.name ?? x.target} lies before the house (${b.id}), to be voted in ${quarterLabel(b.voteAt)}. Until it passes there is no war, and no attack can be ordered.`);
+  }
   // What hits a seat hardest is put before it, not left to be found.
   if (role !== 'none' && c.elections && c.nextElection - w.turn <= 2 && c.nextElection >= w.turn) out.push(`An election is due in ${quarterLabel(c.nextElection)}.`);
   for (const b of c.bills || []) if (b.status === 'pending' && b.confidence && ['leader', 'opposition'].includes(role)) out.push(`A motion of no confidence in the government is before the house, to be voted in ${quarterLabel(b.voteAt)}.`);

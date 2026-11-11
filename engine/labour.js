@@ -23,10 +23,11 @@ function disaster(w, c, p, f) {
   f.disasterAt = w.turn; f.halted = 1; f.temper = clamp(f.temper + 28, 0, 100); f.cash -= Math.min(Math.max(f.cash, 0), 4 + dead / 20);
   c.mods.push({ key: 'sat.workers', delta: -3, turns: 3, label: `The dead of ${f.name}` });
   news(w, `${c.name}: ${what.toLowerCase()} at ${f.name} in ${p.name} killed about ${dead}.`, { kind: 'disaster', countries: [c.id], province: p.id });
-  const careless = f.safety < .3, note = careless ? 'pumps, timbering and ventilation had been let go' : 'the works were kept in fair order and the cause lay elsewhere';
+  // Below what the law requires is noted as that, even where nothing was found let go.
+  const floor = c.labourLaw?.safety ?? 0, careless = f.safety < .3, below = floor > 0 && f.safety < floor - .001, note = careless ? 'pumps, timbering and ventilation had been let go' : below ? `nothing was found let go, but the law requires ${r2(floor)}` : 'the works were kept in fair order and the cause lay elsewhere';
   say(w, boss, 'Works manager', `${what} at ${f.name} (${f.id}) killed about ${dead} of your people, and the works stand still this quarter. The inspector's note: safety spending stood at ${r2(f.safety)} of 1 (${note}). The families and the men who are left look to you.`);
-  if (ruler?.alive && ruler.id !== boss?.id) say(w, ruler, 'Police', `${what} at ${f.name} (${f.id}) in ${p.name} killed about ${dead}. The works belong to ${f.owner === STATE ? 'the state' : boss?.name ?? 'no one in particular'}; safety spending there stood at ${r2(f.safety)} of 1. The district is angry.`);
-  if (careless && boss && f.owner !== STATE) trace(w, boss, `Let safety at ${f.name} run down before the disaster that killed ${dead}.`);
+  if (ruler?.alive && ruler.id !== boss?.id) say(w, ruler, 'Police', `${what} at ${f.name} (${f.id}) in ${p.name} killed about ${dead}. The works belong to ${f.owner === STATE ? 'the state' : boss?.name ?? 'no one in particular'}; safety spending there stood at ${r2(f.safety)} of 1${below ? `, under the ${r2(floor)} the law requires` : careless ? ', and the works had been let go' : ''}. The district is angry.`);
+  if ((careless || below) && boss && f.owner !== STATE) trace(w, boss, careless ? `Let safety at ${f.name} run down before the disaster that killed ${dead}.` : `Kept safety at ${f.name} under the legal floor before the disaster that killed ${dead}.`);
 }
 
 function walkOut(w, c, p, f) {
@@ -96,7 +97,14 @@ export function labourOp(w, actor, c, op, { fail, num, governs, tell, allowance 
     case 'set_wages': case 'set_safety': if (!mine && governs && home.id === c.id) {
       // An order from the government to one works: a floor, kept as far as officials and inspectors can make the owner keep it.
       const kept = clamp(.3 + c.bureaucracy / 200 + inspectors(c) * .4, .2, 1), wages = op.op === 'set_wages', was = wages ? f.wage ?? 1 : f.safety ?? .3, to = wages ? r2(Math.max(was, Math.min(num(op.level, .5, 1.6, was), 1.3) * (kept * .4 + .6))) : r2(Math.max(was, num(op.level, 0, 1, was) * kept));
-      if (to <= was + .001) return { ok: true, msg: `${f.name} already ${wages ? `pays ${was} of the going wage` : `spends ${was} of 1 on safety`}; the order changes nothing there.` };
+      if (to <= was + .001) {
+        const asked = wages ? Math.min(num(op.level, .5, 1.6, was), 1.3) : num(op.level, 0, 1, was), boss = bossOf(w, home, f);
+        if (asked <= was + .001) return { ok: true, msg: `${f.name} already ${wages ? `pays ${was} of the going wage` : `spends ${was} of 1 on safety`}, which is what the order asks or more; it changes nothing there.` };
+        // The order asked for more than the state can make an owner do. Both are told: the government why nothing moved, the owner what is
+        // asked of him. (World 16: "already spends 0.3 of 1 on safety; the order changes nothing" was read by a prince as his decree defied.)
+        if (boss && boss.id !== actor.id) tell(w, boss, home.name, `By order of the government ${f.name} is to ${wages ? `pay at least ${r2(asked)} of the going wage` : `spend at least ${r2(asked)} of 1 on safety`}; it ${wages ? 'pays' : 'spends'} ${was}. The inspectors have not the means to hold you to it: whether it is kept is yours to decide, and the government will see which.`);
+        return { ok: true, msg: `The order went to ${f.name}, which belongs to ${boss?.name ?? 'no one in particular'}, and by itself changed nothing: the works ${wages ? 'pays' : 'spends'} ${was}, and the state's officials and inspectors can hold an owner to only about ${Math.round(kept * 100)} in the hundred of what is ordered (here ${r2(wages ? asked * (kept * .4 + .6) : asked * kept)}). The owner has been told what is asked of him and may raise it himself. A stronger administration, or an inspectorate with the power to audit, enforces more; a law (set_labour_law) binds every works alike, as far as the same officials reach.` };
+      }
       if (wages) f.wage = to; else f.safety = to; home.mods.push({ key: 'sat.capital', delta: -.6, turns: 4, label: `The order to ${f.name}` });
       const boss = bossOf(w, home, f); if (boss && boss.id !== actor.id) tell(w, boss, home.name, `By order of the government ${f.name} is to ${wages ? `pay at least ${r2(num(op.level, .5, 1.6, was))} of the going wage` : `spend at least ${r2(num(op.level, 0, 1, was))} of 1 on safety`}. The inspectors have brought it to ${to}.`);
       return { ok: true, msg: `The order went to ${f.name}, which belongs to ${boss?.name ?? 'no one in particular'}: ${wages ? 'wages' : 'safety spending'} there now stand at ${to} (they were ${was}). An owner keeps such an order as far as officials and inspectors make him.` };

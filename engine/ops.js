@@ -20,7 +20,7 @@ import { fundUnderground } from './underground.js';
 import { mobilize, demobilize, serviceOf, reserveAt, drillOf } from './frontier.js';
 import { prosecute, forge, forgeryFound } from './justice.js';
 import { shame, honourOf, aimsMet, aimsText, kindWord, dealsWith, maySign, tieOf, tieWord, stanceOf, seesTreaty, reveal, faithCost, bondSigned, deed, alarm } from './diplomacy.js';
-import { foundPaper, papersOf, carry, MAX_PAPERS, setPaper, censor, paperWords, keptQuiet } from './press.js';
+import { foundPaper, papersOf, carry, MAX_PAPERS, setPaper, censor, paperWords, keptQuiet, findPaper } from './press.js';
 import { buyBonds, sellBonds } from './bonds.js';
 import { SHIPS, kindOf, ORDERS, friendlyPort, baseMap, readiness, enemyHolds, seaPath, refuge, bombard as shell, liftOf, LIFT, MERCHANT, demonstrate, seizeCustoms } from './navy.js';
 import { proposeContract, acceptContract, cancelContract, toStateAccount } from './contracts.js';
@@ -485,7 +485,7 @@ export function applyOp(w, actor, op) {
   const c = alive(w, actor.country);
   if (!c || !op?.op) return { ok: false, msg: 'Invalid operation.' };
   const perm = permissionsOf(c, actor, w), held = actor.status === 'imprisoned' || actor.status === 'exiled';
-  if (perm && !perm.has(op.op) && (held || !delegated(c, actor, op.op))) return { ok: false, msg: held ? `Someone who is ${actor.status} cannot do this: ${op.op}` : `${c[actor.role] === actor.id ? actor.role : 'A private person'} is not authorized for this operation: ${op.op}${c.general === actor.id && ['mobilize', 'demobilize', 'recruit', 'disband', 'declare_war', 'build_ship'].includes(op.op) ? '. It is for whoever governs to order: a word or a letter from the ruler does not carry it, the ruler has to give the order as his own decision' : ''}` };
+  if (perm && !perm.has(op.op) && (held || !delegated(c, actor, op.op))) return { ok: false, msg: held ? `Someone who is ${actor.status} cannot do this: ${op.op}` : `${c[actor.role] === actor.id ? actor.role : 'A private person'} is not authorized for this operation: ${op.op}${c.general === actor.id && ['mobilize', 'demobilize', 'recruit', 'disband', 'declare_war', 'build_ship'].includes(op.op) ? '. It is for whoever governs to order: a word or a letter from the ruler does not carry it, the ruler has to give the order as his own decision' : ''}${OPEN_WAY[op.op] && !governs(w, c, actor) ? `. ${OPEN_WAY[op.op]}` : ''}` };
   // A law passed by a legislature is above a veto; a decree is not.
   if (!op._law || op._decree) {
     const blocker = vetoedBy(w, c, actor, op.op);
@@ -585,7 +585,9 @@ export function applyOp(w, actor, op) {
       // A man who has said no this quarter does not say yes because the same offer comes round again.
       if (!ch.nobody && allowance(w, actor, `approach:${ch.id}`, 1, 1) <= 0) return fail(`${ch.name} has given his answer this quarter; he can be approached again in the next.`);
       const state = governs(w, c, actor), want = num(op.amount, 0, 1e6, 0), m = state ? treasuryPays(c, allowance(w, c, 'secret_funds', gdp * .002, want)) : Math.min(Math.max(actor.wealth, 0), want);
-      if (!(m >= 1)) return fail('No money was put behind the approach.');
+      // A government that tells its own servant to report to it asks for his duty and need put no money behind the asking.
+      const servant = state && ch.country === c.id && (!!ch.post || !!ch.clerkOf);
+      if (!(m >= 1) && !servant) return fail('No money was put behind the approach.');
       const r = recruitInformant(w, actor, ch, m); if (r.ok && !state) actor.wealth -= m; if (!r.ok && state) c.treasury += m;
       // A clerk nobody had heard of, who would not be bought and said nothing, stays nobody. One who went to his ruler with it has been named
       // to the ruler and is a person from then on: the ruler he reported to can reward him, promote him or use him.
@@ -669,7 +671,7 @@ export function applyOp(w, actor, op) {
     // The owner's line for his paper; and, for whoever governs, the censor, short of closing it.
     case 'set_paper': { const r = setPaper(w, c, actor, op); return r.ok ? r : fail(r.msg); }
     case 'censor': { if (!governs(w, c, actor)) return fail('Only whoever governs sets a censor on the press.'); const r = censor(w, c, actor, op); return r.ok ? r : fail(r.msg); }
-    case 'fund_paper': { const where = target ?? c, n = papersOf(where).find(x => x.id === op.id) ?? papersOf(where).find(x => x.name.toLowerCase() === String(op.id ?? op.name ?? '').trim().toLowerCase()); if (!n) return fail(`No such newspaper${target ? ` in ${target.name}` : ''}.${papersOf(where).length ? ` Those that appear there: ${papersOf(where).map(x => `${x.name} (${x.id})`).join(', ')}.` : ''}`);
+    case 'fund_paper': { const where = target ?? c, n = findPaper(where, op.id ?? op.paper ?? op.name); if (!n) return fail(`No such newspaper${target ? ` in ${target.name}` : ''}.${papersOf(where).length ? ` Those that appear there: ${papersOf(where).map(x => `${x.name} (${x.id})`).join(', ')}.` : ''}`);
       const state = !!target && op.state === true && governs(w, c, actor), want = num(op.amount, 0, 1e6, 0), m = state ? treasuryPays(c, allowance(w, c, 'secret_funds', gdp * .002, want)) : Math.min(Math.max(actor.wealth, 0), want); if (!(m >= .5)) return fail('No money was given.'); if (!state) actor.wealth -= m; n.funds += m;
       // Money for a paper in another country is a secret of the giver and of its owner, and readers leave a paper that is shown to be kept from abroad.
       if (target) { const gold = { paper: n.id, country: target.id, from: c.id, state }, owner = w.characters[n.owner]; (actor.secrets ||= []).push({ turn: w.turn, text: `Sent ${Math.round(m)} ${state ? `of the treasury's money ` : ''}to the paper ${n.name} in ${target.name}.`, gold: { ...gold } }); actor.secrets = actor.secrets.slice(-12);
@@ -695,7 +697,7 @@ export function applyOp(w, actor, op) {
     // Shutting a newspaper is an act of state and is seen as one.
     case 'close_paper': {
       // A paper is known by its name as much as by its number in the register.
-      const n = papersOf(c).find(x => x.id === op.id) ?? papersOf(c).find(x => x.name.toLowerCase() === String(op.id ?? op.name ?? '').trim().toLowerCase()); if (!n) return fail(`No such newspaper.${papersOf(c).length ? ` Those that appear here: ${papersOf(c).map(x => `${x.name} (${x.id})`).join(', ')}.` : ''}`); if (!governs(w, c, actor) && n.owner !== actor.id) return fail('It is not yours to close.');
+      const n = findPaper(c, op.id ?? op.paper ?? op.name); if (!n) return fail(`No such newspaper.${papersOf(c).length ? ` Those that appear here: ${papersOf(c).map(x => `${x.name} (${x.id})`).join(', ')}.` : ''}`); if (!governs(w, c, actor) && n.owner !== actor.id) return fail('It is not yours to close.');
       c.papers = c.papers.filter(x => x !== n); if (n.owner === actor.id) return { ok: true, msg: `${n.name} has ceased to appear.` };
       c.pressFreedom = clamp(c.pressFreedom - 6, 0, 100); c.legitimacy = clamp(c.legitimacy - (2 + n.reach / 15), 0, 100); news(w, `${c.name}: the government has closed ${n.name}.`, { kind: 'politics', countries: [c.id] }); tell(w, w.characters[n.owner], c.name, `Your paper ${n.name} has been closed by order of ${actor.name}.`);
       return { ok: true, msg: `${n.name} is closed. The country saw who did it.` };
@@ -880,10 +882,13 @@ export function applyOp(w, actor, op) {
     // Who is paid and supplied first when the vote for the forces falls short. Default: nobody; all are short alike.
     case 'set_pay_priority': {
       const list = [...new Set((Array.isArray(op.first) ? op.first : op.first ? [op.first] : []).map(x => String(x).trim()).filter(Boolean))].slice(0, 24);
-      const bad = list.filter(x => !(w.units[x]?.country === c.id || w.fleets[x]?.country === c.id || PAY_FIRST.includes(x))); if (bad.length) return fail(`Not a unit or squadron of ours, nor one of ${PAY_FIRST.join(', ')}: ${bad.join(', ')}.`);
+      // A body that is not on the rolls (formed only this quarter, or misnamed) is left out and named; the rest of the order stands. (World 16: a
+      // list of nine units and "army, navy" was refused whole for two units still forming.)
+      const bad = list.filter(x => !(w.units[x]?.country === c.id || w.fleets[x]?.country === c.id || PAY_FIRST.includes(x))), unknown = bad.length ? ` Left out, not being a unit or squadron on our rolls today (nor one of ${PAY_FIRST.join(', ')}): ${bad.join(', ')}.` : ''; for (const x of bad) list.splice(list.indexOf(x), 1);
+      if (bad.length && !list.length) return fail(`Not a unit or squadron of ours, nor one of ${PAY_FIRST.join(', ')}: ${bad.join(', ')}.`);
       if (list.length) c.payFirst = list; else delete c.payFirst;
       const cover = Math.round((c.militaryFunding ?? 1) * 100);
-      return { ok: true, msg: list.length ? `When the vote for the forces falls short, these are paid and supplied in full first: ${list.join(', ')} (navy is every squadron, army every unit, capital the troops standing in the capital); the rest share what is left, and waste, sour and lose faith the faster for it. At the last reckoning the vote covered about ${cover} in the hundred of what the forces cost${cover >= 100 ? ', so that for now nobody goes short' : ''}. The order stands until changed; an empty list ends it.` : 'No body of troops and no squadron is paid before another: when the vote falls short all are short alike.' };
+      return { ok: true, msg: list.length ? `When the vote for the forces falls short, these are paid and supplied in full first: ${list.join(', ')} (navy is every squadron, army every unit, capital the troops standing in the capital); the rest share what is left, and waste, sour and lose faith the faster for it. At the last reckoning the vote covered about ${cover} in the hundred of what the forces cost${cover >= 100 ? ', so that for now nobody goes short' : ''}. The order stands until changed; an empty list ends it.${unknown}` : 'No body of troops and no squadron is paid before another: when the vote falls short all are short alike.' };
     }
     // A reserve of arms and ammunition that no attack may draw on. Default: none.
     case 'set_arsenal_reserve': {
@@ -1614,9 +1619,19 @@ function build(w, c, op, actor) {
   const waste = wasteOf(w, c, p), level = Math.max(c.priceLevel, .01), each = q.price * level * waste;
   // A sum of nothing is no sum: the order then leaves the size of the work to the engineers.
   const named = op.amount != null ? num(op.amount, 0, 1e9, 0) : op.pct_gdp != null ? Math.max(c.gdp, 1) * num(op.pct_gdp, 0, .5, 0) : 0, purse = named > 0 ? named : null;
-  let add = 1, cost = each;
+  let add = 1, cost = each, sized = 0;
   if (q.piece) { if (purse != null && purse < cost * .97) return fail(`A ${q.what} at ${p.name} costs about ${Math.round(cost)}${kind === 'railway' && ground(p) > 1.3 ? `, the ground being ${p.terrain}` : ''}; the ${Math.round(purse)} allotted would not build it.`); }
-  else { add = Math.min(purse != null ? purse / each : q.usual, q.room); cost = add * each; if (!(add > .002)) return fail(`That sum would build nothing to speak of: a full step of ${q.what} at ${p.name} costs about ${Math.round(each)}.`); }
+  else {
+    add = Math.min(purse != null ? purse / each : q.usual, q.room);
+    // An order that names no sum does not pledge the state's credit: the engineers keep to what the treasury has in hand above its working
+    // balance, and say what the usual measure would have cost. Whoever means more names the sum, and what the treasury lacks of a named sum is
+    // borrowed as before. (World 16: "road works and small irrigation works, paid from the 40 already borrowed" came as four works with no
+    // sum; the engineers began 2755 of works with 127 in the treasury, and the state's debt rose by a quarter of a year's revenue.)
+    if (purse == null && actor) { const inHand = Math.max(c.treasury - (c.till || 0), 0) / each; if (inHand < add) { sized = add; add = Math.max(inHand, 0); } }
+    cost = add * each;
+    if (sized && add < sized * .1) return fail(`No sum was named, and the treasury has ${Math.round(Math.max(c.treasury - (c.till || 0), 0))} in hand above its working balance: the usual measure of ${q.what} at ${p.name} costs about ${Math.round(sized * each)}. Name the sum to be spent and the work is cut to it; what the treasury lacks of a named sum is borrowed.`);
+    if (!(add > .002)) return fail(`That sum would build nothing to speak of: a full step of ${q.what} at ${p.name} costs about ${Math.round(each)}.`);
+  }
   const machines = (q.machines || 0) * add, steel = (q.steel || 0) * add;
   if (c.stock.machines < machines) return fail(`Not enough machinery: this needs about ${r1(machines)} and ${r1(c.stock.machines)} is in store; import or produce it.`);
   if (c.stock.steel < steel) return fail(`Not enough steel: this needs about ${r1(steel)} and ${r1(c.stock.steel)} is in store.`);
@@ -1624,9 +1639,15 @@ function build(w, c, op, actor) {
   c.stock.machines -= machines; c.stock.steel -= steel;
   const x = queueProject(w, c, { kind, province: p.id, resource: op.resource, add, cost: cost / level }), gain = projectYield(x);
   const spare = purse != null && cost < purse * .97 ? ` of the ${Math.round(purse)} allotted${q.piece ? '' : ', all the place can take'}` : '';
-  return { ok: true, msg: `Started: ${q.what} at ${p.name} for ${Math.round(cost)}${spare}${!q.piece && gain ? `, which ${gain}` : ''}; ready in ${durationOf(kind)} quarters.${waste > 1.08 ? ` It costs about ${Math.round((waste - 1) * 100)}% more than the work is worth: graft, and the distance of ${p.name} from the capital's eye.` : ''}${note}` };
+  return { ok: true, msg: `Started: ${q.what} at ${p.name} for ${Math.round(cost)}${spare}${!q.piece && gain ? `, which ${gain}` : ''}; ready in ${durationOf(kind)} quarters.${sized ? ` No sum was named, so the engineers kept to what the treasury had in hand; the usual measure there would have cost about ${Math.round(sized * each)}. Name a sum to build more.` : ''}${waste > 1.08 ? ` It costs about ${Math.round((waste - 1) * 100)}% more than the work is worth: graft, and the distance of ${p.name} from the capital's eye.` : ''}${note}` };
 }
 const ok = () => ({ ok: true, msg: 'Applied.' });
+// What somebody who may not give an order can do instead, said with the refusal.
+const OPEN_WAY = {
+  build: 'A private person builds with his own money: a new works is founded as a company (found_company, naming what it is to make or dig, the province and the capital put in), and a works he owns is enlarged (invest_company)',
+  concession: 'Somebody who does not govern gives from his own purse, his company\'s till or his party\'s funds (relief), not from the treasury',
+  repress: 'Troops keep order where their standing orders put them; to turn the police or the army on a town is for whoever governs',
+};
 const fail = msg => ({ ok: false, msg });
 function applyOrder(w, c, u, to, named = true) {
   // An order to be where the unit already stands is an order carried out, not one refused: it stays (a march elsewhere is given up), and what

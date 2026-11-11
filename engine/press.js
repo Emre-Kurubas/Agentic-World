@@ -48,7 +48,10 @@ export function foundPaper(w, c, actor, name, amount) {
   const n = { id: nextId(w, 'N'), name: String(name || `${c.name} Gazette`).slice(0, 60), owner: actor.id, funds: amount, reach: 0, turn: w.turn };
   (c.papers ||= []).push(n); return n;
 }
-export const findPaper = (c, key) => papersOf(c).find(x => x.id === key) ?? papersOf(c).find(x => x.name.toLowerCase() === String(key ?? '').trim().toLowerCase());
+// By its number, or by its name as a person would write it: with or without the article, whatever the capitals. (World 16: "Village Sheet" was
+// not "The Village Sheet", five times.)
+const bare = s => String(s ?? '').trim().toLowerCase().replace(/^the\s+/, '').replace(/[^a-z0-9]+/g, ' ').trim();
+export const findPaper = (c, key) => papersOf(c).find(x => x.id === key) ?? (bare(key) ? papersOf(c).find(x => bare(x.name) === bare(key)) : undefined);
 const findPerson = (w, c, key) => { const k = String(key ?? '').trim(), x = Object.hasOwn(w.characters, k) ? w.characters[k] : Object.values(w.characters).find(y => y.alive && y.country === c.id && y.name.toLowerCase() === k.toLowerCase()); return x?.alive ? x : null; };
 const listed = c => papersOf(c).length ? ` Those that appear here: ${papersOf(c).map(x => `${x.name} (${x.id})`).join(', ')}.` : '';
 

@@ -209,16 +209,32 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
     }
     case 'sell_company': {
       if (!firm || !isOpen(firm) || firm.owner !== actor.id) return fail('This company is not yours.');
-      const buyer = w.characters[op.buyer]; if (!buyer?.alive) return fail('No such buyer.');
-      firm.offer = { buyer: buyer.id, price: num(op.price, 0, 1e9, firmValue(w, firm)) };
+      if (op.withdraw) { firm.offer = null; return { ok: true, msg: `${firm.name} is no longer for sale.` }; }
+      const price = num(op.price, 0, 1e9, firmValue(w, firm)), home = w.countries[firm.country], worth = Math.round(firmValue(w, firm));
+      // To the state: the offer lies before whoever governs the country the works stands in, who takes it for the treasury or lets it lie.
+      const toState = op.buyer === 'state' || op.state === true || (op.buyer != null && w.countries[op.buyer]), state = toState ? (w.countries[op.buyer] ?? home) : null;
+      if (state) { if (state.id !== firm.country) return fail(`${firm.name} stands in ${home?.name}: only that state can take it over as its own works.`); const ruler = w.characters[state.leader]; firm.offer = { state: state.id, price }; if (ruler?.alive) tell(w, ruler, actor.name, `offers to sell the state ${firm.name} (${firm.id}) for ${Math.round(price)}; by its books it is worth about ${worth}. The treasury takes it with buy_company{id, state:true}; until then nothing changes hands.`); return { ok: true, msg: `${firm.name} is offered to ${state.name} for ${Math.round(price)}. The sale happens if the government takes it.` }; }
+      // To nobody by name: it is put up for sale, and whoever has the money may take it at the price. (World 16: a ruined owner could not put his
+      // works "up for sale to a buyer"; "No such buyer".)
+      if (op.buyer == null || op.buyer === '' || op.open) { firm.offer = { open: true, price, since: w.turn }; return { ok: true, msg: `${firm.name} is up for sale at ${Math.round(price)}; by its books it is worth about ${worth}. Anybody with the money may take it (buy_company); it stays yours until somebody does, and the notice stands until you withdraw it (sell_company with withdraw:true).` }; }
+      const buyer = w.characters[op.buyer]; if (!buyer?.alive) return fail('No such buyer: name a person (id), the state (buyer: "state"), or nobody, to put it up for whoever will take it.');
+      firm.offer = { buyer: buyer.id, price };
       tell(w, buyer, actor.name, `offers to sell you ${firm.name} (${firm.id}) for ${Math.round(firm.offer.price)}.`);
       return ok();
     }
     case 'buy_company': {
       if (!firm || !isOpen(firm)) return fail('No such company.');
-      const agreed = firm.offer?.buyer === actor.id, open = firm.owner == null;
-      if (!agreed && !open) return fail('No sale offer.');
-      const price = agreed ? firm.offer.price : firmValue(w, firm);
+      // The treasury takes a works its owner has offered to the state.
+      if (op.state === true || firm.offer?.state) {
+        if (!isHead || firm.offer?.state !== c.id) return fail(firm.offer?.state ? 'That offer was made to the state, and it is for whoever governs it to take.' : 'No offer to the state lies on this works. The state can still take it without one (nationalize_company).');
+        const price = firm.offer.price, seller = w.characters[firm.owner]; if (c.treasury < price) return fail(`The treasury holds ${Math.round(c.treasury)}; the price is ${Math.round(price)}.`);
+        c.treasury -= price; (c._outlay ||= {}).other = (c._outlay.other || 0) + price; if (seller) { seller.wealth += price / (c.rate || 1); tell(w, seller, c.name, `The state has taken ${firm.name} at your price; ${Math.round(price / (c.rate || 1))} is paid to you.`); }
+        firm.owner = STATE; firm.offer = null; c.ownership = clamp(c.ownership + .02, 0, 1); news(w, `${c.name}: the state bought ${firm.name} from ${seller?.name ?? 'its owners'}.`, { kind: 'economy', countries: [c.id] });
+        return { ok: true, msg: `${firm.name} is the state's, bought for ${Math.round(price)}. It is run and drawn on like any state works.` };
+      }
+      const agreed = firm.offer?.buyer === actor.id, forSale = !!firm.offer?.open && firm.owner !== actor.id, open = firm.owner == null;
+      if (!agreed && !open && !forSale) return fail('No sale offer.');
+      const price = agreed || forSale ? firm.offer.price : firmValue(w, firm);
       if (actor.wealth < price) return fail('Not enough wealth.');
       const seller = w.characters[firm.owner], home = w.countries[firm.country]; actor.wealth -= price;
       if (firm.owner === STATE && home) { home.treasury += price * (home.rate || 1); home.ownership = clamp(home.ownership - .02, 0, 1); tell(w, w.characters[home.leader], actor.name, `${firm.name} was bought from the state for ${Math.round(price)}.`); }
