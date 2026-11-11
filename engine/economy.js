@@ -6,6 +6,7 @@ import { migrate, levyShare } from './culture.js';
 import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding, USUAL_COVER, treasuryPays } from './money.js';
 import { blockadeOf, merchantStep, iced } from './navy.js';
 import { upkeepCost } from './military.js';
+import { warFooting, kitOf, marketStep, warEnds, WAR_RISK, lendersWords } from './warcost.js';
 
 export const RECIPE = {
   steel: { iron: 1, coal: .8 }, fuel: { oil: 1.25 }, fertilizer: { phosphate: 1, coal: .2 },
@@ -82,8 +83,9 @@ export function updateRoutes(w) {
     const a = cs[i], b = cs[j], k = routeKey(a.id, b.id);
     // No merchants go where their government sees no state; and where relations are broken off they go without consuls, at their own risk.
     if (a.embargo.includes(b.id) || b.embargo.includes(a.id) || atWar(w, a.id, b.id) || !dealsWith(w, a.id, b.id)) continue;
-    const risk = tieOf(w, a.id, b.id) === 'broken' ? .08 : 0;
-    if (landBorder(w, a, b)) { w.routes[k] = { mode: 'land', cost: 1.04 + risk, path: [], tolls: [] }; continue; }
+    // A cargo to or from a state at war pays for the risk at each such end: insurers, carriers and the buyer's own caution (warcost.js).
+    const risk = tieOf(w, a.id, b.id) === 'broken' ? .08 : 0, hot = warEnds(a, b).length;
+    if (landBorder(w, a, b)) { w.routes[k] = { mode: 'land', cost: 1.04 + risk + hot * WAR_RISK.land, path: [], tolls: [], ...(hot ? { war: hot * WAR_RISK.land } : {}) }; continue; }
     const path = seaRoute(w, a, b);
     if (path) {
       const tolls = path.map(s => straitAt(w, s)).filter(s => s && s.toll && s.controller && ![a.id, b.id].includes(s.controller));
@@ -93,7 +95,7 @@ export function updateRoutes(w) {
       const mined = sum(path, s => { const m = w.mines?.[s]; return !m ? 0 : atWar(w, m.by, a.id) || atWar(w, m.by, b.id) ? .1 * m.level : [a.id, b.id].includes(m.by) ? 0 : .02 * m.level; });
       // A deep harbour with quays and cranes turns ships round faster than an open roadstead: each step of harbour at either end takes a little off the freight.
       const quay = (o, sea) => Math.max(1, ...countryProvinces(w, o.id).filter(p => p.port > 0 && p.controller === o.id && p.seas.includes(sea)).map(p => p.port));
-      w.routes[k] = { mode: 'sea', cost: 1.05 + risk + path.length * .008 - (quay(a, path[0]) + quay(b, path.at(-1)) - 2) * .012 + sum(tolls, t => t.toll) + raided * .15 + mined + runners * .35 + (w.freight || 0), path, tolls: tolls.map(t => t.id) };
+      w.routes[k] = { mode: 'sea', cost: 1.05 + risk + path.length * .008 - (quay(a, path[0]) + quay(b, path.at(-1)) - 2) * .012 + sum(tolls, t => t.toll) + raided * .15 + mined + runners * .35 + (w.freight || 0) + hot * WAR_RISK.sea, path, tolls: tolls.map(t => t.id), ...(hot ? { war: hot * WAR_RISK.sea } : {}) };
     }
   }
   // A state at war with nobody whose ships are turned back from a blockaded coast protests to whoever turned them back.
@@ -106,7 +108,8 @@ export function updateRoutes(w) {
     const a = cs[i], b = cs[j], k = routeKey(a.id, b.id);
     if (direct[k] || a.embargo.includes(b.id) || b.embargo.includes(a.id) || atWar(w, a.id, b.id) || !dealsWith(w, a.id, b.id)) continue;
     const via = cs.filter(m => m !== a && m !== b && open(a, m) && open(m, b)).map(m => ({ m, cost: open(a, m).cost * open(m, b).cost * 1.03 })).sort((x, y) => x.cost - y.cost)[0];
-    if (via) w.routes[k] = { mode: 'transit', via: via.m.id, cost: via.cost, path: [], tolls: [...new Set([...open(a, via.m).tolls, ...open(via.m, b).tolls])] };
+    // Goods that go through a third state pay whatever war premium lies on either leg (through a middleman at war, on both).
+    if (via) { const risk = (open(a, via.m).war || 0) + (open(via.m, b).war || 0); w.routes[k] = { mode: 'transit', via: via.m.id, cost: via.cost, path: [], tolls: [...new Set([...open(a, via.m).tolls, ...open(via.m, b).tolls])], ...(risk ? { war: risk } : {}) }; }
   }
 }
 
@@ -197,12 +200,22 @@ function needs(w, c) {
   need.grain += c._pop * .01; need.goods += c._pop * .004; need.coal += c._hearth + ships * .08 * (1 - motor);
   // Machinery wears out: what the country's works and farms use up in a quarter is what its engineering trade has to replace before anything new is built.
   need.arms += men * .01; need.fuel += engine * .05 + ships * .08 * motor + c._pop * .0006 * motor; need.machines += c._pop * .00014;
+  // The army's keep: bread and boots in barracks, and in the field several times that, with coal for its trains and steel for its works.
+  // It is a want of the country like any other (it is bought abroad when the stores run low, and it moves the world's prices), and it is met
+  // before the towns' (consume).
+  c._kit = kitOf(w, c); for (const [g, q] of Object.entries(c._kit)) need[g] += q;
+  // What the guns burned last quarter the arsenal wants back: the market for arms feels a war that is being fought.
+  need.arms += c._shot || 0;
+  // An army in the field takes wagons, horses, trains and the men who work them: carriage and the trades that live by it do less.
+  { const field = c.war?.on ? men : 0, taken = clamp(field / Math.max(c._pop, 1) * 2.5, 0, .1); c._requisition = taken; if (taken > 0) c._services *= 1 - taken; }
   c._burn = { coal: ships * .08 * (1 - motor), fuel: engine * .05 + ships * .08 * motor };
   // Ordinary building. Towns grow, plant is renewed, lines are relaid and rolling stock replaced whether or not any government orders it: a
   // standing want of steel, timber and machinery in proportion to what the country turns out. It rises in good years and falls off in a slump,
   // with sick banks and when the materials are dear; it is what kept the mills of the age busy. Nobody decrees it: it is what owners and
   // townspeople do. (Without it nothing in the world wanted steel but arms and wares, and half of every mill stood still.)
-  const pulse = clamp(1 + ((c.trend ?? USUAL_GROWTH) - USUAL_GROWTH) * BOOM, .5, 1.35) * (c.bankHealth < 30 ? .6 : 1) * (1 - clamp(c._dev || 0, 0, .5));
+  // War loans crowd the builder out: what lenders add to the state's interest for the war they add to everybody's, and wagons and navvies are with the army.
+  const crowd = clamp(1 - (c.war?.premium || 0) * 30, .6, 1) * (1 - clamp((c._requisition || 0) * 1.6, 0, .25));
+  const pulse = clamp(1 + ((c.trend ?? USUAL_GROWTH) - USUAL_GROWTH) * BOOM, .5, 1.35) * (c.bankHealth < 30 ? .6 : 1) * (1 - clamp(c._dev || 0, 0, .5)) * crowd;
   c._build = Object.fromEntries(Object.entries(BUILDING).map(([g, q]) => [g, q * Math.max(c.realGdp || 0, 0) * pulse * dear(g)]));
   for (const [g, q] of Object.entries(c._build)) need[g] += q;
   // Fertilizer is bought by farmers, and farmers buy less of it the dearer it is: at twice its usual price about half the full dressing goes on the fields.
@@ -238,6 +251,7 @@ const banned = (w, buyer, seller, g) => { const out = seller.bans?.[buyer.id]?.s
 
 function trade(w, cs) {
   w.tradeFlows = {}; const carried = [];
+  const insurer = [...cs].filter(c => !c.war?.on).sort((a, b) => (b.shipping || 0) - (a.shipping || 0))[0] ?? null; for (const c of cs) c._premiums = 0;
   const key = routeKey;
   for (const c of cs) { c.lastSold = {}; c.lastBought = {}; c.lastOrders = []; }
   // What merchants would bring in of a good, and how much of that the law lets through: a prohibition or a quota cuts it, and the part the customs cannot hold back is smuggled.
@@ -276,7 +290,8 @@ function trade(w, cs) {
       const acc = sellers.map(x => ({ x, r: w.routes[key(b.c.id, x.c.id)] })).filter(a => a.x.s > 0 && a.x.c.id !== b.c.id && a.r);
       // How much of the trade between a buyer and one seller the law leaves standing: all of it, unless a duty is aimed at that seller or goods are banned between the two.
       const open = a => aimedTrade(b.c, g, a.x.c.id) * (1 - banned(w, b.c, a.x.c, g));
-      const wgt = a => a.x.s / a.r.cost * (hasTreaty(w, b.c.id, a.x.c.id, 'trade') ? 1.5 : 1) * exportEdge(a.x.c) * open(a), tot = sum(acc, wgt);
+      // Merchants shun a risk more than they shun its price: between a seller at war and one at peace the custom goes to the one at peace when he has the goods.
+      const wgt = a => a.x.s / a.r.cost * (hasTreaty(w, b.c.id, a.x.c.id, 'trade') ? 1.5 : 1) * exportEdge(a.x.c) * open(a) * (1 - clamp((a.r.war || 0) * 4, 0, .7)), tot = sum(acc, wgt);
       if (!tot) continue;
       for (const a of acc) {
         const duty = dutyOn(b.c, g, a.x.c.id), landed = price * a.r.cost * (1 + duty * .3);
@@ -286,11 +301,14 @@ function trade(w, cs) {
         if (q <= 0) continue;
         const v = q * price; a.x.s -= q; b.d -= q; moved += q; a.x.c.lastSold[g] = (a.x.c.lastSold[g] || 0) + q;
         // Freight goes to the exporter, customs to the buyer's own treasury: gold does not vanish from the world.
-        const gold = v * a.r.cost; a.x.c.stock[g] -= q; b.c.stock[g] += q; a.x.c.reserves += gold; b.c.reserves -= gold;
-        if (a.r.mode === 'sea') carried.push([a.x.c.id, b.c.id, q, v * (a.r.cost - 1)]);
+        // The war premium on a cargo is not the exporter's: it is paid to the houses that insure and carry at their own risk, which sit in the
+        // state at peace with the most ships. (Gold does not vanish: one country's war is that country's business.)
+        const gold = v * a.r.cost, risk = insurer && insurer.id !== a.x.c.id ? v * (a.r.war || 0) : 0; a.x.c.stock[g] -= q; b.c.stock[g] += q; a.x.c.reserves += gold - risk; b.c.reserves -= gold;
+        if (risk > 0) { insurer.reserves += risk; insurer._premiums = (insurer._premiums || 0) + risk; }
+        if (a.r.mode === 'sea') carried.push([a.x.c.id, b.c.id, q, v * (a.r.cost - 1 - (a.r.war || 0))]);
         if (b.c._alloc) { const own = Math.min(b.c._alloc[g] ?? 0, gold); b.c._alloc[g] = (b.c._alloc[g] ?? 0) - own; b.c._spare = Math.max(0, (b.c._spare ?? 0) - (gold - own)); }
         // Duty is paid on what came through the customs house, at the rate that good pays; smuggled goods pay none.
-        a.x.c._exportGold = (a.x.c._exportGold || 0) + gold; b.c._duty = (b.c._duty || 0) + v * duty * b.taxed;
+        a.x.c._exportGold = (a.x.c._exportGold || 0) + gold - risk; b.c._duty = (b.c._duty || 0) + v * duty * b.taxed;
         a.x.c._exports = (a.x.c._exports || 0) + v; b.c._imports = (b.c._imports || 0) + v;
         a.x.c._rawExp = (a.x.c._rawExp || 0) + (RAW.includes(g) && g !== 'grain' ? v : 0);
         // The toll is part of what the buyer paid; it is passed on to whoever holds the strait, not minted anew.
@@ -349,15 +367,33 @@ function factories(w, c) {
   c._made = made;
 }
 
+// War frightens money. In the quarter a war begins part of the country's gold leaves for the safest state that is at peace and lets money in (more
+// from the state attacked than from the one that chose its day), and it goes on leaving, more slowly, while the enemy holds more of the country's
+// land than it holds of his. Controls on capital hold what the customs can hold. The gold is not lost to the world: it is the quiet country's gain.
+function warFlight(w, cs) {
+  const tell = (ch, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'Treasury', text }); }, from = {};
+  for (const c of cs) { c._warFlight = 0; const x = c.war; if (!x?.on) continue;
+    const share = (x.begun ? (x.struck ? .03 : .06) : x.losing ? .02 : 0) * (c.capitalClosed ? 1 - sealOf(w, c) : 1); if (!(share > 0)) continue;
+    const haven = cs.filter(o => o.id !== c.id && !o.war?.on && !o.capitalClosed).sort((a, b) => b.legitimacy - a.legitimacy)[0], out = haven ? Math.max(c.reserves, 0) * share : 0; if (!(out > .5)) continue;
+    c.reserves -= out; haven.reserves += out; c._warFlight = out; (from[haven.id] ||= []).push([c, out]);
+    if (x.begun) tell(w.characters[c.leader], `War has frightened money. About ${Math.round(out)} in gold left the country this quarter for ${haven.name}${c.capitalClosed ? ', past the controls on capital' : '; closing the movement of capital would hold most of what is still here'}, and more will go for as long as the enemy holds more of our land than we hold of his. ${lendersWords(c)}`); }
+  for (const [id, xs] of Object.entries(from)) { const h = w.countries[id], n = sum(xs, x => x[1]); h._haven = n; if (n >= Math.max(5, h.reserves * .005)) tell(w.characters[h.leader], `Money is coming in from states at war: about ${Math.round(n)} in gold this quarter, out of ${xs.map(x => x[0].name).join(' and ')}. It came because this country is at peace and thought safe, and it adds to the reserve.`); }
+  for (const c of cs) if (!from[c.id]) c._haven = 0;
+}
+
 export function economyStep(w) {
+  warFooting(w);
   updateStrategic(w); updateRoutes(w); updateRer(w); weatherStep(w);
   const cs = aliveCountries(w), prevReal = Object.fromEntries(cs.map(c => [c.id, c.realGdp]));
+  warFlight(w, cs);
   // The mills run before the market meets: what a country's works turned out this quarter is on the quay when the merchants deal. (When the
   // market met first, no maker ever had wares to spare, and no country that made its own could tell that it did.)
   for (const c of cs) { extract(w, c); needs(w, c); factories(w, c); }
   trade(w, cs);
   w.priceHistory.push(Object.fromEntries(GOODS.map(g => [g, Math.round(w.globalPrice[g] * 10) / 10])));
   if (w.priceHistory.length > 200) w.priceHistory.shift();
+  // Why prices stand where they do, as the exchanges explain it: for every report that speaks of prices, and in print when a war is behind a rise.
+  marketStep(w, cs);
   for (const c of cs) {
     consume(w, c, prevReal[c.id]);
     fiscal(w, c); currencyStep(w, c); demography(w, c); investment(w, c); research(w, c);
@@ -368,6 +404,10 @@ export function economyStep(w) {
 
 function consume(w, c, prev) {
   const n = c._need;
+  // In war the army is fed, clothed and supplied out of the country's stores before the towns are; in peace a garrison goes as short of bread and
+  // cloth as the people it lives among. What the stores could not send it is felt in the ranks (c.kit).
+  { let want = 0, got = 0; c._kitTook = {}; const first = !!c.war?.on, civil = { grain: c._pop * .01, goods: c._pop * .004 };
+    for (const [g, q] of Object.entries(c._kit || {})) { const have = Math.max(0, c.stock[g] || 0), take = first || !civil[g] ? Math.min(q, have) : Math.min(q, have * q / (civil[g] + q)); c.stock[g] -= take; c._kitTook[g] = take; want += q * BASE_PRICE[g]; got += take * BASE_PRICE[g]; } c.kit = want > 0 ? got / want : 1; }
   c.foodRatio = n.grain > 0 ? clamp(c.stock.grain / (c._pop * .01), 0, 1.2) : 1;
   c.stock.grain = Math.max(0, c.stock.grain - c._pop * .01) * .96;
   const consumer = clamp(c.stock.goods / Math.max(c._pop * .004, 1), 0, 1.2);
@@ -376,6 +416,7 @@ function consume(w, c, prev) {
   c.stock.coal = Math.max(0, c.stock.coal - (c._hearth ?? c._pop * .001) - (c._burn?.coal || 0));
   // What the country itself used up this quarter, beyond what its works drew (c._drawn): for whoever asks how long the stores will last.
   c._used = { grain: c._pop * .01 * Math.min(c.foodRatio, 1), goods: c._pop * .004 * Math.min(consumer, 1), coal: (c._hearth ?? c._pop * .001) + (c._burn?.coal || 0), machines: c._pop * .00014 };
+  for (const [g, q] of Object.entries(c._kitTook || {})) c._used[g] = (c._used[g] || 0) + q;
   if (hasTech(c, 'combustion_engine')) {
     const m = c.motor ?? 0; c.fuelRatio = n.fuel > .05 ? clamp(c.stock.fuel / n.fuel, 0, 1.2) : 1; c.stock.fuel = Math.max(0, c.stock.fuel - c._pop * .0006 * m - (c._burn?.fuel || 0));
     // With fuel to spare more of the country takes to the engine; when the tanks run dry it goes back.

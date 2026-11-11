@@ -2,11 +2,54 @@
 // A state's honour is what others have seen it do with its promises. An ultimatum that is not acted on is a bluff called; a guarantee
 // that is not kept is remembered; an exile lives somewhere, and whoever shelters him holds a card.
 import { clamp, news, sum, quarterLabel } from './util.js';
-import { aliveCountries, hasTreaty, atWar } from './world.js';
+import { aliveCountries, hasTreaty, atWar, countryProvinces } from './world.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 export const honourOf = c => c.honour ?? 60;
 export const honourWord = v => v >= 75 ? 'its word is trusted' : v >= 50 ? 'its word is taken with care' : v >= 30 ? 'its word is doubted' : 'its word is worth nothing';
+// What two states are to each other in creed and in the way they are governed, read from their own faith and their own axes. It decides nothing by
+// itself: it is what a people makes of a war or an alliance its government chooses. A war on a state of the country's own faith is taken ill at home in
+// the measure the country is devout (nothing where nobody cares, much in a devout one); an alliance with a government of the country's own kind is
+// well taken, one with its opposite ill. (World 15: creed and kind entered nothing between states, first relations were dealt by lot, and in three
+// years of nine wars one alliance was drafted and none signed.)
+export const sameFaith = (a, b) => !!a?.majorityRel && a.majorityRel === b?.majorityRel;
+export const regimeGap = (a, b) => (Math.abs(a.axes.auth - b.axes.auth) + Math.abs(a.axes.econ - b.axes.econ) + Math.abs(a.axes.faith - b.axes.faith)) / 3;
+export const kinOf = (a, b) => { const gap = regimeGap(a, b); return { faith: sameFaith(a, b), regime: gap < 30 ? 'kin' : gap > 75 ? 'opposite' : null }; };
+export const kinWords = (c, o) => { const k = kinOf(c, o); return [k.faith ? `of our own faith (${c.majorityRel})` : '', k.regime === 'kin' ? 'governed much as we are' : k.regime === 'opposite' ? 'governed as unlike us as a state can be' : ''].filter(Boolean).join(', '); };
+export const faithCost = (c, o) => sameFaith(c, o) ? clamp(1.5 + (c.axes.faith || 0) / 18, 0, 6) : 0;
+export const bondMood = (c, o) => { const k = kinOf(c, o); return (k.regime === 'kin' ? 2 : k.regime === 'opposite' ? -2.5 : 0) + (k.faith ? clamp((c.axes.faith || 0) / 40, 0, 2) : 0); };
+// An alliance, a guarantee or a protection signed is judged at home by who it is with: once for each pair in five years, so that signing again buys nothing.
+export function bondSigned(w, a, b) {
+  const one = (x, y) => { if (w.turn - ((x.bonded ||= {})[y.id] ?? -99) < 20) return ''; x.bonded[y.id] = w.turn; const m = bondMood(x, y); if (Math.abs(m) < .5) return ''; x.legitimacy = clamp(x.legitimacy + m, 0, 100);
+    return ` At home the bond with ${y.name} is ${m > 0 ? 'well' : 'ill'} taken: they are ${kinWords(x, y)}, and the government's standing ${m > 0 ? 'rose' : 'fell'} by about ${Math.round(Math.abs(m) * 10) / 10}.`; };
+  const told = one(b, a); if (told && w.characters[b.leader]?.alive) w.characters[b.leader].inbox.push({ turn: w.turn, from: 'The capital', text: told.trim() });
+  return one(a, b);
+}
+// A deed that every other government will read of: short, public, with its date (the yearbook prints the last of them).
+export function deed(w, c, text) { (c.deeds ||= []).push({ turn: w.turn, text }); c.deeds = c.deeds.slice(-10); }
+export const recordWords = c => (c.deeds || []).slice(-6).map(d => `in ${quarterLabel(d.turn)} it ${d.text}`).join('; ');
+// Who is bound to whom: the states pledged to come to this one's side, those it is pledged to, and those with whom it has promised peace.
+export function pledgesOf(w, c, sees = () => true) {
+  const live = id => w.countries[id]?.alive, ts = w.treaties.filter(t => t.active && t.parties.includes(c.id) && sees(t)), gs = w.guarantees || [];
+  return { allies: ts.filter(t => t.kind === 'alliance').flatMap(t => t.parties.filter(id => id !== c.id && live(id)).map(id => ({ id, t }))), for: gs.filter(g => g.of === c.id && live(g.by)), by: gs.filter(g => g.by === c.id && live(g.of)),
+    wards: ts.filter(t => t.kind === 'protection'), pacts: ts.filter(t => ['nonaggression', 'peace', 'armistice'].includes(t.kind)).flatMap(t => t.parties.filter(id => id !== c.id && live(id)).map(id => ({ id, t }))) };
+}
+// A state that takes land by force is watched by everyone who lives beside it. Their staffs report what was taken, what the taker keeps under arms
+// and how much of it lies near, what it holds against them, and who would come if they were attacked; what is done about it is their governments'.
+export function alarm(w, taker, victim, provs) {
+  if (!taker?.alive || !provs?.length) return;
+  taker.takings = [...(taker.takings || []), ...provs.map(() => w.turn)].filter(t => w.turn - t <= 12);
+  const men = sum(Object.values(w.units).filter(u => u.country === taker.id), u => u.men), nm = id => w.countries[id]?.name ?? id, k = n => n >= 100 ? Math.round(n / 10) * 10 : Math.round(n);
+  const touches = o => countryProvinces(w, o.id).some(p => p.neighbors.some(n => w.provinces[n].controller === taker.id));
+  const near = aliveCountries(w).filter(o => o.id !== taker.id && o.id !== victim?.id && touches(o) && !hasTreaty(w, o.id, taker.id, 'alliance') && !atWar(w, o.id, taker.id));
+  for (const o of near) {
+    if (w.turn - ((o.warned ||= {})[taker.id] ?? -99) < 4) continue; o.warned[taker.id] = w.turn;
+    const front = countryProvinces(w, o.id).filter(p => p.neighbors.some(n => w.provinces[n].controller === taker.id)), close = sum(Object.values(w.units).filter(u => u.country === taker.id && front.some(p => p.neighbors.includes(u.province))), u => u.men);
+    const claims = Object.values(w.provinces).filter(p => p.lostBy === taker.id && p.owner === o.id), b = pledgesOf(w, o), bound = [...b.allies.map(x => nm(x.id)), ...b.for.map(g => `${nm(g.by)} (its guarantee)`)], others = near.filter(x => x.id !== o.id).map(x => x.name);
+    const text = `${taker.name} has taken ${provs.map(p => p.name).join(' and ')} from ${victim?.name ?? 'a neighbour'} by force${taker.takings.length > provs.length ? `; that makes ${taker.takings.length} provinces in three years` : ''}. It keeps about ${k(men)} thousand men under arms, about ${k(close)} thousand of them within a march of our frontier. ${claims.length ? `It has never given up ${claims.map(p => `${p.name} (${p.id})`).join(', ')}, which we hold.` : 'It holds no claim on our land that the staff knows of.'} ${bound.length ? `Bound to come to our side if we are attacked: ${bound.join(', ')}.` : 'No state is bound to come to our side if we are attacked.'}${others.length ? ` ${others.join(', ')} ${others.length > 1 ? 'lie' : 'lies'} on its frontiers as we do.` : ''} The staff does not say that we are next. It says that this is how it would begin; what is done about it (an understanding with the others, a guarantee asked or given, a word in their capital, or nothing) is the government's to decide.`;
+    for (const id of new Set([o.leader, o.general])) { const ch = w.characters[id]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'General Staff', text }); }
+  }
+}
 // One place where a state's standing with others changes, so that every such change leaves a line the country can read.
 export function shame(w, c, by, why) {
   c.honour = clamp(honourOf(c) + by, 0, 100); (c.honourLog ||= []).push({ turn: w.turn, by, why }); c.honourLog = c.honourLog.slice(-8);

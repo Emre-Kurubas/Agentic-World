@@ -329,7 +329,8 @@ function upkeep(w, c) {
   const consume = men * (inWar && inTheField(w, c.id) ? .006 : .004);
   c.stock.arms = Math.max(0, c.stock.arms - consume);
   // Pay, arrears and a long war decide where the troops' spirit settles; a battle only knocks it about for a while.
-  const spiritAt = got => clamp(40 + got * 35 - c.arrears * 6 - c.warExhaustion * .3, 8, 95);
+  // Men short of bread and boots lose heart whatever they are paid (c.kit: what the country's stores sent of what the army asked).
+  const spiritAt = got => clamp(40 + got * 35 - c.arrears * 6 - c.warExhaustion * .3 - (1 - (c.kit ?? 1)) * 15, 8, 95);
   let gone = 0; const field = inWar && inTheField(w, c.id); c._sick = 0;
   for (const u of us) {
     // What this body of men was paid and supplied with this quarter: the army's common share, unless someone decided otherwise.

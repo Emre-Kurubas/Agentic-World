@@ -19,7 +19,7 @@ import { amnesty } from './justice.js';
 import { fundUnderground } from './underground.js';
 import { mobilize, demobilize, serviceOf, reserveAt, drillOf } from './frontier.js';
 import { prosecute, forge, forgeryFound } from './justice.js';
-import { shame, honourOf, aimsMet, aimsText, kindWord, dealsWith, maySign, tieOf, tieWord, stanceOf, seesTreaty, reveal } from './diplomacy.js';
+import { shame, honourOf, aimsMet, aimsText, kindWord, dealsWith, maySign, tieOf, tieWord, stanceOf, seesTreaty, reveal, faithCost, bondSigned, deed, alarm } from './diplomacy.js';
 import { foundPaper, papersOf, carry, MAX_PAPERS, setPaper, censor, paperWords, keptQuiet } from './press.js';
 import { buyBonds, sellBonds } from './bonds.js';
 import { SHIPS, kindOf, ORDERS, friendlyPort, baseMap, readiness, enemyHolds, seaPath, refuge, bombard as shell, liftOf, LIFT, MERCHANT, demonstrate, seizeCustoms } from './navy.js';
@@ -349,6 +349,8 @@ function settleTerms(w, t, fresh) {
     if (giver.capital === p.id) { const next = [...countryProvinces(w, giver.id)].sort((a, b) => provincePop(b) - provincePop(a))[0]; if (next) giver.capital = next.id; }
     news(w, `${p.name} passed from ${giver.name} to ${taker.name} by treaty.`, { kind: 'diplomacy', countries: [giver.id, taker.id], province: p.id, secret: !!t.secret });
   }
+  if (moved && forced) { const by = {}; for (const g of t.grants || []) { const p = w.provinces[g.province]; if (p && p.owner === g.to && p.lostBy && p.lostIn === 1900 + Math.floor(w.turn / 4)) (by[`${g.to}|${p.lostBy}`] ||= []).push(p); }
+    for (const [k, got] of Object.entries(by)) { const [to, from] = k.split('|'), taker = w.countries[to], giver = w.countries[from]; if (!taker?.alive) continue; deed(w, taker, `took ${got.map(p => p.name).join(' and ')} from ${giver?.name ?? 'a neighbour'} by the peace it made`); alarm(w, taker, giver, got); } }
   if (moved) settleOccupations(w);
   // The wars end once the land the peace names has changed hands, not before: winding up a war sends every occupied province back to its owner and
   // every soldier out of land that is not his country's, and a province ceded by this very treaty is his country's. (World 15, the fifth quarter:
@@ -372,6 +374,7 @@ function settleTerms(w, t, fresh) {
 function inForce(w, t, last) {
   t.pending = false; t.active = true; t.since = w.turn; t.parties = [...t.signed]; t.open = t.invited.filter(id => !t.signed.includes(id)); activateClauses(w, t);
   const lasts = t.durationTurns ?? (t.kind === 'peace' ? 20 : t.kind === 'armistice' ? 4 : null); if (lasts) t.expires = w.turn + lasts;
+  if (['alliance', 'guarantee', 'protection'].includes(t.kind)) for (let i = 0; i < t.parties.length; i++) for (let j = i + 1; j < t.parties.length; j++) { const a = w.countries[t.parties[i]], b = w.countries[t.parties[j]]; if (a?.alive && b?.alive) { const said = bondSigned(w, a, b); if (said && w.characters[a.leader]?.alive) w.characters[a.leader].inbox.push({ turn: w.turn, from: 'The capital', text: said.trim() }); } }
   const notes = settleTerms(w, t, t.parties), names = t.parties.map(id => cname(w, id)).join(', '), med = w.countries[t.mediator], cf = (w.conferences || []).find(x => x.id === t.conference), host = w.countries[cf?.host];
   for (const x of t.parties) for (const y of t.parties) if (x !== y) w.countries[x].relations[y] = clampRel((w.countries[x].relations[y] ?? 0) + 8);
   // Whoever brought others to terms is known for it; so is whoever called the table at which it was signed.
@@ -1121,15 +1124,26 @@ export function applyOp(w, actor, op) {
       for (const t of w.treaties.filter(x => x.active && x.parties.includes(c.id) && x.parties.includes(target.id))) { t.active = false; if (['peace', 'nonaggression', 'alliance'].includes(t.kind)) { t.brokenBy = c.id; t.brokenAt = w.turn; } c.legitimacy = clamp(c.legitimacy - (t.kind === 'peace' ? 8 : 3), 0, 100); if (t.kind === 'peace') for (const o of aliveCountries(w)) if (o.id !== c.id) o.relations[c.id] = clampRel((o.relations[c.id] ?? 0) - 6); }
       w.wars.push({ id: nextId(w, 'S'), a: [c.id], b: [target.id], civil: false, active: true, start: w.turn, name: `${c.name} - ${target.name} War` }); c.embargo = c.embargo.filter(x => x !== target.id); c.relations[target.id] = -90; target.relations[c.id] = -90;
       // War after an ultimatum that was let run out is the consequence that was announced. War on someone one had a treaty with is a broken word.
-      if ((c.casus?.[target.id] ?? -1) >= w.turn) { c.legitimacy = clamp(c.legitimacy + 3, 0, 100); delete c.casus[target.id]; }
-      else if (w.treaties.some(x => !x.active && x.brokenBy === c.id && x.brokenAt === w.turn)) shame(w, c, -10, `it made war on ${target.name} in spite of a treaty`);
+      // What every other government and every lender marks: a war in breach of a treaty (most of all a peace not two years old), a war without an
+      // ultimatum, a war without so much as a claim. A war that follows an ultimatum let run out is what was announced, and costs no standing.
+      const broke = w.treaties.filter(x => !x.active && x.brokenBy === c.id && x.brokenAt === w.turn && x.parties.includes(target.id)), warned = (c.casus?.[target.id] ?? -1) >= w.turn, claim = claimsOf(w, c.id).some(p => p.owner === target.id);
+      let abroad = '';
+      if (warned) { c.legitimacy = clamp(c.legitimacy + 3, 0, 100); delete c.casus[target.id]; deed(w, c, `went to war with ${target.name} when its ultimatum had run out`); }
+      else if (broke.length) { const t = broke.find(x => x.kind === 'peace') ?? broke[0], fresh = t.kind === 'peace' && w.turn - (t.since ?? t.turn ?? 0) < 8; shame(w, c, fresh ? -14 : -10, `it made war on ${target.name} in spite of a treaty`);
+        deed(w, c, `went to war with ${target.name}, tearing up ${kindWord(t)} it had signed with them in ${quarterLabel(t.since ?? t.turn ?? w.turn)}`);
+        news(w, `${c.name} has gone to war with ${target.name} in breach of ${kindWord(t)} it signed in ${quarterLabel(t.since ?? t.turn ?? w.turn)}.`, { kind: 'diplomacy', countries: [c.id, target.id] });
+        abroad = ` It tears up ${kindWord(t)} signed in ${quarterLabel(t.since ?? t.turn ?? w.turn)}: every government has marked it, the country's word is worth less, and lenders will ask more for it.`; }
+      else { shame(w, c, claim ? -2 : -5, `it made war on ${target.name} without an ultimatum${claim ? '' : ' and without a claim'}`); deed(w, c, `went to war with ${target.name} without an ultimatum${claim ? '' : ' and without a claim to any of its land'}`);
+        abroad = ` No ultimatum went before it${claim ? '' : ', and no claim to their land stands behind it'}: other governments have marked that, and so have the houses that lend to us.`; }
+      // A war on a people of the country's own faith is taken ill at home in the measure the country is devout.
+      { const fc = faithCost(c, target); if (fc >= .5) { c.legitimacy = clamp(c.legitimacy - fc, 0, 100); abroad += ` ${target.name} is of our own faith: the devout take the war ill, and the government's standing fell by about ${Math.round(fc * 10) / 10}.`; } }
       // A war for land that was lost and never given up is a war the country understands.
       if (claimsOf(w, c.id).some(p => p.owner === target.id)) c.legitimacy = clamp(c.legitimacy + 2, 0, 100);
       // A people that has been wronged by the enemy stands behind the declaration, for a while.
       { const g = c.grudges?.[target.id]; if (g) c.legitimacy = clamp(c.legitimacy + Math.min(6, g.incident * .1 + g.kin * .15), 0, 100); }
       const said = stateAims(w, c, target, op);
       for (const a of aliveCountries(w)) if (a.id !== c.id && a.id !== target.id && hasTreaty(w, a.id, target.id, 'alliance')) tell(w, w.characters[a.leader], 'Foreign Ministry', `Your ally ${target.name} was attacked by ${c.name}. Help is expected under the alliance.`);
-      return { ok: true, msg: said };
+      return { ok: true, msg: `${said}${abroad}` };
     }
     case 'join_war': {
       const war = w.wars.find(x => x.active && x.id === op.war); if (!war || !['a', 'b'].includes(op.side)) return fail('War not found.'); if (war.a.includes(c.id) || war.b.includes(c.id)) return fail('Already in this war.');
@@ -1228,6 +1242,8 @@ export function applyOp(w, actor, op) {
         if (giver.capital === pid) { const next = [...countryProvinces(w, giver.id)].sort((a, b) => provincePop(b) - provincePop(a))[0]; if (next) giver.capital = next.id; }
         news(w, `${p.name} passed from ${giver.name} to ${taker.name} by treaty.`, { kind: 'diplomacy', countries: [giver.id, taker.id], province: pid });
       }
+      // Land taken at the end of a war or under a threat is a deed others read of, and those who live beside the taker are warned by their staffs.
+      if ((t.kind === 'peace' || t.ultimatum) && t.cede?.length) for (const [taker, giver] of [[c, other], [other, c]]) { const got = (t.cede || []).map(pid => w.provinces[pid]).filter(p => p && p.owner === taker.id && had[taker.id] != null && p.lostBy === giver.id); if (got.length) { deed(w, taker, `took ${got.map(p => p.name).join(' and ')} from ${giver.name} by the ${t.ultimatum ? 'ultimatum it sent' : 'peace it made'}`); alarm(w, taker, giver, got); } }
       // The war is wound up once the land has changed hands, not before (see settleTerms): troops standing in what the treaty gives their country stay.
       if (t.kind === 'peace') { endWar(w, c.id, other.id, t.annex); peaceRecognises(w, c, other); for (const x of w.treaties) if (x !== t && x.pending && !x.multi && ['peace', 'armistice'].includes(x.kind) && x.parties.includes(c.id) && x.parties.includes(other.id)) x.pending = false; }
       if (t.cede?.length) settleOccupations(w);
@@ -1238,7 +1254,7 @@ export function applyOp(w, actor, op) {
       }
       // Land signed away at the end of a war or under a threat is a defeat the whole country can measure: the government that signs pays for it in
       // standing, by how many of its people went with the land, and the army does not forgive it. The government that took it is credited.
-      let signed = '';
+      let signed = ['alliance', 'guarantee', 'protection'].includes(t.kind) ? bondSigned(w, c, other) : '';
       if (t.kind === 'peace' || t.ultimatum) for (const [x, y] of [[c, other], [other, c]]) {
         const lost = (had[x.id] - owned(x.id)) / Math.max(had[x.id], 1); if (!(lost > .005)) continue;
         const cost = clamp(lost * 70, 1, 28), gain = clamp((owned(y.id) - had[y.id]) / Math.max(had[y.id], 1) * 25, .5, 8);
