@@ -76,21 +76,24 @@ const FRONTAGE = { plains: 160, hills: 110, forest: 100, mountain: 60, marsh: 70
 const crowding = (men, terrain, widen = 1) => { const room = (FRONTAGE[terrain] ?? 120) * widen; return men <= room ? 1 : (room + (men - room) * .4) / men; };
 const KIND = { infantry: 1, artillery: 1.7, armor: 3.2, air: 2.6, cavalry: .9 };
 
-export function pathStep(w, from, to, country) {
-  if (from === to) return null;
-  const seen = new Set([from]), q = [[from, null]];
-  while (q.length) {
-    const [cur, first] = q.shift();
+// The road a unit takes. Where there is a road over ground it may march on without a fight, it takes that road, however much longer: an army sent
+// from one of its own provinces to another does not blunder through the enemy's country because the map is shorter that way. Where there is none,
+// or where the place it is sent to is the enemy's, it goes through as few provinces of his as will do.
+export function roadTo(w, from, to, country) {
+  if (from === to) return [];
+  const cost = { [from]: 0 }, prev = {}, open = [from], hostile = n => { const o = w.provinces[n].controller; return o !== country && fighting(w, country, o); };
+  while (open.length) {
+    open.sort((a, b) => cost[a] - cost[b]); const cur = open.shift();
+    if (cur === to) { const path = []; for (let x = to; x !== from; x = prev[x]) path.unshift(x); return path; }
     for (const n of w.provinces[cur].neighbors) {
-      if (seen.has(n)) continue;
-      seen.add(n);
-      const f = first || n;
-      if (n === to) return f;
-      if (canEnter(w, country, n)) q.push([n, f]);
+      if (n !== to && !canEnter(w, country, n)) continue;
+      const c = cost[cur] + (hostile(n) ? 50 : 1);
+      if (cost[n] == null || c < cost[n] - 1e-9) { cost[n] = c; prev[n] = cur; if (!open.includes(n)) open.push(n); }
     }
   }
   return null;
 }
+export function pathStep(w, from, to, country) { return roadTo(w, from, to, country)?.[0] ?? null; }
 
 export function canEnter(w, country, pid) {
   const p = w.provinces[pid];

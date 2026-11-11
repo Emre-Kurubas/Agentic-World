@@ -2158,7 +2158,7 @@ chain('A peace says in so many words what it does to the land: the provinces it 
   const x = fresh(), xa = x.countries.U1, xb = x.countries.U2; applyOp(x, ld(x, xa), { op: 'declare_war', target: 'U2', _law: true }); const taken = countryProvinces(x, 'U2').find(p => p.id !== xb.capital); taken.controller = 'U1';
   const keep = applyOp(x, ld(x, xa), { op: 'propose_treaty', target: 'U2', kind: 'peace', annex: true }); assert.ok(keep.msg.includes(`${taken.name} (${taken.id}) stays with ${xa.name}`), keep.msg);
 });
-import { supplyOf as supplyAt, railWorks as railRuns, capture as takeProvince, supplyLines as linesFor } from '../engine/military.js';
+import { supplyOf as supplyAt, railWorks as railRuns, capture as takeProvince, supplyLines as linesFor, roadTo as roadOf } from '../engine/military.js';
 // A battlefield with two roads into it: one province of U2 that two provinces of U1 touch. Railways everywhere, so that supply plays no part
 // unless a test takes them up; full arsenals; both armies led alike.
 const twoRoads = (skill = 1.6) => { const w = fresh(); for (const u of Object.values(w.units)) delete w.units[u.id];
@@ -2268,6 +2268,13 @@ chain('The manner of an attack is the general\'s to choose: a reconnaissance in 
   // A march order takes a unit out of the operation; so does an order to stand on the defensive.
   const m = go({}), back = m.w.provinces[m.e1.neighbors.find(n => m.w.provinces[n].controller === 'U1')], mv = applyOp(m.w, m.gen, { op: 'move', unit: m.atk.id, to: back.id }); assert.ok(mv.ok && !m.atk.attack && /leaves the offensive/.test(mv.msg), mv.msg);
   const dfn = go({}); assert.ok(applyOp(dfn.w, dfn.gen, { op: 'set_posture', unit: dfn.atk.id, posture: 'defensive' }).ok && !dfn.atk.attack && !dfn.atk.target, 'troops told to stand do not attack');
+  // A unit is part of one attack at a time, and a march between two of one's own provinces keeps to one's own roads.
+  { const r = twoRoads(1), u = soldier(r.w, 'U1', r.e1.id, 50), elsewhere = countryProvinces(r.w, 'U2').find(p => p.id !== r.over.id && p.neighbors.some(n => r.w.provinces[n].controller === 'U1')); assert.ok(applyOp(r.w, r.gen, { op: 'offensive', to: r.over.id, units: [u.id] }).ok);
+    const second = applyOp(r.w, r.gen, { op: 'offensive', to: elsewhere.id, units: [u.id] }); assert.ok(second.ok && u.attack.to === elsewhere.id && /A unit is part of one attack at a time/.test(second.msg), second.msg);
+    const road = roadOf(r.w, r.e1.id, r.e2.id, 'U1'); assert.ok(road && road.every(id => r.w.provinces[id].controller === 'U1'), `between two of our own provinces the road keeps to our own ground: ${road}`);
+    const home = applyOp(r.w, r.gen, { op: 'move', unit: u.id, to: r.e2.id }); assert.ok(home.ok && !/enemy/.test(home.msg), home.msg); const at = applyOp(r.w, r.gen, { op: 'move', unit: u.id, to: r.over.id }); assert.ok(at.ok && /is held by the enemy: the unit attacks it as it arrives, by itself/.test(at.msg), at.msg);
+    // Cut off from the rest of the country by the enemy's ground, a unit sent home is told it must fight its way.
+    const deep = countryProvinces(r.w, 'U2').find(p => p.id !== r.d.capital && !p.neighbors.some(n => r.w.provinces[n].controller === 'U1')); if (deep) { const lost = soldier(r.w, 'U1', deep.id, 20), back = applyOp(r.w, r.gen, { op: 'move', unit: lost.id, to: r.a.capital }); assert.ok(back.ok && /the unit will have to fight its way through/.test(back.msg), back.msg); } }
   // What the referee and the commanders are told.
   const ref = refereePrompt(s.w, s.a, [{ actor: s.gen, decisions: ['Attack.'] }]); assert.ok(ref.includes('offensive{to,units?:[unit ids]') && /reconnaissance in force/.test(ref), 'the referee knows the order');
   const army = lookUp(s.w, s.gen, 'army'); assert.ok(/An attack can be ordered as one operation \(offensive\)/.test(army) && /Supply: an army is fed from/.test(army), 'the commander is told how attacks and supply work');
@@ -2510,7 +2517,8 @@ chain('A plan of campaign is a paper: drawn up in peace it lets the army open a 
   assert.ok(/has no plan drawn up/.test(lookUp(w, t.gen, 'war_plan:U2')));
   const made = applyOp(w, t.gen, { op: 'prepare_plan', target: 'U2', objective: t.over.id, text: 'Main weight through Glenara.' }); assert.ok(made.ok && /ready in two quarters/.test(made.msg), made.msg);
   assert.ok(/being drawn up/.test(lookUp(w, t.gen, 'war_plan:U2')) && planFor(w, 'U1', 'U2') === 0); assert.equal(applyOp(w, w.characters[a.opposition], { op: 'prepare_plan', target: 'U2' }).ok, false, 'the staff\'s work is the staff\'s and the ruler\'s to order');
-  w.turn += 2; assert.ok(/lies ready, with .* as its first objective/.test(lookUp(w, t.gen, 'war_plan:U2')) && planFor(w, 'U1', 'U2') === 0, 'ready, and worth nothing until there is a war');
+  w.turn += 1; { const again = applyOp(w, ld(w, a), { op: 'prepare_plan', target: 'U2', objective: t.over.id, text: 'Main weight through Glenara, the cavalry on the left.' }); assert.ok(again.ok && /neither hastens it nor starts it afresh/.test(again.msg) && a.plans.U2.ready === w.turn + 1 && /cavalry on the left/.test(a.plans.U2.text), `ordered again a quarter later, the plan is neither hastened nor begun afresh: ${again.msg}`); }
+  w.turn += 1; assert.ok(/lies ready, with .* as its first objective/.test(lookUp(w, t.gen, 'war_plan:U2')) && planFor(w, 'U1', 'U2') === 0, 'ready, and worth nothing until there is a war');
   war[0].start = w.turn; w.wars = war; assert.equal(planFor(w, 'U1', 'U2'), 1);
   // By timetable: two columns under a poor commander with no wireless, with the plan and without it.
   const base = structuredClone(w), onTime = plan => { let n = 0; for (let i = 0; i < 40; i++) { const x = structuredClone(base); x.rng = 400 + i * 3571; if (!plan) delete x.countries.U1.plans; const u1 = soldier(x, 'U1', t.e1.id, 80), u2 = soldier(x, 'U1', t.e2.id, 60); soldier(x, 'U2', t.over.id, 60);
@@ -2521,7 +2529,9 @@ chain('A plan of campaign is a paper: drawn up in peace it lets the army open a 
   assert.ok((t.gen.secrets || []).some(s => /Passed the general staff's plan/.test(s.text)) && ld(w, d).inbox.some(m => /A copy of the general staff's plan/.test(m.text) && /Main weight through Glenara/.test(m.text)) && /We hold a copy of a plan of theirs for war with us/.test(lookUp(w, w.characters[d.general], 'war_plan:U1')), 'the traitor is marked, and the other staff has the paper');
   const atk = soldier(w, 'U1', t.e1.id, 150); soldier(w, 'U2', t.over.id, 60); applyOp(w, t.gen, { op: 'offensive', to: t.over.id, units: [atk.id] }); const b = quarter(w)[0]; assert.ok(!b.surprise && /they knew our plan of campaign/.test(t.said()) && /came where the copy of their plan in our hands said it would/.test(w.characters[d.general].inbox.map(m => m.text).join(' ')), 'an army that follows a betrayed plan surprises nobody, and both staffs know why');
   // A new plan.
-  assert.ok(applyOp(w, t.gen, { op: 'prepare_plan', target: 'U2', text: 'Everything changed.' }).ok); assert.equal(planFor(w, 'U1', 'U2'), 0, 'the new plan is not ready'); w.turn += 2; w.wars[0].start = w.turn; assert.equal(planFor(w, 'U1', 'U2'), 1, 'and when it is, the old copy is worth nothing');
+  assert.ok(applyOp(w, t.gen, { op: 'prepare_plan', target: 'U2', text: 'A note in the margin.' }).ok); assert.equal(planFor(w, 'U1', 'U2'), -1, 'a note added to the plan does not make the copy abroad worthless');
+  const elsewhere = countryProvinces(w, 'U2').find(p => p.id !== t.over.id && p.controller === 'U2').id, recast = applyOp(w, t.gen, { op: 'prepare_plan', target: 'U2', objective: elsewhere }); assert.ok(recast.ok && /recast around a new first objective/.test(recast.msg), recast.msg);
+  assert.equal(planFor(w, 'U1', 'U2'), 0, 'the recast plan is not ready'); w.turn += 1; w.wars[0].start = w.turn; assert.equal(planFor(w, 'U1', 'U2'), 1, 'and when it is, a quarter later, the old copy is worth nothing');
   assert.ok(applyOp(w, t.gen, { op: 'prepare_plan', target: 'U3' }).ok && applyOp(w, t.gen, { op: 'prepare_plan', target: 'U4' }).ok && !a.plans.U2 && a.plans.U3 && a.plans.U4, 'a staff keeps two plans in order');
   // Copied by a bought man on the staff.
   let copied = 0, told = 0; for (let i = 0; i < 12; i++) { const x = structuredClone(base); x.rng = 70 + i * 811; delete x.countries.U2.stolen; const clerk = spawnCharacter(x, 'U1', 'official', x.countries.U1.axes, { power: 20 }); clerk.clerkOf = 'army'; clerk.handler = x.countries.U2.leader; clerk.loyalty = 10; clerk.stipend = 5; clerk.boughtAt = x.turn;

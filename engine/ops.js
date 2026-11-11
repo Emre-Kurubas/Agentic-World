@@ -1,7 +1,7 @@
 import { clamp, news, rand, nextId, pick, sum } from './util.js';
 import { CLASSES, GOODS, countryProvinces, atWar, hasTreaty, makeUnit, aliveCountries, clampRel, provincePop } from './world.js';
 import { executePlot, neutralize, die, SUCCESSION, distance } from './politics.js';
-import { capture, pathStep, upkeepCost, settleOccupations, marchQuarters, POSTURES, postureWords, MANNERS, commanderOf, supplyOf, shellsFor, abilityWord, closedNow, season } from './military.js';
+import { capture, pathStep, roadTo, upkeepCost, settleOccupations, marchQuarters, POSTURES, postureWords, MANNERS, commanderOf, supplyOf, shellsFor, abilityWord, closedNow, season } from './military.js';
 import { makeFleet, TECHS, PLANTS, DEPOSITS, GOOD_LABEL, ROLES, spawnCharacter, bfsSea } from './world.js';
 import { hasTech, sealOf, importOrder } from './economy.js';
 import { FX_REGIMES, foreignRate, externalDebt, creditLeft, declareDefault, treasuryPays } from './money.js';
@@ -832,15 +832,22 @@ export function applyOp(w, actor, op) {
       const slow = Math.max(...went.map(u => marchQuarters(w, u, op.to) ?? 0));
       return { ok: true, msg: `${went.length} unit${went.length > 1 ? 's' : ''} (${went.map(u => u.id).join(', ')}) ordered to ${w.provinces[op.to].name}${slow ? `; the last should be there in about ${slow} quarter${slow > 1 ? 's' : ''} as the ground, the roads and the seasons stand` : ''}.${held}` }; }
     case 'set_posture': return setPosture(w, c, op);
-    // The staff draws up a plan for war with a named state. It takes two quarters, and a staff keeps two such plans in order at a time.
+    // The staff draws up a plan for war with a named state. It takes two quarters, and a staff keeps two such plans in order at a time. Ordering
+    // it again, or adding to it, neither hastens nor restarts the work; only a new first objective, once the plan is finished, sends it back to the desks.
     case 'prepare_plan': {
       if (!target) return fail('Name the state the plan is against (target).');
       const aim = has(w.provinces, op.objective) && w.provinces[op.objective].controller === target.id ? op.objective : null, old = (c.plans ||= {})[target.id], text = String(op.text ?? '').slice(0, 600);
-      if (old && old.objective === aim && !text) return fail(`The staff's plan for war with ${target.name} ${old.ready <= w.turn ? 'lies ready' : `will be ready in ${old.ready - w.turn} quarter${old.ready - w.turn > 1 ? 's' : ''}`}; nothing in it was changed.`);
-      const kept = Object.entries(c.plans).filter(([id]) => id !== target.id).sort((a, b) => a[1].since - b[1].since); let dropped = '';
+      if (old) {
+        const done = old.ready <= w.turn, recast = !!aim && aim !== old.objective, left = old.ready - w.turn, when = done ? 'lies ready' : `will be ready in ${left} quarter${left > 1 ? 's' : ''}`;
+        if (text) old.text = text;
+        if (!recast) return { ok: true, msg: `The staff's plan for war with ${target.name}${old.objective ? `, with ${w.provinces[old.objective]?.name} as its first objective,` : ''} ${when}.${text ? ' What was ordered now is written into it.' : ''} Ordering the plan again neither hastens it nor starts it afresh.` };
+        old.objective = aim; if (done) { old.since = w.turn; old.ready = w.turn + 1; }
+        return { ok: true, msg: done ? `The finished plan for war with ${target.name} is recast around a new first objective, ${w.provinces[aim].name}: a quarter's work, during which the army has no plan to open by. Copies of the old plan, if any have gone abroad, are now worthless.` : `The plan for war with ${target.name}, still being drawn up, now takes ${w.provinces[aim].name} as its first objective; it ${when}.` };
+      }
+      const kept = Object.entries(c.plans).sort((a, b) => a[1].since - b[1].since); let dropped = '';
       if (kept.length >= 2) { delete c.plans[kept[0][0]]; dropped = ` The staff keeps two plans in order at a time: the plan against ${w.countries[kept[0][0]]?.name ?? kept[0][0]} is put away and is no longer current.`; }
       c.plans[target.id] = { since: w.turn, ready: w.turn + 2, by: actor.id, objective: aim, text };
-      return { ok: true, msg: `The staff is drawing up a plan for war with ${target.name}${aim ? `, with ${w.provinces[aim].name} as its first objective` : ''}: railway timetables, concentration areas, the order of the first attacks. It is ready in two quarters. If war with them comes while it lies ready, the army opens by timetable for the first three quarters: columns in an offensive keep time far better and planned attacks go in as prepared. It is a paper: the officers and clerks of the staff handle it, and whoever comes by a copy across the frontier is waiting where the blow falls. A new plan against them makes an old copy worthless.${dropped}` };
+      return { ok: true, msg: `The staff is drawing up a plan for war with ${target.name}${aim ? `, with ${w.provinces[aim].name} as its first objective` : ''}: railway timetables, concentration areas, the order of the first attacks. It is ready in two quarters. If war with them comes while it lies ready, the army opens by timetable for the first three quarters: columns in an offensive keep time far better and planned attacks go in as prepared. It is a paper: the officers and clerks of the staff handle it, and whoever comes by a copy across the frontier is waiting where the blow falls. A new first objective makes an old copy worthless.${dropped}` };
     }
     // Handing the staff's plan to a foreign government. Whoever does it has done something that can be found out.
     case 'leak_plan': {
@@ -1308,7 +1315,9 @@ function applyOrder(w, c, u, to, named = true) {
   let lifted = ''; if (u.posture === 'defensive') { delete u.posture; lifted = ` ${u.id} had been standing on the defensive: this order lifts that one, and it leaves its works.`; }
   const off = u.attack ? ` It leaves the offensive against ${w.provinces[u.attack.to]?.name ?? 'its objective'} it had been ordered into.` : ''; delete u.attack;
   u.target = to; const q = marchQuarters(w, u, to), still = postureWords(u);
-  return { ok: true, msg: `${u.id} marches for ${w.provinces[to].name}${q ? `: about ${q} quarter${q > 1 ? 's' : ''} as the ground, the roads and the seasons stand (the army report shows how far it got each quarter and what held it)` : ''}.${lifted}${off}${still ? ` Its standing orders go with it: ${still}.` : ''}` };
+  const road = roadTo(w, u.province, to, c.id) || [], foes = road.filter(id => { const o = w.provinces[id].controller; return o !== c.id && atWar(w, c.id, o); }), through = foes.filter(id => id !== to).map(id => w.provinces[id].name);
+  const fight = foes.includes(to) ? ` ${w.provinces[to].name} is held by the enemy: the unit attacks it as it arrives, by itself${through.length ? `, after fighting its way through ${through.join(', ')}` : ''}. (An offensive order would have it form up, wait for the others and go in to a plan.)` : through.length ? ` No road leads there over ground we hold or may cross: the way runs through ${through.join(', ')}, which the enemy holds, and the unit will have to fight its way through.` : '';
+  return { ok: true, msg: `${u.id} marches for ${w.provinces[to].name}${q ? `: about ${q} quarter${q > 1 ? 's' : ''} as the ground, the roads and the seasons stand (the army report shows how far it got each quarter and what held it)` : ''}.${fight}${lifted}${off}${still ? ` Its standing orders go with it: ${still}.` : ''}` };
 }
 // A standing order to troops: one unit, everything in a province, everything facing a neighbour, or the whole army. It holds until it is changed.
 const POSTURE_SAYS = {
@@ -1335,13 +1344,14 @@ function offensive(w, c, op) {
   // With no units named, the troops meant are those that start from the provinces named, or else every unit already standing beside the objective that is free to move.
   const us = named ? mine.filter(u => ids.includes(u.id)) : from.length ? mine.filter(u => from.includes(u.province)) : mine.filter(u => to.neighbors.includes(u.province) && u.posture !== 'defensive');
   if (!us.length) return fail(`No troops for it: name the units, or the provinces they start from (from). ${mine.some(u => to.neighbors.includes(u.province)) ? 'The units beside it stand on the defensive by standing order; an order to them by name lifts that.' : `No unit of ours stands beside ${to.name} now.`}`);
-  const manner = MANNERS.includes(op.manner) ? op.manner : 'assault', shelling = op.shelling === true || op.bombard === true, prepare = Math.round(num(op.prepare, 0, 4, 0)), wait = op.wait !== false, went = [], not = [];
+  const manner = MANNERS.includes(op.manner) ? op.manner : 'assault', shelling = op.shelling === true || op.bombard === true, prepare = Math.round(num(op.prepare, 0, 4, 0)), wait = op.wait !== false, went = [], not = [], left = [];
   // Where a unit will form up: the last province on its road before the objective.
   const staging = u => { let cur = u.province, n = 0; while (!to.neighbors.includes(cur) && n++ < 80) { const step = pathStep(w, cur, to.id, c.id); if (!step || step === to.id) return step ? cur : null; cur = step; } return to.neighbors.includes(cur) ? cur : null; };
   for (const u of us) {
     const at = u.province === to.id ? to.id : staging(u); if (!at) { not.push(`${u.id} has no road to it`); continue; }
     const chief = w.characters[u.commander]; if (w.friction && chief?.alive && isMinor(chief) && chief.loyalty < 25 && rand(w) < .4) { not.push(`${u.id} did not stir: ${chief.name}, who commands it, finds reasons for delay`); continue; }
     if (u.posture === 'defensive') delete u.posture;
+    if (u.attack && u.attack.to !== to.id && w.provinces[u.attack.to]) left.push(`${u.id} (${w.provinces[u.attack.to].name})`);
     u.attack = { to: to.id, manner, shelling, wait, since: w.turn, start: w.turn + prepare }; if (u.province !== to.id) u.target = to.id;
     went.push({ u, at, q: at === u.province ? 0 : marchQuarters(w, u, at) ?? 1 });
   }
@@ -1355,7 +1365,7 @@ function offensive(w, c, op) {
   const timing = when === 0 ? 'The troops are formed up and go in this quarter.' : `They go in together ${prepare ? `no sooner than ${prepare} quarter${prepare > 1 ? 's' : ''} from now, which is time to bring up shells and study the ground${slow > prepare ? ', and not before the last column is up' : ''}` : 'when the last column is up'}${wait ? '; the staff waits up to three quarters for a column that is not up, and then goes with what it has' : '; no column waits for another'}.`;
   const other = to.neighbors.map(n => w.provinces[n]).filter(q => q.controller === c.id && !cols.some(col => col[0].at === q.id));
   const flank = cols.length > 1 ? ' Columns that come from different provinces and arrive together take the defender in flank and have more room to deploy; every column but the strongest keeps the timetable only as well as its commander can, and one that is late goes in a quarter after the rest, alone.' : went.length > 1 && other.length ? ` All of them come up by the same road and strike from one side. To take the defender from two sides a unit would first have to be marched (move) to another province of ours that touches ${to.name} (${other.map(q => `${q.name} ${q.id}`).join(', ')}) and the offensive ordered with it standing there.` : '';
-  return { ok: true, msg: `Offensive against ${to.name} (${to.terrain}${to.fort >= 1 ? ', a fortress' : ''}), held by ${foe.name}: ${went.length} unit${went.length > 1 ? 's' : ''}, ${menText(menAll)}, in ${cols.length} column${cols.length > 1 ? 's' : ''}: ${colText}. ${how} ${guns} ${timing}${flank} The attack will ask about ${Math.round(need * 10) / 10} of arms and ammunition a quarter of the arsenal, which holds ${Math.round(have)}${need > have ? ': not enough, and where the arsenal cannot send what the fight calls for the fire slackens' : ''}.${closedNow(w, to) ? ` ${to.name} is closed by ${season(w) === 'winter' ? 'snow' : 'mud'} this season: the attack waits for the roads.` : ''}${not.length ? ` Not part of it: ${not.join('; ')}.` : ''} What is known of the troops in ${to.name} is in the borders report; the staff reports after the fight what decided it.` };
+  return { ok: true, msg: `Offensive against ${to.name} (${to.terrain}${to.fort >= 1 ? ', a fortress' : ''}), held by ${foe.name}: ${went.length} unit${went.length > 1 ? 's' : ''}, ${menText(menAll)}, in ${cols.length} column${cols.length > 1 ? 's' : ''}: ${colText}. ${how} ${guns} ${timing}${flank} The attack will ask about ${Math.round(need * 10) / 10} of arms and ammunition a quarter of the arsenal, which holds ${Math.round(have)}${need > have ? ': not enough, and where the arsenal cannot send what the fight calls for the fire slackens' : ''}.${closedNow(w, to) ? ` ${to.name} is closed by ${season(w) === 'winter' ? 'snow' : 'mud'} this season: the attack waits for the roads.` : ''}${not.length ? ` Not part of it: ${not.join('; ')}.` : ''}${left.length ? ` A unit is part of one attack at a time: ${left.join(', ')} had been ordered against another objective, and that order is replaced by this one. To take one place and then the next, order the second attack once the first has carried.` : ''} What is known of the troops in ${to.name} is in the borders report; the staff reports after the fight what decided it.` };
 }
 const seaLabel = (w, id) => `${w.seas[id]?.name || 'the open sea'} (${id})`;
 const count = (n, k) => { const r = Math.round(n); return `${r} ${r === 1 ? SHIPS[k].one : SHIPS[k].name}`; };
