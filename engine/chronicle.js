@@ -1,7 +1,7 @@
 // Country chronicles and character lives. Only events are recorded; who feels what is never written.
 // Uses local randomness; does not affect world generation or the engine.
 import { countryProvinces, aliveCountries, GOOD_LABEL } from './world.js';
-import { givenNames, familyNames, personName } from './names.js';
+import { givenNames, familyNames, personName, sexOf, freeFamily } from './names.js';
 
 function seeded(key) {
   let h = 2166136261; for (const ch of key) { h ^= ch.codePointAt(0); h = Math.imul(h, 16777619) >>> 0; }
@@ -89,7 +89,9 @@ export function writeLife(w, ch) {
     const other = pickOf(r, peers), y = Math.min(now - 1, year(between(r, 30, Math.max(31, ch.age - 2))));
     life.push({ year: y, text: pickOf(r, [`Faced ${other.name} in a court case; the case ended in favor of ${r() < .5 ? ch.name : other.name}.`, `Served on the same commission as ${other.name}.`, `${other.name} put up an important bond for ${ch.name}.`, `${other.name} blocked one of their appointments at the last moment.`]) });
   }
-  if (home.eth !== c.majorityEth) ch.name = personName(home.eth, home.rel, ch.id);
+  // Somebody whose home is another people's province bears a name of that people; and no more than anybody else a name that somebody of note in
+  // the country bears already.
+  if (home.eth !== c.majorityEth) { const [given, drawn] = personName(home.eth, home.rel, ch.id).split(' '), taken = new Set(Object.values(w.characters).filter(o => o.id !== ch.id && o.alive && o.country === c.id).map(o => o.name.split(' ').at(-1))); ch.name = `${given} ${freeFamily(home.eth, drawn, taken)}`; ch.sex = sexOf(ch.name); }
   ch.origin = { birthplace: home.name, born, eth: home.eth, rel: home.rel, family: pickOf(r, FAMILY) };
   ch.life = life.sort((a, b) => a.year - b.year);
 }

@@ -45,7 +45,7 @@ export function frontierStep(w) {
     if (rand(w) >= clamp(.012 * (.3 + force) * (bad < -30 ? 2 : bad < 0 ? 1.3 : 1) * pact * (1 + heat / 60) * calm * (truce ? .5 : 1), 0, .25)) continue;
     const [p, q] = f.at, pa = p.controller === a.id ? p : q, pb = pa === p ? q : p, deadA = Math.round(2 + rand(w) * 30), deadB = Math.round(2 + rand(w) * 30);
     for (const [c, d, prov] of [[a, deadA, pa], [b, deadB, pb]]) { const u = Object.values(w.units).find(x => x.country === c.id && x.province === prov.id); if (u) u.men = Math.max(.05, u.men - d / 1000); }
-    grudge(a, b.id).incident += 10 + deadA * .3; grudge(b, a.id).incident += 10 + deadB * .3;
+    grudge(a, b.id).incident += 10 + deadA * .3; grudge(b, a.id).incident += 10 + deadB * .3; grudge(a, b.id).at = grudge(b, a.id).at = w.turn;
     a.relations[b.id] = clamp((a.relations[b.id] ?? 0) - 8, -100, 100); b.relations[a.id] = clamp((b.relations[a.id] ?? 0) - 8, -100, 100);
     // Men who were shot at while forbidden to shoot first take it hard.
     for (const [c, prov] of [[a, pa], [b, pb]]) if (still(c.id) > .5) for (const u of Object.values(w.units)) if (u.country === c.id && u.province === prov.id) u.morale = clamp(u.morale - 3, 0, 100);
@@ -92,6 +92,7 @@ export function mobilize(w, c, op, pay, fail) {
   // They form where the order says, and at the capital and the largest towns where it says nothing.
   const depots = named.length ? named.slice(0, 8) : [w.provinces[c.capital], ...provs.filter(p => p.id !== c.capital).sort((x, y) => provincePop(y) - provincePop(x))].filter(Boolean).slice(0, 3), each = called / depots.length;
   for (const p of depots) { const u = makeUnit(w, c.id, p.id, each, .9, 55 + c.legitimacy * .3, 'infantry'); u.called = true; u.morale = 60; }
+  c.calledUpAt = w.turn; c.calledUpMen = called;
   news(w, `${c.name} has ordered mobilisation: about ${Math.round(called)} thousand reservists are joining the colours.`, { kind: 'war', countries: [c.id] });
   for (const o of aliveCountries(w)) { if (o.id === c.id) continue; const near = countryProvinces(w, o.id).some(p => p.neighbors.some(n => w.provinces[n].controller === c.id)); if (!near) continue;
     o.relations[c.id] = clamp((o.relations[c.id] ?? 0) - 10, -100, 100);

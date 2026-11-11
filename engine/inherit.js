@@ -320,6 +320,9 @@ export function inheritStates(w) {
     if (lone >= 0 && trader >= 0 && lone !== trader) [bag[lone], bag[trader]] = [bag[trader], bag[lone]]; }
   dealFields(w, cs);
   cs.forEach((c, i) => applyArchetype(w, c, bag[i % bag.length], i));
+  // A state that inherits railways knows how to lay them. (World 16: every state began with a dozen railway provinces and no technology at all;
+  // a railway ordered on the first morning was refused "for want of the technology".)
+  for (const c of cs) c.techs.railway ??= 1;
   initGroups(w);
   w.past = makePast(w);
   fortify(w, cs);

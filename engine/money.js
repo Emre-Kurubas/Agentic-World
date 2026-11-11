@@ -132,7 +132,7 @@ function currencyCrisis(w, c) {
 
 export function currencyStep(w, c) {
   const real = Math.max(c.realGdp, 1), target = real * .3, R = c.reserves, bop = R - (c._lastReserves ?? R), prev = c.rate;
-  c._lastReserves = R;
+  c._lastReserves = R; c._goldFlow = bop;
   if (c.fxRegime === 'floating') {
     // A floating rate reacts to the balance of payments and price gaps; low reserves alone do not sink the currency.
     const drift = .4 * Math.log(c.rer ?? 1) + clamp(-bop / real, -OUTPUT_SHIELD, OUTPUT_SHIELD);

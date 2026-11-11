@@ -3,7 +3,7 @@
 // Drawn from the person's own name and number, so the world's dice are not touched.
 import { ROLES, spawnCharacter, aliveCountries } from './world.js';
 import { nextId } from './util.js';
-import { givenNames } from './names.js';
+import { givenNames, sexOf } from './names.js';
 
 const hash = s => { let h = 7; for (const x of String(s)) h = (h * 31 + x.codePointAt(0)) >>> 0; return h; };
 const SECRETS = {
@@ -31,7 +31,9 @@ export function burden(w, ch) {
     const [tie, role] = KIN[(h >>> 13) % KIN.length], kin = spawnCharacter(w, c.id, role, c.axes, { family: ch.name.split(' ').at(-1), age: /sibling$|cousin/.test(tie) ? [36, 60] : [22, 38], power: 22 });
     // Blood shows in the name and in where one comes from, whatever the registry made of them.
     const family = ch.name.split(' ').at(-1), eth = ch.origin?.eth ?? c.majorityEth, rel = ch.origin?.rel ?? c.majorityRel, pool = givenNames(eth);
-    kin.name = `${pool[hash(kin.id) % pool.length]} ${family}`; if (kin.origin) Object.assign(kin.origin, { eth, rel });
+    // The family's name, and a given name nobody of note in the country bears with it already (least of all the kinsman himself).
+    const borne = new Set(Object.values(w.characters).filter(x => x.alive && x.id !== kin.id && x.country === c.id).map(x => x.name)); let at = hash(kin.id) % pool.length; for (let i = 0; i < pool.length && borne.has(`${pool[at]} ${family}`); i++) at = (at + 1) % pool.length;
+    kin.name = `${pool[at]} ${family}`; kin.sex = sexOf(kin.name); if (kin.origin) Object.assign(kin.origin, { eth, rel });
     kin.kin = ch.id; kin.tie = tie; (ch.kinfolk ||= []).push(kin.id);
     if (role === 'officer') { const u = Object.values(w.units).filter(x => x.country === c.id && !w.characters[x.commander]?.alive).sort((a, b) => a.men - b.men)[0]; if (u) u.commander = kin.id; else kin.office = 'a captaincy in the capital garrison'; }
     else kin.office = OFFICES[(h >>> 16) % OFFICES.length];

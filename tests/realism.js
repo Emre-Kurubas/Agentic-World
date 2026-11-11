@@ -342,7 +342,7 @@ ok('Country chronicles and character lives are events, record no feelings, and v
   assert.equal(new Set(cs.map(c => c.chronicle[0].text)).size, cs.length, 'chronicles differ');
   const all = Object.values(w.characters); assert.ok(all.every(ch => ch.life?.length >= 3 && ch.origin?.birthplace), 'everyone has a life');
   for (const ch of all) assert.ok(w.provinces && ch.life[0].year === ch.origin.born);
-  const text = JSON.stringify([...cs.map(c => c.chronicle), ...all.map(a => a.life)]); assert.ok(!/hatred|anger|revenge|grudge|coward|brave/i.test(text), 'no feelings or personality are written');
+  const text = JSON.stringify([...cs.map(c => c.chronicle), ...all.map(a => a.life)]); assert.ok(!/\b(hatred|anger|revenge|grudge|coward\w*|brave\w*)\b/i.test(text), 'no feelings or personality are written');
   const l = w.characters[cs[0].leader], p = actorPrompt(w, l, [], true, { intro: true }); assert.ok(p.includes('Your country\'s history') && p.includes('Your life') && p.includes(l.origin.birthplace)); assert.ok(!actorPrompt(w, l, [], true, { intro: false }).includes('Your life'));
   const n = spawnCharacter(w, cs[0].id, 'general', cs[0].axes); assert.ok(n.life?.length >= 3, 'a character who arrives later also has a life');
 });
@@ -3667,6 +3667,58 @@ chain('A works can be sold to the state or put up for whoever will take it', () 
   const up = applyOp(w, o, { op: 'sell_company', id: g.id, price: 30 }); assert.ok(up.ok && g.offer.open && g.owner === o.id && /is up for sale at 30/.test(up.msg), up.msg);
   const buyer = w.characters[c.opposition]; buyer.wealth = 100; const paid = o.wealth, b = applyOp(w, buyer, { op: 'buy_company', id: g.id }); assert.ok(b.ok && g.owner === buyer.id && buyer.wealth === 70 && o.wealth === paid + 30, 'whoever has the money takes it at the price, and the seller is paid');
   assert.ok(applyOp(w, buyer, { op: 'sell_company', id: g.id, price: 30 }).ok && applyOp(w, buyer, { op: 'sell_company', id: g.id, withdraw: true }).ok && !g.offer, 'a notice of sale can be withdrawn');
+});
+
+import { memoranda } from '../agents/queries.js';
+chain('A ruler\'s desk: what stands is shown as standing, what is only proposed as only proposed, a bill for war as a bill, and a servant speaks unasked only when the matter is his', () => {
+  // World 16: 378 of 553 posture orders ordered what already stood; a treaty only proposed was counted on for five quarters; a war bill was
+  // proclaimed as a war; and ninety-one operations, the money and the diplomacy among them, were never used.
+  const w = inherited(); run(w, 1); const c = w.countries.U1, L = ld(w, c), G = w.characters[c.general], o = w.characters[c.oligarch];
+  const nextDoor = [...new Set(Object.values(w.provinces).filter(p => p.controller === 'U1').flatMap(p => p.neighbors.map(n => w.provinces[n].controller)))].find(id => id && id !== 'U1'), d = w.countries[nextDoor], D = ld(w, d); assert.ok(d, 'a neighbour by land');
+  const quiet = () => { c.lastBalance = 5; c.reserves = 5000; c._goldFlow = 10; c.militaryFunding = 1; c.cells = 0; c.treasury = c.till ?? 0; c.nextElection = w.turn + 9; for (const p of Object.values(w.provinces)) if (p.controller === 'U1') p.unrest = 10; for (const x of aliveCountries(w)) delete x.calledUpAt; for (const g of Object.values(c.grudges || {})) delete g.at; };
+  quiet(); assert.deepEqual(memoranda(w, c, L), [], 'on a quiet morning nobody speaks unasked');
+  // The treasury: gold, then the books.
+  c._goldFlow = -100; c.reserves = 300; let m = memoranda(w, c, L); assert.ok(m.length === 1 && /lays before you:$/.test(m[0][0]) && /the gold reserve \(300\) is gone in about 3 quarters[^]*devalue[^]*set_capital_controls[^]*Or do nothing, and the shops will show it first\./.test(m[0][1][0]), `the keeper of the treasury speaks of the gold: ${m[0]?.[1]?.[0]}`);
+  quiet(); c.lastBalance = -c.gdp * .03; m = memoranda(w, c, L); const point = Math.round(c.lastBooks.income / (c.tax.income * 100));
+  assert.ok(new RegExp(`The books closed ${Math.round(c.gdp * .03)} short last quarter[^]*a point more on the income tax brings about ${point} a quarter[^]*default_debt[^]*Or nothing`).test(m[0][1][0]), `and of the books, with the figures of the budget report: ${m[0][1][0].slice(0, 260)}`);
+  assert.ok(String(answer(w, L, 'budget')).includes(`One point more on the income tax would bring about ${point} a quarter`), 'the same figure the budget report gives');
+  // The foreign office: a neighbour calls up.
+  quiet(); assert.ok(applyOp(w, D, { op: 'mobilize', men: 20 }).ok); m = memoranda(w, c, L);
+  assert.ok(m.length === 1 && m[0][0] === 'Your foreign office notes:' && new RegExp(`${d.name} called up about 20 thousand reservists\\. What governments do short of war[^]*ultimatum[^]*call_conference[^]*Or nothing`).test(m[0][1][0]), `the foreign office speaks when a neighbour calls up: ${m[0]?.[1]?.[0]?.slice(0, 200)}`);
+  // The police: a province close to rising.
+  quiet(); const hot = Object.values(w.provinces).find(p => p.controller === 'U1' && p.id !== c.capital); hot.unrest = 70; m = memoranda(w, c, L);
+  assert.ok(m.length === 1 && /reports:$/.test(m[0][0]) && new RegExp(`${hot.name} \\(${hot.id}\\) is close to rising[^]*repress[^]*relieve_province[^]*Or nothing`).test(m[0][1][0]), 'the police speak of a province close to rising');
+  assert.ok(/reports:\n[^\n]*is close to rising/.test(desk(w, L)) && !/close to rising\. What can be done/.test(desk(w, G)) && !/lays before you|reports:\n/.test(desk(w, o)), 'it lies on the desk of whoever governs, and on nobody else\'s');
+  // Standing orders, and papers that wait.
+  quiet(); const u = Object.values(w.units).find(x => x.country === 'U1'); assert.ok(applyOp(w, G, { op: 'set_posture', posture: 'defensive', unit: u.id }).ok);
+  assert.ok(new RegExp(`Standing orders in force \\(they stand until you change them; there is no need to give them again\\):\\n(?:[^\\n]*\\n)*?Troops under the order "defensive": [^\\n]*${u.id}`).test(desk(w, G)), 'the chief of staff sees what stands');
+  assert.ok(/Standing orders in force[^\n]*\nAt your works: SR\d+ pays [\d.]+ of the going wage and spends [\d.]+ of 1 on safety/.test(desk(w, o)), 'and the magnate what his works pay and spend');
+  const sent = applyOp(w, L, { op: 'propose_treaty', target: d.id, kind: 'nonaggression', terms: 'Five years.' }), id = /A\d+/.exec(sent.msg)[0];
+  assert.ok(new RegExp(`Papers of yours that still wait for the other signature[^\\n]*\\n${id}, nonaggression with ${d.name}, proposed in [^:]*: not signed by the other side`).test(desk(w, L)), 'a treaty that is only proposed is shown as that');
+  assert.ok(applyOp(w, D, { op: 'accept_treaty', id }).ok && !/Papers of yours that still wait/.test(desk(w, L)), 'and no longer once it is signed');
+  // A bill for war is a bill.
+  (d.bills ||= []).push({ id: 'Y9001', title: 'Declaration of war', status: 'pending', voteAt: w.turn + 1, ops: [{ op: 'declare_war', target: 'U1' }] });
+  assert.ok(alarms(w, L).some(x => new RegExp(`The government of ${d.name} has laid a declaration of war on us before its parliament \\(Y9001\\)\\. It is not war yet`).test(x)) && alarms(w, D).some(x => /lies before the house \(Y9001\)[^]*Until it passes there is no war, and no attack can be ordered/.test(x)), 'both governments are told that a bill is a bill');
+  assert.ok(memoranda(w, c, L).some(([t, ls]) => t === 'Your foreign office notes:' && /a declaration of war on us lies before the parliament of/.test(ls[0])), 'and the foreign office says what can be done short of war');
+  const page = actorPrompt(w, L, [], true, { intro: false }); assert.ok(/Saying yes in a letter signs nothing: a treaty or a contract is signed only by a decision\./.test(page), 'the answer form says what signs a paper');
+  assert.ok(/One more thing about the age\. A state in it has more instruments than an army and a budget[^]*None of this is asked of you/.test(actorPrompt(w, L, [], true, { intro: true })), 'the opening names the instruments of the age');
+});
+
+import { sexOf, he as heOf, familyNames as familiesOf } from '../engine/names.js';
+chain('People can be told apart, and a state knows what it inherits: no two seats share a family name by chance, everybody is a man or a woman as the name says, and whoever inherits railways can lay them', () => {
+  // World 16: with eight family names to a people a president took his treasurer for kin, a prince could not tell two Gokces apart, and a woman
+  // jailed in one state was taken for the chief of staff of another; everybody was "he"; and a railway ordered on the first morning was
+  // refused for want of a technology by a state that had ten railway provinces.
+  for (const eth of ['Varenic', 'Tolgar', 'Sumerite', 'Hazen', 'Ordalian', 'Keltish', 'Marun', 'Ispari']) assert.ok(new Set(familiesOf(eth)).size >= 20, `twenty family names for the ${eth}`);
+  const w = inherited(), all = Object.values(w.characters).filter(x => x.alive);
+  for (const c of aliveCountries(w)) { const seats = ROLES.map(r => w.characters[c[r]]), fam = seats.map(x => x.name.split(' ').at(-1)); assert.equal(new Set(fam).size, 4, `the four seats of ${c.name} bear four family names: ${fam.join(', ')}`);
+    const others = all.filter(x => x.country === c.id), twice = others.filter(x => others.some(y => y.id !== x.id && y.name.split(' ').at(-1) === x.name.split(' ').at(-1)));
+    assert.ok(twice.every(x => others.some(y => y.id !== x.id && ((y.kinfolk || []).includes(x.id) || (x.kinfolk || []).includes(y.id)))), `whoever shares a family name in ${c.name} is kin: ${twice.map(x => x.name).join(', ')}`); }
+  assert.equal(new Set(all.map(x => x.country + '|' + x.name)).size, all.length, 'no two people of note in one country bear the same name');
+  assert.ok(all.every(x => x.sex === sexOf(x.name)) && sexOf('Maeve Corvane') === 'f' && sexOf('Rainer Brandt') === 'm' && heOf({ name: 'Helga Reinhart' }) === 'she' && heOf({ name: 'Otto Ostwald', sex: 'm' }) === 'he', 'a person is a man or a woman as the name says, also where the record is older than that');
+  const c = w.countries.U1, L = ld(w, c), list = String(answer(w, L, 'people')); assert.ok(/K\d+ [^,]* \((he|she)\), /.test(list), `the list of people says which: ${list.slice(0, 160)}`);
+  assert.ok(aliveCountries(w).every(x => x.techs.railway), 'every inherited state knows how to lay a railway');
+  const p = Object.values(w.provinces).find(q => q.controller === 'U1' && q.rail); c.treasury = 1e6; c.stock.steel = 1e5; const r = applyOp(w, L, { op: 'build', province: p.id, kind: 'railway' }); assert.ok(!/requires the technology/.test(r.msg), `and is not refused a line for want of it: ${r.msg}`);
 });
 
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {

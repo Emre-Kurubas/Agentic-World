@@ -2,7 +2,7 @@ import { clamp, sum, rand, between, pick, nextId } from './util.js';
 import { inheritStates } from './inherit.js';
 import { issueCurrency } from './money.js';
 import { writeLife } from './chronicle.js';
-import { ETHNICITIES, FAITHS, givenNames, familyNames, placeName, hashOf } from './names.js';
+import { ETHNICITIES, FAITHS, givenNames, familyNames, placeName, hashOf, sexOf, freeFamily } from './names.js';
 
 const SYL = ['ar','ven','tor','mi','sa','lor','ka','zen','ol','ri','dan','ve','gar','su','thal','ne','bor','ha','lin','es','mar','ku','ra','dor','iv','al','pe','ten'];
 const ETH = ETHNICITIES, REL = FAITHS;
@@ -157,9 +157,14 @@ function lifeOf(w, id, name, role) {
 function spawnCharacter(w, cid, role, axes, patch = {}) {
   const id = nextId(w, 'K');
   const t = () => Math.round(between(w, 15, 90));
-  const given = pick(w, givenNames(w.countries[cid]?.majorityEth, w.countries[cid]?.majorityRel)), family = pick(w, familyNames(w.countries[cid]?.majorityEth)), [young, old] = patch.age ?? [34, 68];
+  const given = pick(w, givenNames(w.countries[cid]?.majorityEth, w.countries[cid]?.majorityRel)), drawn = pick(w, familyNames(w.countries[cid]?.majorityEth)), [young, old] = patch.age ?? [34, 68];
+  // Nobody is given by chance the family name of somebody of note already living in the country: a name shared is a name given on purpose (kin, an heir).
+  const family = freeFamily(w.countries[cid]?.majorityEth, drawn, new Set(Object.values(w.characters).filter(x => x.alive && x.country === cid).map(x => x.name.split(' ').at(-1))));
+  // Kin are given the family's name on purpose; they are not given their kinsman's whole name.
+  const fam = patch.family ?? family, pool = givenNames(w.countries[cid]?.majorityEth, w.countries[cid]?.majorityRel), borne = new Set(Object.values(w.characters).filter(x => x.alive && x.country === cid).map(x => x.name));
+  let first = given; for (let i = 1; i <= pool.length && borne.has(`${first} ${fam}`); i++) first = pool[(pool.indexOf(given) + i) % pool.length];
   w.characters[id] = {
-    id, country: cid, role, name: patch.name ?? `${given} ${patch.family ?? family}`, skill: .75 + (hashOf(id) % 61) / 100, alive: true, status: 'free',
+    id, country: cid, role, name: patch.name ?? `${first} ${fam}`, sex: sexOf(patch.name ?? first), skill: .75 + (hashOf(id) % 61) / 100, alive: true, status: 'free',
     age: Math.round(between(w, young, old)), persona: '', diary: [], outcomes: [], ties: {}, dossiers: {}, ambition: t(), loyalty: role === 'leader' ? 100 : t(), ruthless: t(), greed: t(),
     power: patch.power ?? (role === 'leader' ? 70 : Math.round(between(w, 30, 65))),
     wealth: Math.round(between(w, 10, role === 'oligarch' ? 300 : 40)),
