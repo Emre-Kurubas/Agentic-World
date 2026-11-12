@@ -3104,7 +3104,7 @@ chain('A plan of campaign is a paper: drawn up in peace it lets the army open a 
   let copied = 0, told = 0; for (let i = 0; i < 12; i++) { const x = structuredClone(base); x.rng = 70 + i * 811; delete x.countries.U2.stolen; const clerk = spawnCharacter(x, 'U1', 'official', x.countries.U1.axes, { power: 20 }); clerk.clerkOf = 'army'; clerk.handler = x.countries.U2.leader; clerk.loyalty = 10; clerk.stipend = 5; clerk.boughtAt = x.turn;
     courtQuarter(x, applyOp); if (x.countries.U2.stolen?.U1?.against === 'U2') copied++; if (x.characters[x.countries.U2.leader].inbox.some(m => /(?:He|She) has copied the staff's plan for war with/.test(m.text))) told++; }
   assert.ok(copied >= 6 && told === copied, `a clerk in foreign pay copies it for his paymaster's state: ${copied} of 12`);
-  const ref = refereePrompt(w, a, [{ actor: t.gen, decisions: ['Plan.'] }]); assert.ok(ref.includes('prepare_plan{target,objective?:province id of theirs,text?}') && ref.includes('leak_plan{against,to}'), 'the referee knows these orders');
+  const ref = refereePrompt(w, a, [{ actor: t.gen, decisions: ['Plan.'] }]); assert.ok(ref.includes('prepare_plan{target,objective?:province id of theirs,text?,fresh?}') && ref.includes('leak_plan{against,to}'), 'the referee knows these orders');
 });
 
 chain('The sea has seasons and crews have tempers: a northern harbour freezes in winter and takes no ship or cargo until spring; the all-big-gun ship outclasses the battleship once the yards can build it; a squadron left unpaid in harbour mutinies, and one lying in the capital\'s harbour counts when the state is struck at', () => {
@@ -3139,7 +3139,8 @@ chain('What a staff sees across a frontier depends on how it looks: at peace att
   // A service with eyes there.
   a.intel.U2 = 35; assert.ok(/about \d+ thousand men/.test(line(gen)), 'a fair service still gives round numbers across a closed frontier'); a.intel.U2 = 60; const counted = line(gen); assert.ok(/: 80 thousand men/.test(counted) && /field works \(2\)/.test(counted), `a good one counts them and knows their works: ${counted}`);
   // At peace the frontier is open to attaches and travellers.
-  a.intel.U2 = 10; const war = w.wars; w.wars = []; const peace = line(gen); assert.ok(/about \d+ thousand men/.test(peace) && Math.abs(count(peace) - 80) <= 16 && !/field works/.test(peace) && /at peace, attaches and travellers give round numbers/.test(lookUp(w, gen, 'borders')), `at peace round numbers are to be had: ${peace}`);
+  a.intel.U2 = 10; const war = w.wars; w.wars = []; const stale = line(gen); assert.ok(/no troops reported last quarter|by last quarter's reports/.test(stale), `attaches report what stood there a quarter ago: ${stale}`); w.garrisons = { ...(w.garrisons || {}), [over.id]: Object.values(w.units).filter(u => u.province === over.id && u.country === 'U2').reduce((s, u) => s + u.men, 0) };
+  const peace = line(gen); assert.ok(/about \d+ thousand men by last quarter's reports/.test(peace) && Math.abs(count(peace) - 80) <= 24 && !/field works/.test(peace) && /at peace, attaches and travellers give round numbers/.test(lookUp(w, gen, 'borders')), `at peace round numbers are to be had: ${peace}`);
   assert.ok(!/\d+ thousand men/.test(line(w.characters[a.opposition])), 'someone outside the army hears only what is said in the streets'); w.wars = war;
   // Troops that have met the enemy bring back what they saw.
   const scouts = soldier(w, 'U1', e1.id, 30); assert.ok(applyOp(w, gen, { op: 'offensive', to: over.id, units: [scouts.id], manner: 'probe' }).ok); quarter(w);

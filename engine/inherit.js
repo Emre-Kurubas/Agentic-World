@@ -376,7 +376,10 @@ export function inheritStates(w) {
 // and earned) is taken from it; nothing else is. (World 17: on the first morning every treasury read "revenue 0" and every works "turned out 0".)
 function lastQuarter(w, cs) {
   const trial = structuredClone(w); trial.status = 'playing'; beginTurn(trial); stepWorld(trial);
-  for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive) continue; for (const k of Object.keys(t)) if (/^last[A-Z]/.test(k) && t[k] != null) c[k] = structuredClone(t[k]); if (t.interestRate != null) c.interestRate = t.interestRate; if (t.paidRatio != null) c.paidRatio = t.paidRatio; for (const k of ['_made', '_raw', '_from', '_carried', '_hauled', '_freightIn', '_freightOut', 'shipping', '_seaVol']) if (t[k] != null) c[k] = structuredClone(t[k]); }
+  for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive) continue; for (const k of Object.keys(t)) if (/^last[A-Z]/.test(k) && t[k] != null) c[k] = structuredClone(t[k]); if (t.interestRate != null) c.interestRate = t.interestRate; if (t.paidRatio != null) c.paidRatio = t.paidRatio; for (const k of ['_made', '_raw', '_from', '_carried', '_hauled', '_freightIn', '_freightOut', 'shipping', '_seaVol']) if (t[k] != null) c[k] = structuredClone(t[k]);
+    // Output as that quarter's books reckoned it. (World 19: the figure of the day of handing over was reckoned another way, and the first
+    // quarter read as growth of an eighth to a fifth in every state.)
+    for (const k of ['gdp', 'realGdp']) if (Number.isFinite(t[k]) && t[k] > 0) c[k] = t[k]; }
   w.seaCargo = trial.seaCargo ?? 0;
   for (const f of Object.values(w.firms || {})) { const t = trial.firms?.[f.id]; if (!t || t.strike || t.lockout || t.halted) continue; for (const k of ['lastProfit', 'lastUnits', 'lastTax', 'lastPrice', 'earn']) if (t[k] != null) f[k] = structuredClone(t[k]); }
 }

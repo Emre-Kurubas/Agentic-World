@@ -179,9 +179,17 @@ function billLean(c, b, p) {
     case 'default_debt': s += x.econ > 0 ? -25 : 5; break;
     case 'declare_war': s += x.nation > 30 ? 12 : -15; break;
     case 'set_tax': { const up = (op.rate ?? 0) > (c.tax[op.kind] ?? 0), pays = { land: 'peasants', business: 'elite', income: 'workers' }[op.kind], mine = p.base === pays || (op.kind === 'income' && p.base === 'middle'); s += up ? (mine ? -20 : 4) : (mine ? 12 : 0); break; }
-    case 'set_budget': { const up = (op.share ?? 0) > (c.budget[op.category] ?? 0) ? 1 : -1; if (op.category === 'welfare') s += up * (x.econ < 0 ? 15 : -8); if (op.category === 'military') s += up * (x.nation > 20 ? 10 : -8); break; }
+    case 'set_budget': { const up = (op.share ?? 0) > (c.budget[op.category] ?? 0) ? 1 : -1; if (op.category === 'welfare') s += up * (x.econ < 0 ? 15 : -8); if (op.category === 'military') s += up * (x.nation > 20 ? 10 : -8); if (op.category === 'infrastructure') s += up * (p.base === 'workers' ? 14 : p.base === 'elite' ? -10 : 2); if (op.category === 'administration') s += up * (p.base === 'middle' ? 16 : p.base === 'elite' ? -12 : -2); break; }
     case 'nationalize': case 'nationalize_company': s += x.econ < -20 ? 18 : x.econ > 20 ? -30 : -5; break;
     case 'privatize': s += x.econ > 20 ? 15 : x.econ < -20 ? -20 : 0; break;
+    // Whose bread and whose trade a law touches. A duty on foreign grain is the landlord's and the ploughman's law and the townsman's dear loaf;
+    // a duty on wares shelters the mills and their hands and is paid by the village. A floor under pay and safety is the men's law and the owners'
+    // cost. Public works are work for the towns. (World 19: eleven bills in three parliaments, two bread duties and two cuts in the offices among
+    // them, all passed by a hundred to none: the parties nobody led judged every bill by its sponsor's colours and none by its content.)
+    case 'set_import': case 'set_tariff': { const cur = op.op === 'set_tariff' ? c.tariff ?? 0 : c.imports?.rules?.[op.good]?.tariff ?? c.tariff ?? 0, up = op.ban === true || (op.tariff ?? op.rate ?? cur) > cur + .001 || op.quota != null, bread = op.good === 'grain', sign = up ? 1 : op.clear === true || (op.tariff ?? op.rate ?? cur) < cur - .001 ? -1 : 0;
+      s += sign * (bread ? (p.base === 'peasants' ? 22 : p.base === 'elite' ? 6 : p.base === 'workers' ? -34 : -20) : (p.base === 'workers' ? 10 : p.base === 'elite' ? 14 : p.base === 'peasants' ? -16 : -4)); break; }
+    case 'set_labour_law': { const cur = c.labourLaw ?? { safety: 0, wage: 0 }, up = (op.min_safety ?? cur.safety) > (cur.safety || 0) + .001 || (op.min_wage ?? cur.wage) > (cur.wage || 0) + .001; s += (up ? 1 : -1) * (p.base === 'workers' ? 30 : p.base === 'elite' ? -34 : p.base === 'middle' ? 6 : 0); break; }
+    case 'set_institutions': if (op.postal_secrecy === true) s += x.auth > 30 ? -22 : 14; if (op.postal_secrecy === false) s += x.auth > 30 ? 12 : -24; break;
     case 'land_reform': s += p.base === 'peasants' ? 30 : p.base === 'elite' ? -40 : x.econ < 0 ? 10 : -10; break;
     // A law that puts a people or a faith under disabilities is voted by those who want the nation or the faith first and fought by the rest; lifting them, the other way.
     case 'set_status': { const harsh = op.equal !== true && ([op.vote, op.office, op.arms, op.protect].includes(false) || op.levy > 0); s += (x.nation > 30 || x.faith > 30 ? 12 : -20) * (harsh ? 1 : -1); break; }

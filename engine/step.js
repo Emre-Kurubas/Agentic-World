@@ -59,6 +59,9 @@ export function stepWorld(w) {
   debtStep(w);
   collapseStep(w);
   relationDrift(w);
+  // What stood in every province when the quarter closed. Attaches and travellers report this, a quarter late; only a service with eyes in the
+  // place, a watch on the frontier or troops in contact know what stands there today (queries.js troopsIn).
+  w.garrisons = {}; for (const u of Object.values(w.units)) { const p = w.provinces[u.province]; if (p && u.country === p.controller) w.garrisons[p.id] = (w.garrisons[p.id] || 0) + u.men; }
   pruneStep(w);
   labourEnd(w);
   carryStandingLate(w);
