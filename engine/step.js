@@ -65,6 +65,7 @@ export function stepWorld(w) {
   // place, a watch on the frontier or troops in contact know what stands there today (queries.js troopsIn).
   crisesStep(w);
   fearStep(w);
+  w.garrisonsWas = w.garrisons;
   w.garrisons = {}; for (const u of Object.values(w.units)) { const p = w.provinces[u.province]; if (p && u.country === p.controller) w.garrisons[p.id] = (w.garrisons[p.id] || 0) + u.men; }
   pruneStep(w);
   labourEnd(w);

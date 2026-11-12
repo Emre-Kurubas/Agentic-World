@@ -380,7 +380,9 @@ function lastQuarter(w, cs) {
     // Output as that quarter's books reckoned it. (World 19: the figure of the day of handing over was reckoned another way, and the first
     // quarter read as growth of an eighth to a fifth in every state.)
     // (Only the figure that is read: the money figure the first quarter's votes are reckoned on stays as it was handed over.)
-    if (Number.isFinite(t.realGdp) && t.realGdp > 0) c.realGdp = t.realGdp; }
+    if (Number.isFinite(t.realGdp) && t.realGdp > 0) c.realGdp = t.realGdp;
+    // How each class stood on the day of handing over: "angry" is angrier than that (queries.js seatMemoranda).
+    { const home = countryProvinces(w, c.id); c.moodBase = Object.fromEntries(['peasants', 'workers', 'middle'].map(k => { const n = home.reduce((a, p) => a + p.pops[k].n, 0) || 1; return [k, home.reduce((a, p) => a + p.pops[k].sat * p.pops[k].n, 0) / n]; })); } }
   w.seaCargo = trial.seaCargo ?? 0;
   for (const f of Object.values(w.firms || {})) { const t = trial.firms?.[f.id]; if (!t || t.strike || t.lockout || t.halted) continue; for (const k of ['lastProfit', 'lastUnits', 'lastTax', 'lastPrice', 'earn']) if (t[k] != null) f[k] = structuredClone(t[k]); }
 }

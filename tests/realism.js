@@ -4026,7 +4026,7 @@ chain('An order kept for its day is carried as a ruling would be, a signature go
     const third = aliveCountries(w).find(c => c.id !== 'U1' && c.id !== foe.id), rel = third.relations.U1, again = applyOp(w, L, { op: 'declare_war', target: foe.id, aims: { provinces: [to.id], text: 'the same, in other words' } });
     assert.ok(again.ok && /is at war with [^]* already, and its aims stand as they were declared/.test(again.msg) && third.relations.U1 === rel, `${again.msg}`); }
   // The cast.
-  { const cfg = JSON.parse(fs_.readFileSync(new URL('../config.json', import.meta.url), 'utf8')); assert.deepEqual(cfg.models.cast, ['opus', 'sonnet'], 'the characters are dealt two models'); assert.ok(!JSON.stringify(cfg.models).includes('haiku'));
+  { const cfg = JSON.parse(fs_.readFileSync(new URL('../config.json', import.meta.url), 'utf8')); assert.deepEqual(cfg.models.cast, ['opus', 'sonnet', 'fable'], 'the characters are dealt three models'); assert.deepEqual(cfg.models.effort, { opus: 'medium', sonnet: 'high', fable: 'medium' }, 'each at the effort the user set'); assert.ok(!JSON.stringify(cfg.models).includes('haiku'));
     const w = inherited(2696855, 8), free = { ...base, models: { ...cfg.models } }; for (const ch of Object.values(w.characters)) delete ch.model; dealCast(free, w, (() => { let s = 7; return () => (s = (s * 16807) % 2147483647) / 2147483647; })());
     for (const c of aliveCountries(w)) { const ms = ROLES.map(r => w.characters[c[r]].model); assert.ok(ms.includes('opus') && ms.includes('sonnet') && ms.every(m => m === 'opus' || m === 'sonnet') && ms.filter(m => m === 'opus').length === 2, `${c.name}: two of each at every table (${ms.join(', ')})`); } }
 });
