@@ -9,7 +9,8 @@ import { afflict } from './health.js';
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 export const cellsWord = v => v >= 60 ? 'strong, armed and striking at will' : v >= 35 ? 'organised and armed' : v >= 15 ? 'small and scattered' : 'no more than talk';
 // How far the lawful ways are shut, from about 0.1 in a free country to 1.5 under a police state.
-export const shut = c => (c.unions ? .35 : 1) * (1.15 - c.pressFreedom / 120) * (c.elections ? .6 : 1) + c.repress / 180;
+// (Meetings forbidden and societies broken up are doors shut like the others: masses.js.)
+export const shut = c => (c.unions ? .35 : 1) * (1.15 - c.pressFreedom / 120) * (c.elections ? .6 : 1) + c.repress / 180 + (c.noMeetings ? .12 : 0) + Math.min(.2, (c.societies || []).filter(s => s.banned).length * .06);
 
 function strike(w, c) {
   const ruler = w.characters[c.leader], chief = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'police' && x.status === 'free');

@@ -20,6 +20,7 @@ import { diplomacyStep } from './diplomacy.js';
 import { pressStep } from './press.js';
 import { fearStep } from './fear.js';
 import { crisesStep } from './crises.js';
+import { massStep } from './masses.js';
 import { bondStep } from './bonds.js';
 import { disputeStep } from './politics.js';
 import { countryProvinces, aliveCountries, provincePop } from './world.js';
@@ -63,6 +64,7 @@ export function stepWorld(w) {
   relationDrift(w);
   // What stood in every province when the quarter closed. Attaches and travellers report this, a quarter late; only a service with eyes in the
   // place, a watch on the frontier or troops in contact know what stands there today (queries.js troopsIn).
+  massStep(w);
   crisesStep(w);
   fearStep(w);
   w.garrisonsWas = w.garrisons;

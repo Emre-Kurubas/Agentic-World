@@ -24,6 +24,7 @@ import { shame, honourOf, aimsMet, aimsText, kindWord, dealsWith, maySign, tieOf
 import { STANDING_OPS, standingOp, standingStep } from './standing.js';
 import { INQUIRY_OPS, inquiryOp } from './inquiry.js';
 import { MEANS_OPS, meansOp } from './means.js';
+import { MASS_OPS, massOp } from './masses.js';
 import { TENDER_OPS, tenderOp, tenderStep } from './tender.js';
 import { foundPaper, papersOf, carry, MAX_PAPERS, setPaper, censor, paperWords, keptQuiet, findPaper } from './press.js';
 import { buyBonds, sellBonds } from './bonds.js';
@@ -67,7 +68,7 @@ QUIET.add('destroy_evidence');
 QUIET.add('inquire').add('inspect');
 PRIVATE.push('denounce'); PERMISSIONS.general.add('stage_incident'); for (const seat of ['general', 'opposition', 'oligarch']) PERMISSIONS[seat].add('denounce');
 QUIET.add('denounce').add('stage_incident').add('turn_informant');
-const OWN = ['set_paper', 'incite', 'accept_loan', 'decline_loan', ...NOTE_OPS, ...SEAT_OPS];
+const OWN = ['set_paper', 'incite', 'accept_loan', 'decline_loan', 'petition', 'found_society', 'rally', 'call_strike', ...NOTE_OPS, ...SEAT_OPS];
 QUIET.add('lead_rising').add('name_deputy');
 for (const op of NOTE_OPS) QUIET.add(op);
 PRIVATE.push(...OWN, ...OPEN_STANDING);
@@ -632,6 +633,7 @@ function applyOne(w, actor, op) {
   if (STANDING_OPS.has(op.op)) return standingOp(w, actor, c, op, { fail, num, known: k => typeof k === 'string' && /^[a-z_]{3,}$/.test(k), may: k => !perm || perm.has(k) || delegated(c, actor, k) });
   if (INQUIRY_OPS.has(op.op)) return inquiryOp(w, actor, c, op, { fail, num, allowance: (key, cap, want) => allowance(w, c, key, cap, want), pays: m => treasuryPays(c, m, 'secret'), leads: leadsParties(w, c, actor).some(p => (c.parliament?.seats?.[p.id] ?? 0) > 0) });
   if (TENDER_OPS.has(op.op)) return tenderOp(w, actor, c, op, { fail, num });
+  if (MASS_OPS.has(op.op)) return massOp(w, actor, c, op, { fail, num });
   if (MEANS_OPS.has(op.op)) return meansOp(w, actor, c, op, { fail, num, target, pay: (cost, what) => pay(c, cost, what), allowance: (who, key, cap, want) => allowance(w, who, key, cap, want), personFor, noPerson });
   if (SEAT_OPS.has(op.op)) return seatOp(w, actor, c, op, { fail, num, governs: governs(w, c, actor), personFor });
   switch (op.op) {

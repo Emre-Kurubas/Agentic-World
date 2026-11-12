@@ -5,6 +5,7 @@ import { clamp, rand, news, sum, pick } from './util.js';
 import { STATE, isOpen, firmBy, lawFor } from './firms.js';
 import { him, himself } from './names.js';
 import { cowed, frighten, DREAD } from './fear.js';
+import { strikeChest } from './masses.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 const trace = (w, ch, text) => { if (!ch) return; (ch.secrets ||= []).push({ turn: w.turn, text }); ch.secrets = ch.secrets.slice(-12); };
@@ -16,7 +17,8 @@ export const stopped = f => !!(f.strike || f.lockout || f.halted > 0);
 const bossOf = (w, c, f) => f.owner === STATE ? w.characters[c.leader] : w.characters[f.owner];
 // Bodies that inspect the works make them safer and take some of the anger; relief funds keep strikers fed.
 const inspectors = c => clamp(sum((c.institutions || []).filter(i => i.id && i.powers.includes('industry')), i => i.strength), 0, 1.2);
-const relief = c => clamp(sum((c.institutions || []).filter(i => i.id && i.powers.includes('welfare')), i => i.strength) * .12, 0, .3);
+// What keeps men who are out fed: relief bodies, and a union's own chest (masses.js).
+const relief = c => clamp(sum((c.institutions || []).filter(i => i.id && i.powers.includes('welfare')), i => i.strength) * .12 + strikeChest(c), 0, .45);
 
 function disaster(w, c, p, f) {
   const boss = bossOf(w, c, f), ruler = w.characters[c.leader], pit = f.sector === 'mine';
@@ -79,7 +81,9 @@ export function labourStep(w) {
       else { p.unrest = clamp(p.unrest + 3, 0, 100); for (const o of others) o.stir = (o.stir || 0) + 6; }
     }
     // Angry men who are afraid stay angry and stay at work (fear.js).
-    else if (!(f.halted > 0) && f.temper > 62 && rand(w) < (c.unions ? .45 : .12) * cowed(c)) walkOut(w, c, p, f);
+    // Men called out by a union they know go out when they are angry enough, without waiting for the day's chance (masses.js call_strike).
+    // (Whether they were angry enough was settled when the call went out.)
+    else if (!(f.halted > 0) && ((f.called != null && w.turn - f.called <= 1) || (f.temper > 62 && rand(w) < (c.unions ? .45 : .12) * cowed(c)))) { delete f.called; f.temper = Math.max(f.temper, 63); walkOut(w, c, p, f); }
     if (stopped(f)) p.halt[keyOf(f)] = clamp((p.halt[keyOf(f)] || 0) + f.stake * .85, 0, .95);
     if (f.halted > 0) f.haltedNow = true;
     const a = acc[p.id] ||= { v: 0, n: 0 };
