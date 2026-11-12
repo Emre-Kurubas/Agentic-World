@@ -27,7 +27,7 @@ import { bondsOf, holdersOf, marketPrice } from '../engine/bonds.js';
 import { season, TERRAIN_DEF, FRONTAGE, postureWords, marchQuarters, supplyWords, supplyOf, railWorks, shellsFor, abilityWord, commanderOf } from '../engine/military.js';
 import { holdsFire } from '../engine/frontier.js';
 import { SHIPS, kindOf, orderWords, fromBase, readiness, baseMap, liftOf, LIFT, QUAY, iced } from '../engine/navy.js';
-import { claimsOf } from '../engine/ops.js';
+import { claimsOf, UNFOUGHT } from '../engine/ops.js';
 import { quarterLabel, clamp } from '../engine/util.js';
 import { quote, wasteOf, durationOf, projectYield, projectLabel, WORKS } from '../engine/projects.js';
 import { importOrder, sealOf, inUse, SPREAD, upkeepAt, paceOf, literacyAt } from '../engine/economy.js';
@@ -501,6 +501,7 @@ const WAYS = {
   contracts: () => "What the state buys can be put to tender (tender: so much of a good each quarter for so many quarters, open to the houses of the country or of any country): every house with a works that makes it is told, names a sealed price (bid), and when the prices are opened next quarter the lowest takes the contract, paid by the treasury for what is delivered. Whoever governs can give it to a named house whatever the prices (award_tender); a lower price passed over is in the books of both for whoever looks.",
   my_companies: () => "A government's tender for what your works make is answered with a sealed price a unit (bid); it is opened the next quarter and the lowest takes the contract.",
   my_secrets: () => "What is on paper can be destroyed (destroy_evidence), once in a quarter: what is burned cleanly no inquiry and no dossier will find; what somebody else already holds a copy of cannot be reached; and now and then the hand that was to burn a page keeps it.",
+  wars: w => w.dearLand ? `What land costs the government that loses it. Land lost in a peace or given up to a demand counts at home for the people who went with it. Land signed away without a battle fought for it counts for more: about ${UNFOUGHT.standing} of the government's standing beyond that, and the army's trust in the government that signed (every regiment's loyalty and spirit, and its commanders'). A state that takes land by the same paper has made an exchange and not a surrender. A treaty that would cost a government so says it before it is signed.` : '',
   technology: () => "A process another state has mastered can also be stolen by agents (steal_tech: one attempt a quarter against one state; it may fail and be traced).",
   country: (w, c, ch, arg) => { const o = w.countries[arg]; return o?.alive && o.id !== c.id ? yearbook(w, c, o, ch) : ''; },
 };

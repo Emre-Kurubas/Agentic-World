@@ -333,7 +333,7 @@ export function inheritStates(w) {
   // Routes are known from the start so shipment and credit decisions can be made in the first quarter too.
   updateStrategic(w); updateRoutes(w);
   // The people around the seats are there from the first day, and the state's offices work as they are staffed.
-  w.burdens = true; w.friction = true; seatCourt(w);
+  w.burdens = true; w.friction = true; w.dearLand = true; seatCourt(w);
   // An army that has stood for years has sent trained men home every year: they are its reserve.
   for (const c of cs) c.reserve = Object.values(w.units).filter(u => u.country === c.id).reduce((a, u) => a + u.men, 0) * RESERVE;
   settle(w, cs);
@@ -364,4 +364,30 @@ export function inheritStates(w) {
     const big = Object.values(w.units).filter(u => u.country === c.id && u.kind === 'infantry').sort((a, b) => b.men - a.men)[0]; if (!big) continue;
     const n = Math.round(Math.min(big.men * .15, Math.max(4, away.reduce((a, p) => a + provincePop(p), 0) * .004))), at = [...away].sort((a, b) => provincePop(b) - provincePop(a))[0]; if (n < 2) continue;
     const g = makeUnit(w, c.id, at.id, n, big.quality, big.loyalty, 'infantry'); g.morale = big.morale; g.equip = big.equip; big.men -= n; }
+  garrisonFrontiers(w, cs);
+}
+
+// What a neighbour wants back is not left open to him. A province that another living state lost and has not given up is inherited behind
+// fortress works and with a garrison standing on the defensive: about an eighth of the holder's army, never fewer than eight thousand and never
+// more than a fifth of what the claimant has under arms. And on the frontier with the neighbour whose army is the largest, every province that
+// touches him and stands empty has a covering force of a few thousand. All of it is drawn from the state's largest bodies of troops: the army is
+// no larger for it, it stands elsewhere. Done last of all on the day of handing over, so that nothing else about that day depends on it.
+// (World 17: four of the six claimed provinces and four fifths of all frontier provinces were inherited without a soldier; in two years four wars
+// were declared for such provinces and not one battle was fought: the land was walked into and signed away. The owner: "claimed provinces are to
+// be inherited garrisoned and with their fortress manned, and covering troops where the frontier faces the largest neighbour, so that taking them
+// takes fighting".)
+export const CLAIM_GARRISON = { share: .12, least: 8, ofClaimant: .2 }, SCREEN = { share: .03, least: 3, most: 8, total: .15 };
+function garrisonFrontiers(w, cs) {
+  const armyOf = c => Object.values(w.units).filter(u => u.country === c.id).reduce((a, u) => a + u.men, 0), here = (c, p) => Object.values(w.units).filter(u => u.country === c.id && u.province === p.id).reduce((a, u) => a + u.men, 0);
+  const draw = (c, n, at, posture) => { const big = Object.values(w.units).filter(u => u.country === c.id && u.kind === 'infantry' && u.province !== at.id).sort((a, b) => b.men - a.men || (a.id < b.id ? -1 : 1))[0]; if (!big || big.men - n < Math.max(8, n)) return null;
+    const g = makeUnit(w, c.id, at.id, n, big.quality, big.loyalty, 'infantry'); g.morale = big.morale; g.equip = big.equip; big.men -= n; if (posture) g.posture = posture; return g; };
+  const strength = Object.fromEntries(cs.map(c => [c.id, armyOf(c)]));
+  for (const c of cs) { const mine = countryProvinces(w, c.id), total = strength[c.id]; if (!(total > 0)) continue;
+    const claimed = mine.filter(p => p.lostBy && p.lostBy !== c.id && w.countries[p.lostBy]?.alive).sort((a, b) => provincePop(b) - provincePop(a) || (a.id < b.id ? -1 : 1)).slice(0, 3);
+    for (const p of claimed) { p.fort = Math.max(p.fort || 0, 1); const want = Math.round(clamp(total * CLAIM_GARRISON.share, CLAIM_GARRISON.least, Math.max(CLAIM_GARRISON.least, (strength[p.lostBy] || 0) * CLAIM_GARRISON.ofClaimant))), lack = want - here(c, p); if (lack >= 2) draw(c, Math.round(lack), p, 'defensive'); else for (const u of Object.values(w.units)) if (u.country === c.id && u.province === p.id && !u.posture) u.posture = 'defensive'; }
+    const facing = {}; for (const p of mine) for (const n of p.neighbors) { const o = w.provinces[n].owner; if (o && o !== c.id && w.countries[o]?.alive) (facing[o] ||= new Set()).add(p); }
+    const strongest = Object.keys(facing).sort((a, b) => (strength[b] || 0) - (strength[a] || 0) || (a < b ? -1 : 1))[0]; if (!strongest) continue;
+    const screen = Math.round(clamp(total * SCREEN.share, SCREEN.least, SCREEN.most)); let spent = 0;
+    for (const p of [...facing[strongest]].sort((a, b) => provincePop(b) - provincePop(a) || (a.id < b.id ? -1 : 1))) { if (here(c, p) >= 1 || spent + screen > total * SCREEN.total) continue; if (draw(c, screen, p)) spent += screen; }
+  }
 }

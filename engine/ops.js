@@ -1,5 +1,5 @@
 import { clamp, news, rand, nextId, pick, sum, quarterLabel } from './util.js';
-import { CLASSES, GOODS, countryProvinces, atWar, hasTreaty, makeUnit, aliveCountries, clampRel, provincePop, goHome } from './world.js';
+import { CLASSES, GOODS, countryProvinces, atWar, hasTreaty, makeUnit, aliveCountries, clampRel, provincePop, goHome, hasFought } from './world.js';
 import { executePlot, neutralize, die, SUCCESSION, distance } from './politics.js';
 import { joinUnits, capture, pathStep, roadTo, upkeepCost, PAY_FIRST, settleOccupations, marchQuarters, POSTURES, postureWords, MANNERS, commanderOf, supplyOf, shellsFor, abilityWord, closedNow, season } from './military.js';
 import { makeFleet, TECHS, PLANTS, DEPOSITS, GOOD_LABEL, ROLES, spawnCharacter, bfsSea } from './world.js';
@@ -311,9 +311,12 @@ const cname = (w, id) => w.countries[id]?.name ?? id;
 // What a treaty does to the land the day it is signed, in the engine's own terms: the provinces it names change hands, and in a peace every other
 // province one party holds of another's goes back to its owner (or stays where it is, if the treaty says each keeps what it holds). The words of a
 // treaty are the parties' own; this is what will actually happen, and whoever offers, receives or signs it is told so by name.
+// What a government pays at home, beyond the people lost, for land it signs away without a battle fought for it; and what the army thinks of it.
+export const UNFOUGHT = { standing: 8, army: 12, loyalty: 8, morale: 6 };
 export function settlementText(w, t) {
   if (!t) return ''; const name = pid => `${w.provinces[pid]?.name} (${pid})`, out = [];
   const cede = (t.cede || []).map(x => x && typeof x === 'object' ? x : { province: x }).filter(x => w.provinces[x.province]);
+  if (cede.length && w.dearLand) { const soft = [...new Set(cede.map(x => { const p = w.provinces[x.province], to = x.to ?? t.parties.find(id => id !== p.owner); return hasFought(w, p.owner, to) ? null : p.owner; }).filter(Boolean))].filter(id => !cede.some(x => (x.to ?? t.parties.find(y => y !== w.provinces[x.province].owner)) === id)); if (soft.length) out.push(`${soft.map(id => cname(w, id)).join(' and ')} ${soft.length > 1 ? 'have' : 'has'} fought no battle for this land: a government that signs land away so pays for it at home, beyond the people it loses, with about ${UNFOUGHT.standing} of its standing and with the army's trust.`); }
   if (cede.length) out.push(`On signing these provinces change hands: ${cede.map(x => { const p = w.provinces[x.province], to = x.to ?? t.parties.find(id => id !== p.owner); return `${name(x.province)} from ${cname(w, p.owner)} to ${cname(w, to)}`; }).join('; ')}.`);
   if (t.kind === 'peace') {
     const held = Object.values(w.provinces).filter(p => t.parties.includes(p.owner) && t.parties.includes(p.controller) && p.owner !== p.controller && !cede.some(x => x.province === p.id));
@@ -357,19 +360,41 @@ function stateAims(w, c, target, op) {
   return stated ? `War is declared on ${target.name}, for: ${what}. The country and the world will measure the peace against that: one that brings it is a war won, one that gives most of it up is a war lost, and going on once it is in hand wearies the country faster.${stated.regime ? ' Demanding the fall of their ruler rallies their people to him and alarms other governments.' : ''}` : `War is declared on ${target.name}, with no aims stated: nothing at home or abroad says what would end it, and other governments are the more uneasy for that.`;
 }
 // What is settled when several states are bound by a treaty, for those newly bound: wars among them end, the land and money it names change hands, guarantees are given.
+// The price of land given up without a battle fought for it, paid by the government that signs (see settleTerms). gave: for each state, the
+// provinces it handed over, to whom, and whether it had fought that state in the war; got: the states that received land by the same paper.
+function unfoughtLand(w, gave, got, note) {
+  if (!w.dearLand) return;
+  for (const [id, list] of Object.entries(gave)) { const unfought = list.filter(([, , fought]) => !fought); if (!unfought.length || got[id]) continue;
+    const x = w.countries[id], names = unfought.map(([p]) => p.name).join(' and '), to = [...new Set(unfought.map(([, to]) => w.countries[to]?.name))].join(' and ');
+    x.legitimacy = clamp(x.legitimacy - UNFOUGHT.standing, 0, 100); x.blocs.army.sat = clamp(x.blocs.army.sat - UNFOUGHT.army, 0, 100);
+    for (const u of Object.values(w.units)) if (u.country === id) { u.loyalty = clamp((u.loyalty ?? 60) - UNFOUGHT.loyalty, 0, 100); u.morale = clamp((u.morale ?? 60) - UNFOUGHT.morale, 0, 100); }
+    for (const fl of Object.values(w.fleets)) if (fl.country === id) fl.morale = clamp((fl.morale ?? 60) - UNFOUGHT.morale, 0, 100);
+    for (const ch of Object.values(w.characters)) if (ch.alive && ch.country === id && isMinor(ch) && Object.values(w.units).some(u => u.commander === ch.id)) ch.loyalty = clamp(ch.loyalty - UNFOUGHT.loyalty, 0, 100);
+    note(id, ` ${names} was given up to ${to} without a battle fought for it: beyond the people who went with the land, that cost the government about ${UNFOUGHT.standing} of its standing at home, and the army holds it against the government that signed.`);
+    news(w, `${x.name} has given up ${names} to ${to} without a battle fought for it. The army and the country take it hard.`, { kind: 'diplomacy', countries: [id] });
+    tell(w, w.characters[x.leader], 'The capital', `${names} was signed away without a battle fought for it. In the streets and in the messes it is called a surrender: the government's standing has fallen by about ${UNFOUGHT.standing} beyond what the lost people count for, and the regiments and their commanders trust it the less.`);
+    if (x.general !== x.leader) tell(w, w.characters[x.general], 'The army', `${names} has been signed away without the army having fired a shot for it. The regiments take it as their own disgrace and the government's doing.`); }
+}
 function settleTerms(w, t, fresh) {
   const had = Object.fromEntries(t.parties.map(id => [id, ownedPeople(w, id)])), notes = {}, note = (id, s) => { notes[id] = (notes[id] || '') + s; }, forced = t.kind === 'peace';
   const warring = []; if (t.kind === 'peace') for (const x of fresh) for (const y of t.parties) if (x !== y && atWar(w, x, y)) warring.push([x, y, warsBetween(w, x, y)]);
-  let moved = false;
+  let moved = false; const gave = {}, got = {};
   for (const g of t.grants || []) {
     const p = w.provinces[g.province]; if (g.done || !p || !t.parties.includes(p.owner) || !t.parties.includes(g.to) || p.owner === g.to) continue;
-    const giver = w.countries[p.owner], taker = w.countries[g.to]; g.done = true; moved = true;
+    const giver = w.countries[p.owner], taker = w.countries[g.to]; g.done = true; moved = true; (gave[giver.id] ||= []).push([p, taker.id, hasFought(w, giver.id, taker.id)]); got[taker.id] = true;
     p.owner = taker.id; p.controller = taker.id; p.admin = Math.min(p.admin ?? .5, .3); p.governor = null; delete p.siege; handOver(w, p, giver.id, taker.id, forced);
     if (giver.capital === p.id) { const next = [...countryProvinces(w, giver.id)].sort((a, b) => provincePop(b) - provincePop(a))[0]; if (next) giver.capital = next.id; }
     news(w, `${p.name} passed from ${giver.name} to ${taker.name} by treaty.`, { kind: 'diplomacy', countries: [giver.id, taker.id], province: p.id, secret: !!t.secret });
   }
   if (moved && forced) { const by = {}; for (const g of t.grants || []) { const p = w.provinces[g.province]; if (p && p.owner === g.to && p.lostBy && p.lostIn === 1900 + Math.floor(w.turn / 4)) (by[`${g.to}|${p.lostBy}`] ||= []).push(p); }
     for (const [k, got] of Object.entries(by)) { const [to, from] = k.split('|'), taker = w.countries[to], giver = w.countries[from]; if (!taker?.alive) continue; deed(w, taker, `took ${got.map(p => p.name).join(' and ')} from ${giver?.name ?? 'a neighbour'} by the peace it made`); alarm(w, taker, giver, got); } }
+  // Land given up without a battle fought for it. What a government pays for land lost is measured by the people who went with it, and for a
+  // province of half a million that is next to nothing; but a government that signs land away for which its army never fired a shot has done
+  // something else, and pays for that as well: a fixed loss of standing at home, and the army's trust in it. A state that takes land in the same
+  // paper has made an exchange, not a surrender. (World 17: four wars were declared in two years for provinces that stood empty, not one battle was
+  // fought, the land was signed over within two quarters, and the governments that signed lost two points of standing or gained three. The owner:
+  // "giving up land without a fight must be heavy: a fixed loss of legitimacy and a fall in the army's loyalty". Worlds made from then on.)
+  unfoughtLand(w, gave, got, note);
   if (moved) settleOccupations(w);
   // The wars end once the land the peace names has changed hands, not before: winding up a war sends every occupied province back to its owner and
   // every soldier out of land that is not his country's, and a province ceded by this very treaty is his country's. (World 15, the fifth quarter:
@@ -514,7 +539,9 @@ export function applyOp(w, actor, op) {
       return bill ? { ok: true, msg: `Referred to parliament: ${bill.id}`, bill: bill.id } : fail('The parliamentary agenda is full.');
     }
   }
-  const target = op.target ? alive(w, op.target) : null;
+  // Where an order that can be about one's own country names it as its target, it means home. (World 17: somebody buying his own state's bonds
+  // was told that this needs another country.)
+  const home = op.target === c.id && HOME_TOO.has(op.op), target = op.target && !home ? alive(w, op.target) : null;
   if (target && target.id === c.id) return fail('That needs another country, not your own.');
   const gdp = Math.max(c.gdp, 1);
   if (FIRM_OPS.has(op.op)) return firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num);
@@ -1283,12 +1310,16 @@ export function applyOp(w, actor, op) {
       if (t.ultimatum) { c.legitimacy = clamp(c.legitimacy - 4, 0, 100); other.legitimacy = clamp(other.legitimacy + 2, 0, 100); const g = (c.grudges ||= {})[other.id] ||= { incident: 0, kin: 0 }; g.incident += 15; news(w, `${c.name} has accepted the ultimatum of ${other.name}.`, { kind: 'diplomacy', countries: [c.id, other.id] }); }
       const fought = warsBetween(w, c.id, other.id), land = settlementText(w, t); t.since = w.turn;
       if (land && (t.kind === 'peace' || t.cede?.length)) { news(w, `${c.name} and ${other.name}: ${land.replace('On signing these provinces change hands', 'by the treaty these provinces changed hands').replace('goes back to its owner the day the peace is signed', 'went back to its owner')}`, { kind: 'diplomacy', countries: [c.id, other.id], secret: !!t.secret }); tell(w, w.characters[other.leader], c.name, `${c.name} has signed ${t.id}. ${land}`); }
+      const gave = {}, got = {}, surrender = {};
       for (const pid of t.cede || []) {
         const p = w.provinces[pid], giver = w.countries[p.owner], taker = p.owner === c.id ? other : p.owner === other.id ? c : null; if (!taker) continue;
+        (gave[giver.id] ||= []).push([p, taker.id, hasFought(w, giver.id, taker.id)]); got[taker.id] = true;
         p.owner = taker.id; p.controller = taker.id; p.admin = Math.min(p.admin ?? .5, .3); p.governor = null; delete p.siege; handOver(w, p, giver.id, taker.id, t.kind === 'peace' || !!t.ultimatum);
         if (giver.capital === pid) { const next = [...countryProvinces(w, giver.id)].sort((a, b) => provincePop(b) - provincePop(a))[0]; if (next) giver.capital = next.id; }
         news(w, `${p.name} passed from ${giver.name} to ${taker.name} by treaty.`, { kind: 'diplomacy', countries: [giver.id, taker.id], province: pid });
       }
+      // Signed away without a battle fought for it (while the war, if there is one, still stands on the books).
+      unfoughtLand(w, gave, got, (id, text) => { surrender[id] = (surrender[id] || '') + text; });
       // Land taken at the end of a war or under a threat is a deed others read of, and those who live beside the taker are warned by their staffs.
       if ((t.kind === 'peace' || t.ultimatum) && t.cede?.length) for (const [taker, giver] of [[c, other], [other, c]]) { const got = (t.cede || []).map(pid => w.provinces[pid]).filter(p => p && p.owner === taker.id && had[taker.id] != null && p.lostBy === giver.id); if (got.length) { deed(w, taker, `took ${got.map(p => p.name).join(' and ')} from ${giver.name} by the ${t.ultimatum ? 'ultimatum it sent' : 'peace it made'}`); alarm(w, taker, giver, got); } }
       // The war is wound up once the land has changed hands, not before (see settleTerms): troops standing in what the treaty gives their country stay.
@@ -1309,6 +1340,7 @@ export function applyOp(w, actor, op) {
         if (x === c) signed = ` About ${Math.round(lost * 100)}% of the country's people went with the land that was signed away; the government's standing at home fell by about ${Math.round(cost)}.`;
         tell(w, w.characters[x.leader], 'The capital', `The treaty with ${y.name} took about ${Math.round(lost * 100)}% of the country's people with the land it gave up. It is being called a defeat, in the streets and in the army.`);
       }
+      if (surrender[c.id]) signed += surrender[c.id];
       if (t.kind === 'peace') { const paid = (t.reparations || 0); signed += weighAims(w, c, other, fought, t.payer === other.id ? paid : 0); weighAims(w, other, c, fought, t.payer === c.id ? paid : 0); }
       news(w, t.kind === 'peace' ? `${c.name} and ${other.name} signed a peace.` : t.kind === 'armistice' ? `${c.name} and ${other.name} signed an armistice: the fighting stops where the lines stand${t.expires != null ? `, for ${t.expires - w.turn} quarters` : ''}.` : `Treaty signed between ${c.name} and ${other.name}: ${t.kind.replace('_', ' ')}.`, { kind: 'diplomacy', countries: [c.id, other.id], secret: !!t.secret });
       const harsh = t.annex || t.reparations > 0 || t.cede?.length, warmth = t.kind === 'armistice' ? 5 : t.kind === 'peace' && harsh ? 4 : 18;
@@ -1686,6 +1718,7 @@ function build(w, c, op, actor) {
   return { ok: true, msg: `Started: ${q.what} at ${p.name} for ${Math.round(cost)}${spare}${!q.piece && gain ? `, which ${gain}` : ''}; ready in ${durationOf(kind)} quarters.${sized ? ` No sum was named, so the engineers kept to what the treasury had in hand; the usual measure there would have cost about ${Math.round(sized * each)}. Name a sum to build more.` : ''}${waste > 1.08 ? ` It costs about ${Math.round((waste - 1) * 100)}% more than the work is worth: graft, and the distance of ${p.name} from the capital's eye.` : ''}${note}` };
 }
 const ok = () => ({ ok: true, msg: 'Applied.' });
+const HOME_TOO = new Set(['buy_bonds', 'sell_bonds', 'fund_party', 'fund_paper', 'recruit_informant', 'found_company']);
 // What somebody who may not give an order can do instead, said with the refusal.
 const OPEN_WAY = {
   build: 'A private person builds with his own money: a new works is founded as a company (found_company, naming what it is to make or dig, the province and the capital put in), and a works he owns is enlarged (invest_company)',

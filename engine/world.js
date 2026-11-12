@@ -382,6 +382,10 @@ export const countryProvinces = (w, id) => Object.values(w.provinces).filter(p =
 export function goHome(provs, men) { const hands = sum(provs, p => p.pops.peasants.n + p.pops.workers.n); if (!(men > 0) || !(hands > 0)) return; for (const p of provs) for (const k of ['peasants', 'workers']) p.pops[k].n += men * p.pops[k].n / hands; }
 export const provincePop = p => CLASSES.reduce((a, k) => a + (p.pops[k]?.n || 0), 0);
 export const atWar = (w, a, b) => w.wars.some(x => x.active && ((x.a.includes(a) && x.b.includes(b)) || (x.b.includes(a) && x.a.includes(b))));
+// A battle between two states at war is remembered in the war itself: land signed away without one is another thing than land lost in one.
+export const markFought = (w, a, b) => { for (const x of w.wars) if (x.active && !x.civil && ((x.a.includes(a) && x.b.includes(b)) || (x.b.includes(a) && x.a.includes(b)))) { (x.fought ||= {})[a] = w.turn; x.fought[b] = w.turn; } };
+// Has a fought a battle against b in a war still on between them?
+export const hasFought = (w, a, b) => w.wars.some(x => x.active && !x.civil && x.fought?.[a] != null && ((x.a.includes(a) && x.b.includes(b)) || (x.b.includes(a) && x.a.includes(b))));
 export const hasTreaty = (w, a, b, kind) => w.treaties.some(t => t.active && t.kind === kind && t.parties.includes(a) && t.parties.includes(b));
 export const leaderOf = (w, c) => w.characters[c.leader];
 export const aliveCountries = w => Object.values(w.countries).filter(c => c.alive);

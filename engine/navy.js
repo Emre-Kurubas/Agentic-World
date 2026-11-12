@@ -3,7 +3,7 @@
 // broadside, by how the ships are kept, coaled and led, and by the day; what is hit is as often towed home as sunk, and comes back when a
 // dock has had it long enough. Small craft and mines let a weak navy make its own coast dangerous to a strong one.
 import { clamp, sum, news, between, rand } from './util.js';
-import { atWar, hasTreaty, countryProvinces, aliveCountries, makeFleet } from './world.js';
+import { atWar, hasTreaty, countryProvinces, aliveCountries, makeFleet, markFought } from './world.js';
 import { hasTech } from './economy.js';
 import { fighting, commanderOf, season, leadOf } from './military.js';
 import { die } from './politics.js';
@@ -233,6 +233,7 @@ function fight(w, sea, fs, beaten) {
   const sunkText = t => Object.entries(t.sunk).filter(([, n]) => n >= .5).map(([k, n]) => count(n, k)).join(', ') || 'nothing', hurtText = t => Object.entries(t.hurt).filter(([, n]) => n >= .5).map(([k, n]) => count(n, k)).join(', ');
   const total = (key, part) => Math.round(sum(Object.values(tally[key]), x => sum(Object.values(x[part]))) * 10) / 10, wk = aWins ? 'A' : 'B', lk = aWins ? 'B' : 'A';
   news(w, `Naval battle in ${seaName(w, sea)}: ${winner.name} prevailed over ${loser.name}. Ships sunk: ${Math.round(total(wk, 'sunk'))} of the victor's, ${Math.round(total(lk, 'sunk'))} of the beaten side's.`, { kind: 'war', countries: fighters });
+  markFought(w, winner.id, loser.id);
   (w.seaFights ||= []).push({ sea, winner: winner.id, loser: loser.id, turn: w.turn, sunk: [total(wk, 'sunk'), total(lk, 'sunk')], disabled: [total(wk, 'hurt'), total(lk, 'hurt')] });
   // What each staff knows of the day: its own losses as counted, the enemy's as seen from the bridge, and what told.
   const lineOf = xs => Object.entries(xs.reduce((a, f) => ((a[kindOf(f)] = (a[kindOf(f)] || 0) + f.ships), a), {})).map(([k, n]) => count(n, k)).join(', ');
