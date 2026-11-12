@@ -480,10 +480,10 @@ export function leanLines(w, c, own = false) {
   // And the other way: who leans on this state.
   const on = [];
   for (const o of aliveCountries(w)) { if (o.id === c.id) continue; const g = leanFacts(w, o), why = [];
-    const ships = g.carriers.find(x => x.id === c.id); if (ships && ships.share >= .25) why.push(`${partWord(ships.share)} of its sea trade sails in ${own ? 'our' : 'its'} ships`);
-    for (const x of g.goods.filter(x => x.top === c.id && x.share * x.topShare >= .12).slice(0, 2)) why.push(`${partWord(x.share * x.topShare)} of the ${good(x.g)} it uses comes from ${own ? 'us' : 'it'}`);
-    const debt = g.owes.find(x => x.id === c.id); if (debt) why.push(`it owes ${own ? 'us' : 'it'} ${Math.round(debt.gold)} in gold`);
-    for (const x of g.markets.filter(x => x.top === c.id && x.share >= .5).slice(0, 1)) why.push(`${partWord(x.share)} of the ${good(x.g)} it sells abroad is bought ${own ? 'by us' : 'by it'}`);
+    const ships = g.carriers.find(x => x.id === c.id); if (ships && ships.share >= .25) why.push(`${partWord(ships.share)} of its sea trade sails in ${own ? 'our ships' : `the ships of ${c.name}`}`);
+    for (const x of g.goods.filter(x => x.top === c.id && x.share * x.topShare >= .12).slice(0, 2)) why.push(`${partWord(x.share * x.topShare)} of the ${good(x.g)} it uses comes from ${own ? 'us' : c.name}`);
+    const debt = g.owes.find(x => x.id === c.id); if (debt) why.push(`it owes ${own ? 'us' : c.name} ${Math.round(debt.gold)} in gold`);
+    for (const x of g.markets.filter(x => x.top === c.id && x.share >= .5).slice(0, 1)) why.push(`${partWord(x.share)} of the ${good(x.g)} it sells abroad is bought by ${own ? 'us' : c.name}`);
     if (why.length) on.push(`${o.name} (${why.join('; ')})`); }
   lines.push(on.length ? `Leaning on ${own ? 'us' : 'it'}: ${on.join('; ')}.` : `No other state leans on ${own ? 'us' : 'it'} for ships, for goods or for gold.`);
   return lines;
