@@ -21,7 +21,7 @@ function disaster(w, c, p, f) {
   const boss = bossOf(w, c, f), ruler = w.characters[c.leader], pit = f.sector === 'mine';
   const dead = Math.round((15 + rand(w) * 180) * clamp(f.stake + .3, .3, 1.3) * (pit ? 1 : .4)), what = pick(w, pit ? ['A fire-damp explosion', 'A flooded gallery', 'A roof fall'] : ['A boiler explosion', 'A fire']);
   p.pops.workers.n = Math.max(1, p.pops.workers.n - dead / 1000); p.unrest = clamp(p.unrest + 4, 0, 100);
-  f.disasterAt = w.turn; f.halted = 1; f.temper = clamp(f.temper + 28, 0, 100); f.cash -= Math.min(Math.max(f.cash, 0), 4 + dead / 20);
+  f.disasterAt = w.turn; f.lastDisaster = { turn: w.turn, dead, safety: f.safety, what }; f.halted = 1; f.temper = clamp(f.temper + 28, 0, 100); f.cash -= Math.min(Math.max(f.cash, 0), 4 + dead / 20);
   c.mods.push({ key: 'sat.workers', delta: -3, turns: 3, label: `The dead of ${f.name}` });
   news(w, `${c.name}: ${what.toLowerCase()} at ${f.name} in ${p.name} killed about ${dead}.`, { kind: 'disaster', countries: [c.id], province: p.id });
   // Below what the law requires is noted as that, even where nothing was found let go.

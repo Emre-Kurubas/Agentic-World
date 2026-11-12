@@ -52,13 +52,18 @@ export function foundPaper(w, c, actor, name, amount) {
 // By its number, or by its name as a person would write it: with or without the article, whatever the capitals. (World 16: "Village Sheet" was
 // not "The Village Sheet", five times.)
 const bare = s => String(s ?? '').trim().toLowerCase().replace(/^the\s+/, '').replace(/[^a-z0-9]+/g, ' ').trim();
-export const findPaper = (c, key) => papersOf(c).find(x => x.id === key) ?? (bare(key) ? papersOf(c).find(x => bare(x.name) === bare(key)) : undefined);
+// A paper is found by its number, by its name (with or without "The"), by either of two names where the masthead carries a second in
+// brackets ("The National Loom (Il Telaio Nazionale)"), and, by the one who owns a single paper, as "my paper". (World 19: money for
+// "The National Loom" and a line for "my paper" both came back "No such newspaper".)
+const mastheads = x => { const m = /^(.*?)\s*\((.*)\)\s*$/.exec(x.name); return [x.name, ...(m ? [m[1], m[2]] : [])].map(bare); };
+const MINE = /^(my|our|his|her|the)?\s*(own\s+|party'?s?\s+)?(news)?(paper|sheet|press|weekly|daily|organ)$/i;
+export const findPaper = (c, key, by) => { const all = papersOf(c), k = bare(key), own = by ? all.filter(x => x.owner === by) : []; return all.find(x => x.id === key) ?? (k ? all.find(x => mastheads(x).includes(k)) : undefined) ?? (own.length === 1 && MINE.test(String(key ?? '').trim()) ? own[0] : undefined); };
 const findPerson = (w, c, key) => { const k = String(key ?? '').trim(), x = Object.hasOwn(w.characters, k) ? w.characters[k] : Object.values(w.characters).find(y => y.alive && y.country === c.id && y.name.toLowerCase() === k.toLowerCase()); return x?.alive ? x : null; };
 const listed = c => papersOf(c).length ? ` Those that appear here: ${papersOf(c).map(x => `${x.name} (${x.id})`).join(', ')}.` : '';
 
 // The owner gives the paper its line. Only what the order names is changed; an order given again changes nothing and costs nothing.
 export function setPaper(w, c, actor, op) {
-  const key = op.id ?? op.paper ?? op.name, own = papersOf(c).filter(x => x.owner === actor.id), n = key != null ? findPaper(c, key) : own.length === 1 ? own[0] : null;
+  const key = op.id ?? op.paper ?? op.name, own = papersOf(c).filter(x => x.owner === actor.id), n = key != null ? findPaper(c, key, actor.id) : own.length === 1 ? own[0] : null;
   if (!n) return { ok: false, msg: `No such newspaper.${listed(c)}` };
   if (n.owner !== actor.id) return { ok: false, msg: `${n.name} is ${w.characters[n.owner]?.name ?? 'another'}'s paper, and its line is its owner's to give. What it prints can be asked of its owner or paid for; whoever governs can set a censor on it or close it.` };
   const notes = [];

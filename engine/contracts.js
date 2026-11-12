@@ -14,6 +14,17 @@ const signsForState = (w, actor, flag) => { const c = w.countries[actor.country]
 const works = (w, k) => { const sc = stateOf(w, k, w.characters[k.seller]); return Object.values(w.firms || {}).filter(f => f.status === 'open' && (sc ? f.owner === STATE && f.country === sc.id : f.owner === k.seller) && (f.sector === k.good || f.resource === k.good)); };
 const sellerFirm = (w, k) => works(w, k)[0];
 // Small quantities are written as they are: a tenth of a unit is not 'none'.
+// A bargain struck "at the price of the day": the buyer pays each quarter what the goods delivered cost that day, on the world's exchanges
+// or on the buyer's own market. (World 19: "army boots at the home market price" and "iron at the world price" could only be written as
+// papers under which no money moved; a ruler took hers back and named sixty a unit by guess.)
+const DAY = { world: 'world', exchange: 'world', exchanges: 'world', home: 'home', market: 'home', day: 'home', ordinary: 'home', going: 'home', current: 'home' };
+export const dayOf = op => DAY[String(op.price ?? (typeof op.unit_price === 'string' && !(Number(op.unit_price) > 0) ? op.unit_price : '')).trim().toLowerCase().split(/[^a-z]+/)[0]] ?? null;
+export function priceOfDay(w, k) {
+  if (!k.at || !k.good) return null;
+  const buyer = w.characters[k.seller === k.a ? k.b : k.a], to = stateOf(w, k, buyer) ?? w.countries[buyer?.country]; if (!to) return null;
+  return (k.at === 'home' ? to.prices?.[k.good] ?? (w.globalPrice?.[k.good] ?? 0) * (to.rer ?? 1) : w.globalPrice?.[k.good] ?? 0) * (to.rate || 1);
+}
+export const dayWords = k => k.at === 'home' ? 'the price of the day on the buyer\'s home market' : 'the price of the day on the world\'s exchanges';
 export const few = v => v >= 10 ? Math.round(v) : v >= 1 ? Math.round(v * 10) / 10 : Math.round(v * 100) / 100;
 
 export function proposeContract(w, actor, op, num) {
@@ -30,8 +41,9 @@ export function proposeContract(w, actor, op, num) {
   // (World 18: some twenty-five offers that said 'the treasury pays' were read as charged to the ruler's own purse; rulers declined them,
   // owners apologised five times for clerks who had made no mistake, and an army waited three quarters for its cloth.)
   const theirs = w.countries[other.country]; if (theirs?.alive && governs(w, theirs, other) && op.to_state !== false && (hasGoods && k.amount > 0 || op.to_state === true)) k.toState = theirs.id;
+  { const at = dayOf(op); if (hasGoods && k.amount > 0 && at && op.pay_per_turn == null && !(Number(op.unit_price) > 0)) { k.at = at; if (!k.payer || k.payer === k.seller) k.payer = k.seller === actor.id ? other.id : actor.id; k.pay = (priceOfDay(w, k) ?? 0) * k.amount; } }
   (w.contracts ||= []).push(k);
-  say(w, other, actor.name, `Contract offer ${k.id}${sc ? `, made for the state of ${sc.name} and on its treasury's account` : ''}: ${k.terms}${k.pay ? ` Payment ${Math.round(k.pay)} per quarter.` : ''}${k.good ? ` Delivery ${few(k.amount)} ${GOOD_LABEL[k.good]} per quarter, from the quarter after it is signed.` : ''} Runs ${k.turns} quarters. Accept with accept_contract.${k.toState ? ` It is laid before the state of ${theirs.name}: signed by you as it stands, the treasury pays and is paid and the state's own works deliver; to take it on your own purse instead, sign with state:false.` : !sc && w.countries[other.country]?.leader === other.id && !k.purse?.[other.id] ? ' It is addressed to you in person: signed as it stands, what you owe under it comes from your own purse; signed for the state (accept_contract with state:true), the treasury pays and is paid and the state\'s own works deliver.' : ''}`);
+  say(w, other, actor.name, `Contract offer ${k.id}${sc ? `, made for the state of ${sc.name} and on its treasury's account` : ''}: ${k.terms}${k.at ? ` Payment at ${dayWords(k)} for what is delivered (about ${Math.round(k.pay)} a quarter as prices stand).` : k.pay ? ` Payment ${Math.round(k.pay)} per quarter.` : ''}${k.good ? ` Delivery ${few(k.amount)} ${GOOD_LABEL[k.good]} per quarter, from the quarter after it is signed.` : ''} Runs ${k.turns} quarters. Accept with accept_contract.${k.toState ? ` It is laid before the state of ${theirs.name}: signed by you as it stands, the treasury pays and is paid and the state's own works deliver; to take it on your own purse instead, sign with state:false.` : !sc && w.countries[other.country]?.leader === other.id && !k.purse?.[other.id] ? ' It is addressed to you in person: signed as it stands, what you owe under it comes from your own purse; signed for the state (accept_contract with state:true), the treasury pays and is paid and the state\'s own works deliver.' : ''}`);
   return k;
 }
 
@@ -89,6 +101,7 @@ export function contractStep(w) {
       part = q / k.amount; k.lastDelivered = q;
       if (q < k.amount * .95 && few(q) < few(k.amount)) breach(w, k, seller.id, why);
     }
+    if (k.at) { const p = priceOfDay(w, k); if (p != null) k.pay = p * k.amount; }
     if (k.pay > 0 && k.payer) {
       const payer = w.characters[k.payer], payee = k.payer === k.a ? B : A, from = stateOf(w, k, payer), to = stateOf(w, k, payee);
       // Payment for goods follows the goods. Money a treasury pays a private person for nothing that can be weighed is a grant under another name:

@@ -8,7 +8,13 @@ const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn
 const trace = (w, ch, text) => { if (!ch) return; (ch.secrets ||= []).push({ turn: w.turn, text }); ch.secrets = ch.secrets.slice(-12); };
 
 export function prosecute(w, c, actor, ch, op) {
-  if (ch.trial) return { ok: false, msg: `${ch.name} is already before the court.` };
+  // A case that waits can be changed by whoever brought it: the penalty asked, and whatever has come into the file since. (World 19: "the
+  // penalty sought is imprisonment, not death" came back "already before the court".)
+  if (ch.trial) { const t = ch.trial, mine = t.country === c.id, more = mine ? (actor.dossiers?.[ch.id]?.facts ?? []).filter(f => !t.facts.includes(f)) : [], asked = op.penalty === 'death' ? 'death' : op.penalty ? 'prison' : t.penalty, changed = mine && asked !== t.penalty;
+    if (!mine || (!changed && !more.length)) return { ok: false, msg: `${ch.name} is already before the court${mine ? `, which rules when the quarter is out; the prosecution asks for ${t.penalty === 'death' ? 'death' : 'prison'}, on ${t.facts.length ? `${t.facts.length} document${t.facts.length > 1 ? 's' : ''}` : 'no documents'}. Nothing in this order changes the case` : ''}.` };
+    const was = t.penalty; t.penalty = asked; t.facts.push(...more); t.forged.push(...(actor.dossiers?.[ch.id]?.forged ?? []).filter(f => more.includes(f)));
+    if (changed) say(w, ch, 'The court', `The prosecution now asks for ${asked === 'death' ? 'death' : 'prison'} where it asked for ${was === 'death' ? 'death' : 'prison'}.`);
+    return { ok: true, msg: `${ch.name} is before the court already, and the case stands as it was brought${changed ? `, except that the prosecution now asks for ${asked === 'death' ? 'death' : 'prison'} (it asked for ${was === 'death' ? 'death' : 'prison'})` : ''}${more.length ? `; ${more.length} further document${more.length > 1 ? 's' : ''} from your file ${more.length > 1 ? 'are' : 'is'} laid before the bench` : ''}. The court rules when the quarter is out.` }; }
   const file = actor.dossiers?.[ch.id], facts = [...(file?.facts ?? [])], forged = (file?.forged ?? []).filter(f => facts.includes(f));
   const charge = String(op.charge || 'offences against the state').slice(0, 1200).replace(/[\s.]+$/, ''), penalty = op.penalty === 'death' ? 'death' : 'prison';
   // Whoever is already held stays held until the bench has spoken; an acquittal then opens the cell.

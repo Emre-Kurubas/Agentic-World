@@ -56,13 +56,15 @@ export function standingOp(w, actor, c, op, h) {
         if (!person.alive || person.id === actor.id) return fail('No such person.');
         const here = person.country === c.id ? person.status !== 'exiled' : person.host === c.id;
         if (!here) return fail(`${person.name} is not within reach of anybody of ours who could watch: what happens abroad is the secret service's work (spy, recruit_informant).`);
-        if (staff && !state && !['officer', 'general'].includes(person.role) && !Object.values(w.units).some(u => u.commander === person.id)) return fail('The staff watches its own: officers and commanders. Anybody else is for the police, which answer to whoever governs.');
       }
       if (kind === 'province' && !state) return fail('A province is watched by the police and the gendarmes, who answer to whoever governs.');
       if (kind === 'province' && prov.controller !== c.id) return fail('That province is not in our hands.');
       if (kind === 'frontier' && !state && !staff) return fail('The frontier is watched by the staff, for whoever governs or commands.');
       if (kind === 'frontier' && (!target?.alive || target.id === c.id)) return fail('No such state.');
-      const official = state || (staff && (kind === 'frontier' || kind === 'person')), mine = list.filter(x => x.by === actor.id && x.kind === kind).length, room = official ? watchRoom(c)[kind] : PRIVATE_WATCH;
+      // The staff watches its own, officers and commanders; a chief of staff who wants anybody else watched hires men for it, as anyone may.
+      // (World 19: a general's watch on a magnate was simply refused.)
+      const ours = kind !== 'person' || ['officer', 'general'].includes(person.role) || Object.values(w.units).some(u => u.commander === person.id) || Object.values(w.fleets || {}).some(f => f.commander === person.id);
+      const official = state || (staff && (kind === 'frontier' || (kind === 'person' && ours))), mine = list.filter(x => x.by === actor.id && x.kind === kind).length, room = official ? watchRoom(c)[kind] : PRIVATE_WATCH;
       if (mine >= room) return fail(official ? `The ${kind === 'frontier' ? 'staff' : 'police'} can keep ${room} such watches at one time and keep them already; take one off first.` : `Somebody without the police behind him can have ${room} people watched at a time, and you have that many.`);
       const fee = official ? 0 : Math.max(1, num(op.amount, 0, 20, 1)); if (!official && actor.wealth < fee) return fail(`Men who watch are paid: ${fee} a quarter, and you have not got it.`);
       list.push({ id: nextId(w, 'W'), by: actor.id, country: c.id, kind, key, state: official, fee, since: w.turn, ...(kind === 'frontier' ? { seen: round5(menFacing(w, c, target)) } : {}) });
@@ -70,7 +72,7 @@ export function standingOp(w, actor, c, op, h) {
         : kind === 'party' ? (official ? 'Each quarter you are told what its chest holds, how its organisation stands and who paid into it.' : 'Each quarter you are told what its chest holds and how its organisation stands; who pays into it only the police could see.')
         : kind === 'province' ? 'Each quarter you are told how the province stands and what moves under its surface.'
         : `The staff counts what stands across that frontier each quarter (about ${round5(menFacing(w, c, target))} thousand men now within a march of it) and tells you at once when the number changes much.`;
-      return { ok: true, msg: `${watchWords(w, list.at(-1))} is under watch${official ? '' : `, at ${fee} a quarter from your purse`}. ${what} The watch stands until you take it off (watch with lift:true).` };
+      return { ok: true, msg: `${watchWords(w, list.at(-1))} is under watch${official ? '' : `, at ${fee} a quarter from your purse${staff && kind === 'person' ? ' (the staff watches its own, officers and commanders; anybody else is for the police, or for men of your own hire, as these are)' : ''}`}. ${what} The watch stands until you take it off (watch with lift:true).` };
     }
     // A power of the ruler's left in another's hands: named operations, to a seat or to a person, until taken back.
     case 'delegate': {

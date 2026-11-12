@@ -1,5 +1,6 @@
 // Institutions, parliament and treaty clauses. The agent writes freely what to found, the referee translates it to these rules, the code decides the outcome.
-import { clamp, sum, news, rand, nextId } from './util.js';
+import { clamp, sum, news, rand, nextId, quarterLabel } from './util.js';
+import { treasuryPays } from './money.js';
 import { GOODS, GOOD_LABEL, aliveCountries, atWar } from './world.js';
 import { distance, installLeader } from './politics.js';
 import { incapacitated } from './health.js';
@@ -283,11 +284,18 @@ export function billStep(w, apply) {
 }
 
 // Treaty clauses. The referee turns free text into these types; what can be paid is paid by code, what is not kept is recorded as a breach.
+// What a delivery is sold for. A delivery with no price is handed over for nothing, as tribute and aid are; one that is sold says what the
+// receiver pays in gold for each unit that arrives: a figure, or the world's price of the day, with something off it if the paper says so.
+// (World 19: three treaties in the first year sold iron, arms and grain "at world price, payable in gold"; the clause could carry no price,
+// and for three quarters the goods crossed the frontier for nothing while both treasuries believed they were being paid for.)
+const priceOf = c => { const p = c.price ?? c.unit_price, world = typeof p === 'string' && /world|market|day|exchange/i.test(p), off = num(c.off ?? c.discount, 0, .9, 0);
+  return world ? { price: 'world', ...(off > 0 ? { off } : {}) } : Number(p) > 0 ? { price: num(p, 0, 1e5, 0) } : {}; };
+export const unitPrice = (w, cl) => cl.price === 'world' ? (w.globalPrice?.[cl.good] ?? 0) * (1 - (cl.off || 0)) : Number(cl.price) > 0 ? Number(cl.price) : 0;
 export function normalizeClauses(w, raw, parties) {
   const out = [], isParty = x => parties.includes(x), turns = v => Math.round(num(v, 1, 80, 12));
   for (const c of Array.isArray(raw) ? raw.slice(0, 8) : []) {
     if (c?.type === 'tribute' && isParty(c.payer)) out.push({ type: 'tribute', payer: c.payer, ...(isParty(c.to) && c.to !== c.payer ? { to: c.to } : {}), pct_gdp: num(c.pct_gdp, 0, .2, .02), turns: turns(c.turns) });
-    else if (c?.type === 'delivery' && isParty(c.from) && GOODS.includes(c.good)) out.push({ type: 'delivery', from: c.from, ...(isParty(c.to) && c.to !== c.from ? { to: c.to } : {}), good: c.good, amount: num(c.amount, 0, 1e5, 0), turns: turns(c.turns), ...(c.credit === true ? { credit: true } : {}) });
+    else if (c?.type === 'delivery' && isParty(c.from) && GOODS.includes(c.good)) out.push({ type: 'delivery', from: c.from, ...(isParty(c.to) && c.to !== c.from ? { to: c.to } : {}), good: c.good, amount: num(c.amount, 0, 1e5, 0), turns: turns(c.turns), ...(c.credit === true ? { credit: true } : {}), ...priceOf(c) });
     // Gold lent by one government to another under the paper: it leaves the lender's reserve the day the treaty comes into force, and is owed.
     else if (c?.type === 'loan' && isParty(c.from) && isParty(c.to) && c.from !== c.to && num(c.amount, 0, 1e7, 0) >= 1) out.push({ type: 'loan', from: c.from, to: c.to, amount: num(c.amount, 0, 1e7, 0), ...(c.rate != null ? { rate: num(c.rate, 0, .15, .012) } : {}) });
     // A claim one party holds on a state (a party or not) passes to the other party.
@@ -310,8 +318,8 @@ export const observes = (w, a, b, province) => w.treaties.some(t => t.active && 
 export function clauseText(w, cl) {
   const n = id => w.countries[id]?.name ?? id;
   switch (cl.type) {
-    case 'tribute': return `${n(cl.payer)} pays ${cl.to ? `${n(cl.to)} ` : ''}${Math.round(cl.pct_gdp * 1000) / 10}% of GDP each turn${cl.until != null ? `, until the end of turn ${cl.until}` : ''}`;
-    case 'delivery': return `${n(cl.from)} delivers ${cl.to ? `to ${n(cl.to)} ` : ''}${Math.round(cl.amount)} ${GOOD_LABEL[cl.good]} each turn${cl.until != null ? `, until the end of turn ${cl.until}` : ''}${cl.credit ? ', each delivery struck off what it owes the other at the world price of the day' : ''}`;
+    case 'tribute': return `${n(cl.payer)} pays ${cl.to ? `${n(cl.to)} ` : ''}${Math.round(cl.pct_gdp * 1000) / 10}% of GDP each quarter${cl.until != null ? `, until ${quarterLabel(cl.until)}` : ''}`;
+    case 'delivery': return `${n(cl.from)} delivers ${cl.to ? `to ${n(cl.to)} ` : ''}${Math.round(cl.amount)} ${GOOD_LABEL[cl.good]} each quarter${cl.until != null ? `, until ${quarterLabel(cl.until)}` : ''}${cl.credit ? ', each delivery struck off what it owes the other at the world price of the day' : cl.price ? `, and is paid in gold for what arrives: ${cl.price === 'world' ? `the world price of the day${cl.off ? ` less ${Math.round(cl.off * 100)} in the hundred` : ''}` : `${Math.round(cl.price * 10) / 10} a unit`}` : ', for which nothing is paid'}`;
     case 'loan': return `${n(cl.from)} lends ${n(cl.to)} ${Math.round(cl.amount)} in gold on the day this comes into force${cl.rate != null ? `, at ${Math.round(cl.rate * 1000) / 10}% a quarter on whatever ${n(cl.to)} owes it` : ', at the interest that state\'s foreign debt bears'}; it is owed until it is repaid (repay_foreign)`;
     case 'assign': return `${n(cl.from)} makes over to ${n(cl.to)} ${cl.amount != null ? `${Math.round(cl.amount)} of ` : ''}what ${n(cl.debtor)} owes it: from that day ${n(cl.debtor)} owes it to ${n(cl.to)}`;
     case 'renounce': return `${n(cl.country)} gives up its claim to ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}`;
@@ -377,11 +385,15 @@ export function treatyStep(w) {
       } else if (cl.type === 'delivery') {
         const from = w.countries[cl.from], to = w.countries[cl.to ?? t.parties.find(x => x !== cl.from)];
         if (!from?.alive || !to?.alive || !t.parties.includes(from.id) || !t.parties.includes(to.id) || !routeOpen(w, from.id, to.id)) continue;
-        const moved = Math.min(from.stock[cl.good] || 0, cl.amount);
+        // A delivery that is sold goes only as far as the receiver has gold for it. The gold crosses with the goods; the receiving treasury
+        // pays its supplier in its own money, as for any purchase abroad, and the delivering treasury is paid for what left its stores.
+        const unit = cl.credit ? 0 : unitPrice(w, cl), has = Math.min(Math.max(from.stock[cl.good] || 0, 0), cl.amount), moved = unit > 0 ? Math.min(has, Math.max(to.reserves, 0) / unit) : has, unpaid = unit > 0 && moved < has * .95;
         from.stock[cl.good] = (from.stock[cl.good] || 0) - moved; to.stock[cl.good] = (to.stock[cl.good] || 0) + moved;
+        if (unit > 0 && moved > 0) { const gold = moved * unit; to.reserves -= gold; from.reserves += gold; treasuryPays(to, gold * (to.rate || 1), 'purchases'); from.treasury += gold * (from.rate || 1); cl.paid = (cl.paid || 0) + gold; cl.lastPaid = { turn: w.turn, units: moved, gold }; }
+        if (unpaid) breach(w, t, cl, to.id, `${to.name} had not the gold to pay for its ${GOOD_LABEL[cl.good]} in full, and took only what it could pay for.`);
         // A delivery made against a debt is struck off the debt at what the world pays for the good that day.
         if (cl.credit && moved > 0) { const owed = from.creditors?.[to.id] || 0, worth = moved * (w.globalPrice?.[cl.good] ?? 0), off = Math.min(owed, worth); if (off > 0) { from.creditors[to.id] = owed - off; if (from.creditors[to.id] < .01) delete from.creditors[to.id]; cl.credited = (cl.credited || 0) + off; } }
-        if (moved < cl.amount * .95) breach(w, t, cl, cl.from, `${from.name} could not complete its ${GOOD_LABEL[cl.good]} delivery.`);
+        else if (moved < cl.amount * .95) breach(w, t, cl, cl.from, `${from.name} could not complete its ${GOOD_LABEL[cl.good]} delivery.`);
       } else if (cl.type === 'tariff') {
         // The agreed rate holds between every two of those who signed.
         const ps = t.parties.map(x => w.countries[x]).filter(o => o?.alive);
