@@ -19,11 +19,14 @@
     "secondary": "sonnet",
     "cast": [
       "opus",
-      "sonnet"
+      "sonnet",
+      "fable"
     ],
     "assign": {},
     "effort": {
-      "sonnet": "high"
+      "opus": "medium",
+      "sonnet": "high",
+      "fable": "medium"
     }
   },
   "concurrency": 6,
