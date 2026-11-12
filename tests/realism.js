@@ -3965,7 +3965,7 @@ chain('Land is not to be had for the asking: what a neighbour claims is inherite
     if (from) { w.wars.push({ id: 'S-c', a: [atk.id], b: [def.id], civil: false, active: true, start: w.turn, name: 'c' }); const u = soldier(w, atk.id, from.id, 60); assert.ok(applyOp(w, w.characters[atk.general], { op: 'offensive', to: p.id, units: [u.id], manner: 'assault' }).ok); let fought = false; for (let i = 0; i < 4 && !fought; i++) { beginTurn(w); stepWorld(w); fought = hasFought_(w, def.id, atk.id); } assert.ok(fought, `${p.name} has to be fought for`); } }
 });
 
-import { carryList as carryList_, carryStandingLate as lateOrders_ } from '../engine/ops.js';
+import { carryList as carryList_, carryStandingLate as lateOrders_, watersOf as watersOf_ } from '../engine/ops.js';
 import fs_ from 'node:fs';
 chain('An order kept for its day is carried as a ruling would be, a signature goes to the paper that was named, a party in the house can open the state\'s books, and an attack ordered with a declaration that is before the house waits for the vote', () => {
   // World 17, eleven quarters. (1) "When war comes: attack Dundale; once it falls dig in; if it fails return" was carried all at once, and the
@@ -4264,6 +4264,35 @@ chain('Every morning a seat is briefed: the state of the country as its offices 
   assert.ok(new RegExp(`${e.name} has stopped paying its creditors`).test(all) && /On the exchanges, against a year ago: iron up 20 in the hundred/.test(all), 'who has stopped paying, and what the exchanges have done');
   assert.ok(!/No state is at war/.test(all) && desk(w, L).includes(lines[0]), 'and it is on the desk');
   const secret = w.treaties.at(-1); secret.secret = true; assert.ok(!/nonaggression between/.test(worldToday_(w, a, ld(w, a)).join('\n')) && !/nonaggression between/.test(worldToday_(w, c, L).join('\n')), `a secret paper is in nobody's morning briefing: ${worldToday_(w, a, ld(w, a)).join(' | ')}`);
+});
+
+import { inlandWords as inlandWords_ } from '../agents/queries.js';
+chain('World 18, first review: a signature waits for the contract it was ordered for, relief with no sum named is the customary sum, an empty dossier says what a dossier is, and a harbour on an inland water is known to be one', () => {
+  // Found in the first four quarters of world 18: three of nine contract signatures were refused for a paper that arrived the same morning;
+  // "pay compensation to the families of the dead" was refused for want of a figure; nineteen of twenty-six dossiers came back with "no
+  // evidence" and no word of why; a fleet was ordered into a gulf no strait joins to the ocean and told only "no open water leads there".
+  { const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), M = w.characters[c.oligarch];
+    const early = applyOp(w, L, { op: 'accept_contract', from: M.id, state: true }); assert.ok(early.ok && early.waits === `contract:${M.id}` && /The signature is ready: it is given to whatever single offer of theirs arrives this quarter/.test(early.msg), early.msg);
+    assert.ok(applyOp(w, M, { op: 'propose_contract', to: L.id, terms: 'Iron for the arsenal.', good: 'iron', amount: 2, unit_price: 9, seller: 'me', payer: 'them', turns: 4 }).ok); const k = w.contracts.at(-1); L.inbox = []; carrySigned(w);
+    assert.ok(k.status === 'active' && k.purse?.[L.id] === c.id && L.inbox.some(m => /arrived, and it was signed as you had ordered[^]*on the treasury's account/.test(m.text)) && !(w.signingContracts || []).length, `the paper that came the same morning is signed, for the state as ordered: ${L.inbox.at(-1)?.text}`);
+    const none = applyOp(w, L, { op: 'accept_contract', from: M.id }); assert.ok(none.ok && none.waits); L.inbox = []; carrySigned(w); assert.ok(L.inbox.some(m => /Nothing was signed with [^]* this quarter: no single offer of theirs reached you/.test(m.text)), 'and where none comes, the one who ordered it is told');
+    assert.ok(!applyOp(w, L, { op: 'accept_contract', id: 'CT99999' }).ok, 'a paper named by a number nobody knows is not waited for');
+    assert.ok(applyOp(w, M, { op: 'propose_contract', to: L.id, terms: 'Boots.', good: 'goods', amount: 1, unit_price: 30, seller: 'me', payer: 'them', turns: 2 }).ok && L.inbox.some(m => /It is addressed to you in person[^]*signed for the state \(accept_contract with state:true\), the treasury pays/.test(m.text)), 'an offer addressed to whoever governs says it can be signed for the state'); }
+  { const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), f = Object.values(w.firms).find(x => x.country === c.id && x.status === 'open'), p = countryProvinces(w, c.id)[1], t0 = c.treasury + 0;
+    const r = applyOp(w, L, { op: 'relief', to: f.id, from: 'treasury', _law: true }); assert.ok(r.ok && /no sum was named: what is customary was given, about a tenth of what its hands earn in a quarter/.test(r.msg), r.msg);
+    const r2 = applyOp(w, L, { op: 'relief', to: p.id, from: 'treasury', _law: true }); assert.ok(r2.ok && /a hundredth of what its people earn in a quarter/.test(r2.msg), r2.msg);
+    assert.ok(!applyOp(w, L, { op: 'relief', to: p.id, from: 'treasury', amount: 0, _law: true }).ok, 'a sum of nothing, named, is still nothing'); }
+  { const w = inherited(2696855, 8), c = aliveCountries(w)[0], O = w.characters[c.opposition], other = w.characters[c.general]; let said = null;
+    for (let i = 0; i < 30 && !said; i++) { const x = structuredClone(w); x.rng = 31 + i * 7919; const r = applyOp(x, x.characters[O.id], { op: 'gather_dossier', character: other.id }); if (!r.ok) said = r.msg; }
+    assert.ok(said && /No evidence could be found for a dossier[^]*A dossier holds what a person has done that left a trace[^]*caught by a watch \(watch\)[^]*by an inquiry \(inquire\)/.test(said), `an empty dossier says what a dossier is and what else there is: ${said}`);
+    assert.ok(/no unit of ours is called B99999/.test(applyOp(w, other, { op: 'move', unit: 'B99999', to: c.capital }).msg)); }
+  { // The inland water.
+    const w = createWorld({ ...base, plainStates: false, seed: 2696855, countries: 8, provinces: 200 }), of = watersOf_(w), sizes = {}; for (const k of Object.values(of)) sizes[k] = (sizes[k] || 0) + 1; const open = +Object.entries(sizes).sort((a, b) => b[1] - a[1])[0][0];
+    const c = aliveCountries(w).find(x => countryProvinces(w, x.id).some(p => p.port > 0 && p.seas.length && p.seas.every(s => of[s] !== open))); assert.ok(c && Object.keys(sizes).length >= 2, 'this world has an inland water with a harbour on it');
+    const G = w.characters[c.general], f = Object.values(w.fleets).find(x => x.country === c.id && of[x.sea] !== open), sea = Object.keys(of).find(s => of[s] === open);
+    assert.ok(/On an inland water: [^]* that no strait joins to the open sea\. Ships there cannot leave it[^]*A canal would join it to the open sea: it can be cut at /.test(String(answer(w, G, 'fleet'))) && inlandWords_(w, c).length > 40, `the admiral's report says so: ${inlandWords_(w, c)}`);
+    if (f) { const r = applyOp(w, G, { op: 'move_fleet', fleet: f.id, to: sea }); assert.ok(!r.ok && /The two lie on different waters: ours here is an inland water of \d+ seas? that no strait joins to the open sea[^]*A canal would join them: it can be cut at /.test(r.msg), `and an order out of it says why it cannot be: ${r.msg}`); }
+    const dry = aliveCountries(w).find(x => x.id !== c.id && !inlandWords_(w, x)); assert.ok(dry, 'a state whose harbours all lie on the open sea is told nothing of the kind'); }
 });
 
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {

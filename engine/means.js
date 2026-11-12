@@ -31,9 +31,11 @@ export function meansOp(w, actor, c, op, h) {
   switch (op.op) {
     // Money for people nobody names: the men of a works and the families of its dead, or the people of a province.
     case 'relief': {
-      const amount = num(op.amount, 0, 1e6, 0); if (!(amount >= .5)) return fail('Say how much is given (amount).');
       const f = own(w.firms, op.to) ? w.firms[op.to] : null, p = f ? w.provinces[f.province] : own(w.provinces, op.to) ? w.provinces[op.to] : null, home = p && w.countries[p.controller];
       if (!p || !home?.alive) return fail('Say whom it is for (to): the men of a works and the families of its dead (the works\' id), or the people of a province (its id). Money for one named person is give; money for a whole class of the country is the government\'s concession.');
+      // With no sum named, what is customary is given: about a tenth of what the hands of a works earn in a quarter, or a hundredth of what the
+      // people of a province earn. ("Pay compensation to the families of the dead" names no figure, and is not for that an order to do nothing.)
+      const named = op.amount != null && op.amount !== '', usual = f ? Math.max(handsOf(w, f), .2) * perThousand(w, home) * .1 : provincePop(p) * perThousand(w, home) * .01, amount = named ? num(op.amount, 0, 1e6, 0) : Math.max(.5, Math.round(usual * 10) / 10); if (!(amount >= .5)) return fail('Say how much is given (amount).');
       const src = String(op.from ?? 'own'), party = leadsParties(w, c, actor)[0]; let paid = 0, from = '';
       if (src === 'treasury') { if (!state) return fail('The treasury pays on the order of whoever governs; anybody else gives from his own purse, his company\'s till (from: the works\' id) or his party\'s chest (from: "party").'); const note = h.pay(amount, 'relief'); if (note === null) return fail('The treasury cannot find the money.'); paid = amount; from = 'the treasury'; }
       else if (src === 'party') { if (!party) return fail('You lead no party whose chest you could open.'); paid = Math.min(amount, Math.max(party.funds || 0, 0)); if (paid < .5) return fail(`The chest of the ${party.name} is empty.`); party.funds -= paid; from = `the chest of the ${party.name}`; }
@@ -46,7 +48,7 @@ export function meansOp(w, actor, c, op, h) {
         did = `It came to about ${r1(share * 100)} in the hundred of what the people of ${p.name} earn in a quarter. Unrest there stands at ${n(p.unrest)} of 100 (it was ${n(was)}).`; }
       // Whoever gave it is remembered for it where it was given.
       if (src === 'party' && party) party.support = clamp((party.support || 0) + Math.min(1.5, paid / Math.max(c.gdp, 1) * 400), 0, 100);
-      return { ok: true, msg: `${r1(paid)} was paid out of ${from} to ${f ? `the men of ${f.name} and the families of its dead` : `the people of ${p.name}`}. ${did}` };
+      return { ok: true, msg: `${r1(paid)} was paid out of ${from} to ${f ? `the men of ${f.name} and the families of its dead` : `the people of ${p.name}`}${named ? '' : ` (no sum was named: what is customary was given, about ${f ? 'a tenth of what its hands earn in a quarter' : 'a hundredth of what its people earn in a quarter'})`}. ${did}` };
     }
     // A province let off its land tax for a time, or sent grain from the state's stores.
     case 'relieve_province': {

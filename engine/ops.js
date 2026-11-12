@@ -251,6 +251,9 @@ export function carryStanding(w) { standingStep(w, applyOp, carryList); tenderSt
 // frontier) is given the same quarter and not a quarter late, and its owner wakes to what came of it and not to an order still "waiting".
 export function carryStandingLate(w) { standingStep(w, applyOp, carryList); }
 export function carrySigned(w) {
+  for (const a of (w.signingContracts || []).splice(0)) { const ch = w.characters[a.actor], from = w.characters[a.from]; if (!ch?.alive || !from) continue;
+    const r = applyOp(w, ch, { op: 'accept_contract', from: a.from, ...(a.state ? { state: true } : {}), _late: true });
+    tell(w, ch, 'Your secretary', r.ok ? `The offer of ${from.name} arrived, and it was signed as you had ordered. ${r.msg}` : `Nothing was signed with ${from.name} this quarter: no single offer of theirs reached you. The order to sign does not stand over: it has to be given again when their paper lies before you.`); }
   for (const a of (w.signing || []).splice(0)) {
     const ch = w.characters[a.actor], c = ch && w.countries[ch.country], o = w.countries[a.target]; if (!ch?.alive || !c?.alive || !o) continue;
     const r = applyOp(w, ch, { op: 'accept_treaty', target: o.id, _late: true });
@@ -684,7 +687,14 @@ export function applyOp(w, actor, op) {
       const nm = id => w.characters[id]?.name ?? id, r = v => Math.round(v * 10) / 10, onState = id => k.purse?.[id] ? ` (on the account of ${w.countries[k.purse[id]]?.name})` : '';
       const goods = k.good && k.amount > 0 ? `${nm(k.seller)}${onState(k.seller)} delivers ${r(k.amount)} of ${GOOD_LABEL[k.good] ?? k.good} a quarter` : op.good ? `it names ${GOOD_LABEL[op.good] ?? op.good} but no quantity, so nothing is delivered under it` : 'no goods move under it', money = k.payer && k.pay > 0 ? `${nm(k.payer)}${onState(k.payer)} pays ${r(k.pay)} a quarter${k.good && k.amount > 0 ? ` (${r(k.pay / k.amount)} a unit)` : ''}` : 'no money is paid under it';
       return { ok: true, msg: `Contract offered: ${k.id}, for ${k.turns} quarters: ${goods}; ${money}. Whatever else its words say binds only as far as the two who sign keep it.`, contract: k.id }; }
-    case 'accept_contract': { const k = acceptContract(w, actor, op.id, op.from, op.state) ?? (op.state === true ? toStateAccount(w, actor, op.id) : null); return k ? { ok: true, msg: `Contract ${k.id} is in force${k.purse?.[actor.id] ? ", on the treasury's account" : ''}.` } : fail('No such offer is waiting for you.'); }
+    case 'accept_contract': { const k = acceptContract(w, actor, op.id, op.from, op.state) ?? (op.state === true ? toStateAccount(w, actor, op.id) : null); if (k) return { ok: true, msg: `Contract ${k.id} is in force${k.purse?.[actor.id] ? ", on the treasury's account" : ''}.` };
+      // Two people agree by letter in a quarter, one sends the paper and the other signs: which order reaches the engine first is chance. A
+      // signature for an offer that has not arrived waits for it and is given when the quarter's offers are all in (carrySigned). (World 18, the
+      // first four quarters: three of nine signatures were refused for a paper that came the same morning.)
+      const sender = w.characters[op.from]?.id ?? w.countries[op.from]?.leader ?? null, mine = (w.contracts || []).filter(x => x.status === 'proposed' && x.b === actor.id);
+      if (sender && w.characters[sender]?.alive && sender !== actor.id && !op._late && (op.id == null || op.id === '')) { const q = (w.signingContracts ||= []), at = q.findIndex(x => x.actor === actor.id && x.from === sender), entry = { turn: w.turn, actor: actor.id, from: sender, state: op.state === true }; if (at >= 0) q[at] = entry; else q.push(entry);
+        return { ok: true, waits: `contract:${sender}`, msg: `No offer from ${w.characters[sender].name} lies before you yet. The signature is ready: it is given to whatever single offer of theirs arrives this quarter, and if none comes nothing is signed. You are told which.` }; }
+      return fail(`No such offer is waiting for you.${mine.length ? ` Waiting: ${mine.map(x => `${x.id} from ${w.characters[x.a]?.name ?? x.a}`).join(', ')}.` : ' Nothing lies before you unsigned.'}`); }
     // The state pays a person: a salary, a grant, a reward, a reimbursement, compensation. It is done in the open, and the money really leaves the treasury.
     case 'pay_person': {
       const ch = has(w.characters, op.character) ? w.characters[op.character] : Object.values(w.characters).find(x => x.alive && x.name.toLowerCase() === String(op.character ?? '').toLowerCase()); if (!ch?.alive) return fail('No such person.');
@@ -967,7 +977,7 @@ export function applyOp(w, actor, op) {
       const port = has(w.provinces, op.to) ? w.provinces[op.to] : null, sea = has(w.seas, op.to) ? w.seas[op.to] : null; if (!port && !sea) return fail('Name a sea (such as D12) to keep station in, or a province with a harbour (such as P12) to lie in.');
       if (port && !friendlyPort(w, c.id, port)) return fail(port.port > 0 ? `${port.name} is not a harbour open to our ships. Only a harbour of our own, an ally's, or one opened to us by a right of passage (a military_access treaty) coals and shelters them.` : `${port.name} has no harbour.`);
       const k = SHIPS[kindOf(f)], goal = port ? (port.seas.includes(f.sea) ? f.sea : port.seas.find(x => seaPath(w, f.sea, x, c.id))) : sea.id, path = goal ? seaPath(w, f.sea, goal, c.id) : null;
-      if (!path) return fail('No open water leads there: the way is landlocked or passes a strait that is closed to us.');
+      if (!path) return fail(`No open water leads there: the way is landlocked or passes a strait that is closed to us.${apart(w, c, f.sea, port ? port.seas : [sea.id])}`);
       const base = port ? { d: 0, port: port.id } : baseMap(w, c.id)[goal] ?? { d: 99, port: null }, baseName = w.provinces[base.port]?.name;
       if (base.d > k.reach) return fail(`${seaLabel(w, goal)} lies ${base.d > 90 ? 'out of reach of' : `${base.d} seas from`} the nearest harbour that would coal our ships${baseName ? ` (${baseName})` : ''}; ${k.name} keep station ${k.reach} seas from a base at most. A harbour nearer to it would have to be ours, an ally's, or opened to us by treaty.`);
       // A number of ships sends a squadron and leaves the rest where they are.
@@ -1098,7 +1108,7 @@ export function applyOp(w, actor, op) {
       const wait = !ours && !escort.length && !op._late;
       if (!ours && !escort.length && !wait) return fail('No surface squadron of ours took station at sea off the target coast and held that water this quarter (a squadron lying in harbour covers nothing, and one stopped or beaten on the way covers nothing either).');
       if (ours && p.seas.every(s => enemyHolds(w, s, c.id))) return fail(`The enemy commands the water off ${p.name}: no transport can put in there until it is driven off.`);
-      const ways = from.seas.flatMap(s => p.seas.map(t => seaPath(w, s, t, c.id))).filter(Boolean).sort((a, b) => a.length - b.length), way = ways[0]; if (!way) return fail('No sea route joins the two coasts.');
+      const ways = from.seas.flatMap(s => p.seas.map(t => seaPath(w, s, t, c.id))).filter(Boolean).sort((a, b) => a.length - b.length), way = ways[0]; if (!way) return fail(`No sea route joins the two coasts.${apart(w, c, from.seas[0], p.seas)}`);
       if (way.length - 1 > 12) return fail(`The crossing is ${way.length - 1} seas: too far for transports in one quarter. The troops must embark from a coast within twelve seas of the landing place.`);
       if (!wait) { const held = way.find(s => enemyHolds(w, s, c.id)); if (held) return fail(`The enemy commands ${seaLabel(w, held)} on the way: transports cannot cross water an enemy squadron holds.`); }
       // The men cross in merchant ships taken up for the quarter: two thousand, with their horses and stores, to each unit of tonnage.
@@ -1120,7 +1130,7 @@ export function applyOp(w, actor, op) {
       if (allowance(w, actor, `dossier:${ch.id}`, 1, 1) <= 0) return fail(`${ch.name} has been looked into once this quarter already; nothing more will turn up before the next.`);
       const state = governs(w, c, actor) || delegated(c, actor, 'gather_dossier'), staff = !state && c.general === actor.id, fee = state || staff ? 0 : Math.min(Math.max(actor.wealth, 0), num(op.amount, 0, 40, 0)); actor.wealth -= fee;
       const means = state ? .25 + c.intelligence / 200 : staff ? .15 + c.intelligence / 330 : .1 + actor.power / 400 + fee / 50, reach = ch.country === c.id ? 1 : .5 + (state || staff ? (c.intel[ch.country] ?? 0) / 200 : 0);
-      if (rand(w) > clamp(means * reach, .05, .8)) return fail(`No evidence could be found for a dossier${fee ? `; the ${Math.round(fee * 10) / 10} paid to those who asked the questions is spent` : ''}.`); // What somebody is paid or placed to keep out of sight is not found while he keeps it; and what a person owes on notes of hand is found with the rest.
+      if (rand(w) > clamp(means * reach, .05, .8)) return fail(`No evidence could be found for a dossier${fee ? `; the ${Math.round(fee * 10) / 10} paid to those who asked the questions is spent` : ''}. A dossier holds what a person has done that left a trace (money taken, a bargain kept dark, a debt, a plot): where there is nothing yet, or it is well kept, those who ask come back empty${state ? '' : ', the oftener the fewer means are behind the asking'}. It can be tried again next quarter; what ${ch.name} does from now on is caught by a watch (watch), and what passed through an office or a works by an inquiry (inquire).`); // What somebody is paid or placed to keep out of sight is not found while he keeps it; and what a person owes on notes of hand is found with the rest.
       const owes = (w.debts || []).filter(d => d.debtor === ch.id && ['open', 'overdue'].includes(d.status) && !d.known && w.characters[d.creditor]?.alive).map(d => `Owes ${Math.round(d.owed)} to ${w.characters[d.creditor].name} on a note of hand (${d.id}), ${d.status === 'overdue' ? 'overdue' : `due ${quarterLabel(d.due)}`}.`);
       const facts = [...(ch.secrets || []).filter(s => !s.published && !keptQuiet(w, s)).slice(-5).map(s => s.text), ...owes.slice(0, 3)]; actor.dossiers[ch.id] = { turn: w.turn, about: ch.name, facts }; return { ok: true, msg: facts.length ? `Dossier opened, ${facts.length} facts found.` : 'Dossier opened, but nothing that is not already known came up.' }; }
     case 'blackmail': { const ch = w.characters[op.character], file = actor.dossiers[ch?.id]; if (!ch?.alive || !file) return fail('You hold no dossier.'); if (!file.facts?.length) return fail('There is nothing usable in the dossier.');
@@ -1199,7 +1209,7 @@ export function applyOp(w, actor, op) {
     case 'mobilize': return mobilize(w, c, op, pay, fail);
     case 'demobilize': return demobilize(w, c, op.men != null ? num(op.men, 0, 1e6, 0) : op.share != null ? -num(op.share, 0, 1, 1) : null, op.unit) ?? fail('No reservists are under arms.');
     case 'move': {
-      const u = w.units[op.unit]; if (!u || u.country !== c.id || !w.provinces[op.to]) return fail('Invalid movement order.');
+      const u = w.units[op.unit]; if (!u || u.country !== c.id) return fail(`Invalid movement order: no unit of ours is called ${op.unit ?? '(none was named)'}. The army list has the units and their numbers.`); if (!w.provinces[op.to]) return fail(`Invalid movement order: no such province to march to (${op.to ?? 'none was named'}).`);
       if (freshlyCalled(w)(u) && w.provinces[op.to].controller !== c.id && atWar(w, c.id, w.provinces[op.to].controller)) return fail(`${u.id} was called up this quarter: it can march on our own ground and hold it, and goes against ground the enemy holds from next quarter.`);
       // A number sends a detachment and leaves the rest of the unit where it stands.
       // Where no road leads (an island, a possession across the sea) the troops go by ship, as a landing on a friendly coast does: "detach six
@@ -1879,6 +1889,12 @@ const POSTURE_SAYS = {
 // go in together; the order says how (a reconnaissance in force, an assault, an attack pressed whatever it costs), whether the guns prepare it,
 // and how long the staff has to get ready. What comes of it is the engine's to say (military.js: launch, resolve).
 const freshlyCalled = w => u => u.called === true && u.calledAt === w.turn;
+// The bodies of water of the world: seas that touch belong to one water. A harbour on an inland water that no strait joins to the open sea is
+// a harbour its ships cannot leave, and no order sends them out of it; whoever gives such an order is told why, and where a canal could be cut.
+export function watersOf(w) { const of = {}; let k = 0; for (const id of Object.keys(w.seas)) { if (of[id] != null) continue; const q = [id]; of[id] = k; for (let i = 0; i < q.length; i++) for (const x of w.seas[q[i]].neighbors || []) if (of[x] == null) { of[x] = k; q.push(x); } k++; } return of; }
+export function canalsBetween(w, a, b) { const of = watersOf(w); return (w.strategic || []).filter(x => x.type === 'canal_site' && !(w.canals || []).some(k => k.id === x.id || k.site === x.id)).filter(x => { const ws = new Set((w.provinces[x.ref]?.seas || []).map(s => of[s])); return ws.has(a) && ws.has(b); }); }
+function apart(w, c, from, to) { const of = watersOf(w), a = of[from], bs = [...new Set(to.map(s => of[s]))]; if (a == null || bs.includes(a) || !bs.length) return ''; const size = k => Object.values(of).filter(x => x === k).length, small = size(a) <= size(bs[0]) ? a : bs[0], sites = canalsBetween(w, a, bs[0]);
+  return ` The two lie on different waters: ${small === a ? 'ours here' : 'the one named'} is an inland water of ${size(small)} sea${size(small) > 1 ? 's' : ''} that no strait joins to the open sea, and no ship passes from the one to the other.${sites.length ? ` A canal would join them: it can be cut at ${sites.map(s => `${w.provinces[s.ref]?.name} (${s.id}, ${w.provinces[s.ref]?.controller === c.id ? 'on our soil' : `held by ${w.countries[w.provinces[s.ref]?.controller]?.name ?? 'another state'}`})`).join(' or ')} (build_canal, where the land is ours).` : ''}`; }
 function offensive(w, c, op) {
   const to = w.provinces[op.to]; if (!to) return fail('Name the province to be attacked (to).');
   const mine = Object.values(w.units).filter(u => u.country === c.id), on = mine.filter(u => u.attack?.to === to.id);
