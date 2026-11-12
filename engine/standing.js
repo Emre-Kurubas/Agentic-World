@@ -9,7 +9,7 @@
 import { clamp, rand, news, nextId, quarterLabel } from './util.js';
 import { aliveCountries } from './world.js';
 import { governs } from './polity.js';
-import { he, him } from './names.js';
+import { he, him, his } from './names.js';
 
 export const STANDING_OPS = new Set(['watch', 'delegate', 'standing_order', 'cancel_order']);
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
@@ -79,7 +79,7 @@ export function standingOp(w, actor, c, op, h) {
       if (!ops.length) return fail('Say which powers: the operations that person may order as his own (for the chief of staff, for instance: mobilize, demobilize, recruit, build).');
       if (at >= 0) list[at].ops = [...new Set([...list[at].ops, ...ops])]; else list.push({ ...(seat ? { seat } : { to: to.id }), ops, by: actor.id, since: w.turn });
       say(w, to, c.name, `${actor.name} leaves in your hands, to order as your own until it is taken back: ${ops.join(', ')}. What you do with it is done in the government's name.`);
-      return { ok: true, msg: `${to.name}${seat ? ', and whoever holds that seat after,' : ''} may now order as his own: ${(at >= 0 ? list[at].ops : ops).join(', ')}. It is done in the government's name and paid for by the treasury; it stands until you take it back (delegate with revoke:true).` };
+      return { ok: true, msg: `${to.name}${seat ? ', and whoever holds that seat after,' : ''} may now order as ${his(to)} own: ${(at >= 0 ? list[at].ops : ops).join(', ')}. It is done in the government's name and paid for by the treasury; it stands until you take it back (delegate with revoke:true).` };
     }
     // An order that waits for its day.
     case 'standing_order': {

@@ -1715,15 +1715,15 @@ chain('Whoever answers a small person\'s letters has read the earlier ones and k
   w.turn++; const later = ask(rich, banker, 'I trust the paper is in order.'); assert.ok(/Sold .* the note B-1/.test(later) && /Refused/.test(later), 'next time the voice knows what he sold and what he refused');
   assert.ok(!/would sell it to the writer/.test(later), 'and no longer offers what he no longer holds');
   // What a sum would buy from a commander is the engine's own figure.
-  const seen = ask(rich, col, 'What would it take for your regiment to stay in barracks?'), m = /keep his men out of it when the government is struck at: about (\d+)/.exec(seen); assert.ok(m, 'the voice is given his price'); const p = +m[1];
+  const seen = ask(rich, col, 'What would it take for your regiment to stay in barracks?'), m = /keep (?:his|her) men out of it when the government is struck at: about (\d+)/.exec(seen); assert.ok(m, 'the voice is given his price'); const p = +m[1];
   assert.equal(applyOp(w, rich, { op: 'bribe', character: col.id, amount: p - 1, for: 'stand_aside' }).ok, false); w.turn++; assert.ok(applyOp(w, rich, { op: 'bribe', character: col.id, amount: p, for: 'stand_aside' }).ok, 'and at that price he does it');
-  assert.ok(/Until Q\d \d+ he keeps his men where they stand/.test(ask(rich, col, 'You have my thanks.')), 'after which the voice knows he is bound');
+  assert.ok(/Until Q\d \d+ (?:he|she) keeps (?:his|her) men where they stand/.test(ask(rich, col, 'You have my thanks.')), 'after which the voice knows he is bound');
   // A servant reports to the ruler he serves, and to nobody else; one who has lost faith gives no figures.
   keeper.loyalty = 70; const figure = `the treasury holds ${Math.round(c.treasury)}`; assert.ok(ask(boss, keeper, 'How do we stand?').includes(figure), 'to his ruler the keeper of the treasury gives the true figure'); assert.ok(!ask(rich, keeper, 'How does the treasury stand?').includes(figure), 'to a magnate he gives none');
   keeper.loyalty = 10; assert.ok(!ask(boss, keeper, 'How do we stand?').includes(figure) && /lost faith/.test(ask(boss, keeper, 'How do we stand?')), 'and a keeper who has lost faith in his ruler reports no more than he must');
   keeper.handler = rich.id; assert.ok(ask(rich, keeper, 'What do the books say?').includes(figure), 'unless the magnate has bought him');
   // A file held over him: what he would give way in, by the engine's reckoning.
-  col.secrets = [{ turn: 0, text: 'Sold remounts to a dealer.' }]; w.characters[c.opposition].dossiers[col.id] = { turn: w.turn, about: col.name, facts: ['Sold remounts to a dealer.'] }; assert.ok(/holds a file on him/.test(ask(w.characters[c.opposition], col, 'You know what I hold.')), 'the voice knows that the writer holds a file, and what it would force');
+  col.secrets = [{ turn: 0, text: 'Sold remounts to a dealer.' }]; w.characters[c.opposition].dossiers[col.id] = { turn: w.turn, about: col.name, facts: ['Sold remounts to a dealer.'] }; assert.ok(/holds a file on (?:him|her)/.test(ask(w.characters[c.opposition], col, 'You know what I hold.')), 'the voice knows that the writer holds a file, and what it would force');
 });
 import { uprisingStep as risingsOf, die as dieOf } from '../engine/politics.js';
 chain('A seat decides for itself: the leader of the opposition is asked before the provinces rise in his name and may refuse or give warning; an office can be laid down and a country left and come back to; a deputy named in advance takes a vacant seat, and where the army fills it the ruler is told who; and those who take the palace say what is done in the first hours', () => {
@@ -2002,7 +2002,7 @@ chain('What rulers and others were found unable to do: dismiss a chief of staff 
   // chronicle.js writeLife, whatever name the order gave him. On the map as it now falls that happens to this man.) assert.equal(gen.status, 'free', 'the dismissed chief is a private person, and free');
   assert.ok(Object.values(w.units).filter(u => u.country === 'U1').every((u, i) => u.loyalty < loyal[i] + 1e-9), 'the army takes it badly'); assert.equal(applyOp(w, gen, { op: 'move_army', to: c.capital }).ok, false, 'and he commands nothing any more');
   // A general with a stroke prepared answers with it.
-  const x = inherited(), k = x.countries.U1, head = ld(x, k), g = x.characters[k.general]; assert.ok(applyOp(x, g, { op: 'start_plot', kind: 'coup' }).ok); const out = applyOp(x, head, { op: 'dismiss' }); assert.ok(!x.plots.at(-1).active, 'the plot is sprung'); assert.ok(/stroke he had prepared/.test(out.msg), out.msg);
+  const x = inherited(), k = x.countries.U1, head = ld(x, k), g = x.characters[k.general]; assert.ok(applyOp(x, g, { op: 'start_plot', kind: 'coup' }).ok); const out = applyOp(x, head, { op: 'dismiss' }); assert.ok(!x.plots.at(-1).active, 'the plot is sprung'); assert.ok(/stroke (?:he|she) had prepared/.test(out.msg), out.msg);
   // A fine.
   c.courts = 0; rich.wealth = 80; const till = c.treasury; const f1 = applyOp(w, boss, { op: 'fine', character: rich.id, amount: 20, reason: 'the flooded gallery' }); assert.ok(f1.ok, f1.msg); assert.equal(rich.wealth, 60); assert.ok(Math.abs(c.treasury - till - 20) < 1e-6); c.courts = 100; let struck = 0; for (let i = 0; i < 60; i++) { w.turn++; if (!applyOp(w, boss, { op: 'fine', character: rich.id, amount: 1 }).ok) struck++; } assert.ok(struck > 8, `free courts strike some fines down: ${struck} of 60`);
   // A guard formed on the spot.
@@ -3098,7 +3098,7 @@ chain('A plan of campaign is a paper: drawn up in peace it lets the army open a 
   assert.ok(applyOp(w, t.gen, { op: 'prepare_plan', target: 'U3' }).ok && applyOp(w, t.gen, { op: 'prepare_plan', target: 'U4' }).ok && !a.plans.U2 && a.plans.U3 && a.plans.U4, 'a staff keeps two plans in order');
   // Copied by a bought man on the staff.
   let copied = 0, told = 0; for (let i = 0; i < 12; i++) { const x = structuredClone(base); x.rng = 70 + i * 811; delete x.countries.U2.stolen; const clerk = spawnCharacter(x, 'U1', 'official', x.countries.U1.axes, { power: 20 }); clerk.clerkOf = 'army'; clerk.handler = x.countries.U2.leader; clerk.loyalty = 10; clerk.stipend = 5; clerk.boughtAt = x.turn;
-    courtQuarter(x, applyOp); if (x.countries.U2.stolen?.U1?.against === 'U2') copied++; if (x.characters[x.countries.U2.leader].inbox.some(m => /He has copied the staff's plan for war with/.test(m.text))) told++; }
+    courtQuarter(x, applyOp); if (x.countries.U2.stolen?.U1?.against === 'U2') copied++; if (x.characters[x.countries.U2.leader].inbox.some(m => /(?:He|She) has copied the staff's plan for war with/.test(m.text))) told++; }
   assert.ok(copied >= 6 && told === copied, `a clerk in foreign pay copies it for his paymaster's state: ${copied} of 12`);
   const ref = refereePrompt(w, a, [{ actor: t.gen, decisions: ['Plan.'] }]); assert.ok(ref.includes('prepare_plan{target,objective?:province id of theirs,text?}') && ref.includes('leak_plan{against,to}'), 'the referee knows these orders');
 });
@@ -3574,7 +3574,7 @@ chain('Whoever holds no office may leave the stage of his own will, and only of 
   w.plots.push({ id: 'K-own', country: 'U1', kind: 'coup', leader: old.id, members: [], progress: 10, secrecy: .9, active: true, start: w.turn }); w.newsThisTurn = [];
   const r = game.applyRuling(old, { narrative: 'He is done.', prob: 1, public: true, source: 'referee', ops: [{ op: 'retire', words: 'I have served; let others quarrel.' }] });
   assert.ok(r.success && r.results[0].ok && old.retired === w.turn && !old.everAI && !isAI(base, c, old) && old.alive && w.characters[old.id], `he has left the stage and is still in the world: ${r.results[0].msg}`);
-  assert.ok(!shouldWake(w, base, old) && !w.plots.find(p => p.id === 'K-own').active && w.newsThisTurn.some(e => /has let it be known that he withdraws from public life, with the words: "I have served/.test(e.text)), 'he is not woken again, what he led ends with him, and the papers say that he went');
+  assert.ok(!shouldWake(w, base, old) && !w.plots.find(p => p.id === 'K-own').active && w.newsThisTurn.some(e => /has let it be known that (?:he|she) withdraws from public life, with the words: "I have served/.test(e.text)), 'he is not woken again, what he led ends with him, and the papers say that he went');
   assert.ok(!applyOp(w, old, { op: 'retire' }).ok, 'it is done once');
   // A prisoner may; and nobody is retired for him.
   const o = w.characters[c.opposition]; o.everAI = true; assert.ok(applyOp(w, L, { op: 'purge', character: o.id, fate: 'imprisoned' }).ok && o.status === 'imprisoned'); for (let i = 0; i < 6; i++) run(w, 1);
@@ -3751,7 +3751,7 @@ chain('Standing matters: a watch sees what is done in secret and opens the post,
   assert.ok(G.inbox.some(m => /The watch on the frontier with [^:]*: about \d+ thousand of their men now stand within a march of it; a quarter ago it was about \d+ thousand/.test(m.text)), 'the staff says at once when the number across the frontier changes much');
   // A power left in another's hands.
   assert.ok(!applyOp(w, G, { op: 'mobilize', men: 5 }).ok && !applyOp(w, G, { op: 'delegate', to: O.id, powers: ['mobilize'] }).ok, 'the chief of staff cannot call up, nor hand powers about');
-  const del = applyOp(w, L, { op: 'delegate', to: 'general', powers: ['mobilize', 'demobilize'] }); assert.ok(del.ok && /may now order as his own: mobilize, demobilize/.test(del.msg), del.msg);
+  const del = applyOp(w, L, { op: 'delegate', to: 'general', powers: ['mobilize', 'demobilize'] }); assert.ok(del.ok && /may now order as (?:his|her) own: mobilize, demobilize/.test(del.msg), del.msg);
   assert.ok(applyOp(w, G, { op: 'mobilize', men: 5 }).ok, 'now he can');
   assert.ok(/Left in your hands by [^\n]*: mobilize, demobilize/.test(desk(w, G)) && /Left in the hands of [^\n]*: mobilize, demobilize/.test(desk(w, L)), 'both desks show it');
   assert.ok(applyOp(w, L, { op: 'delegate', to: 'general', revoke: true }).ok && !applyOp(w, G, { op: 'mobilize', men: 5 }).ok, 'and no longer once it is taken back');
@@ -4164,6 +4164,21 @@ chain('The sea carries what is heavy, ships earn whatever flag the cargo sails f
     const debtor = cs.find(c => Object.keys(c.creditors || {}).length); if (debtor) { const [cid] = Object.keys(debtor.creditors); assert.ok(leanLines_(w, debtor, true).some(l => new RegExp(`^We owe ${w.countries[cid].name} \\d+ in gold`).test(l)) && leanLines_(w, w.countries[cid], true).some(l => new RegExp(`${debtor.name} \\([^)]*it owes us \\d+ in gold`).test(l)), 'a debt between states is read from both ends'); } }
 });
 
+import { sexOf as sexOfPerson } from '../engine/names.js';
+chain('The engine speaks of a woman as she and of a man as he', () => {
+  // World 17: the engine's own sentences called every holder of a note, every clerk and every dismissed general "he".
+  const w = inherited(2696855, 8), c = w.countries.U1, boss = w.characters[c.leader], small = Object.values(w.characters).filter(x => x.alive && minorOf(x));
+  const woman = small.find(x => sexOfPerson(x.name) === 'f'), man = small.find(x => sexOfPerson(x.name) === 'm'); assert.ok(woman && man, 'there are small people of both sexes around the seats');
+  w.debts = []; boss.wealth = 0;
+  const said = (h, op) => { h.greed = 50; const d = { id: `B-${w.debts.length + 1}`, creditor: h.id, debtor: boss.id, amount: 40, owed: 50, due: w.turn + 6, terms: 'An old loan.', status: 'open', turn: w.turn }; w.debts.push(d); const r = applyOp(w, boss, { ...op, debt: d.id }); assert.ok(r.msg, 'the engine answers'); return r.msg; };
+  const w1 = said(woman, { op: 'ask_terms', offer: 1 }), m1 = said(man, { op: 'ask_terms', offer: 1 });
+  assert.ok(/(She would take \d+ now|By her reckoning)/.test(w1) && !/\b(he|his|him|He)\b/.test(w1), `a woman who holds a note is she: ${w1}`);
+  assert.ok(/(He would take \d+ now|By his reckoning)/.test(m1) && !/\b(she|her|She)\b/.test(m1), `and a man is he: ${m1}`);
+  w.turn++;
+  const w2 = said(woman, { op: 'ask_terms', extend: 1 }), m2 = said(man, { op: 'ask_terms', extend: 1 });
+  assert.ok(/For the time she adds/.test(w2) && /She has renewed it/.test(w2) && !/\b(he|his|him|He)\b/.test(w2), `she gives time and says so as she: ${w2}`);
+  assert.ok(/For the time he adds/.test(m2) && /He has renewed it/.test(m2) && !/\b(she|her|She)\b/.test(m2), `he gives time and says so as he: ${m2}`);
+});
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
   // The same fight, the same dice, the enemy warned both times: only the man in command differs.
   const hurt = skill => { const f = duel({ dug: 5, ground: { trench: 2 }, rng: 99, seen: true }); f.gen.skill = skill; const [b] = quarter(f.w); assert.ok(b, 'a battle'); assert.ok(!b.prisoners, 'nobody was routed'); return f.D - f.def.men; };

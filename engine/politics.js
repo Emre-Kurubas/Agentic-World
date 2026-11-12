@@ -7,6 +7,7 @@ import { culturePenalty, leaderForeignness, minorityShare, votersOf } from './cu
 import { adminPressure } from './admin.js';
 import { afflict, healthStep, incapacitated } from './health.js';
 import { shut } from './underground.js';
+import { he, He, his } from './names.js';
 
 const CLASS_AXES = { peasants: { econ: -15, auth: 15, nation: 15, faith: 35 }, workers: { econ: -55, auth: -10, nation: 5, faith: 0 }, middle: { econ: 20, auth: -35, nation: 0, faith: -10 }, elite: { econ: 65, auth: 25, nation: 15, faith: 10 } };
 
@@ -220,7 +221,7 @@ export function fillSeat(w, c, role, gone, how) {
   c[role] = n.id; n.rise = `Took the place of ${gone?.name ?? 'the last holder'}, who ${how}, in ${w.date ?? 'the first days'}${named ? ', as the deputy named for it' : ''}.`;
   const ruler = w.characters[c.leader];
   const own = ruler?.id === gone?.id, vacant = own ? 'Your old office of chief of the general staff is vacant now that you govern.' : `The office of chief of the general staff fell vacant: ${gone?.name ?? 'its holder'} ${how}.`;
-  if (role === 'general' && ruler?.alive && ruler.id !== n.id) ruler.inbox.push({ turn: w.turn, from: 'War Ministry', text: named ? `${own ? vacant : `${gone?.name ?? 'The chief of the general staff'} ${how}.`} ${n.name} (${n.id}), whom you had named deputy, is chief of the general staff from today.` : `${vacant} The army has put forward ${n.name} (${n.id}), and he holds the office. He is not your choice: you can put another in his place at any time (dismiss, naming the successor), and a deputy named in advance (name_deputy) takes the office the day it falls vacant.` });
+  if (role === 'general' && ruler?.alive && ruler.id !== n.id) ruler.inbox.push({ turn: w.turn, from: 'War Ministry', text: named ? `${own ? vacant : `${gone?.name ?? 'The chief of the general staff'} ${how}.`} ${n.name} (${n.id}), whom you had named deputy, is chief of the general staff from today.` : `${vacant} The army has put forward ${n.name} (${n.id}), and ${he(n)} holds the office. ${He(n)} is not your choice: you can put another in ${his(n)} place at any time (dismiss, naming the successor), and a deputy named in advance (name_deputy) takes the office the day it falls vacant.` });
   return { n, fresh };
 }
 export function replaceSlot(w, c, ch) {

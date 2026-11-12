@@ -30,6 +30,7 @@ export const sexOf = name => WOMEN.has(String(name ?? '').split(' ')[0]) ? 'f' :
 // The words for a person, by what they are (a record made before people had a sex is read from the name).
 const isWoman = ch => (ch?.sex ?? sexOf(ch?.name)) === 'f';
 export const he = ch => isWoman(ch) ? 'she' : 'he', him = ch => isWoman(ch) ? 'her' : 'him', his = ch => isWoman(ch) ? 'her' : 'his', himself = ch => isWoman(ch) ? 'herself' : 'himself';
+export const He = ch => isWoman(ch) ? 'She' : 'He', His = ch => isWoman(ch) ? 'Her' : 'His';
 
 const cultureOf = eth => CULTURES[eth] ?? CULTURES.Varenic;
 export const givenNames = (eth, rel) => { const c = cultureOf(eth), f = FAITH_NAMES[rel]; return f ? [...c.first, ...c.first, ...f] : c.first; };

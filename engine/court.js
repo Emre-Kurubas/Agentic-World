@@ -43,6 +43,7 @@ function serve(w, c) {
 // how good its secret service is and how far its courts let it go; a letter that crosses a border is looked at more closely, and a ruler's own
 // correspondence travels by courier and in cipher. What is copied goes to whoever governs, and into the file kept on the writer.
 import { watchedIn } from './standing.js';
+import { he, He, him, his } from './names.js';
 export function openPost(w, from, to, text) {
   const readers = [];
   // Someone nobody plays has no memory of his own: the last letters that passed between him and each correspondent are kept with him, so that
@@ -122,7 +123,7 @@ function officer(w, c, ch, applyOp) {
     const patron = seats.find(x => x.role === 'general' && rand(w) < .6) ?? seats[Math.floor(rand(w) * seats.length)];
     if (patron) {
       ch.soundedAt = w.turn; ch.patron = patron.id; trace(w, ch, `Sounded out ${patron.name} about moving against ${ruler.name}.`);
-      say(w, patron, ch.name, `In private, and asking that it go no further: ${ch.name}, who commands ${u.id} (${Math.round(u.men)} thousand men at ${w.provinces[u.province]?.name}), lets you know that he and his officers have lost faith in ${ruler.name}. If you were to move against the government, he says, his men would follow you, and he asks what you intend. He is ${ch.id}; a plot can take him in by name. What you answer him, and whether ${ruler.name} hears of it, is yours to decide.`);
+      say(w, patron, ch.name, `In private, and asking that it go no further: ${ch.name}, who commands ${u.id} (${Math.round(u.men)} thousand men at ${w.provinces[u.province]?.name}), lets you know that ${he(ch)} and ${his(ch)} officers have lost faith in ${ruler.name}. If you were to move against the government, ${he(ch)} says, ${his(ch)} men would follow you, and ${he(ch)} asks what you intend. ${He(ch)} is ${ch.id}; a plot can take ${him(ch)} in by name. What you answer ${him(ch)}, and whether ${ruler.name} hears of it, is yours to decide.`);
     }
     return;
   }
@@ -135,8 +136,8 @@ function governor(w, c, ch, p) {
   if (ch.loyalty >= 30 || p.id === c.capital) return;
   p.admin = Math.max(.08, (p.admin ?? .5) - .015);
   if (w.turn - (ch.warnedAt ?? -99) < 6) return;
-  ch.warnedAt = w.turn; trace(w, ch, `Kept back taxes from ${p.name} and filled its offices with his own people.`);
-  say(w, w.characters[c.leader], 'Treasury', `Reports from ${p.name}: Governor ${ch.name} (${ch.id}) keeps back part of the province's taxes and fills its offices with his own men. The capital's hold on the province is slipping.`);
+  ch.warnedAt = w.turn; trace(w, ch, `Kept back taxes from ${p.name} and filled its offices with ${his(ch)} own people.`);
+  say(w, w.characters[c.leader], 'Treasury', `Reports from ${p.name}: Governor ${ch.name} (${ch.id}) keeps back part of the province's taxes and fills its offices with ${his(ch)} own men. The capital's hold on the province is slipping.`);
 }
 
 // A governor who has agreed to send his returns elsewhere: for as long as it stands, a slice of what his province pays goes to whoever he
@@ -282,14 +283,14 @@ export function recruitInformant(w, actor, ch, amount) {
   if (rand(w) >= p) {
     const host = w.countries[ch.country], ruler = w.characters[host?.leader];
     const told = ch.loyalty > 58 && ruler?.alive && ruler.id !== actor.id;
-    if (told) { say(w, ruler, ch.name, `${ch.name} (${ch.id})${postOf(w, ch) ? `, ${postOf(w, ch)},` : ''} reports that ${actor.name} (${actor.id})${actor.country !== ch.country ? ` of ${w.countries[actor.country]?.name}` : ''} offered him ${Math.round(amount)} to pass on what he sees in his post. He refused. He is known to you now, and at your disposal.`); trace(w, actor, `Tried to buy ${ch.name} as an informant.`); deal(w, ch, actor, `Refused ${actor.name}'s ${Math.round(amount)} to pass on what goes through his post, and told the ruler.`); }
+    if (told) { say(w, ruler, ch.name, `${ch.name} (${ch.id})${postOf(w, ch) ? `, ${postOf(w, ch)},` : ''} reports that ${actor.name} (${actor.id})${actor.country !== ch.country ? ` of ${w.countries[actor.country]?.name}` : ''} offered ${him(ch)} ${Math.round(amount)} to pass on what ${he(ch)} sees in ${his(ch)} post. ${He(ch)} refused. ${He(ch)} is known to you now, and at your disposal.`); trace(w, actor, `Tried to buy ${ch.name} as an informant.`); deal(w, ch, actor, `Refused ${actor.name}'s ${Math.round(amount)} to pass on what goes through ${his(ch)} post, and told the ruler.`); }
     // The one who asked learns what stood in the way: the sum, or the man.
     const atBest = clamp(.12 + ch.greed / 170 + Math.max(amount * 3, 30) / 45 - ch.loyalty / 190, .04, .92);
-    return { ok: false, told, priced: atBest >= .55 && p < .45, msg: `${ch.name} would not be bought${atBest >= .55 && p < .45 ? ` for ${Math.round(amount)}: the sum was too small for the risk he would run; something nearer ${Math.max(even, Math.round(amount) + 1)} might have been heard differently` : atBest < .55 ? ': it was not the sum; he will not sell what passes through his hands while he stands toward the government as he does' : ' this time'}.` };
+    return { ok: false, told, priced: atBest >= .55 && p < .45, msg: `${ch.name} would not be bought${atBest >= .55 && p < .45 ? ` for ${Math.round(amount)}: the sum was too small for the risk ${he(ch)} would run; something nearer ${Math.max(even, Math.round(amount) + 1)} might have been heard differently` : atBest < .55 ? `: it was not the sum; ${he(ch)} will not sell what passes through ${his(ch)} hands while ${he(ch)} stands toward the government as ${he(ch)} does` : ' this time'}.` };
   }
   ch.handler = actor.id; ch.stipend = amount; ch.boughtAt = w.turn;
-  trace(w, actor, `Bought ${ch.name} as an informant.`); trace(w, ch, `Sold what passes through his post to ${actor.name}.`);
-  return { ok: true, msg: `${ch.name} took the money. He will send word each quarter of what passes under his hands, for as long as he is not caught.` };
+  trace(w, actor, `Bought ${ch.name} as an informant.`); trace(w, ch, `Sold what passes through ${his(ch)} post to ${actor.name}.`);
+  return { ok: true, msg: `${ch.name} took the money. ${He(ch)} will send word each quarter of what passes under ${his(ch)} hands, for as long as ${he(ch)} is not caught.` };
 }
 // What passes under the hands of a man in a post, in words: the true figures of his office. A bought man sends it to his paymaster; a servant
 // reports it to the ruler or the chief he serves when he is asked.
@@ -301,7 +302,7 @@ export function postReport(w, c, ch) {
   else if (ch.post === 'house' || ch.clerkOf === 'house') { const house = ch.post === 'house' ? ch : minorsOf(w, c).find(x => x.post === 'house'), took = (w.offers || []).filter(o => o.from === house?.id && ['running', 'taken', 'finished', 'ended'].includes(o.status)); text = took.length ? `the house has paid ${took.map(o => `${w.characters[o.to]?.name ?? 'someone'} ${o.amount} (${o.kind === 'lease' ? 'for the customs lease' : o.kind === 'supply' ? 'for the army contracts' : 'for goodwill'}, ${quarterLabel(o.turn)})`).join('; ')}.` : 'the house has paid no one in office so far.';
         // And the notes of hand that lie in its strongbox: who owes it, how much, and when.
         const notes = (w.debts || []).filter(d => d.creditor === house?.id && ['open', 'overdue'].includes(d.status) && w.characters[d.debtor]?.alive); if (notes.length) text += ` In its strongbox lie notes of hand on ${notes.map(d => `${w.characters[d.debtor].name} for ${Math.round(d.owed)} (${d.id}, ${d.status === 'overdue' ? 'overdue' : `due ${quarterLabel(d.due)}`})`).join('; ')}. A note is a paper the house may sell.`; }
-  else { const p = Object.values(w.provinces).find(x => x.governor === ch.id); text = p ? `in ${p.name} unrest stands at ${Math.round(p.unrest)} of 100 and the state's hold on the province at ${Math.round((p.admin ?? .5) * 100)} of 100.` : 'nothing of weight passed under his hands this quarter.'; }
+  else { const p = Object.values(w.provinces).find(x => x.governor === ch.id); text = p ? `in ${p.name} unrest stands at ${Math.round(p.unrest)} of 100 and the state's hold on the province at ${Math.round((p.admin ?? .5) * 100)} of 100.` : `nothing of weight passed under ${his(ch)} hands this quarter.`; }
   return text;
 }
 // What a turned man sends: the same kind of letter as before, with the figures his ruler wants believed. Shown strong, the army is half as
@@ -324,8 +325,8 @@ function inform(w, c, ch) {
   const arrest = () => {
     ch.handler = null; sideline(w, ch, 'imprisoned'); trace(w, handler, `Ran ${ch.name} as an informant in ${c.name}.`);
     news(w, `${c.name}: ${ch.name} was arrested for passing state papers to ${abroad ? `an agent of ${w.countries[handler.country]?.name}` : 'a private paymaster'}.`, { kind: 'plot', countries: abroad ? [c.id, handler.country] : [c.id] });
-    if (ruler?.alive && ruler.id !== handler.id) { say(w, ruler, 'Police', `${ch.name} was taken with papers meant for ${handler.name} (${handler.id})${abroad ? ` of ${w.countries[handler.country]?.name}` : ''}, who has been paying him since ${quarterLabel(ch.boughtAt ?? w.turn)}.`); const file = ruler.dossiers[handler.id] ||= { turn: w.turn, about: handler.name, facts: [] }, t = `Paid ${ch.name} to pass on state papers.`; if (!file.facts.includes(t)) { file.facts.push(t); file.facts = file.facts.slice(-8); } }
-    say(w, handler, 'A warning', `${ch.name}, your informant in ${c.name}, has been arrested. Your name was on the papers found with him.`);
+    if (ruler?.alive && ruler.id !== handler.id) { say(w, ruler, 'Police', `${ch.name} was taken with papers meant for ${handler.name} (${handler.id})${abroad ? ` of ${w.countries[handler.country]?.name}` : ''}, who has been paying ${him(ch)} since ${quarterLabel(ch.boughtAt ?? w.turn)}.`); const file = ruler.dossiers[handler.id] ||= { turn: w.turn, about: handler.name, facts: [] }, t = `Paid ${ch.name} to pass on state papers.`; if (!file.facts.includes(t)) { file.facts.push(t); file.facts = file.facts.slice(-8); } }
+    say(w, handler, 'A warning', `${ch.name}, your informant in ${c.name}, has been arrested. Your name was on the papers found with ${him(ch)}.`);
     if (abroad) { const hc = w.countries[handler.country]; if (hc?.alive && [hc.leader, hc.general].includes(handler.id)) c.relations[hc.id] = clamp((c.relations[hc.id] ?? 0) - 12, -100, 100); }
   };
   // Found out last quarter, and whoever governs let it be: the police take him now.
@@ -335,11 +336,11 @@ function inform(w, c, ch) {
     // not know he is watched and goes on as before; if nothing is ordered he is arrested next quarter, as he always was.
     if (!(ruler?.alive && ruler.aiControlled && ruler.status === 'free' && ruler.id !== handler.id)) { arrest(); return; }
     ch.caught = { for: handler.id, turn: w.turn }; const file = ruler.dossiers[handler.id] ||= { turn: w.turn, about: handler.name, facts: [] }; file.facts.push(`Paid ${ch.name} to pass on state papers.`); file.facts = file.facts.slice(-8);
-    say(w, ruler, 'Police', `${ch.name} (${ch.id})${postOf(w, ch) ? `, who ${postOf(w, ch)},` : ''} has been found passing state papers to ${handler.name} (${handler.id})${abroad ? ` of ${w.countries[handler.country]?.name}` : ''}, who has been paying him since ${quarterLabel(ch.boughtAt ?? w.turn)}. He does not know that we know. He can be arrested, which his paymaster will learn at once; or turned (turn_informant): he then goes on writing to his paymaster and writes what we choose, so that what ${abroad ? 'they know of us' : 'his paymaster knows'} grows worse instead of better. If nothing is ordered, the police take him next quarter.`);
+    say(w, ruler, 'Police', `${ch.name} (${ch.id})${postOf(w, ch) ? `, who ${postOf(w, ch)},` : ''} has been found passing state papers to ${handler.name} (${handler.id})${abroad ? ` of ${w.countries[handler.country]?.name}` : ''}, who has been paying ${him(ch)} since ${quarterLabel(ch.boughtAt ?? w.turn)}. ${He(ch)} does not know that we know. ${He(ch)} can be arrested, which ${his(ch)} paymaster will learn at once; or turned (turn_informant): ${he(ch)} then goes on writing to ${his(ch)} paymaster and writes what we choose, so that what ${abroad ? 'they know of us' : `${his(ch)} paymaster knows`} grows worse instead of better. If nothing is ordered, the police take ${him(ch)} next quarter.`);
   }
   const u = commandOf(w, ch);
   // A clerk sees the papers of his office, but not all of them and not always the latest.
-  let text = ch.clerkOf && rand(w) < .35 ? 'nothing of weight passed under his hands this quarter.' : postReport(w, c, ch);
+  let text = ch.clerkOf && rand(w) < .35 ? `nothing of weight passed under ${his(ch)} hands this quarter.` : postReport(w, c, ch);
   // A paper kept secret passes under some hands: a treaty that concerns the army under those of its officers and staff clerks, one about trade
   // or money under those of the treasury and the banking house. A bought man in the right place sees it, and then his paymaster holds it.
   const sees = t => (u || ch.role === 'officer' || ch.clerkOf === 'army') ? MILITARY.includes(t.kind) : (ch.post === 'treasury' || ch.clerkOf === 'treasury' || ch.post === 'house' || ch.clerkOf === 'house') ? t.kind === 'trade' || t.reparations > 0 || (t.clauses || []).some(x => ['tribute', 'delivery', 'tariff'].includes(x.type)) : false;
@@ -347,11 +348,11 @@ function inform(w, c, ch) {
     if (!t.active || !t.secret || !t.parties.includes(c.id) || (ch.told ||= []).includes(t.id) || !sees(t)) continue;
     ch.told.push(t.id); (handler.papers ||= []).includes(t.id) || handler.papers.push(t.id);
     const hc = w.countries[handler.country]; if (abroad && hc?.alive && [hc.leader, hc.general].includes(handler.id) && !t.parties.includes(hc.id) && !(t.known ||= []).includes(hc.id)) t.known.push(hc.id);
-    text += ` He has also seen a paper that is kept secret: ${c.name} is bound by ${kindWord(t)} (${t.id}) with ${t.parties.filter(id => id !== c.id).map(id => w.countries[id]?.name).join(', ')}${t.terms ? `: "${t.terms}"` : ''}. You hold it now, and can make it public (publish_treaty).`;
+    text += ` ${He(ch)} has also seen a paper that is kept secret: ${c.name} is bound by ${kindWord(t)} (${t.id}) with ${t.parties.filter(id => id !== c.id).map(id => w.countries[id]?.name).join(', ')}${t.terms ? `: "${t.terms}"` : ''}. You hold it now, and can make it public (publish_treaty).`;
   }
   // The staff's plans of campaign pass under the hands of its officers and clerks.
   if (u || ch.role === 'officer' || ch.clerkOf === 'army') for (const [id, plan] of Object.entries(c.plans || {})) { const foe = w.countries[id]; if (!foe?.alive || plan.ready > w.turn || (ch.shown ||= {})[id] === plan.since) continue; ch.shown[id] = plan.since;
-    text += ` He has copied the staff's plan for war with ${foe.name}${plan.objective ? `: its first objective is ${w.provinces[plan.objective]?.name} (${plan.objective})` : ''}${plan.text ? `; it says: "${plan.text}"` : ''}.`;
+    text += ` ${He(ch)} has copied the staff's plan for war with ${foe.name}${plan.objective ? `: its first objective is ${w.provinces[plan.objective]?.name} (${plan.objective})` : ''}${plan.text ? `; it says: "${plan.text}"` : ''}.`;
     const hc = w.countries[handler.country]; if (hc?.alive && hc.id !== c.id) { (hc.stolen ||= {})[c.id] = { against: id, turn: w.turn, objective: plan.objective ?? null, text: plan.text ?? '', from: ch.id }; text += hc.id === id ? ' While they follow it, we know where they will come.' : ''; } }
   say(w, handler, `${ch.name} (your informant)`, `Word from ${ch.name} in ${c.name}: ${text}`);
   if (abroad) { const hc = w.countries[handler.country]; if (hc?.alive) hc.intel[c.id] = clamp((hc.intel[c.id] ?? 0) + 6, 0, 100); }
@@ -364,7 +365,7 @@ export function courtStep(w, applyOp) {
       if (ch.status !== 'free') continue;
       settle(w, c, ch);
       // Whoever keeps the treasury and has lost both faith and scruple keeps some of it.
-      if (w.friction && ch.post === 'treasury' && ch.loyalty < 30 && ch.greed > 50) { const take = Math.min(Math.max(c.treasury, 0), (c.lastRevenue || 0) * .012); c.treasury -= take; ch.wealth += take * .2; c.corruption = clamp(c.corruption + .3, 2, 95); if (take > 0 && !(ch.secrets || []).some(s => /Kept back money/.test(s.text) && w.turn - s.turn < 8)) trace(w, ch, `Kept back money from the treasury he keeps, about ${Math.round(take)} a quarter.`); }
+      if (w.friction && ch.post === 'treasury' && ch.loyalty < 30 && ch.greed > 50) { const take = Math.min(Math.max(c.treasury, 0), (c.lastRevenue || 0) * .012); c.treasury -= take; ch.wealth += take * .2; c.corruption = clamp(c.corruption + .3, 2, 95); if (take > 0 && !(ch.secrets || []).some(s => /Kept back money/.test(s.text) && w.turn - s.turn < 8)) trace(w, ch, `Kept back money from the treasury ${he(ch)} keeps, about ${Math.round(take)} a quarter.`); }
       if (ch.handler) inform(w, c, ch);
       if (ch.status !== 'free') continue;
       if (ch.role === 'officer' || commandOf(w, ch)) officer(w, c, ch, applyOp);

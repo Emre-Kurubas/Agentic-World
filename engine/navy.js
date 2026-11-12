@@ -7,6 +7,7 @@ import { atWar, hasTreaty, countryProvinces, aliveCountries, makeFleet, markFoug
 import { hasTech } from './economy.js';
 import { fighting, commanderOf, season, leadOf } from './military.js';
 import { die } from './politics.js';
+import { his } from './names.js';
 
 // power: what one hull counts for in a line of battle, a cruiser being one. speed: who can decline a fight. coal: what a hull burns in a
 // quarter at sea. cells: how far it steams in a quarter. reach: how many seas from a base it can keep station at all.
@@ -225,7 +226,7 @@ function fight(w, sea, fs, beaten) {
   const wa = admiral(w, [...win].sort((a, b) => hull(b) - hull(a))[0]), la = admiral(w, [...lose].sort((a, b) => hull(b) - hull(a))[0]);
   if (wa) { wa.skill = clamp((wa.skill ?? 1) + .01, .5, 1.6); (wa.record ||= { won: 0, lost: 0 }).won++; } if (la) (la.record ||= { won: 0, lost: 0 }).lost++;
   // An admiral goes down with his flagship now and then; the staff ashore does not.
-  for (const [ad, f, bad] of [[wa, win[0], false], [la, lose[0], true]]) if (ad?.alive && f.commander === ad.id && rand(w) < (bad ? .06 : .015)) { news(w, `${ad.name} was lost with his flagship in ${seaName(w, sea)}.`, { kind: 'war', countries: [ad.country] }); die(w, ad, `went down with his flagship in ${seaName(w, sea)}`, { quiet: true }); }
+  for (const [ad, f, bad] of [[wa, win[0], false], [la, lose[0], true]]) if (ad?.alive && f.commander === ad.id && rand(w) < (bad ? .06 : .015)) { news(w, `${ad.name} was lost with ${his(ad)} flagship in ${seaName(w, sea)}.`, { kind: 'war', countries: [ad.country] }); die(w, ad, `went down with ${his(ad)} flagship in ${seaName(w, sea)}`, { quiet: true }); }
   // The beaten squadron does not stay to be sunk: it runs for a harbour of its own where no enemy waits, and lies there.
   const ran = {};
   for (const f of [...win, ...lose]) f.hurt = w.turn;
