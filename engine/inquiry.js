@@ -63,8 +63,8 @@ export function inquiryOp(w, actor, c, op, h) {
   }
   const m = matterOf(w, c, op.into ?? op.id ?? op.matter); if (!m) return fail(`Say what is to be looked into (into): ${INTO}. One person is looked into with gather_dossier.`);
   const list = (w.inquiries ||= []); if (list.some(x => x.by === actor.id && x.key === m.key)) return fail(`An inquiry of yours into ${m.name} is sitting already; it reports when the quarter is out.`);
-  const staff = !state && c.general === actor.id && m.key === 'army', owner = m.kind === 'works' && w.firms[m.key].owner === actor.id, house = !state && !staff && !!c.parliament && h.leads;
-  if (!state && !staff && ['office', 'province'].includes(m.kind) && !house) return fail(`The books of ${m.name} are the state's: only whoever governs can have them opened${c.parliament ? ', or a party in the house by an inquiry of the house' : ''}.`);
+  const staff = !state && c.general === actor.id && m.key === 'army', owner = m.kind === 'works' && w.firms[m.key].owner === actor.id, sits = !!c.parliament && c.parliament.legislative !== false, house = !state && !staff && sits && h.leads;
+  if (!state && !staff && ['office', 'province'].includes(m.kind) && !house) return fail(`The books of ${m.name} are the state's: only whoever governs can have them opened${sits ? ', or the leader of a party that holds seats in the house, by an inquiry of the house (you lead no such party)' : c.parliament ? `; the ${c.parliament.name ?? 'council'} advises and cannot call for the state's books` : ''}.`);
   const fee = state || staff ? h.pays(Math.max(c.gdp, 1) * .0003) : owner || house ? 0 : Math.min(Math.max(actor.wealth, 0), Math.max(1, num(op.amount, 0, 40, 2))); if (!state && !staff && !owner && !house) { if (actor.wealth < 1) return fail('Men who ask questions are paid, and you have nothing to pay them with.'); actor.wealth -= fee; }
   const eye = state ? clamp(.3 + c.bureaucracy / 250 + (c.courts ?? 40) / 400 + auditors(c) * .25, .25, .9) : staff ? .45 : owner ? .7 : house ? clamp(.25 + (c.courts ?? 40) / 300, .2, .6) : clamp(.12 + actor.power / 400 + fee / 60, .1, .5);
   const open = house || op.public === true;

@@ -28,7 +28,7 @@ if (flag('roles')) {
   if (bad.length) { console.error(`Unknown character: ${bad.join(', ')}. Options: ${ROLES.join(', ')}`); process.exit(1); }
 }
 
-// --cast opus,sonnet,haiku deals these models by lot among the characters when a world begins; --cast none goes back to one model for leaders and one for the rest.
+// --cast opus,sonnet deals these models by lot among the characters when a world begins; --cast none goes back to one model for leaders and one for the rest.
 if (flag('cast')) cfg.models.cast = flag('cast') === 'none' ? [] : String(flag('cast')).split(',').map(s => s.trim()).filter(Boolean);
 
 const baseDir = cfg.saveDir || path.join(os.homedir(), 'ajan-dunyasi-kayitlar');

@@ -67,7 +67,7 @@ function callClaude(prompt, model, { timeoutMs = 900000, session = null, cwd = n
 }
 
 export async function checkClaude() {
-  const { text } = await callClaude('Respond with only this JSON: {"ok":true}', 'haiku', { timeoutMs: 120000 });
+  const { text } = await callClaude('Respond with only this JSON: {"ok":true}', 'sonnet', { timeoutMs: 120000 });
   return extractJson(text).ok === true;
 }
 

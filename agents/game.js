@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { aliveCountries, ROLES, countryProvinces } from '../engine/world.js';
 import { beginTurn, stepWorld } from '../engine/step.js';
-import { applyOp, printable, hangOn, onceTaken } from '../engine/ops.js';
+import { applyOp, printable, carryList } from '../engine/ops.js';
 import { news, rand, clamp, quarterLabel } from '../engine/util.js';
 import { openPost, isMinor } from '../engine/court.js';
 import { burden } from '../engine/burdens.js';
@@ -391,29 +391,7 @@ export class Game {
   applyRuling(ch, { narrative, prob, public: pub, ops, source, decision, decisionText }) {
     const w = this.w, c = w.countries[ch.country];
     const chancy = op => op?.op === 'custom', diced = prob > 0 && prob < 1 && (!ops.length || ops.some(chancy)), luck = prob >= 1 || (prob > 0 && (!diced || rand(w) < prob));
-    const results = [], nodes = [];
-    if (prob > 0) ops.forEach((op, i) => {
-      const { if_done, if_refused, once_taken, ...plain } = op ?? {}, hang = Number.isInteger(if_done) ? 'done' : Number.isInteger(if_refused) ? 'refused' : null, n = hang === 'done' ? if_done : if_refused, on = hang && n >= 0 && n < i ? results[n] : null;
-      if (on?.waits) {
-        const a = (w.awaiting || []).find(x => x.key === on.waits && x.actor === ch.id);
-        if (a) { (a[hang === 'done' ? 'then' : 'else'] ||= []).push(plain); results.push({ op: op.op, ok: true, waits: on.waits, msg: `${op.op} waits with ${ops[n].op}: it is carried out this quarter only if that ${hang === 'done' ? 'is carried out' : 'cannot be'}, and the staff reports which.` }); return; }
-      }
-      const side = hang === 'refused' ? 'else' : 'then', place = on?.takes && on.ok !== false && !on.skipped ? on.takes : null, placeName = id => w.provinces[id]?.name ?? id;
-      if (once_taken != null && once_taken !== '') {
-        const r = onceTaken(w, ch, String(once_taken), plain);
-        if (r) { const { node, ...told } = r; if (node) nodes[i] = node; results.push({ op: op.op, ...told }); return; }
-      } else if (hang && nodes[n]) {
-        const node = { op: plain, then: [], else: [] }; nodes[n][side].push(node); nodes[i] = node;
-        results.push({ op: op.op, ok: true, waits: results[n].waits, msg: `${op.op} waits with ${ops[n].op}: it is ordered only ${hang === 'done' ? 'once that has been carried out' : 'if that cannot be'}, and the staff reports which.` }); return;
-      } else if (place) {
-        nodes[i] = hangOn(w, ch, place, side, { op: plain, then: [], else: [] });
-        results.push({ op: op.op, ok: true, waits: `take:${place}`, msg: hang === 'done' ? `${op.op} waits for ${placeName(place)} to fall: it is ordered once the place is in our hands, not before, and lapses if the attack on it is beaten off or given up. The staff reports which.` : `${op.op} is held back for the case that the attack on ${placeName(place)} fails or is given up: it is ordered then, and lapses if the place falls. The staff reports which.` }); return;
-      }
-      if (on && (hang === 'done' ? on.ok === false || on.skipped : on.ok !== false || on.skipped)) { results.push({ op: op.op, ok: true, skipped: true, msg: `${op.op} was not attempted: it was ordered only in case ${ops[n].op} ${hang === 'done' ? 'was carried out, and it was not' : 'was refused, and it was not'}.` }); return; }
-      if (chancy(op) && !luck) { results.push({ op: op.op, ok: false, chance: true, msg: 'It did not come off.' }); return; }
-      if (plain.op === 'report') { results.push({ op: 'report', ...orderReport(w, ch, plain) }); return; }
-      results.push({ op: op.op, ...safeApply(w, ch, plain) });
-    });
+    const results = prob > 0 ? carryList(w, ch, ops, (plain, op) => chancy(op) && !luck ? { ok: false, chance: true, msg: 'It did not come off.' } : plain.op === 'report' ? orderReport(w, ch, plain) : safeApply(w, ch, plain)) : [];
     // The ruling as a whole failed if the dice went against it and nothing else in it was done.
     const success = prob > 0 && (luck || results.some(r => !r.chance && !r.skipped && r.ok !== false));
     const refused = results.filter(r => r.ok === false), carried = success && (!results.length || refused.length < results.length), waits = results.some(r => r.waits);

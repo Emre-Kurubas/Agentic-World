@@ -184,6 +184,60 @@ export function onceTaken(w, actor, pid, op) {
   const node = hangOn(w, actor, p.id, 'then', { op, then: [], else: [], any: true });
   return { ok: true, waits: `take:${p.id}`, node, msg: attack ? `${op.op} waits for ${p.name} to fall: it is ordered once the place is in our hands, and lapses if the attack on it is beaten off or given up${due ? ' and no treaty brings it back' : ''}. The staff reports which.` : `${op.op} waits for ${p.name} to come back into our hands${p.owner === c.id ? ', by a peace or by arms' : ' by the treaty proposed'}: it is ordered on that day. The staff reports it.` };
 }
+// A list of operations given together: those of one ruling, or of a standing order whose day has come. One of them may hang on the engine's answer
+// to an earlier one: if_done n is carried out only if operation n was, if_refused n only if the engine refused it. Where the earlier one waits
+// (on ships still at sea, on the vote of the house), what hangs on it waits with it; what hangs on an attack waits for the place to fall or for
+// the attack to fail (hangOn, carryTaken); and an operation may name the place it waits for itself (once_taken). each carries one plain operation.
+// (World 17: a standing order carried every part of its list at once, so that "attack Dundale; once it falls dig in; if it fails fall back" told
+// the columns to attack, to dig in and to go home on the same morning, and the order to dig in cancelled the attack.)
+export function carryList(w, ch, ops, each) {
+  const results = [], nodes = [], run = each ?? (plain => applyOp(w, ch, plain)), placeName = id => w.provinces[id]?.name ?? id;
+  (ops || []).forEach((op, i) => {
+    const { if_done, if_refused, once_taken, ...plain } = op ?? {}, hang = Number.isInteger(if_done) ? 'done' : Number.isInteger(if_refused) ? 'refused' : null, n = hang === 'done' ? if_done : if_refused, on = hang && n >= 0 && n < i ? results[n] : null;
+    if (on?.waits) {
+      const a = (w.awaiting || []).find(x => x.key === on.waits && x.actor === ch.id);
+      if (a) { (a[hang === 'done' ? 'then' : 'else'] ||= []).push(plain); results.push({ op: op.op, ok: true, waits: on.waits, msg: `${op.op} waits with ${ops[n].op}: it is carried out this quarter only if that ${hang === 'done' ? 'is carried out' : 'cannot be'}, and the staff reports which.` }); return; }
+      // What hangs on an order that waits for the vote of the house waits for the vote with it, and hangs on it still when the day comes.
+      const so = on.so ? (w.standingOrders || []).find(x => x.id === on.so) : null;
+      if (so) { const dep = { ...plain, [hang === 'done' ? 'if_done' : 'if_refused']: on.at }, same = JSON.stringify(dep); let at = so.then.findIndex(o => JSON.stringify(o) === same); if (at < 0 && so.then.length < 16) at = so.then.push(dep) - 1;
+        results.push(at < 0 ? { op: op.op, ok: false, msg: `${op.op} could not be added to what waits on the vote: too many orders wait on it already.` } : { op: op.op, ok: true, waits: on.waits, so: so.id, at, msg: `${op.op} waits with ${ops[n].op} for the vote of the house: it is ordered only ${hang === 'done' ? 'once that has been carried out' : 'if that cannot be'}.` }); return; }
+    }
+    const side = hang === 'refused' ? 'else' : 'then', place = on?.takes && on.ok !== false && !on.skipped ? on.takes : null;
+    if (once_taken != null && once_taken !== '') {
+      const r = onceTaken(w, ch, String(once_taken), plain);
+      if (r) { const { node, ...told } = r; if (node) nodes[i] = node; results.push({ op: op.op, ...told }); return; }
+    } else if (hang && nodes[n]) {
+      const node = { op: plain, then: [], else: [] }; nodes[n][side].push(node); nodes[i] = node;
+      results.push({ op: op.op, ok: true, waits: results[n].waits, msg: `${op.op} waits with ${ops[n].op}: it is ordered only ${hang === 'done' ? 'once that has been carried out' : 'if that cannot be'}, and the staff reports which.` }); return;
+    } else if (place) {
+      nodes[i] = hangOn(w, ch, place, side, { op: plain, then: [], else: [] });
+      results.push({ op: op.op, ok: true, waits: `take:${place}`, msg: hang === 'done' ? `${op.op} waits for ${placeName(place)} to fall: it is ordered once the place is in our hands, not before, and lapses if the attack on it is beaten off or given up. The staff reports which.` : `${op.op} is held back for the case that the attack on ${placeName(place)} fails or is given up: it is ordered then, and lapses if the place falls. The staff reports which.` }); return;
+    }
+    if (on && (hang === 'done' ? on.ok === false || on.skipped : on.ok !== false || on.skipped)) { results.push({ op: op.op, ok: true, skipped: true, msg: `${op.op} was not attempted: it was ordered only in case ${ops[n].op} ${hang === 'done' ? 'was carried out, and it was not' : 'was refused, and it was not'}.` }); return; }
+    let r; try { r = run(plain, op, i); } catch (e) { r = { ok: false, msg: `Error: ${e.message}` }; }
+    results.push({ op: op.op, ...r });
+  });
+  return results;
+}
+// An attack ordered while the declaration of war is still before the house. In a state whose house holds the power of war the declaration is a
+// bill, voted when the quarter is out; the order to attack, to land or to shell given the same morning is not refused but kept, and goes out in
+// the name of whoever gave it on the day the bill passes. It lapses if the house refuses the war or the government withdraws the bill.
+// (World 17: three of six declarations went to a house, and each time the attack ordered with it was turned back with "there is no war".)
+const WAR_ACTS = new Set(['offensive', 'amphibious', 'bombard', 'move', 'lay_mines']);
+const warBill = (c, foe) => (c.bills || []).find(b => b.status === 'pending' && (b.ops || []).some(o => o?.op === 'declare_war' && o.target === foe));
+function foeOf(w, c, op) {
+  const pid = op.op === 'bombard' ? op.province : op.op === 'lay_mines' ? null : op.to, p = pid && Object.hasOwn(w.provinces, pid) ? w.provinces[pid] : null;
+  if (op.op === 'offensive' && op.cancel === true) return null;
+  return p && p.controller && p.controller !== c.id && !atWar(w, c.id, p.controller) && !hasTreaty(w, c.id, p.controller, 'military_access') && !hasTreaty(w, c.id, p.controller, 'alliance') ? p.controller : null;
+}
+function awaitVote(w, actor, c, op, bill, foe) {
+  const list = (w.standingOrders ||= []), name = w.countries[foe]?.name ?? foe; let so = list.find(x => x.by === actor.id && x.vote === bill.id);
+  if (!so) list.push(so = { id: nextId(w, 'SO'), by: actor.id, country: c.id, when: { bill: bill.id, state: 'passed' }, words: `the day bill ${bill.id} is passed`, then: [], label: `Waits on the vote of the house on war with ${name}`, since: w.turn, vote: bill.id });
+  const { _law, _decree, _late, ...plain } = op, who = o => JSON.stringify([o.op, o.unit ?? o.units ?? o.fleet ?? null, o.to ?? o.province ?? o.sea ?? null]), key = who(plain);
+  // Given again, an order replaces itself: nothing multiplies.
+  let at = so.then.findIndex(o => !Number.isInteger(o.if_done) && !Number.isInteger(o.if_refused) && who(o) === key); if (at >= 0) so.then[at] = plain; else { if (so.then.length >= 16) return fail('Too many orders wait on that vote already.'); at = so.then.push(plain) - 1; }
+  return { ok: true, waits: `vote:${bill.id}`, so: so.id, at, msg: `The declaration of war on ${name} is before the house as bill ${bill.id}, and the house votes when this quarter is out: until it passes there is no war. This order waits for the vote: it goes out in your name the day the bill passes, and lapses if the house refuses the war or the bill is withdrawn (it is kept as order ${so.id}; cancel_order withdraws it).` };
+}
 function carryNode(w, ch, node, fresh) {
   const r = applyOp(w, ch, { ...node.op, _late: true }), line = `${node.op.op}${r.ok ? '' : ' was NOT carried out'}: ${r.msg}`, more = (node.then?.length || 0) + (node.else?.length || 0);
   // What hangs on an attack that was itself waiting now waits for that attack in its turn.
@@ -191,7 +245,10 @@ function carryNode(w, ch, node, fresh) {
   return [line, ...((r.ok ? node.then : node.else) || []).flatMap(n => carryNode(w, ch, n, fresh))];
 }
 // Orders that were waiting for their day are given once every government's orders of the quarter are in, and before the world moves.
-export function carryStanding(w) { standingStep(w, applyOp); tenderStep(w); }
+export function carryStanding(w) { standingStep(w, applyOp, carryList); tenderStep(w); }
+// And once more when the quarter has been played: an order that waited for something the quarter brought (a vote of the house, a war, troops on a
+// frontier) is given the same quarter and not a quarter late, and its owner wakes to what came of it and not to an order still "waiting".
+export function carryStandingLate(w) { standingStep(w, applyOp, carryList); }
 export function carrySigned(w) {
   for (const a of (w.signing || []).splice(0)) {
     const ch = w.characters[a.actor], c = ch && w.countries[ch.country], o = w.countries[a.target]; if (!ch?.alive || !c?.alive || !o) continue;
@@ -536,8 +593,9 @@ export function applyOp(w, actor, op) {
     if (blocker) { news(w, `${c.name}: ${blocker.name} blocked the decision taken by ${actor.name}.`, { kind: 'politics', countries: [c.id] }); return fail(`${blocker.name} blocked it.`); }
     if (!op._law && mustPassParliament(w, c, op)) {
       const bill = createBill(w, c, actor, { title: LAW_TITLE[op.op] ?? op.op, text: billWords(op), ops: [op] });
-      return bill ? { ok: true, msg: `Referred to parliament: ${bill.id}`, bill: bill.id } : fail('The parliamentary agenda is full.');
+      return bill ? { ok: true, msg: `Referred to parliament: ${bill.id}${op.op === 'declare_war' ? `. In this state war is declared by the house: the declaration is laid before it as that bill and is voted when this quarter is out. Until it passes there is no war; an attack, a landing or a bombardment ordered meanwhile waits for the vote and goes out the day it passes` : ''}`, bill: bill.id } : fail('The parliamentary agenda is full.');
     }
+    if (!op._late && WAR_ACTS.has(op.op)) { const foe = foeOf(w, c, op), bill = foe ? warBill(c, foe) : null; if (bill) return awaitVote(w, actor, c, op, bill, foe); }
   }
   // Where an order that can be about one's own country names it as its target, it means home. (World 17: somebody buying his own state's bonds
   // was told that this needs another country.)
@@ -549,7 +607,7 @@ export function applyOp(w, actor, op) {
   if (PEOPLE_OPS.has(op.op)) { const r = peopleOp(w, actor, c, op, { fail, num, pay, allowance, rules: governs(w, c, actor), leads: leadsParties(w, c, actor), leaveTrace, NO_FUNDS }); c._privilege = privilege(w, c); return r; }
   if (NOTE_OPS.has(op.op)) return noteOp(w, actor, c, op, { fail, num, governs: governs(w, c, actor), allowance });
   if (STANDING_OPS.has(op.op)) return standingOp(w, actor, c, op, { fail, num, known: k => typeof k === 'string' && /^[a-z_]{3,}$/.test(k) });
-  if (INQUIRY_OPS.has(op.op)) return inquiryOp(w, actor, c, op, { fail, num, allowance: (key, cap, want) => allowance(w, c, key, cap, want), pays: m => treasuryPays(c, m), leads: leadsParties(w, c, actor).some(p => (p.seats ?? 0) > 0) });
+  if (INQUIRY_OPS.has(op.op)) return inquiryOp(w, actor, c, op, { fail, num, allowance: (key, cap, want) => allowance(w, c, key, cap, want), pays: m => treasuryPays(c, m), leads: leadsParties(w, c, actor).some(p => (c.parliament?.seats?.[p.id] ?? 0) > 0) });
   if (TENDER_OPS.has(op.op)) return tenderOp(w, actor, c, op, { fail, num });
   if (MEANS_OPS.has(op.op)) return meansOp(w, actor, c, op, { fail, num, target, pay: (cost, what) => pay(c, cost, what), allowance: (who, key, cap, want) => allowance(w, who, key, cap, want), personFor, noPerson });
   if (SEAT_OPS.has(op.op)) return seatOp(w, actor, c, op, { fail, num, governs: governs(w, c, actor), personFor });
@@ -1186,6 +1244,9 @@ export function applyOp(w, actor, op) {
         const war = w.wars.find(x => x.active && ((x.a.includes(c.id) && x.b.includes(target.id)) || (x.b.includes(c.id) && x.a.includes(target.id)))), stated = war ? readAims(w, target, op) : null;
         if (!stated) return fail(`${c.name} is already at war with ${target.name}. To say what that war is for, name what can be measured: provinces of theirs, an indemnity, the fall of their ruler, or the end of a treaty.`);
         if (allowance(w, c, `aims:${target.id}`, 1, 1) <= 0) return fail('The aims of this war have been stated once this quarter already.');
+        const was = war.aims?.[c.id], same = was && aimsText(w, was) === aimsText(w, stated);
+        // Said again as they stand, the aims are not changed, and nobody takes it for a change.
+        if (same) return { ok: true, msg: `${c.name} is at war with ${target.name} already, and its aims stand as they were declared: ${aimsText(w, was)}.` };
         const changed = !!war.aims?.[c.id], what = aimsText(w, stated); (war.aims ||= {})[c.id] = stated;
         // Aims that grow in mid-war make every other government wonder where they will stop.
         if (changed) for (const o of aliveCountries(w)) if (o.id !== c.id && o.id !== target.id) o.relations[c.id] = clampRel((o.relations[c.id] ?? 0) - 3);
@@ -1292,7 +1353,12 @@ export function applyOp(w, actor, op) {
       return { ok: true, msg: `${ch.name} is recognised by you as the rightful government of ${home.name}. It weighs on the standing of those who rule there, and they will not forgive it.` };
     }
     case 'accept_treaty': {
-      const waiting = w.treaties.filter(x => (x.pending && x.parties.includes(c.id) && x.proposer !== c.id && !(x.signed || []).includes(c.id)) || (x.multi && x.active && (x.open || []).includes(c.id))), from = waiting.filter(x => !target || x.proposer === target.id), t = waiting.find(x => x.id === op.id) ?? (from.length === 1 ? from[0] : null);
+      const waiting = w.treaties.filter(x => (x.pending && x.parties.includes(c.id) && x.proposer !== c.id && !(x.signed || []).includes(c.id)) || (x.multi && x.active && (x.open || []).includes(c.id))), from = waiting.filter(x => !target || x.proposer === target.id), named = op.id != null && op.id !== '' ? w.treaties.find(x => x.id === String(op.id)) : null, t = named ? waiting.find(x => x.id === named.id) ?? null : waiting.find(x => x.id === op.id) ?? (from.length === 1 && (target || op.id == null || op.id === '') ? from[0] : null);
+      // A signature goes to the paper that was named, or to none. (World 17: an order to sign a treaty already signed put the signature on the one
+      // other paper on the table, a commission its government had refused three times.)
+      if (named && !t) { const ours = (named.parties || []).includes(c.id), rest = waiting.length ? ` Unsigned on the table: ${waiting.map(x => `${x.id} (${x.kind}, from ${w.countries[x.proposer]?.name ?? x.proposer})`).join(', ')}.` : '';
+        if (ours && (named.active || (named.signed || []).includes(c.id))) return { ok: true, msg: `${named.id} bears our signature already${named.active ? ' and is in force' : ''}: there is nothing more to sign.${rest}` };
+        return fail(`${named.id} is not waiting for our signature${ours && named.proposer === c.id ? ': it is our own proposal, and the other side signs it' : named.pending ? '' : ': it is closed'}.${rest}`); }
       // A signature ordered for a paper that has not arrived yet waits for it: in a quarter two governments agree by letter, one sends the treaty and
       // the other signs, and which of the two orders reaches the engine first is chance. It is given when the quarter's proposals are all in
       // (carrySigned, before the quarter is played), and whoever ordered it is told what came of it.

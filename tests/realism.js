@@ -3965,6 +3965,65 @@ chain('Land is not to be had for the asking: what a neighbour claims is inherite
     if (from) { w.wars.push({ id: 'S-c', a: [atk.id], b: [def.id], civil: false, active: true, start: w.turn, name: 'c' }); const u = soldier(w, atk.id, from.id, 60); assert.ok(applyOp(w, w.characters[atk.general], { op: 'offensive', to: p.id, units: [u.id], manner: 'assault' }).ok); let fought = false; for (let i = 0; i < 4 && !fought; i++) { beginTurn(w); stepWorld(w); fought = hasFought_(w, def.id, atk.id); } assert.ok(fought, `${p.name} has to be fought for`); } }
 });
 
+import { carryList as carryList_, carryStandingLate as lateOrders_ } from '../engine/ops.js';
+import fs_ from 'node:fs';
+chain('An order kept for its day is carried as a ruling would be, a signature goes to the paper that was named, a party in the house can open the state\'s books, and an attack ordered with a declaration that is before the house waits for the vote', () => {
+  // World 17, eleven quarters. (1) "When war comes: attack Dundale; once it falls dig in; if it fails return" was carried all at once, and the
+  // order to dig in cancelled the attack. (2) "Sign A636", which was signed, put the signature on the one other paper on the table. (3) The
+  // opposition's inquiry of the house was refused every time, because the seats were looked for in the wrong place. (4) Three of six
+  // declarations went to a house and the attack ordered the same morning was refused with "there is no war".
+  const near = (w, a) => { for (const p of Object.values(w.provinces).filter(p => p.controller === a.id)) for (const n of p.neighbors) { const q = w.provinces[n]; if (q.controller && q.controller !== a.id && q.id !== w.countries[q.controller].capital) return { from: p, to: q, foe: w.countries[q.controller] }; } return null; };
+  { const w = inherited(), a = w.countries.U1, { from, to, foe } = near(w, a), L = ld(w, a), u = soldier(w, 'U1', from.id, 60), home = Object.values(w.provinces).find(p => p.controller === 'U1' && p.id !== from.id && from.neighbors.includes(p.id)) ?? from;
+    w.wars.push({ id: 'S-so', a: ['U1'], b: [foe.id], civil: false, active: true, start: w.turn, name: 'so' }); a.relations[foe.id] = -80; foe.relations.U1 = -80;
+    const so = applyOp(w, L, { op: 'standing_order', when: { after: 1 }, then: [{ op: 'offensive', to: to.id, units: [u.id], manner: 'assault' }, { op: 'set_posture', posture: 'defensive', unit: u.id, if_done: 0 }, { op: 'move', unit: u.id, to: home.id, if_refused: 0 }, { op: 'set_posture', posture: 'defensive', unit: u.id, if_refused: 0 }] }); assert.ok(so.ok, so.msg);
+    assert.equal(w.standingOrders.at(-1).then.length, 4, 'the whole order is kept, with what hangs on what');
+    w.turn += 1; L.inbox = []; carryStanding(w);
+    assert.ok(u.attack?.to === to.id && u.posture !== 'defensive' && u.target !== home.id, `the attack stands when the day comes: the unit is not told to dig in and go home the same morning (${JSON.stringify({ attack: u.attack?.to, posture: u.posture, target: u.target })})`);
+    const h = (w.hanging || []).find(x => x.actor === L.id && x.province === to.id); assert.ok(h && h.then.length === 1 && h.else.length === 2, 'what was to follow the capture waits for the capture, and what was ordered for a failure for the failure');
+    assert.ok(L.inbox.some(m => /has come to its day[^]*offensive:[^]*set_posture: set_posture waits for [^]* to fall[^]*move: move is held back for the case that the attack/.test(m.text)), `and its owner is told so: ${L.inbox.at(-1)?.text.slice(0, 600)}`); }
+  { // A list in which the first order is refused: the part meant for that case is ordered, the part meant for success is not.
+    const w = inherited(), a = w.countries.U1, { from, to } = near(w, a), L = ld(w, a), u = soldier(w, 'U1', from.id, 30);
+    const r = carryList_(w, L, [{ op: 'offensive', to: to.id, units: [u.id] }, { op: 'set_posture', posture: 'no_retreat', unit: u.id, if_done: 0 }, { op: 'set_posture', posture: 'defensive', unit: u.id, if_refused: 0 }]);
+    assert.ok(r[0].ok === false && r[1].skipped && r[2].ok && u.posture === 'defensive', 'refused for want of a war, the order made for that case is the one that is given'); }
+  { // The signature.
+    const w = inherited(2696855, 8), [a, b, c] = aliveCountries(w), A = ld(w, a);
+    assert.ok(applyOp(w, ld(w, b), { op: 'propose_treaty', target: a.id, kind: 'nonaggression', terms: 'Neither attacks the other.' }).ok); const first = w.treaties.at(-1); assert.ok(applyOp(w, A, { op: 'accept_treaty', id: first.id }).ok && first.active);
+    assert.ok(applyOp(w, ld(w, c), { op: 'propose_treaty', target: a.id, kind: 'commission', terms: 'Officers of both count.' }).ok); const second = w.treaties.at(-1);
+    const again = applyOp(w, A, { op: 'accept_treaty', id: first.id }); assert.ok(again.ok && /bears our signature already and is in force: there is nothing more to sign/.test(again.msg) && second.pending && !second.active, `an order to sign what is signed signs nothing else: ${again.msg}`);
+    assert.ok(new RegExp(second.id).test(again.msg), 'and says what does lie unsigned');
+    const none = applyOp(w, A, { op: 'accept_treaty', id: 'A99999' }); assert.ok(!none.ok && second.pending, 'a paper nobody knows is not taken for another');
+    assert.ok(applyOp(w, A, { op: 'accept_treaty', target: c.id }).ok && second.active, 'named by the state that sent it, the one paper of theirs is signed as before'); }
+  { // The house.
+    const w = inherited(2696855, 8), withHouse = aliveCountries(w).filter(c => c.parliament && c.parliament.legislative !== false), c = withHouse.find(x => leadsOf(w, x, w.characters[x.opposition]).some(p => (x.parliament.seats[p.id] ?? 0) > 0)); assert.ok(c, 'a state with a house and an opposition that sits in it');
+    const O = w.characters[c.opposition], keeper = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'treasury'), was = O.wealth; O.wealth = 0;
+    const r = applyOp(w, O, { op: 'inquire', into: 'army', public: true }); assert.ok(r.ok && /It sits in public/.test(r.msg) && O.wealth === 0 && w.inquiries.at(-1).kind === 'the house\'s', `the leader of a party in the house has the army\'s books called for, and it costs him nothing: ${r.msg}`); O.wealth = was;
+    const M = w.characters[c.oligarch]; if (!leadsOf(w, c, M).length) { const no = applyOp(w, M, { op: 'inquire', into: 'treasury' }); assert.ok(!no.ok && /by an inquiry of the house \(you lead no such party\)/.test(no.msg), `a private person is told who can: ${no.msg}`); }
+    const adv = aliveCountries(w).find(x => x.parliament && x.parliament.legislative === false); if (adv) { const P = w.characters[adv.opposition]; const no = applyOp(w, P, { op: 'inquire', into: 'treasury', public: true }); assert.ok(!no.ok && /advises and cannot call for the state's books/.test(no.msg), `a council that only advises cannot: ${no.msg}`); } }
+  { // The vote.
+    const w = inherited(2696855, 8), c = aliveCountries(w).find(x => x.archetype === 'republic'), L = ld(w, c), G = w.characters[c.general], { from, to, foe } = near(w, c), u = soldier(w, c.id, from.id, 60);
+    const d = applyOp(w, L, { op: 'declare_war', target: foe.id, aims: { provinces: [to.id] } }); assert.ok(d.ok && d.bill && /Referred to parliament: Y\d+\. In this state war is declared by the house[^]*an attack, a landing or a bombardment ordered meanwhile waits for the vote/.test(d.msg), `the ruler is told that the house declares war and what becomes of an attack ordered meanwhile: ${d.msg}`);
+    const r = carryList_(w, G, [{ op: 'offensive', to: to.id, units: [u.id], manner: 'assault' }, { op: 'set_posture', posture: 'defensive', unit: u.id, if_done: 0 }, { op: 'set_posture', posture: 'fall_back', unit: u.id, if_refused: 0 }]);
+    assert.ok(r[0].ok && r[0].waits === `vote:${d.bill}` && /This order waits for the vote: it goes out in your name the day the bill passes, and lapses if the house refuses/.test(r[0].msg) && !u.attack, `the attack is kept for the vote and not refused: ${r[0].msg}`);
+    assert.ok(r[1].waits === r[0].waits && r[2].waits === r[0].waits && u.posture !== 'defensive', 'and what hangs on it waits with it');
+    const so = w.standingOrders.find(x => x.by === G.id && x.vote === d.bill); assert.ok(so && so.then.length === 3 && so.then[1].if_done === 0 && so.then[2].if_refused === 0);
+    carryList_(w, G, [{ op: 'offensive', to: to.id, units: [u.id], manner: 'all_out' }]); assert.ok(so.then.length === 3 && so.then[0].manner === 'all_out', 'given again, the order replaces itself');
+    const x = structuredClone(w), bx = x.countries[c.id].bills.find(q => q.id === d.bill), gx = x.characters[G.id], ux = x.units[u.id]; bx.status = 'passed'; assert.ok(applyOp(x, x.characters[L.id], { ...bx.ops[0], _law: true }).ok && atWarOf(x, c.id, foe.id)); gx.inbox = [];
+    lateOrders_(x); assert.ok(ux.attack?.to === to.id && ux.attack.manner === 'all_out' && ux.posture !== 'defensive' && !(x.standingOrders || []).some(q => q.vote === d.bill), `the day the house votes the war the attack goes out, in the quarter of the vote: ${gx.inbox.at(-1)?.text.slice(0, 300)}`);
+    assert.ok((x.hanging || []).some(h => h.actor === G.id && h.province === to.id && h.then.length === 1 && h.else.length === 1), 'with what was to follow it still hanging on it');
+    const y = structuredClone(w), by = y.countries[c.id].bills.find(q => q.id === d.bill), gy = y.characters[G.id]; by.status = 'rejected'; by.closedAt = y.turn; gy.inbox = []; lateOrders_(y);
+    assert.ok(!y.units[u.id].attack && !(y.standingOrders || []).some(q => q.vote === d.bill) && gy.inbox.some(m => /has lapsed: bill Y\d+ was rejected, and what waited on its passing \(offensive, set_posture, set_posture\) was not ordered/.test(m.text)), `refused by the house, the order lapses and its owner is told: ${gy.inbox.at(-1)?.text}`);
+    // No bill before the house: the old refusal stands.
+    const z = inherited(2696855, 8), cz = z.countries[c.id], n2 = near(z, cz), uz = soldier(z, cz.id, n2.from.id, 60), no = applyOp(z, z.characters[cz.general], { op: 'offensive', to: n2.to.id, units: [uz.id] }); assert.ok(!no.ok && /with whom there is no war/.test(no.msg)); }
+  { // Aims said again as they stand are not a change of aims.
+    const w = inherited(), a = w.countries.U1, { to, foe } = near(w, a), L = ld(w, a); assert.ok(applyOp(w, L, { op: 'declare_war', target: foe.id, aims: { provinces: [to.id] } }).ok && atWarOf(w, 'U1', foe.id));
+    const third = aliveCountries(w).find(c => c.id !== 'U1' && c.id !== foe.id), rel = third.relations.U1, again = applyOp(w, L, { op: 'declare_war', target: foe.id, aims: { provinces: [to.id], text: 'the same, in other words' } });
+    assert.ok(again.ok && /is at war with [^]* already, and its aims stand as they were declared/.test(again.msg) && third.relations.U1 === rel, `${again.msg}`); }
+  // The cast.
+  { const cfg = JSON.parse(fs_.readFileSync(new URL('../config.json', import.meta.url), 'utf8')); assert.deepEqual(cfg.models.cast, ['opus', 'sonnet'], 'the characters are dealt two models'); assert.ok(!JSON.stringify(cfg.models).includes('haiku'));
+    const w = inherited(2696855, 8), free = { ...base, models: { ...cfg.models } }; for (const ch of Object.values(w.characters)) delete ch.model; dealCast(free, w, (() => { let s = 7; return () => (s = (s * 16807) % 2147483647) / 2147483647; })());
+    for (const c of aliveCountries(w)) { const ms = ROLES.map(r => w.characters[c[r]].model); assert.ok(ms.includes('opus') && ms.includes('sonnet') && ms.every(m => m === 'opus' || m === 'sonnet') && ms.filter(m => m === 'opus').length === 2, `${c.name}: two of each at every table (${ms.join(', ')})`); } }
+});
+
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
   // The same fight, the same dice, the enemy warned both times: only the man in command differs.
   const hurt = skill => { const f = duel({ dug: 5, ground: { trench: 2 }, rng: 99, seen: true }); f.gen.skill = skill; const [b] = quarter(f.w); assert.ok(b, 'a battle'); assert.ok(!b.prisoners, 'nobody was routed'); return f.D - f.def.men; };

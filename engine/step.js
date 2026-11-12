@@ -7,7 +7,7 @@ import { projectStep } from './projects.js';
 import { cultureStep } from './culture.js';
 import { adminStep } from './admin.js';
 import { contractStep } from './contracts.js';
-import { applyOp, carryAwaited, carryTaken, carrySigned, carryStanding } from './ops.js';
+import { applyOp, carryAwaited, carryTaken, carrySigned, carryStanding, carryStandingLate } from './ops.js';
 import { watchStep } from './standing.js';
 import { inquiryStep } from './inquiry.js';
 import { meansStep } from './means.js';
@@ -61,6 +61,7 @@ export function stepWorld(w) {
   relationDrift(w);
   pruneStep(w);
   labourEnd(w);
+  carryStandingLate(w);
   inquiryStep(w);
   watchStep(w);
   for (const c of aliveCountries(w)) {

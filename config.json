@@ -16,11 +16,10 @@
   "models": {
     "leader": "sonnet",
     "referee": "opus",
-    "secondary": "haiku",
+    "secondary": "sonnet",
     "cast": [
       "opus",
-      "sonnet",
-      "haiku"
+      "sonnet"
     ],
     "assign": {}
   },

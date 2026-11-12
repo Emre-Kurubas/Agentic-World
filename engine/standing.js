@@ -85,7 +85,7 @@ export function standingOp(w, actor, c, op, h) {
     case 'standing_order': {
       const mine = (w.standingOrders ||= []).filter(x => x.by === actor.id); if (mine.length >= 8) return fail('Eight orders of yours are waiting for their day already; withdraw one first (cancel_order).');
       const k = normWhen(w, c, op.when); if (k.no) return fail(k.no);
-      const then = (Array.isArray(op.then) ? op.then : op.then ? [op.then] : []).filter(o => o && typeof o === 'object' && !STANDING_OPS.has(o.op) && h.known(o.op)).map(plainOp).slice(0, 6);
+      const then = (Array.isArray(op.then) ? op.then : op.then ? [op.then] : []).filter(o => o && typeof o === 'object' && !STANDING_OPS.has(o.op) && h.known(o.op)).map(plainOp).slice(0, 16);
       if (!then.length) return fail('Say what is to be done when the day comes: one or more operations (then).');
       const so = { id: nextId(w, 'SO'), by: actor.id, country: c.id, when: k.when, words: k.words, then, label: String(op.label ?? '').slice(0, 160), since: w.turn, again: op.again === true };
       w.standingOrders.push(so);
@@ -122,12 +122,17 @@ const holds = (w, so) => { const c = w.countries[so.country], k = so.when, fresh
   return false; };
 // Run once the quarter's orders are all in, before the world moves: an order whose day has come is given in its owner's name, with the powers he
 // has that day, and he is told what came of it.
-export function standingStep(w, apply) {
+export function standingStep(w, apply, carry) {
   const list = w.standingOrders || []; if (!list.length) return;
   for (const so of [...list]) { const ch = w.characters[so.by], c = w.countries[so.country];
     if (!ch?.alive || !c?.alive || ch.status === 'imprisoned' || w.turn - so.since > 20) { list.splice(list.indexOf(so), 1); if (ch?.alive && c?.alive) say(w, ch, 'Your secretary', `Order ${so.id} (${so.words}) has lapsed unused.`); continue; }
+    // An order that waited on a bill lapses with the bill.
+    if (so.when.bill && so.when.state === 'passed') { const b = aliveCountries(w).flatMap(o => [...(o.bills || []), ...(o.laws || [])]).find(x => x.id === so.when.bill); if (!b || ['rejected', 'withdrawn', 'lapsed'].includes(b.status)) { list.splice(list.indexOf(so), 1); say(w, ch, 'Your secretary', `Order ${so.id}${so.label ? ` ("${so.label}")` : ''} has lapsed: bill ${so.when.bill} ${!b ? 'is no longer before the house' : `was ${b.status}`}, and what waited on its passing (${so.then.map(o => o.op).join(', ')}) was not ordered.`); continue; } }
     if (so.firedAt === w.turn || !holds(w, so)) continue;
-    const results = so.then.map(o => { let r; try { r = apply(w, ch, plainOp(o)); } catch (e) { r = { ok: false, msg: `Error: ${e.message}` }; } return `${o.op}: ${r.ok === false ? 'NOT carried out: ' : ''}${r.msg ?? ''}`; });
+    // The parts of the order that hang on one another are carried as they would be in a ruling: what was to follow the taking of a place waits
+    // for the place, and what was ordered for the case of a refusal is ordered only on a refusal.
+    const one = o => { try { return apply(w, ch, o); } catch (e) { return { ok: false, msg: `Error: ${e.message}` }; } }, out = carry ? carry(w, ch, so.then.map(plainOp), one) : so.then.map(o => ({ op: o.op, ...one(plainOp(o)) }));
+    const results = out.map(r => `${r.op}: ${r.ok === false ? 'NOT carried out: ' : ''}${r.msg ?? ''}`);
     say(w, ch, 'Your secretary', `Order ${so.id}${so.label ? ` ("${so.label}")` : ''} has come to its day (${so.words}) and was given in your name. ${results.join(' ')}`);
     (w.standingFired ||= []).push({ id: so.id, turn: w.turn, by: so.by, results });
     if (so.again) { so.firedAt = w.turn; so.since = w.turn + 1; } else list.splice(list.indexOf(so), 1); }
