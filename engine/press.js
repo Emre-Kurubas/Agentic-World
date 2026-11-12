@@ -103,7 +103,7 @@ export function censor(w, c, actor, op) {
 export function pressStep(w) {
   for (const c of aliveCountries(w)) {
     // A party's organisation is what its treasury pays for each quarter; where the press is gagged and unions banned, an opposition can build less.
-    for (const p of c.parties) { if (p.dues > 0 && !p.banned) p.funds = (p.funds || 0) + duesOf(c, p); const spend = (p.funds || 0) * .2; p.funds = (p.funds || 0) - spend; const open = p.id === c.rulingParty ? 1 : .4 + c.pressFreedom / 100 * .6; p.organization = (p.organization || 0) + (clamp(spend * 6 * open, 0, 60) - (p.organization || 0)) * .25; }
+    for (const p of c.parties) { if (p.dues > 0 && !p.banned) p.funds = (p.funds || 0) + duesOf(c, p); const spend = (p.funds || 0) * .2 + (p.drive || 0); p.funds = (p.funds || 0) - (p.funds || 0) * .2; delete p.drive; const open = p.id === c.rulingParty ? 1 : .4 + c.pressFreedom / 100 * .6; p.organization = (p.organization || 0) + (clamp(spend * 6 * open, 0, 60) - (p.organization || 0)) * .25; }
     const papers = c.papers ||= [], ruler = w.characters[c.leader];
     if (c.barred) c.barred = c.barred.filter(b => w.characters[b.who]?.alive && (!b.paper || papers.some(n => n.id === b.paper)));
     for (const n of [...papers]) {

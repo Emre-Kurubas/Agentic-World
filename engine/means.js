@@ -19,7 +19,10 @@ const peopleOf = (w, c) => Math.max(sum(countryProvinces(w, c.id), provincePop),
 // What a thousand people of the country earn in a quarter: the measure of what a sum of relief is to those who get it.
 const perThousand = (w, c) => Math.max(c.gdp, 1) / peopleOf(w, c);
 // What a party's dues bring in a quarter: from its following, as far as it has an organisation to collect them.
-export const duesOf = (c, p) => (p.dues || 0) * (p.support || 0) / 100 * Math.max(c.gdp, 1) * .0006 * (.2 + (p.organization || 0) / 75);
+// What dues bring in. The rate is the share of what its people earn that the party asks of them; the more is asked the fewer pay (about four in
+// the hundred brings the most), and it takes an organisation to collect them at all. (World 17: fourteen party leaders set dues at two to five
+// in the hundred and every one of them was told "about 0 a quarter": the rate was read as a share of some unseen maximum.)
+export const duesOf = (c, p) => { const rate = clamp(p.dues || 0, 0, .25); return rate / (1 + (rate / .04) ** 2) * (p.support || 0) / 100 * Math.max(c.gdp, 1) * .06 * (.2 + (p.organization || 0) / 75); };
 // What forgiving a share of a province's land tax costs the treasury in a quarter.
 const remitCost = (w, c, p, share) => { const all = Math.max(sum(countryProvinces(w, c.id), q => q.pops.peasants?.n || 0), 1); return (c.lastBooks?.land ?? c.gdp * .01) * (p.pops.peasants?.n || 0) / all * share; };
 
@@ -50,15 +53,18 @@ export function meansOp(w, actor, c, op, h) {
       if (!state) return fail('Taxes are remitted and the state\'s stores opened by whoever governs. Anybody else can give money (relief).');
       const p = own(w.provinces, op.province) ? w.provinces[op.province] : null; if (!p || p.controller !== c.id) return fail('That province is not in our hands.');
       const share = op.remit != null ? num(op.remit, 0, 1, .5) : 0, quarters = Math.round(num(op.quarters, 1, 8, 4)), grain = num(op.grain, 0, 1e6, 0), notes = [];
-      if (!(share > 0) && !(grain > 0) && op.end !== true) return fail('Say what the province is given: its land tax remitted (remit: the share forgiven, 0 to 1; quarters: for how long, up to eight) or grain from the state\'s stores (grain).');
+      // "Two quarters more": a remission that is running is lengthened without being said over again.
+      const more = op.remit == null && op.quarters != null && !!p.remit && op.end !== true;
+      if (more) { p.remit.until = Math.min(w.turn + 8, Math.max(p.remit.until, w.turn) + quarters); notes.push(`The remission at ${p.name} (${n(p.remit.share * 100)} in the hundred of its land tax, about ${r1(remitCost(w, c, p, p.remit.share))} a quarter to the treasury) now runs until ${quarterLabel(p.remit.until)}`); }
+      if (!(share > 0) && !(grain > 0) && op.end !== true && !more) return fail('Say what the province is given: its land tax remitted (remit: the share forgiven, 0 to 1; quarters: for how long, up to eight) or grain from the state\'s stores (grain).');
       if (op.end === true && p.remit) { delete p.remit; notes.push(`The remission at ${p.name} is ended`); }
       if (share > 0) { p.remit = { share, until: w.turn + quarters, by: actor.id }; notes.push(`${n(share * 100)} in the hundred of the land tax of ${p.name} is forgiven until ${quarterLabel(w.turn + quarters)}: it costs the treasury about ${r1(remitCost(w, c, p, share))} a quarter, and the province grows quieter while it lasts`); }
       if (grain > 0) { const g = Math.min(grain, c.stock.grain || 0); if (g < .05) notes.push('there is no grain in the state\'s stores to send'); else { c.stock.grain -= g; const need = Math.max((c._need?.grain || peopleOf(w, c) * .01) * provincePop(p) / peopleOf(w, c), .01), was = p.unrest, drop = h.allowance(c, `grain:${p.id}`, 8, clamp(g / need * 10 * ((c.foodRatio ?? 1) < 1 ? 1.5 : 1), 0, 8)); p.unrest = clamp(was - drop, 0, 100); notes.push(`${r1(g)} of grain went to ${p.name} from the state's stores, about ${n(g / need * 100)} in the hundred of what it eats in a quarter; unrest there stands at ${n(p.unrest)} of 100 (it was ${n(was)})`); } }
       return { ok: true, msg: `${notes.join('. ')}.` };
     }
     // A party lives on what its members pay, if it asks them.
-    case 'set_dues': { const p = leadsParties(w, c, actor)[0]; if (!p) return fail('You lead no party.'); p.dues = num(op.rate, 0, 1, .5);
-      return { ok: true, msg: p.dues > 0 ? `The ${p.name} collects dues from its following, at ${n(p.dues * 100)} in the hundred of what could be asked: about ${r1(duesOf(c, p))} a quarter as it stands (more with a larger following and an organisation to collect them). It stands until changed.` : `The ${p.name} collects no dues.` }; }
+    case 'set_dues': { const p = leadsParties(w, c, actor)[0]; if (!p) return fail('You lead no party.'); p.dues = num(op.rate, 0, .25, .02);
+      return { ok: true, msg: p.dues > 0 ? `The ${p.name} collects dues from its following, ${r1(p.dues * 100)} in the hundred of what its people earn: about ${r1(duesOf(c, p))} a quarter as it stands. A larger following and an organisation to collect them bring more; asked for more, fewer pay. It stands until changed.` : `The ${p.name} collects no dues.` }; }
     // A formal note of protest: the least a government can do, and something.
     case 'note': {
       if (!state) return fail('Notes between governments are sent by whoever governs.'); if (!target) return fail('Say which government the note is for (target).'); if (atWar(w, c.id, target.id)) return fail('Governments at war exchange no notes.');

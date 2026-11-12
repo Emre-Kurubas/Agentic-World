@@ -331,6 +331,10 @@ export function inheritStates(w) {
   initFirms(w);
   outfitFleets(w);
   // Routes are known from the start so shipment and credit decisions can be made in the first quarter too.
+  // A state that has held land beyond the sea for years lands its stores there somewhere: every such piece of land has at least a landing place (a
+  // harbour of the first class) in its largest province on the coast. (World 17: two island garrisons were inherited where no harbour could
+  // supply them and wasted from the first day, whatever their general ordered.)
+  for (const c of cs) for (const piece of outlying(w, Object.values(w.provinces).filter(p => p.owner === c.id)).filter(x => x.sea)) { if (piece.provinces.some(p => (p.port || 0) >= 1)) continue; const at = piece.provinces.filter(p => p.coast && p.seas?.length).sort((a, b) => provincePop(b) - provincePop(a))[0]; if (at) at.port = 1; }
   updateStrategic(w); updateRoutes(w);
   // The people around the seats are there from the first day, and the state's offices work as they are staffed.
   w.burdens = true; w.friction = true; w.dearLand = true; seatCourt(w);
@@ -365,6 +369,15 @@ export function inheritStates(w) {
     const n = Math.round(Math.min(big.men * .15, Math.max(4, away.reduce((a, p) => a + provincePop(p), 0) * .004))), at = [...away].sort((a, b) => provincePop(b) - provincePop(a))[0]; if (n < 2) continue;
     const g = makeUnit(w, c.id, at.id, n, big.quality, big.loyalty, 'infantry'); g.morale = big.morale; g.equip = big.equip; big.men -= n; }
   garrisonFrontiers(w, cs);
+  lastQuarter(w, cs);
+}
+// The books of the quarter before anyone governs lie on the desks the first morning. One quarter is run on a copy, as the state stands on the day
+// of handing over, and what that quarter's accounts would read (the treasury's books, the prices and the labour market, what each works turned out
+// and earned) is taken from it; nothing else is. (World 17: on the first morning every treasury read "revenue 0" and every works "turned out 0".)
+function lastQuarter(w, cs) {
+  const trial = structuredClone(w); trial.status = 'playing'; beginTurn(trial); stepWorld(trial);
+  for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive) continue; for (const k of Object.keys(t)) if (/^last[A-Z]/.test(k) && t[k] != null) c[k] = structuredClone(t[k]); if (t.interestRate != null) c.interestRate = t.interestRate; if (t.paidRatio != null) c.paidRatio = t.paidRatio; for (const k of ['_made', '_raw']) if (t[k]) c[k] = structuredClone(t[k]); }
+  for (const f of Object.values(w.firms || {})) { const t = trial.firms?.[f.id]; if (!t || t.strike || t.lockout || t.halted) continue; for (const k of ['lastProfit', 'lastUnits', 'lastTax', 'lastPrice', 'earn']) if (t[k] != null) f[k] = structuredClone(t[k]); }
 }
 
 // What a neighbour wants back is not left open to him. A province that another living state lost and has not given up is inherited behind

@@ -287,11 +287,17 @@ export function normalizeClauses(w, raw, parties) {
   const out = [], isParty = x => parties.includes(x), turns = v => Math.round(num(v, 1, 80, 12));
   for (const c of Array.isArray(raw) ? raw.slice(0, 8) : []) {
     if (c?.type === 'tribute' && isParty(c.payer)) out.push({ type: 'tribute', payer: c.payer, ...(isParty(c.to) && c.to !== c.payer ? { to: c.to } : {}), pct_gdp: num(c.pct_gdp, 0, .2, .02), turns: turns(c.turns) });
-    else if (c?.type === 'delivery' && isParty(c.from) && GOODS.includes(c.good)) out.push({ type: 'delivery', from: c.from, ...(isParty(c.to) && c.to !== c.from ? { to: c.to } : {}), good: c.good, amount: num(c.amount, 0, 1e5, 0), turns: turns(c.turns) });
+    else if (c?.type === 'delivery' && isParty(c.from) && GOODS.includes(c.good)) out.push({ type: 'delivery', from: c.from, ...(isParty(c.to) && c.to !== c.from ? { to: c.to } : {}), good: c.good, amount: num(c.amount, 0, 1e5, 0), turns: turns(c.turns), ...(c.credit === true ? { credit: true } : {}) });
+    // Gold lent by one government to another under the paper: it leaves the lender's reserve the day the treaty comes into force, and is owed.
+    else if (c?.type === 'loan' && isParty(c.from) && isParty(c.to) && c.from !== c.to && num(c.amount, 0, 1e7, 0) >= 1) out.push({ type: 'loan', from: c.from, to: c.to, amount: num(c.amount, 0, 1e7, 0), ...(c.rate != null ? { rate: num(c.rate, 0, .15, .012) } : {}) });
+    // A claim one party holds on a state (a party or not) passes to the other party.
+    else if (c?.type === 'assign' && isParty(c.from) && isParty(c.to) && c.from !== c.to && typeof c.debtor === 'string' && Object.hasOwn(w.countries, c.debtor) && c.debtor !== c.from && c.debtor !== c.to) out.push({ type: 'assign', from: c.from, to: c.to, debtor: c.debtor, ...(c.amount != null ? { amount: num(c.amount, 0, 1e7, 0) } : {}) });
+    // A state gives up what it has claimed since it lost it.
+    else if (c?.type === 'renounce' && isParty(c.country) && Array.isArray(c.provinces)) { const ps = c.provinces.filter(p => typeof p === 'string' && Object.hasOwn(w.provinces, p)).slice(0, 12); if (ps.length) out.push({ type: 'renounce', country: c.country, provinces: ps }); }
     else if (c?.type === 'tariff') out.push({ type: 'tariff', rate: num(c.rate, 0, 1, 0) });
     else if (c?.type === 'demilitarized_zone' && Array.isArray(c.provinces)) out.push({ type: 'demilitarized_zone', country: isParty(c.country) ? c.country : null, provinces: c.provinces.filter(p => w.provinces[p]).slice(0, 12) });
     // A limit on a state's troops: on all of them, or on those it keeps in named provinces (a frontier thinned out on both sides).
-    else if (c?.type === 'troop_limit' && isParty(c.country)) { const ps = (Array.isArray(c.provinces) ? c.provinces : []).filter(p => typeof p === 'string' && Object.hasOwn(w.provinces, p)).slice(0, 12); out.push({ type: 'troop_limit', country: c.country, men: num(c.men, 0, 1e6, 0), ...(ps.length ? { provinces: ps } : {}) }); }
+    else if (c?.type === 'troop_limit' && isParty(c.country)) { const ps = (Array.isArray(c.provinces) ? c.provinces : []).filter(p => typeof p === 'string' && Object.hasOwn(w.provinces, p)).slice(0, 12); out.push({ type: 'troop_limit', country: c.country, men: num(c.men, 0, 1e6, 0), ...(ps.length ? { provinces: ps } : {}), ...(ps.length > 1 && c.total === true ? { total: true } : {}) }); }
     // Officers of each party count the other's troops in named provinces: what stands there is known to both, exactly.
     else if (c?.type === 'observers' && Array.isArray(c.provinces)) { const ps = c.provinces.filter(p => typeof p === 'string' && Object.hasOwn(w.provinces, p)).slice(0, 12); if (ps.length) out.push({ type: 'observers', provinces: ps }); }
     else if (c?.type === 'mutual_defense') out.push({ type: 'mutual_defense', called: {} });
@@ -305,10 +311,13 @@ export function clauseText(w, cl) {
   const n = id => w.countries[id]?.name ?? id;
   switch (cl.type) {
     case 'tribute': return `${n(cl.payer)} pays ${cl.to ? `${n(cl.to)} ` : ''}${Math.round(cl.pct_gdp * 1000) / 10}% of GDP each turn${cl.until != null ? `, until the end of turn ${cl.until}` : ''}`;
-    case 'delivery': return `${n(cl.from)} delivers ${cl.to ? `to ${n(cl.to)} ` : ''}${Math.round(cl.amount)} ${GOOD_LABEL[cl.good]} each turn${cl.until != null ? `, until the end of turn ${cl.until}` : ''}`;
+    case 'delivery': return `${n(cl.from)} delivers ${cl.to ? `to ${n(cl.to)} ` : ''}${Math.round(cl.amount)} ${GOOD_LABEL[cl.good]} each turn${cl.until != null ? `, until the end of turn ${cl.until}` : ''}${cl.credit ? ', each delivery struck off what it owes the other at the world price of the day' : ''}`;
+    case 'loan': return `${n(cl.from)} lends ${n(cl.to)} ${Math.round(cl.amount)} in gold on the day this comes into force${cl.rate != null ? `, at ${Math.round(cl.rate * 1000) / 10}% a quarter on whatever ${n(cl.to)} owes it` : ', at the interest that state\'s foreign debt bears'}; it is owed until it is repaid (repay_foreign)`;
+    case 'assign': return `${n(cl.from)} makes over to ${n(cl.to)} ${cl.amount != null ? `${Math.round(cl.amount)} of ` : ''}what ${n(cl.debtor)} owes it: from that day ${n(cl.debtor)} owes it to ${n(cl.to)}`;
+    case 'renounce': return `${n(cl.country)} gives up its claim to ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}`;
     case 'tariff': return `Mutual tariff of ${Math.round(cl.rate * 100)}%`;
     case 'demilitarized_zone': return `${cl.country ? n(cl.country) : 'The parties'} shall station no troops in: ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}`;
-    case 'troop_limit': return `${n(cl.country)} keeps at most ${Math.round(cl.men)}k troops${cl.provinces?.length ? ` in ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}` : ''}`;
+    case 'troop_limit': return `${n(cl.country)} keeps at most ${Math.round(cl.men)}k troops${cl.provinces?.length ? ` in ${cl.provinces.length > 1 ? (cl.total ? 'all of these together: ' : 'each of: ') : ''}${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}` : ''}`;
     case 'observers': return `Officers of each party count the other's troops in: ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}`;
     case 'mutual_defense': return 'Each party enters the war on the side of the party attacked';
     default: return cl.type;
@@ -317,6 +326,21 @@ export function clauseText(w, cl) {
 
 export function activateClauses(w, t) {
   for (const cl of t.clauses || []) { if (cl.turns) cl.until = w.turn + cl.turns; cl.text = clauseText(w, cl); }
+  for (const cl of t.clauses || []) { if (cl.done != null) continue;
+    if (cl.type === 'loan') { const a = w.countries[cl.from], b = w.countries[cl.to]; if (!a?.alive || !b?.alive) continue; const m = Math.min(Math.max(a.reserves, 0), cl.amount); a.reserves -= m; b.reserves += m; b.creditors[a.id] = (b.creditors[a.id] || 0) + m; if (cl.rate != null) (b.creditTerms ||= {})[a.id] = { rate: cl.rate, treaty: t.id }; cl.done = w.turn; cl.paid = m;
+      for (const [x, text] of [[a, `${Math.round(m)} in gold has left the reserve for ${b.name} under ${t.id}: it is owed to us${cl.rate != null ? ` at ${Math.round(cl.rate * 1000) / 10}% a quarter` : ''} until it is repaid.`], [b, `${Math.round(m)} in gold has reached the reserve from ${a.name} under ${t.id}. It is owed back${cl.rate != null ? `, at ${Math.round(cl.rate * 1000) / 10}% a quarter on what we owe them` : ''}; the interest goes out in gold every quarter, before anything is bought abroad (repay_foreign pays it down).`]]) { const ch = w.characters[x.leader]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'The treasury', text }); } }
+    else if (cl.type === 'assign') { const d = w.countries[cl.debtor], a = w.countries[cl.from], b = w.countries[cl.to]; if (!d || !a || !b) continue; const m = Math.min(d.creditors[a.id] || 0, cl.amount ?? Infinity); if (m > 0) { d.creditors[a.id] -= m; if (d.creditors[a.id] < .01) delete d.creditors[a.id]; d.creditors[b.id] = (d.creditors[b.id] || 0) + m; const ch = w.characters[d.leader]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'The treasury', text: `${a.name} has made over to ${b.name} ${Math.round(m)} of what we owe: from today that sum is owed to ${b.name}, and the interest on it goes there.` }); } cl.done = w.turn; cl.paid = m; }
+    else if (cl.type === 'renounce') { const c = w.countries[cl.country]; let n = 0; for (const pid of cl.provinces) { const p = w.provinces[pid]; if (p?.lostBy === cl.country) { delete p.lostBy; delete p.lostIn; n++; } } cl.done = w.turn;
+      // What a state signs away of its old claims is felt at home by those who put the nation first.
+      if (n && c?.alive) { const cost = Math.min(6, n * (1 + Math.max(0, c.axes?.nation ?? 0) / 50)); c.legitimacy = clamp(c.legitimacy - cost, 0, 100); const ch = w.characters[c.leader]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'The capital', text: `The claim to ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')} is given up under ${t.id}. Those at home who counted that land ours take it ill: it cost the government about ${Math.round(cost * 10) / 10} of its standing. A war for it would no longer be understood as a war for our own.` }); } }
+  }
+}
+// What stands in the way of a signature because of the money a paper moves: a lender without the gold, a claim that is not there to make over.
+export function moneyStops(w, t, only) {
+  for (const cl of t.clauses || []) { if (cl.done != null) continue;
+    if (cl.type === 'loan' && (!only || cl.from === only)) { const a = w.countries[cl.from]; if (a && a.reserves < cl.amount - .5) return `${t.id} has ${a.name} lend ${Math.round(cl.amount)} in gold, and its reserve holds ${Math.round(Math.max(a.reserves, 0))}: as it stands the paper cannot come into force.`; }
+    if (cl.type === 'assign' && (!only || cl.from === only)) { const d = w.countries[cl.debtor], a = w.countries[cl.from], held = d?.creditors?.[cl.from] || 0; if (held < Math.min(cl.amount ?? 1, 1)) return `${t.id} has ${a?.name ?? cl.from} make over what ${d?.name ?? cl.debtor} owes it, and ${d?.name ?? cl.debtor} owes it nothing.`; if (cl.amount != null && held < cl.amount - .5) return `${t.id} has ${a?.name} make over ${Math.round(cl.amount)} of what ${d.name} owes it, and ${d.name} owes it ${Math.round(held)}.`; } }
+  return null;
 }
 
 function breach(w, t, cl, party, text) {
@@ -351,6 +375,8 @@ export function treatyStep(w) {
         if (!from?.alive || !to?.alive || !t.parties.includes(from.id) || !t.parties.includes(to.id) || !routeOpen(w, from.id, to.id)) continue;
         const moved = Math.min(from.stock[cl.good] || 0, cl.amount);
         from.stock[cl.good] = (from.stock[cl.good] || 0) - moved; to.stock[cl.good] = (to.stock[cl.good] || 0) + moved;
+        // A delivery made against a debt is struck off the debt at what the world pays for the good that day.
+        if (cl.credit && moved > 0) { const owed = from.creditors?.[to.id] || 0, worth = moved * (w.globalPrice?.[cl.good] ?? 0), off = Math.min(owed, worth); if (off > 0) { from.creditors[to.id] = owed - off; if (from.creditors[to.id] < .01) delete from.creditors[to.id]; cl.credited = (cl.credited || 0) + off; } }
         if (moved < cl.amount * .95) breach(w, t, cl, cl.from, `${from.name} could not complete its ${GOOD_LABEL[cl.good]} delivery.`);
       } else if (cl.type === 'tariff') {
         // The agreed rate holds between every two of those who signed.
@@ -359,8 +385,12 @@ export function treatyStep(w) {
       } else if (cl.type === 'demilitarized_zone') {
         for (const u of Object.values(w.units)) if (cl.provinces.includes(u.province) && (cl.country ? u.country === cl.country : t.parties.includes(u.country))) { breach(w, t, cl, u.country, `${w.countries[u.country]?.name} moved troops into the demilitarized zone: ${w.provinces[u.province]?.name}.`); break; }
       } else if (cl.type === 'troop_limit') {
-        const men = sum(Object.values(w.units).filter(u => u.country === cl.country && (!cl.provinces?.length || cl.provinces.includes(u.province))), u => u.men);
-        if (men > cl.men + .5) breach(w, t, cl, cl.country, `${w.countries[cl.country]?.name} exceeded its troop limit${cl.provinces?.length ? ` in ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}` : ''} (${Math.round(men)}k against ${Math.round(cl.men)}k).`);
+        // Named for several provinces, the limit is for each of them, as such papers are written ("no more than seventy thousand in any frontier
+        // province"); total:true makes it one figure for all of them together. (World 17: two governments that had agreed seventy thousand a
+        // province were both recorded in breach of one figure for three.)
+        const count = ps => sum(Object.values(w.units).filter(u => u.country === cl.country && (!ps?.length || ps.includes(u.province))), u => u.men), each = cl.provinces?.length > 1 && !cl.total;
+        const over = each ? cl.provinces.map(p => [p, count([p])]).filter(([, m]) => m > cl.men + .5) : null, men = each ? Math.max(0, ...cl.provinces.map(p => count([p]))) : count(cl.provinces);
+        if (each ? over.length : men > cl.men + .5) breach(w, t, cl, cl.country, `${w.countries[cl.country]?.name} exceeded its troop limit${cl.provinces?.length ? ` in ${(each ? over.map(([p]) => p) : cl.provinces).map(p => w.provinces[p]?.name ?? p).join(', ')}` : ''} (${Math.round(men)}k against ${Math.round(cl.men)}k).`);
       } else if (cl.type === 'mutual_defense') {
         // Every other signatory owes its help to the one attacked.
         for (const x of t.parties) for (const ally of t.parties) for (const war of w.wars) {

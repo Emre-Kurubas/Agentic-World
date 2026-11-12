@@ -6,6 +6,7 @@ import { ROLES, aliveCountries, spawnCharacter } from './world.js';
 import { sideline } from './politics.js';
 import { treasuryPays, creditLeft } from './money.js';
 import { MILITARY, kindWord } from './diplomacy.js';
+import { governs } from './polity.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 const trace = (w, ch, text) => { if (!ch) return; (ch.secrets ||= []).push({ turn: w.turn, text }); ch.secrets = ch.secrets.slice(-12); };
@@ -271,10 +272,12 @@ export const leaseDrain = (w, c) => (w.offers || []).filter(o => o.status === 'r
 // ---- Informants ----
 // A minor person can be bought to report what passes under his hands. What he sends is true and depends on his post. Every quarter the
 // country he works in has a chance to catch him.
+// In the state's service: the keeper of the treasury, the chief of police, an officer with a command or a garrison, a clerk in one of the offices.
+export const inService = (w, ch) => isMinor(ch) && (!!ch.post || !!ch.clerkOf || ch.role === 'officer' || !!commandOf(w, ch));
 export function recruitInformant(w, actor, ch, amount) {
   // A servant of the state asked by his own government to report on those around him is asked for his duty, not for a betrayal: it is his
   // loyalty that decides, and money counts for less. (World 16: a president's instruction to his own treasury clerk was refused as a bribe too small.)
-  const own = ch.country === actor.country && w.countries[ch.country]?.leader === actor.id && (!!ch.post || !!ch.clerkOf), duty = own ? .25 + ch.loyalty / 160 : 0;
+  const home = w.countries[ch.country], own = ch.country === actor.country && !!home && governs(w, home, actor) && inService(w, ch), duty = own ? .25 + ch.loyalty / 160 : 0;
   const p = clamp(.12 + ch.greed / 170 + amount / 45 - (own ? 0 : ch.loyalty / 190) + duty, .04, .92), even = Math.ceil(45 * (.55 - .12 - ch.greed / 170 + ch.loyalty / 190));
   if (rand(w) >= p) {
     const host = w.countries[ch.country], ruler = w.characters[host?.leader];
@@ -282,7 +285,7 @@ export function recruitInformant(w, actor, ch, amount) {
     if (told) { say(w, ruler, ch.name, `${ch.name} (${ch.id})${postOf(w, ch) ? `, ${postOf(w, ch)},` : ''} reports that ${actor.name} (${actor.id})${actor.country !== ch.country ? ` of ${w.countries[actor.country]?.name}` : ''} offered him ${Math.round(amount)} to pass on what he sees in his post. He refused. He is known to you now, and at your disposal.`); trace(w, actor, `Tried to buy ${ch.name} as an informant.`); deal(w, ch, actor, `Refused ${actor.name}'s ${Math.round(amount)} to pass on what goes through his post, and told the ruler.`); }
     // The one who asked learns what stood in the way: the sum, or the man.
     const atBest = clamp(.12 + ch.greed / 170 + Math.max(amount * 3, 30) / 45 - ch.loyalty / 190, .04, .92);
-    return { ok: false, told, msg: `${ch.name} would not be bought${atBest >= .55 && p < .45 ? ` for ${Math.round(amount)}: the sum was too small for the risk he would run; something nearer ${Math.max(even, Math.round(amount) + 1)} might have been heard differently` : atBest < .55 ? ': it was not the sum; he will not sell what passes through his hands while he stands toward the government as he does' : ' this time'}.` };
+    return { ok: false, told, priced: atBest >= .55 && p < .45, msg: `${ch.name} would not be bought${atBest >= .55 && p < .45 ? ` for ${Math.round(amount)}: the sum was too small for the risk he would run; something nearer ${Math.max(even, Math.round(amount) + 1)} might have been heard differently` : atBest < .55 ? ': it was not the sum; he will not sell what passes through his hands while he stands toward the government as he does' : ' this time'}.` };
   }
   ch.handler = actor.id; ch.stipend = amount; ch.boughtAt = w.turn;
   trace(w, actor, `Bought ${ch.name} as an informant.`); trace(w, ch, `Sold what passes through his post to ${actor.name}.`);
