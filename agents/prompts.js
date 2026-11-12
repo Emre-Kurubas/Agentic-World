@@ -1,7 +1,7 @@
 import { quarterLabel } from '../engine/util.js';
 import { countryProvinces, aliveCountries, atWar, TECHS, GOODS, provincePop } from '../engine/world.js';
 import { claimsOf, settlementText } from '../engine/ops.js';
-import { CATALOG, alarms, newsFor, desk, lawOfPeoples, answer, leanLines, worldLines, lackLines } from './queries.js';
+import { CATALOG, alarms, newsFor, desk, lawOfPeoples, answer, leanLines, worldLines, lackLines, tradeWays } from './queries.js';
 import { groupsOf } from '../engine/culture.js';
 import { STATE_POWERS, CIVIL_POWERS, DELEGABLE, GATED, LEGISLATIVE, MAX_AGENCY_BUDGET, governs } from '../engine/polity.js';
 import { SUCCESSION, SUCCESSION_TEXT, successionRule } from '../engine/politics.js';
@@ -95,8 +95,8 @@ function questionsText(w, ch) {
     const seen = o.pressFreedom >= 35 || (c.intel?.[o.id] ?? 0) >= 40, troubles = [o.defaulted ? 'it has defaulted on its debts' : '', seen && (o.unrest ?? 0) >= 40 ? 'its provinces are restless' : '', seen && o.legitimacy < 35 ? 'its government is little loved' : '', atWar(w, c.id, o.id) ? 'IT IS AT WAR WITH US' : ''].filter(Boolean);
     out.push(`${o.name} (${o.id}), ${near.has(o.id) ? 'across a land frontier' : 'reached only by sea'}: an army of about ${about(men(o.id))} thousand against about ${about(men(c.id))} thousand of ours${troubles.length ? `; ${troubles.join(', ')}` : ''}.`);
   }
-  const lean = leanLines(w, c, true), states = worldLines(w, c), lack = lackLines(w, c);
-  return `${out.length ? `\nThe questions the country was handed down with, as everyone in its public life knows them:\n${out.map(x => `- ${x}`).join('\n')}` : ''}${lean.length ? `\nWhat the country and the others need of one another, as the trade returns, the shipping lists and the treasuries' accounts show it:\n${lean.map(x => `- ${x}`).join('\n')}` : ''}${lack.length ? `\nWhat the country is short of, and where it lies, by the atlas and the mining returns:\n${lack.map(x => `- ${x}`).join('\n')}` : ''}${states.length ? `\nThe other states of the world on this day, as the yearbooks, the atlas and the trade returns have them:\n${states.map(x => `- ${x}`).join('\n')}` : ''}`;
+  const lean = leanLines(w, c, true), states = worldLines(w, c), lack = lackLines(w, c), ways = tradeWays(w, c);
+  return `${out.length ? `\nThe questions the country was handed down with, as everyone in its public life knows them:\n${out.map(x => `- ${x}`).join('\n')}` : ''}${lean.length ? `\nWhat the country and the others need of one another, as the trade returns, the shipping lists and the treasuries' accounts show it:\n${lean.map(x => `- ${x}`).join('\n')}` : ''}${ways.length ? `\nHow the country's trade travels, by the consuls' returns:\n${ways.map(x => `- ${x}`).join('\n')}` : ''}${lack.length ? `\nWhat the country is short of, and where it lies, by the atlas and the mining returns:\n${lack.map(x => `- ${x}`).join('\n')}` : ''}${states.length ? `\nThe other states of the world on this day, as the yearbooks, the atlas and the trade returns have them:\n${states.map(x => `- ${x}`).join('\n')}` : ''}`;
 }
 
 // Given only once, at the start of the session: the state the character was born into and the past they know.
