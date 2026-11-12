@@ -1914,7 +1914,7 @@ chain('An order is carried out as far as the state has the offices and the loyal
   { const keeper = Object.values(x.characters).find(v => v.country === 'U1' && v.post === 'treasury'); keeper.loyalty = 90; keeper.skill = 1.35; courtOf(x, applyOp); const good = k.service.treasury; keeper.skill = .75; courtOf(x, applyOp); assert.ok(k.service.treasury < good - .1, `a poor hand at the treasury gets less in: ${good} -> ${k.service.treasury}`);
     const r = applyOp(x, b, { op: 'appoint_minister', post: 'treasury', name: 'Aldous Wren' }); assert.ok(r.ok, r.msg); assert.equal(Object.values(x.characters).filter(v => v.alive && v.country === 'U1' && v.post === 'treasury').length, 1, 'one keeper at a time'); assert.ok(keeper.post == null && keeper.loyalty < 90, 'the one put out resents it');
     assert.ok(Object.values(x.provinces).some(p => p.controller === 'U1' && x.characters[p.governor]?.role === 'governor'), 'the largest provinces have governors'); assert.ok(lookUp(x, b, 'ministers').includes('keeps the treasury'));
-    k.bureaucracy = 20; const thin = lookUp(x, b, 'economy'); assert.ok(/may be off by about/.test(thin), 'a thin state is told its own figures are rough'); k.bureaucracy = 90; assert.ok(!/may be off by about/.test(lookUp(x, b, 'economy')), 'a capable one counts well'); }
+    k.bureaucracy = 20; const thin = lookUp(x, b, 'economy'); assert.ok(/may be off by about/.test(thin), 'a thin state is told its own figures are rough'); k.bureaucracy = 90; delete k.fear; assert.ok(!/may be off by about/.test(lookUp(x, b, 'economy')), 'a capable one counts well'); k.fear = 60; assert.ok(/may be off by about/.test(lookUp(x, b, 'economy')), 'but where officials are afraid even a capable state is told what pleases'); delete k.fear; }
   const clerk = Object.values(x.characters).find(v => v.country === 'U1' && v.post === 'treasury'); clerk.loyalty = 5; clerk.greed = 90; k.treasury = 5000; k.lastRevenue = 1000; const had = clerk.wealth; courtOf(x, applyOp); assert.ok(k.treasury < 5000 && clerk.wealth > had && clerk.secrets.some(s => /Kept back money/.test(s.text)), 'a faithless treasurer keeps some back, and that can be found');
 });
 import { diplomacyStep as diplomacyOf, honourOf as honourIn } from '../engine/diplomacy.js';
@@ -5192,6 +5192,57 @@ chain('World 19, third review: a loan is an offer until it is taken; capital goe
     const r = applyOp(w, L, { op: 'set_arms_share', share: .4, _law: true }); assert.ok(r.ok && Math.abs(c.armShare - .1) < 1e-9 && /now asked for 40 in the hundred of what they can make/.test(r.msg), r.msg);
     const full = applyOp(w, L, { op: 'set_arms_share', share: 1, _law: true }); assert.ok(Math.abs(c.armShare - .25) < 1e-9 && /now asked for 100 in the hundred[^]*\(it was 40\)/.test(full.msg), full.msg);
     const low = applyOp(w, L, { op: 'set_arms_share', share: .05, _law: true }); assert.ok(Math.abs(c.armShare - .05) < 1e-9 && /now asked for 20 in the hundred[^]*never run at less than a fifth/.test(low.msg), low.msg); }
+});
+import { fearOf as fearOf_, cowed as cowed_, informers as informers_, flattery as flattery_, streetsWould as streetsWould_, fearStep as fearStep_ } from '../engine/fear.js';
+import { recognised as recognised_, disputeSettled as disputeSettled_, crisesStep as crisesStep_ } from '../engine/crises.js';
+import { sovereignRate as rateOf_ } from '../engine/money.js';
+chain('Fear, and three things that want an answer: a government that is hard is obeyed for a time beyond the reach of its police, and pays for it otherwise; kin under another flag send a deputation when their province has stood at the edge two quarters; a succession in dispute next door can be recognised from abroad and the winner remembers; and a debtor state that cannot pay its interest owes it still, and its creditor is told what creditors do', () => {
+  // World 19: twelve quarters, eight governments, no blood shed and no decision that could not wait. Every cost of hardness stood in the
+  // morning's reports and none of its gains; and nothing came to any government from outside that had to be answered.
+  const w = inherited(2696855, 8); run(w, 1);
+  const cs = aliveCountries(w);
+  { // Fear.
+    const quiet = structuredClone(w), hard = structuredClone(w), c0 = aliveCountries(quiet)[0], c1 = aliveCountries(hard)[0], L1 = ld(hard, c1);
+    for (const x of [quiet, hard]) for (const p of Object.values(x.provinces)) if (p.controller === c0.id) p.unrest = 60;
+    assert.ok(applyOp(hard, L1, { op: 'repress', strength: .5, _law: true }).ok && fearOf_(c1) > 5 && cowed_(c1) < 1 && informers_(c1) > 0 && flattery_(c1) > 0, `holding the streets frightens: ${fearOf_(c1)}`);
+    const mean = x => { const ps = Object.values(x.provinces).filter(p => p.controller === c0.id); return ps.reduce((a, p) => a + p.unrest, 0) / ps.length; };
+    run(quiet, 3); run(hard, 3); const gain = mean(quiet) - mean(hard), told = streetsWould_({ police: structuredClone(w).countries[c0.id].police });
+    assert.ok(gain > 1 && gain < told.peak * 1.6 + 2 && told.peak > 1 && told.last >= told.at, `the provinces are quieter for it by about what the police said they would be (${gain.toFixed(1)} against ${told.peak.toFixed(1)} at the most)`);
+    assert.ok(fearOf_(c1) > 0 && fearOf_(c1) < 15 * 1.4 && quiet.countries[c0.id].fear == null, 'it fades by the quarter, and a state that has done nothing of the kind has none');
+    const f0 = fearOf_(c1), O = hard.characters[c1.opposition]; O.power = 60; c1.courts = 10; assert.ok(applyOp(hard, L1, { op: 'purge', character: O.id, fate: 'dead', _law: true }).ok || true); const killed = fearOf_(c1) - f0;
+    const again = structuredClone(w), c2 = aliveCountries(again)[0], O2 = again.characters[c2.opposition]; O2.power = 60; c2.courts = 10; applyOp(again, ld(again, c2), { op: 'purge', character: O2.id, _law: true }); assert.ok(!(killed > 0) || killed > fearOf_(c2), `a killing frightens more than an arrest (${killed} against ${fearOf_(c2)})`);
+    // What it costs beside: the comfortable classes, each quarter it lasts.
+    c1.fear = 50; c1.mods = []; fearStep_(hard); assert.ok(c1.mods.some(m => m.key === 'sat.middle' && m.delta < -2) && c1.mods.some(m => m.key === 'sat.capital' && m.delta < -1) && Math.abs(c1.fear - 44) < 1e-6, 'those with something to lose take note, and it fades by an eighth');
+    // And it is written where the cost is written.
+    const hot = Object.values(hard.provinces).find(p => p.controller === c1.id); hot.unrest = 75; const memo = memorandaOf(hard, c1, L1).flatMap(([, l]) => l).join('\n');
+    assert.ok(/repress: at their present strength the police would bring unrest there down by about \d+ within (the quarter|\d quarters) and keep it down for about (a quarter or two|a year|two years); it shuts doors/.test(memo) && /Fear is an instrument like the others\.[^]*officials who are afraid report what pleases\. As things stand, (people are afraid|the country is cowed)/.test(memo), `the police say what their trade would do and what it costs: ${memo.slice(-900)}`);
+    for (const k of ['unrest', 'justice', 'plots', 'labour']) assert.ok(/Fear is an instrument like the others/.test(lookUp(hard, L1, k)), `and so does the ${k} return`); }
+  { // A deputation.
+    let found = null; for (const p of Object.values(w.provinces)) { const x = w.countries[p.controller]; if (!x?.alive) continue; const g = (p.groups || []).find(g => g.share >= .35 && g.eth !== x.majorityEth && cs.some(o => o.id !== x.id && o.majorityEth === g.eth)); if (g) { found = { p, x, y: cs.find(o => o.id !== x.id && o.majorityEth === g.eth), g }; break; } }
+    assert.ok(found, 'some province holds the kin of a neighbouring state'); const { p, x, y } = found, Y = ld(w, y), YO = w.characters[y.opposition], X = ld(w, x);
+    x.mods.push({ key: 'unrest', delta: 60, turns: 8, label: 'test' }); for (const ch of [Y, YO, X]) ch.inbox = []; const before = y.grudges?.[x.id]?.incident || 0; w.appeals = [];
+    run(w, 1); const first = w.appeals.filter(a => a.from === x.id && a.to === y.id).length; run(w, 2);
+    const a = w.appeals.find(a => a.from === x.id && a.to === y.id), q = w.provinces[a?.province] ?? p, words = new RegExp(`Men of our people from ${q.name} \\(${q.id}\\), under ${x.name}, have come over the frontier to ask for help\\. They say: unrest there stands at \\d+ of 100[^]*They ask for arms and money, or for your word spoken aloud, or for your army\\.[^]*Left unanswered, it is remembered here as a wrong borne in silence\\.`);
+    assert.ok(a && first === 0 && q.unrest >= 50, `they come when it has lasted, not the day it begins (unrest ${Math.round(p.unrest)}, appeals ${JSON.stringify(w.appeals).slice(0, 200)})`);
+    assert.ok(Y.inbox.some(m => m.from === `A deputation from ${q.name}` && words.test(m.text)) && YO.inbox.some(m => words.test(m.text)) && X.inbox.some(m => m.from === 'Police' && /has crossed into/.test(m.text)), `the government and the opposition of their own people hear them, and the state that holds the province hears of it: ${Y.inbox.map(m => m.text).join(' | ').slice(0, 500)}`);
+    assert.ok((y.grudges[x.id].incident || 0) > before + 3, 'and it lies on the country as a wrong until it is answered');
+    const n = w.appeals.length; run(w, 2); assert.equal(w.appeals.filter(a => a.from === x.id && a.to === y.id).length, 1, 'they do not come every quarter'); assert.ok(w.appeals.length >= n); x.mods = x.mods.filter(m => m.label !== 'test'); }
+  { // A succession in dispute, seen from next door.
+    const v = inherited(2696855, 8); run(v, 1); const c = aliveCountries(v)[0], G = v.characters[c.general], L = ld(v, c), n = aliveCountries(v).find(o => o.id !== c.id && Object.values(v.provinces).some(p => p.controller === o.id && p.neighbors.some(k => v.provinces[k].controller === c.id))), N = ld(v, n); N.inbox = [];
+    c.dispute = { holder: L.id, claimant: G.id, since: v.turn, until: v.turn + 3, backers: {} }; crisesStep_(v);
+    assert.ok(N.inbox.some(m => m.from === 'Foreign office' && new RegExp(`The succession in ${c.name} is disputed\\. ${L.name} \\(${L.id}\\) holds the capital; ${G.name} \\(${G.id}\\) claims the seat[^]*A government may recognise either \\(back_claim\\)`).test(m.text)), `the neighbours are told: ${N.inbox.map(m => m.text).join(' | ').slice(0, 400)}`);
+    const told = N.inbox.length; crisesStep_(v); assert.equal(N.inbox.length, told, 'once');
+    assert.ok(/Recognise one of the two/.test(applyOp(v, N, { op: 'back_claim', target: c.id, character: 'nobody' }).msg));
+    const r = applyOp(v, N, { op: 'back_claim', target: c.id, character: G.id }); assert.ok(r.ok && c.dispute.abroad[n.id] === 'claimant' && recognised_(v, c, 'claimant') >= 4 && recognised_(v, c, 'holder') === 0 && G.inbox.some(m => /recognises you as the ruler/.test(m.text)) && L.inbox.some(m => /has recognised [^,]*, not you/.test(m.text)), `recognition from abroad counts, and both claimants hear of it: ${r.msg}`);
+    const rel = c.relations[n.id] ?? 0; N.inbox = []; disputeSettled_(v, c, c.dispute.abroad, { side: 'holder', ch: L }, { ch: G }); assert.ok((c.relations[n.id] ?? 0) < rel - 10 && N.inbox.some(m => /who lost; the government there will not forget it/.test(m.text)), 'and whoever wins remembers who stood where'); }
+  { // A debtor that cannot pay.
+    const v = inherited(2696855, 8); run(v, 1); const [d, k] = aliveCountries(v), D = ld(v, d), K = ld(v, k); d.creditors = { [k.id]: 200000 }; d.creditTerms = { [k.id]: { rate: .01 } }; d.reserves = 100; D.inbox = []; K.inbox = []; const r0 = rateOf_(d);
+    run(v, 1); const owed = d.creditors[k.id];
+    assert.ok(owed > 200000 + 100 && d.arrearsTo[k.id] > 100 && K.inbox.some(m => m.from === 'The treasury' && new RegExp(`${d.name} paid \\d+ of the \\d+ in gold due to us this quarter; \\d+ stands in arrear, on a debt of \\d+\\. What creditors have done: given time or a lower rate by a paper[^]*A debtor left in arrear a year pays every lender more\\.`).test(m.text)) && D.inbox.some(m => /The \d+ unpaid is added to what we owe them/.test(m.text)), `what is not paid is owed still, and the creditor is told what creditors do: ${K.inbox.map(m => m.text).join(' | ').slice(0, 400)}`);
+    assert.ok(d.extArrears >= 1 && rateOf_(d) > r0, 'and every lender asks the debtor more while it lasts');
+    const told = K.inbox.filter(m => /stands in arrear/.test(m.text)).length; run(v, 1); assert.ok(K.inbox.filter(m => /stands in arrear/.test(m.text)).length === told && d.creditors[k.id] > owed, 'the creditor is told the first quarter and once a year, not every quarter, while the debt goes on growing'); }
+  // Who a person is, in their own words: how far they would go.
+  { const first = actorPrompt(w, ld(w, cs[0]), [], false, { intro: true }); assert.ok(/what you would never forgive, and how far you would go against whoever stands in your way: what you would do to them, and what, if anything, you would not\./.test(first) && !/where your limits lie/.test(first), 'the question asks what they would do before it asks what they would not'); }
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

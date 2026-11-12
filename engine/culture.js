@@ -1,6 +1,7 @@
 // Provinces hold mixed peoples. Policy, schooling, war and flight slowly change who lives where.
 import { clamp, between, pick, rand, news } from './util.js';
 import { aliveCountries, countryProvinces, provincePop } from './world.js';
+import { frighten, DREAD } from './fear.js';
 
 export const LANGUAGE_POLICY = ['assimilate', 'tolerate', 'autonomy'];
 export const FAITH_POLICY = ['state', 'tolerate', 'secular'];
@@ -273,7 +274,7 @@ export function peopleOp(w, actor, c, op, { fail, num, pay, allowance, rules, le
       const lost = clamp(.05 + far * .06 + (winter ? .06 : 0) + (['mountain', 'tundra', 'desert', 'marsh'].includes(to.terrain) ? .05 : 0), .05, .3), dead = taken * lost;
       for (const g of gone) settlePeople(to, g.eth, g.rel, g.people * (1 - lost));
       from.unrest = clamp(from.unrest - 10 * reach, 0, 100); to.unrest = clamp(to.unrest + taken / Math.max(provincePop(to), 1) * 80, 0, 100); from.devastation = clamp(from.devastation + share * reach * .15, 0, 1);
-      from.scar = { turn: w.turn, by: c.id, weight: clamp((from.scar?.by === c.id ? from.scar.weight : 0) + taken / Math.max(pop, 1), 0, 1) }; c.blood = (c.blood || 0) + clamp(dead * .5, 0, 15);
+      from.scar = { turn: w.turn, by: c.id, weight: clamp((from.scar?.by === c.id ? from.scar.weight : 0) + taken / Math.max(pop, 1), 0, 1) }; c.blood = (c.blood || 0) + clamp(dead * .5, 0, 15); frighten(c, DREAD.removal);
       for (const u of troops) { u.morale = clamp(u.morale - 3, 0, 100); u.loyalty = clamp(u.loyalty - 2, 0, 100); }
       leaveTrace(w, actor, `Ordered about ${thousands(taken)} ${name} people moved from ${from.name} to ${to.name}.`);
       const known2 = !op.secret || rand(w) < clamp(.3 + c.pressFreedom / 120 + taken / Math.max(pop, 1), 0, .97), text = `${c.name} moved about ${thousands(taken)} ${name} people from ${from.name} to ${to.name} under guard; about ${thousands(dead)} died on the way.`;

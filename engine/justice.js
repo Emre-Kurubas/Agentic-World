@@ -3,6 +3,7 @@
 // convicts whoever is brought. Papers can be forged, and a free press and honest judges sometimes find the forgery.
 import { clamp, rand, news } from './util.js';
 import { neutralize, die } from './politics.js';
+import { frighten, DREAD } from './fear.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 const trace = (w, ch, text) => { if (!ch) return; (ch.secrets ||= []).push({ turn: w.turn, text }); ch.secrets = ch.secrets.slice(-12); };
@@ -49,6 +50,8 @@ export function justiceStep(w) {
       // A conviction on proof before a free court costs the state nothing. A sentence from a tame bench on thin papers is seen for what it is.
       if (sound) c.legitimacy = clamp(c.legitimacy + 1, 0, 100); else { c.legitimacy = clamp(c.legitimacy - (1 + 4 * c.pressFreedom / 100), 0, 100); c.mods.push({ key: 'unrest', delta: clamp(ch.power / 20, .5, 4) * (.3 + c.pressFreedom / 100), turns: 3, label: `The trial of ${ch.name}` }); }
       // A death sentence nobody believes was the court's own is blood on the state's hands like any other.
+      // A sentence from a bench that is seen to be the government's frightens; the gallows more than the cell.
+      if (!sound) frighten(c, death ? DREAD.gallows : DREAD.trial); else if (death) frighten(c, 3);
       if (death) { docket('executed'); if (!sound) c.blood = (c.blood || 0) + 1.5; news(w, `${c.name}: ${ch.name} was found guilty of ${t.charge} and executed.`, { kind: 'politics', countries: [c.id] }); trace(w, by, `Had ${ch.name} tried and put to death.`); die(w, ch, 'was executed after a trial', { quiet: true }); say(w, by, 'The court', `${ch.name} was found guilty and the sentence of death has been carried out.`); continue; }
       const years = Math.round(2 + proof * 6 + (1 - free) * 4); docket('guilty', years);
       news(w, `${c.name}: ${ch.name} was found guilty of ${t.charge} and sentenced to ${years} years.`, { kind: 'politics', countries: [c.id] });

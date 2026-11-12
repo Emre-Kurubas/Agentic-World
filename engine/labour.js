@@ -4,6 +4,7 @@
 import { clamp, rand, news, sum, pick } from './util.js';
 import { STATE, isOpen, firmBy, lawFor } from './firms.js';
 import { him, himself } from './names.js';
+import { cowed, frighten, DREAD } from './fear.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 const trace = (w, ch, text) => { if (!ch) return; (ch.secrets ||= []).push({ turn: w.turn, text }); ch.secrets = ch.secrets.slice(-12); };
@@ -77,7 +78,8 @@ export function labourStep(w) {
       if (rand(w) < giveIn) { f.lockout = null; f.temper = Math.max(f.temper, 60); news(w, `${c.name}: the lockout at ${f.name} ended; the men came back on the owner's terms.`, { kind: 'politics', countries: [c.id], province: p.id }); say(w, bossOf(w, c, f), 'Works manager', `The gates of ${f.name} are open again; the men took your terms.`); }
       else { p.unrest = clamp(p.unrest + 3, 0, 100); for (const o of others) o.stir = (o.stir || 0) + 6; }
     }
-    else if (!(f.halted > 0) && f.temper > 62 && rand(w) < (c.unions ? .45 : .12)) walkOut(w, c, p, f);
+    // Angry men who are afraid stay angry and stay at work (fear.js).
+    else if (!(f.halted > 0) && f.temper > 62 && rand(w) < (c.unions ? .45 : .12) * cowed(c)) walkOut(w, c, p, f);
     if (stopped(f)) p.halt[keyOf(f)] = clamp((p.halt[keyOf(f)] || 0) + f.stake * .85, 0, .95);
     if (f.halted > 0) f.haltedNow = true;
     const a = acc[p.id] ||= { v: 0, n: 0 };
@@ -151,7 +153,7 @@ export function labourOp(w, actor, c, op, { fail, num, governs, tell, allowance 
       // Soldiers do not always fire on their own people.
       if (c.police < 40 && troops.length && loyal < 45 && rand(w) < .5) { for (const u of troops) u.loyalty = clamp(u.loyalty - 5, 0, 100); f.stir = (f.stir || 0) + 12; news(w, `${c.name}: troops sent against the strikers of ${f.name} refused to move.`, { kind: 'politics', countries: [c.id], province: p.id }); return fail('The troops would not march against the strikers.'); }
       const dead = Math.round((3 + rand(w) * 40) * clamp(f.stake + .3, .3, 1.3) * (1.3 - c.police / 200));
-      p.pops.workers.n = Math.max(1, p.pops.workers.n - dead / 1000); f.strike = null; f.lockout = null; f.temper = 50; f.bloodAt = w.turn; c.blood = (c.blood || 0) + dead / 6;
+      p.pops.workers.n = Math.max(1, p.pops.workers.n - dead / 1000); f.strike = null; f.lockout = null; f.temper = 50; f.bloodAt = w.turn; c.blood = (c.blood || 0) + dead / 6; frighten(c, DREAD.strike + dead / 10);
       p.scar = { by: c.id, turn: w.turn, weight: clamp((p.scar?.by === c.id ? p.scar.weight : 0) + .12, 0, 1) };
       c.mods.push({ key: 'sat.workers', delta: -6, turns: 6, label: `The dead of ${f.name}` }); c.legitimacy = clamp(c.legitimacy - (1.5 + c.pressFreedom / 40), 0, 100);
       for (const u of troops) u.loyalty = clamp(u.loyalty - 2, 0, 100);

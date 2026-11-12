@@ -18,6 +18,8 @@ import { frontierStep } from './frontier.js';
 import { justiceStep } from './justice.js';
 import { diplomacyStep } from './diplomacy.js';
 import { pressStep } from './press.js';
+import { fearStep } from './fear.js';
+import { crisesStep } from './crises.js';
 import { bondStep } from './bonds.js';
 import { disputeStep } from './politics.js';
 import { countryProvinces, aliveCountries, provincePop } from './world.js';
@@ -61,6 +63,8 @@ export function stepWorld(w) {
   relationDrift(w);
   // What stood in every province when the quarter closed. Attaches and travellers report this, a quarter late; only a service with eyes in the
   // place, a watch on the frontier or troops in contact know what stands there today (queries.js troopsIn).
+  crisesStep(w);
+  fearStep(w);
   w.garrisons = {}; for (const u of Object.values(w.units)) { const p = w.provinces[u.province]; if (p && u.country === p.controller) w.garrisons[p.id] = (w.garrisons[p.id] || 0) + u.men; }
   pruneStep(w);
   labourEnd(w);

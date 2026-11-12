@@ -7,6 +7,7 @@ import { aliveCountries, ROLES } from './world.js';
 import { duesOf } from './means.js';
 import { rivalParty, onBenches, leadsParties } from './polity.js';
 import { cameOut } from './intrigue.js';
+import { cowed } from './fear.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 // A paper put into somebody's file: once, and the file keeps the latest eight.
@@ -122,7 +123,8 @@ export function pressStep(w) {
       if (n.reach < 1) continue;
       const friendly = standOf(w, c, n) === 'for', hunt = (n.targets || []).filter(id => w.characters[id]?.alive);
       // Reporters dig as far as the law lets them print what they find; a paper set on named people finds what there is about them sooner.
-      if (c.pressFreedom < 30 || n.gag || rand(w) >= n.reach / 300 * (hunt.length ? 1.5 : 1)) continue;
+      // Reporters of a paper that does not stand with the government dare less where people are afraid (fear.js).
+      if (c.pressFreedom < 30 || n.gag || rand(w) >= n.reach / 300 * (hunt.length ? 1.5 : 1) * (friendly ? 1 : cowed(c))) continue;
       // They leave alone the owner, whoever the owner has told them to spare, and, in a paper that stands with the government, its head.
       const spare = new Set([n.owner, ...(n.spare || []), ...(friendly ? [c.leader] : [])]), filed = x => owner.dossiers[x.id]?.facts || [];
       // What has been held back or struck already lies in the owner's file and is not found a second time.

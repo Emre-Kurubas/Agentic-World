@@ -82,7 +82,7 @@ export function sovereignRate(c) {
   // Lenders also price a state's word: one that breaks treaties, falls on its neighbours and threatens emptily pays more for money (about a point and
   // a half a year for every ten its standing has lost). And they price a war: a state at war pays a premium that grows with the war's length, more
   // if it began it and more again while it is losing ground, and that outlasts the peace by a few quarters (warcost.js warFooting).
-  return clamp(.0075 + .02 * Math.max(0, burden - .6) ** 1.5 + Math.max(0, c.inflTrend ?? c.inflation) * .6 + (c.defaulted ? .02 : 0) + (c.bankHealth < 30 ? .01 : 0) + Math.max(0, 60 - (c.honour ?? 60)) * .0004 + (c.war?.premium || 0) + vaultPremium(c), .005, .35);
+  return clamp(.0075 + .02 * Math.max(0, burden - .6) ** 1.5 + Math.max(0, c.inflTrend ?? c.inflation) * .6 + (c.defaulted ? .02 : 0) + (c.bankHealth < 30 ? .01 : 0) + Math.max(0, 60 - (c.honour ?? 60)) * .0004 + (c.war?.premium || 0) + vaultPremium(c) + (c.extArrears || 0) * .0004, .005, .35);
 }
 // Lenders shut out a defaulter, but not forever: some years of paying in full and the market deals with the state again.
 // A state already in default cannot default again; it simply goes on not paying.

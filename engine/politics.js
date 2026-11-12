@@ -1,4 +1,6 @@
 import { clamp, sum, news, rand, between, nextId, pick, quarterLabel } from './util.js';
+import { hush, cowed, informers, frighten, DREAD } from './fear.js';
+import { recognised, disputeSettled } from './crises.js';
 import { CLASSES, ROLES, countryProvinces, provincePop, aliveCountries, makeCountry, spawnCharacter, atWar, clampRel } from './world.js';
 import { voiceOf } from './press.js';
 import { allocateSeats, onBenches, rivalParty, seatGovernment, makeParliament } from './polity.js';
@@ -81,7 +83,7 @@ export function satisfactionStep(w) {
       const scar = p.scar && p.scar.by === p.controller ? p.scar.weight * 40 * Math.max(0, 1 - (w.turn - p.scar.turn) / 80) : 0;
       // A rising that was fought out and put down leaves a province quiet for some years, the longer the harder it was put down.
       const quiet = p.quelled ? p.quelled.weight * Math.max(0, 1 - (w.turn - p.quelled.turn) / 12) : 0;
-      const pressure = 88 - meanSat * 1.3 + (c.pressFreedom > 70 ? 3 : 0) - grip - garrisonHold(garrison[p.id] || 0, pp) - c.repress * .35 + modValue(c, 'unrest') + adminPressure(p) + scar - quiet;
+      const pressure = 88 - meanSat * 1.3 + (c.pressFreedom > 70 ? 3 : 0) - grip - garrisonHold(garrison[p.id] || 0, pp) - c.repress * .35 - hush(c) + modValue(c, 'unrest') + adminPressure(p) + scar - quiet;
       p.unrest = clamp(p.unrest + (clamp(pressure, 0, 100) - p.unrest) * .35, 0, 100);
       unrestSum += p.unrest * pp; popSum += pp;
     }
@@ -200,10 +202,12 @@ export function disputeStep(w) {
     c.legitimacy = clamp(c.legitimacy - 1.5, 0, 100);
     if (w.turn < d.until) continue;
     const backed = side => sum(Object.entries(d.backers).filter(([, s]) => s === side).map(([id]) => w.characters[id]).filter(live), x => claimOf(w, c, x) * .5);
-    const a = holdOf(w, c, holder) + backed('holder'), b = claimOf(w, c, rival) + backed('claimant') + between(w, -8, 8); c.dispute = null;
-    if (b > a * 1.1) { news(w, `${c.name}: ${rival.name} has prevailed in the disputed succession; ${holder.name} has fled.`, { kind: 'politics', countries: [c.id] }); sideline(w, holder, 'exiled'); installLeader(w, c, rival); rival.rise = `Took power in ${w.date ?? 'the first days'} when the succession was disputed and the country came over.`; c.legitimacy = clamp(c.legitimacy - 4, 0, 100); }
+    // Recognition from abroad counts for something, and is remembered by whoever wins (crises.js).
+    const abroad = d.abroad, settled = won => disputeSettled(w, c, abroad, { side: won, ch: won === 'holder' ? holder : rival }, { ch: won === 'holder' ? rival : holder });
+    const a = holdOf(w, c, holder) + backed('holder') + recognised(w, c, 'holder'), b = claimOf(w, c, rival) + backed('claimant') + recognised(w, c, 'claimant') + between(w, -8, 8); c.dispute = null;
+    if (b > a * 1.1) { news(w, `${c.name}: ${rival.name} has prevailed in the disputed succession; ${holder.name} has fled.`, { kind: 'politics', countries: [c.id] }); sideline(w, holder, 'exiled'); installLeader(w, c, rival); rival.rise = `Took power in ${w.date ?? 'the first days'} when the succession was disputed and the country came over.`; c.legitimacy = clamp(c.legitimacy - 4, 0, 100); settled('claimant'); }
     else if (b > a * .9 && canSplit(w, c) && startCivilWar(w, c, rival, 'Claimant\'s Party')) { /* settled by arms */ }
-    else { rival.power = clamp(rival.power - 12, 0, 100); c.legitimacy = clamp(c.legitimacy + 5, 0, 100); news(w, `${c.name}: the claim made for ${rival.name} has collapsed; ${holder.name} holds the state.`, { kind: 'politics', countries: [c.id] }); }
+    else { rival.power = clamp(rival.power - 12, 0, 100); c.legitimacy = clamp(c.legitimacy + 5, 0, 100); news(w, `${c.name}: the claim made for ${rival.name} has collapsed; ${holder.name} holds the state.`, { kind: 'politics', countries: [c.id] }); settled('holder'); }
   }
 }
 
@@ -331,8 +335,9 @@ export function plotStep(w) {
     // A plot can be run from exile, not from a cell; and it dies with the person it was aimed at.
     if (!c?.alive || !lead?.alive || lead.status === 'imprisoned' || (pl.kind === 'assassination' && pl.target && !w.characters[pl.target]?.alive)) { pl.active = false; continue; }
     pl.members = [...new Set(pl.members)].filter(x => x !== pl.leader);
-    pl.progress = clamp(pl.progress + 9 + pl.members.length * 7, 0, 100);
-    const leak = clamp(.03 + pl.members.length * .05 + (c.police + c.intelligence) / 100 * .1 - pl.secrecy * .12, .02, .75);
+    // Where people are afraid, men are slower to commit themselves and quicker to tell (fear.js).
+    pl.progress = clamp(pl.progress + (9 + pl.members.length * 7) * cowed(c), 0, 100);
+    const leak = clamp(.03 + pl.members.length * .05 + (c.police + c.intelligence) / 100 * .1 - pl.secrecy * .12 + informers(c), .02, .75);
     // A chief of police who has been paid or frightened into looking away from the ringleader's affairs seldom hears of them.
     const chief = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'police' && x.status === 'free'), away = !!chief?.blind && chief.blind.until >= w.turn && chief.blind.for === pl.leader;
     if (!pl.exposed && rand(w) < leak * (away ? .3 : 1)) {
@@ -502,7 +507,7 @@ export function uprisingStep(w) {
       // there: put down by troops quartered in the province it does not rise again for years, and the dead are remembered by those who take
       // up arms in secret; left to burn itself out, it is back sooner.
       const hold = garrisonHold(sum(Object.values(w.units).filter(u => u.province === p.id && u.country === c.id && !u.barracks), u => u.men), provincePop(p));
-      p.unrest = clamp(p.unrest - 14, 0, 100); p.quelled = { turn: w.turn, weight: 8 + hold }; c.blood = (c.blood || 0) + hold * .05;
+      p.unrest = clamp(p.unrest - 14, 0, 100); p.quelled = { turn: w.turn, weight: 8 + hold }; c.blood = (c.blood || 0) + hold * .05; frighten(c, DREAD.rising);
       news(w, `${p.name}: mass uprising, fighting in the streets.`, { kind: 'disaster', countries: [c.id], hush: true, province: p.id });
       // A rising in a remote valley shakes the government less than one in a great city.
       c.legitimacy = clamp(c.legitimacy - clamp(provincePop(p) / people * 20, .3, 2.5), 0, 100);

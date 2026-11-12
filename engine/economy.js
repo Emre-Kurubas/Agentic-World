@@ -624,7 +624,9 @@ function fiscal(w, c) {
   let interest = !c.defaulted ? owed : w.turn - (c.defaultedAt ?? -99) < 4 ? 0 : Math.min(owed, spare);
   // External debt is in gold: when the currency falls, the same interest costs the budget more.
   const external = sum(Object.values(c.creditors), x => x), extRate = foreignRate(c, external); let extDue = 0, extPaid = 0;
-  for (const [cid, amt] of Object.entries(c.creditors)) if (w.countries[cid]?.alive) { const due = amt * (c.creditTerms?.[cid]?.rate ?? extRate), pay = Math.min(Math.max(c.reserves, 0), due); c.reserves -= pay; w.countries[cid].reserves += pay; extDue += due; extPaid += pay; }
+  for (const [cid, amt] of Object.entries(c.creditors)) if (w.countries[cid]?.alive) { const due = amt * (c.creditTerms?.[cid]?.rate ?? extRate), pay = Math.min(Math.max(c.reserves, 0), due); c.reserves -= pay; w.countries[cid].reserves += pay; extDue += due; extPaid += pay;
+    // Interest that could not be paid in gold is owed still, and the creditor hears of it (crises.js).
+    if (pay < due - .5) (c._unpaid ||= {})[cid] = { due, pay }; }
   interest += extPaid * (c.rate || 1);
   c.foreignRate = extRate; c._debtService = extDue;
   c.extArrears = extDue > 0 && extPaid < extDue * .5 ? (c.extArrears || 0) + 1 : Math.max(0, (c.extArrears || 0) - 1);
