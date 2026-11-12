@@ -5,7 +5,7 @@ import { dealsWith, tieOf } from './diplomacy.js';
 import { migrate, levyShare } from './culture.js';
 import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding, USUAL_COVER, treasuryPays } from './money.js';
 import { blockadeOf, merchantStep, iced } from './navy.js';
-import { upkeepCost } from './military.js';
+import { upkeepCost, railWorks, roadFactor } from './military.js';
 import { warFooting, kitOf, marketStep, warEnds, WAR_RISK, lendersWords } from './warcost.js';
 
 export const RECIPE = {
@@ -30,33 +30,78 @@ export const inUse = (w, c, t) => !c.techs?.[t] ? 0 : clamp(c.adopting?.[t] ?? 1
 // up by farmers who can read what is printed on the sack.
 export const paceOf = (c, t) => (t === 'electricity' ? clamp(1 + (c.budget.infrastructure * (c.paidRatio ?? 1) - (c.roadShare ?? c.budget.infrastructure)) * 60, .4, 2.5) : t === 'chemical_fertilizer' ? clamp(.5 + c.literacy / 100, .5, 1.5) : 1) / (SPREAD[t] || 1);
 
-// Rule: goods move only if a route exists. War, a closed strait and an enemy fleet cut the route.
+// Rule: goods move only if a road or a water joins buyer and seller, and they pay for the way they go.
+//
+// Every cargo between two states travels from the one's seat of trade to the other's (their capitals), over the provinces and seas that lie
+// between: by rail where both ends of a stage have a working line, by wagon road where they do not (dearer, dearer still over hills, marsh and
+// mountain, and shut where winter or mud shuts the road), through a harbour on to the water and off it again, and across the soil of a third
+// state where that state lets it pass. Heavy cargo (grain, coal, ore, timber, oil) pays far more than wares for every stage by road and
+// somewhat more by rail, and so goes by water and by rail wherever it can. The cheapest way is the way trade takes; when a frontier closes, a
+// railway is cut, a strait is shut or a war lies across the road, it takes the next cheapest, at that price, or stops.
+//
+// (Until world 19 two states that touched traded "overland" at one price wherever they touched, a third state between two others carried
+// their trade at next to nothing, no railway and no pass was worth anything to commerce, a strait could be closed without a single cargo
+// noticing, and a toll at a strait was paid by ships that had open water beside them. World 18: a state that held three straits on a
+// neighbour's whole sea trade never knew it, and by measurement would have taken a third of its revenue in tolls from ships that could not
+// go round.)
+export const CARRY = { rail: .003, road: .009, bulkRail: 1.6, bulkRoad: 2.6, border: .008, load: .025, quay: .012, sea: .008, home: .6, trains: 1.5, waste: .05 };
+const GROUND = { plains: 1, desert: 1.3, hills: 1.3, forest: 1.2, tundra: 1.5, marsh: 1.6, mountain: 2 };
 // A sea is closed to two countries' trade when an enemy of either holds it in strength; held thinly, runners still get through, at a price.
 const SEALED = .8;
 const closure = (w, sea, a, b) => Math.max(blockadeOf(w, sea, a), blockadeOf(w, sea, b));
 function seaLocked(w, sea, a, b) { return closure(w, sea, a, b) >= SEALED; }
 function straitAt(w, sea) { return w.strategic.find(x => x.type === 'strait' && x.ref === sea); }
-function canalAdj(w, sea) { return w.canals.filter(k => k.a === sea || k.b === sea).map(k => k.a === sea ? k.b : k.a); }
-
-function seaRoute(w, a, b) {
-  // Harbours that are frozen in take no ships: a country whose only ports lie on a northern coast does not trade by sea in winter.
-  const portsA = countryProvinces(w, a.id).filter(p => p.port > 0 && p.controller === a.id && !iced(w, p)).flatMap(p => p.seas);
-  const targets = new Set(countryProvinces(w, b.id).filter(p => p.port > 0 && !iced(w, p)).flatMap(p => p.seas).filter(x => !seaLocked(w, x, a.id, b.id)));
-  if (!portsA.length || !targets.size) return null;
-  const prev = {}, q = [];
-  for (const s of portsA) if (!(s in prev) && !seaLocked(w, s, a.id, b.id)) { prev[s] = null; q.push(s); }
-  while (q.length) {
-    const x = q.shift();
-    if (targets.has(x)) { const path = []; for (let c = x; c; c = prev[c]) path.unshift(c); return path; }
-    for (const n of [...w.seas[x].neighbors, ...canalAdj(w, x)]) {
-      if (n in prev) continue;
-      const st = straitAt(w, n);
-      if (st?.closed && st.controller !== a.id && st.controller !== b.id) continue;
-      if (seaLocked(w, n, a.id, b.id)) continue;
-      prev[n] = x; q.push(n);
+const canalsAt = (w, sea) => w.canals.filter(k => k.a === sea || k.b === sea);
+// Whether one state lets the cargoes of two others cross its soil, and at what due. Left alone it lets them pass for nothing but the
+// carriers' ordinary charges; whoever governs can lay a due on what crosses or shut the road, to everybody or to one state's trade
+// (set_transit). It never lets pass the trade of a state it is at war with, has laid an embargo on or does not deal with.
+export const transitOf = (t, id) => ({ closed: !!(t.transit?.by?.[id]?.closed ?? t.transit?.closed), toll: t.transit?.by?.[id]?.toll ?? t.transit?.toll ?? 0 });
+function lets(w, t, a, b) {
+  for (const x of [a, b]) { if (atWar(w, t.id, x.id) || t.embargo.includes(x.id) || x.embargo.includes(t.id) || !dealsWith(w, t.id, x.id) || transitOf(t, x.id).closed) return false; }
+  return true;
+}
+// The cheapest way for one kind of cargo between two states, or null. `without` leaves one province or sea out, to ask what its loss would cost.
+export function carry(w, a, b, bulk = false, without = null) {
+  const from = a.capital, to = b.capital; if (!w.provinces[from] || !w.provinces[to]) return null;
+  const pass = {}, open = id => { if (id in pass) return pass[id]; const t = w.countries[id]; return pass[id] = !!t?.alive && (id === a.id || id === b.id || lets(w, t, a, b)); };
+  const enter = p => p.id !== without && !p.siege && open(p.controller);
+  const dist = { [from]: 0 }, prev = {}, how = {}, heap = [from], done = new Set();
+  const relax = (x, n, d, kind) => { if (d < (dist[n] ?? Infinity) - 1e-12) { dist[n] = d; prev[n] = x; how[n] = kind; heap.push(n); } };
+  while (heap.length) {
+    heap.sort((x, y) => dist[x] - dist[y]); const x = heap.shift(); if (done.has(x)) continue; done.add(x); if (x === to) break;
+    const p = w.provinces[x];
+    if (p) {
+      for (const n of p.neighbors) { const q = w.provinces[n]; if (!q || !enter(q)) continue;
+        const t = w.countries[q.controller], rail = railWorks(w, p) && railWorks(w, q), ours = q.controller === a.id || q.controller === b.id;
+        let step = rail ? CARRY.rail * (bulk ? CARRY.bulkRail : 1) * (t.war?.on ? CARRY.trains : 1) : CARRY.road * (GROUND[q.terrain] ?? 1.3) * roadFactor(q) * (bulk ? CARRY.bulkRoad : 1);
+        step = step * (ours ? CARRY.home : 1) + (q.devastation || 0) * CARRY.waste;
+        if (q.controller !== p.controller) step += CARRY.border + (ours ? 0 : transitOf(t, a.id).toll + transitOf(t, b.id).toll) / 2 + (!ours && t.war?.on ? WAR_RISK.land : 0);
+        relax(x, n, dist[x] + step, rail ? 'rail' : 'road'); }
+      if (p.port > 0 && !iced(w, p)) for (const s of p.seas) { if (s === without || seaLocked(w, s, a.id, b.id)) continue; relax(x, s, dist[x] + CARRY.load - (p.port - 1) * CARRY.quay + seaCost(w, s, a, b) + (w.freight || 0), 'port'); }
+    } else {
+      const sea = w.seas[x]; if (!sea) continue;
+      for (const n of sea.neighbors) { if (n === without || seaLocked(w, n, a.id, b.id)) continue; const st = straitAt(w, n); if (st?.closed && st.controller !== a.id && st.controller !== b.id) continue; relax(x, n, dist[x] + CARRY.sea + seaCost(w, n, a, b) + tollAt(st, a, b), 'sea'); }
+      for (const k of canalsAt(w, x)) { const n = k.a === x ? k.b : k.a, cut = w.strategic.find(s => s.type === 'canal' && s.ref === k.province), holder = w.provinces[k.province]?.controller; if (n === without || k.province === without || seaLocked(w, n, a.id, b.id)) continue; if (cut?.closed && holder !== a.id && holder !== b.id) continue; if (holder && holder !== a.id && holder !== b.id && !open(holder)) continue; relax(x, n, dist[x] + CARRY.sea + seaCost(w, n, a, b) + tollAt(cut && { ...cut, controller: holder }, a, b), 'canal'); }
+      for (const pid of sea.coast) { const q = w.provinces[pid]; if (!q || !(q.port > 0) || iced(w, q) || !enter(q)) continue; relax(x, pid, dist[x] + CARRY.load - (q.port - 1) * CARRY.quay, 'port'); }
     }
   }
-  return null;
+  if (!(to in dist)) return null;
+  const nodes = []; for (let x = to; x != null; x = prev[x]) nodes.unshift(x);
+  const seas = nodes.filter(id => w.seas[id]), land = nodes.filter(id => w.provinces[id]), vias = [...new Set(land.map(id => w.provinces[id].controller).filter(id => id !== a.id && id !== b.id))];
+  // A strait's keeper takes his toll once from a cargo, however many of his narrows it passes.
+  const tolled = seas.map(s => straitAt(w, s)).filter(s => tollAt(s, a, b) > 0), keepers = {}; let twice = 0;
+  for (const s of tolled) { if (keepers[s.controller]) twice += s.toll; else keepers[s.controller] = s; }
+  const stages = { rail: 0, road: 0 }; for (const id of nodes) if (how[id] === 'rail' || how[id] === 'road') stages[how[id]]++;
+  const water = seas.length ? sum(nodes.filter(id => ['port', 'sea', 'canal'].includes(how[id])), id => dist[id] - dist[prev[id]]) : 0;
+  const dues = vias.map(id => ({ to: id, rate: (transitOf(w.countries[id], a.id).toll + transitOf(w.countries[id], b.id).toll) / 2 })).filter(d => d.rate > 0);
+  return { mode: seas.length ? 'sea' : vias.length ? 'transit' : 'land', way: dist[to] - twice, path: seas, land, nodes, tolls: Object.values(keepers).map(s => s.id), dues, ...(vias.length ? { via: vias[0], vias } : {}), stages, water };
+}
+const tollAt = (st, a, b) => st && st.toll && st.controller && st.controller !== a.id && st.controller !== b.id ? st.toll : 0;
+// What the dangers of one sea add to a cargo of these two states: raiders, mines, a blockade that is run.
+function seaCost(w, s, a, b) {
+  const raided = (w.seaRaids?.[s] || []).some(x => atWar(w, x, a.id) || atWar(w, x, b.id)) ? .15 : 0, m = w.mines?.[s];
+  const mined = !m ? 0 : atWar(w, m.by, a.id) || atWar(w, m.by, b.id) ? .1 * m.level : [a.id, b.id].includes(m.by) ? 0 : .02 * m.level;
+  return raided + mined + closure(w, s, a.id, b.id) * .35;
 }
 const landBorder = (w, a, b) => countryProvinces(w, a.id).some(p => p.neighbors.some(n => w.provinces[n].controller === b.id));
 
@@ -73,28 +118,16 @@ export function updateStrategic(w) {
       if (!w.countries[s.controller]?.alive) s.controller = null;
       const pol = s.controller ? w.countries[s.controller].straitPolicy?.[s.id] : null;
       s.closed = !!pol?.closed; s.toll = pol?.toll ?? 0;
-    } else s.controller = w.provinces[s.ref]?.controller ?? null;
+    } else { s.controller = w.provinces[s.ref]?.controller ?? null;
+      // A canal is its holder's to close or to charge for, like a strait.
+      if (s.type === 'canal') { const pol = s.controller ? w.countries[s.controller]?.straitPolicy?.[s.id] : null; s.closed = !!pol?.closed; s.toll = pol?.toll ?? 0; } }
   }
 }
 
-// Bulk: what is heavy for its price. Between two states that touch by land a cargo goes by rail and road; but grain, coal, ore, timber and oil
-// carried overland cost a good deal more for what they are worth (LAND_BULK on top of the land route), and where both states have harbours on
-// waters that join, such cargoes go round by sea whenever that is the cheaper way. So neighbours with coasts send each other their bulk in
-// ships, and a war, a blockade or a dear freight puts it back on the railway. (Before, every cargo between neighbours went by land: half the
-// world's trade never saw a ship, and the state with half the world's ships earned next to nothing by them.)
+// Bulk: what is heavy for its price. It is carried on its own reckoning (carry with bulk), and goes by the way that is cheapest for it, which
+// is seldom the wagon road.
 export const BULK = new Set(['grain', 'timber', 'coal', 'iron', 'copper', 'oil', 'phosphate']), LAND_BULK = .05;
 export const routeFor = (r, g) => r && r.bulk && BULK.has(g) ? r.bulk : r;
-function seaLeg(w, a, b, risk, hot) {
-  const path = seaRoute(w, a, b); if (!path) return null;
-  const tolls = path.map(s => straitAt(w, s)).filter(s => s && s.toll && s.controller && ![a.id, b.id].includes(s.controller));
-  const raided = path.filter(s => (w.seaRaids?.[s] || []).some(x => atWar(w, x, a.id) || atWar(w, x, b.id))).length;
-  // Mines laid by an enemy of either make every passage through that water a risk; laid by anyone else they are a lesser one.
-  const runners = sum(path, s => closure(w, s, a.id, b.id));
-  const mined = sum(path, s => { const m = w.mines?.[s]; return !m ? 0 : atWar(w, m.by, a.id) || atWar(w, m.by, b.id) ? .1 * m.level : [a.id, b.id].includes(m.by) ? 0 : .02 * m.level; });
-  // A deep harbour with quays and cranes turns ships round faster than an open roadstead: each step of harbour at either end takes a little off the freight.
-  const quay = (o, sea) => Math.max(1, ...countryProvinces(w, o.id).filter(p => p.port > 0 && p.controller === o.id && p.seas.includes(sea)).map(p => p.port));
-  return { mode: 'sea', cost: 1.05 + risk + path.length * .008 - (quay(a, path[0]) + quay(b, path.at(-1)) - 2) * .012 + sum(tolls, t => t.toll) + raided * .15 + mined + runners * .35 + (w.freight || 0) + hot * WAR_RISK.sea, path, tolls: tolls.map(t => t.id), ...(hot ? { war: hot * WAR_RISK.sea } : {}) };
-}
 export function updateRoutes(w) {
   const cs = aliveCountries(w), before = w.routes || {}; w.routes = {};
   for (let i = 0; i < cs.length; i++) for (let j = i + 1; j < cs.length; j++) {
@@ -103,23 +136,44 @@ export function updateRoutes(w) {
     if (a.embargo.includes(b.id) || b.embargo.includes(a.id) || atWar(w, a.id, b.id) || !dealsWith(w, a.id, b.id)) continue;
     // A cargo to or from a state at war pays for the risk at each such end: insurers, carriers and the buyer's own caution (warcost.js).
     const risk = tieOf(w, a.id, b.id) === 'broken' ? .08 : 0, hot = warEnds(a, b).length;
-    if (landBorder(w, a, b)) { const land = { mode: 'land', cost: 1.04 + risk + hot * WAR_RISK.land, path: [], tolls: [], ...(hot ? { war: hot * WAR_RISK.land } : {}) }, byRail = { ...land, cost: land.cost + LAND_BULK }, round = seaLeg(w, a, b, risk, hot);
-      w.routes[k] = { ...land, bulk: round && round.cost < byRail.cost ? round : byRail }; continue; }
-    const leg = seaLeg(w, a, b, risk, hot); if (leg) w.routes[k] = leg;
+    const dress = r => { if (!r) return null; const sea = r.mode === 'sea', war = hot * (sea ? WAR_RISK.sea : WAR_RISK.land); return { ...r, cost: 1 + r.way + risk + war, ...(war ? { war } : {}) }; };
+    const wares = dress(carry(w, a, b, false)); if (!wares) continue;
+    w.routes[k] = { ...wares, bulk: dress(carry(w, a, b, true)) ?? wares };
   }
   // A state at war with nobody whose ships are turned back from a blockaded coast protests to whoever turned them back.
-  for (const [k, r] of Object.entries(before)) { if (r.mode !== 'sea' || w.routes[k]?.mode === 'sea') continue; const [x, y] = k.split('|').map(id => w.countries[id]); if (!x?.alive || !y?.alive || atWar(w, x.id, y.id)) continue;
-    for (const [n, v] of [[x, y], [y, x]]) for (const b of cs) { if (b === n || b === v || !atWar(w, b.id, v.id) || atWar(w, b.id, n.id)) continue; if (!countryProvinces(w, v.id).some(p => p.port > 0 && p.seas.some(s => (w.seaPower?.[s]?.[b.id] || 0) > 0 && blockadeOf(w, s, v.id) >= SEALED))) continue;
-      n.relations[b.id] = clamp((n.relations[b.id] ?? 0) - 5, -100, 100); const ch = w.characters[n.leader]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'Foreign Ministry', text: `${b.name}'s squadrons have closed the harbours of ${v.name}: our ships are turned back and our trade with ${v.name} by sea has stopped. Our merchants want to know what the government will say to ${b.name}.` }); } }
-  // Two countries with no road or water of their own between them still trade through a third that deals with both: the goods pay both freights and the middleman's handling.
-  const direct = { ...w.routes }, open = (x, y) => direct[routeKey(x.id, y.id)];
-  for (let i = 0; i < cs.length; i++) for (let j = i + 1; j < cs.length; j++) {
-    const a = cs[i], b = cs[j], k = routeKey(a.id, b.id);
-    if (direct[k] || a.embargo.includes(b.id) || b.embargo.includes(a.id) || atWar(w, a.id, b.id) || !dealsWith(w, a.id, b.id)) continue;
-    const via = cs.filter(m => m !== a && m !== b && open(a, m) && open(m, b)).map(m => ({ m, cost: open(a, m).cost * open(m, b).cost * 1.03 })).sort((x, y) => x.cost - y.cost)[0];
-    // Goods that go through a third state pay whatever war premium lies on either leg (through a middleman at war, on both).
-    if (via) { const risk = (open(a, via.m).war || 0) + (open(via.m, b).war || 0); w.routes[k] = { mode: 'transit', via: via.m.id, cost: via.cost, path: [], tolls: [...new Set([...open(a, via.m).tolls, ...open(via.m, b).tolls])], ...(risk ? { war: risk } : {}) }; }
-  }
+  // (Once, when the coast is closed: not every quarter it stays closed, and whether or not his cargoes then find another way.)
+  const sealed = {}; for (const v of cs) for (const b of cs) if (b !== v && atWar(w, b.id, v.id) && countryProvinces(w, v.id).some(p => p.port > 0 && p.seas.some(s => (w.seaPower?.[s]?.[b.id] || 0) > 0 && blockadeOf(w, s, v.id) >= SEALED))) sealed[`${v.id}|${b.id}`] = true;
+  const fresh = Object.keys(sealed).filter(key => !w.sealed?.[key]); w.sealed = sealed;
+  for (const [k, r] of Object.entries(before)) { if (![r, r.bulk].some(x => x?.mode === 'sea')) continue; const [x, y] = k.split('|').map(id => w.countries[id]); if (!x?.alive || !y?.alive || atWar(w, x.id, y.id)) continue;
+    for (const [n, v] of [[x, y], [y, x]]) for (const b of cs) { if (b === n || b === v || !fresh.includes(`${v.id}|${b.id}`) || atWar(w, b.id, n.id)) continue;
+      n.relations[b.id] = clamp((n.relations[b.id] ?? 0) - 5, -100, 100); const ch = w.characters[n.leader]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'Foreign Ministry', text: `${b.name}'s squadrons have closed the harbours of ${v.name}: our ships are turned back from that coast${w.routes[k] ? `, and what trade we still have with ${v.name} goes another way and dearer` : ` and our trade with ${v.name} has stopped`}. Our merchants want to know what the government will say to ${b.name}.` }); } }
+  // Whose road was lengthened or cut since last quarter is told to whoever governs (routeNews), once the new ways are known.
+  routeNews(w, before);
+}
+// A government hears when the way its trade takes with another state has grown much dearer, or has closed, or has opened again, and why.
+function routeNews(w, before) {
+  for (const [k, was] of Object.entries(before)) { const now = w.routes[k], [x, y] = k.split('|').map(id => w.countries[id]); if (!x?.alive || !y?.alive || atWar(w, x.id, y.id)) continue;
+    const worse = !now || now.cost > was.cost + .06, better = now && now.cost < was.cost - .06; if (!worse && !better) continue;
+    const why = now ? whyChanged(w, x, y, was, now) : whyClosed(w, x, y, was); for (const [n, v] of [[x, y], [y, x]]) { const ch = w.characters[n.leader]; if (ch?.alive) { ch.inbox.push({ turn: w.turn, from: 'Board of Trade', text: !now ? `Our trade with ${v.name} has no way open to it any longer${why ? `: ${why}` : ''}.` : `Carriage between us and ${v.name} now adds about ${Math.round((now.cost - 1) * 100)} in the hundred to a cargo (it was ${Math.round((was.cost - 1) * 100)})${why ? `: ${why}` : ''}.` }); } } }
+  for (const [k, now] of Object.entries(w.routes)) if (!before[k] && Object.keys(before).length) { const [x, y] = k.split('|').map(id => w.countries[id]); for (const [n, v] of [[x, y], [y, x]]) { const ch = w.characters[n.leader]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'Board of Trade', text: `A way is open again for our trade with ${v.name}: ${wayOf(w, now)}; carriage adds about ${Math.round((now.cost - 1) * 100)} in the hundred.` }); } }
+}
+const names = (w, ids) => ids.map(id => w.provinces[id]?.name ?? w.seas[id]?.name ?? id);
+// A way in words: what it crosses, and how.
+export function wayOf(w, r) {
+  const land = r.land || [], through = r.vias?.length ? ` across ${r.vias.map(id => w.countries[id]?.name).join(' and ')}` : '';
+  const stages = r.stages ? [r.stages.rail ? `${r.stages.rail} stage${r.stages.rail > 1 ? 's' : ''} by rail` : '', r.stages.road ? `${r.stages.road} by wagon road` : ''].filter(Boolean).join(' and ') : '';
+  if (r.mode === 'sea') { const ports = (r.nodes || []).filter((id, i, all) => w.provinces[id] && (w.seas[all[i + 1]] || w.seas[all[i - 1]])); return `by sea${ports.length ? ` between ${names(w, ports).join(' and ')}` : ''}, through ${r.path.join(' > ')}${stages ? `, with ${stages} to and from the harbours` : ''}${through}`; }
+  return `overland${through}${land.length > 2 ? ` through ${names(w, land.slice(1, -1)).join(', ')}` : ''}${stages ? ` (${stages})` : ''}`;
+}
+function whyClosed(w, x, y, was) {
+  const lost = (was.nodes || []).find(id => { const p = w.provinces[id]; return p && (p.siege || (p.controller !== x.id && p.controller !== y.id && !lets(w, w.countries[p.controller] ?? { embargo: [] }, x, y))); }), p = w.provinces[lost];
+  if (p) { const t = w.countries[p.controller]; return p.siege ? `${p.name}, on the road it took, is under siege` : `${t?.name ?? 'the state'} that holds ${p.name}, on the road it took, ${t && (atWar(w, t.id, x.id) || atWar(w, t.id, y.id)) ? 'is at war with one of us' : t && (transitOf(t, x.id).closed || transitOf(t, y.id).closed) ? 'has shut its roads to it' : 'no longer lets it pass'}, and there is no other`; }
+  const s = (was.path || []).find(id => seaLocked(w, id, x.id, y.id) || (straitAt(w, id)?.closed && ![x.id, y.id].includes(straitAt(w, id).controller))); return s ? `the water it took (${w.seas[s]?.name || s}) is closed to it` : '';
+}
+function whyChanged(w, x, y, was, now) {
+  const gone = (was.nodes || []).filter(id => !(now.nodes || []).includes(id)), p = gone.map(id => w.provinces[id]).find(q => q && (q.siege || q.railOut > w.turn || q.cut || (q.controller !== x.id && q.controller !== y.id))), s = gone.find(id => w.seas[id] && (straitAt(w, id)?.closed || straitAt(w, id)?.toll || closure(w, id, x.id, y.id) > 0));
+  if (now.cost > was.cost) return p ? `it no longer goes by ${p.name}${p.siege ? ', which is besieged' : p.railOut > w.turn || p.cut ? ', where the railway is cut' : `, which ${w.countries[p.controller]?.name} holds`} and goes ${wayOf(w, now)}` : s ? `it no longer goes through ${w.seas[s]?.name || s} and goes ${wayOf(w, now)}` : now.war > (was.war || 0) ? 'insurers and carriers ask more of a cargo to or from a state at war' : `it goes ${wayOf(w, now)}`;
+  return `it now goes ${wayOf(w, now)}`;
 }
 
 function weatherStep(w) {
@@ -276,7 +330,7 @@ const aimedTrade = (c, g, from) => c.tariffDeals?.[from] != null || c.aimed?.[fr
 const banned = (w, buyer, seller, g) => { const out = seller.bans?.[buyer.id]?.sell.includes(g) ? sealOf(w, seller) : 0, inn = buyer.bans?.[seller.id]?.buy.includes(g) ? sealOf(w, buyer) : 0; return 1 - (1 - out) * (1 - inn); };
 
 function trade(w, cs) {
-  w.tradeFlows = {}; const carried = []; for (const c of cs) c._from = {};
+  w.tradeFlows = {}; const carried = [], traffic = {}; for (const c of cs) c._from = {};
   const insurer = [...cs].filter(c => !c.war?.on).sort((a, b) => (b.shipping || 0) - (a.shipping || 0))[0] ?? null; for (const c of cs) c._premiums = 0;
   const key = routeKey;
   for (const c of cs) { c.lastSold = {}; c.lastBought = {}; c.lastOrders = []; }
@@ -331,7 +385,9 @@ function trade(w, cs) {
         // state at peace with the most ships. (Gold does not vanish: one country's war is that country's business.)
         const gold = v * a.r.cost, risk = insurer && insurer.id !== a.x.c.id ? v * (a.r.war || 0) : 0; a.x.c.stock[g] -= q; b.c.stock[g] += q; a.x.c.reserves += gold - risk; b.c.reserves -= gold;
         if (risk > 0) { insurer.reserves += risk; insurer._premiums = (insurer._premiums || 0) + risk; }
-        if (a.r.mode === 'sea') carried.push([a.x.c.id, b.c.id, q, v * (a.r.cost - 1 - (a.r.war || 0))]);
+        if (a.r.mode === 'sea') carried.push([a.x.c.id, b.c.id, q, v * (a.r.water || 0)]);
+        // What passed where, for whoever asks what a place is worth to the world's trade (w.traffic).
+        for (const id of a.r.nodes || []) { const t = (traffic[id] ||= { v: 0, by: {} }), pair = key(b.c.id, a.x.c.id); t.v += v; t.by[pair] = (t.by[pair] || 0) + v; }
         // Who sold whom what, for the yearbooks: a state's dependence on another is a fact anybody can add up from the trade returns.
         ((b.c._from ||= {})[g] ||= {})[a.x.c.id] = ((b.c._from[g] ||= {})[a.x.c.id] || 0) + q;
         if (b.c._alloc) { const own = Math.min(b.c._alloc[g] ?? 0, gold); b.c._alloc[g] = (b.c._alloc[g] ?? 0) - own; b.c._spare = Math.max(0, (b.c._spare ?? 0) - (gold - own)); }
@@ -341,6 +397,8 @@ function trade(w, cs) {
         a.x.c._rawExp = (a.x.c._rawExp || 0) + (RAW.includes(g) && g !== 'grain' ? v : 0);
         // The toll is part of what the buyer paid; it is passed on to whoever holds the strait, not minted anew.
         for (const tid of a.r.tolls) { const t = w.strategic.find(s => s.id === tid); if (t?.controller) { const fee = Math.min(v * t.toll, Math.max(a.x.c.reserves, 0)); a.x.c.reserves -= fee; w.countries[t.controller].reserves += fee; w.countries[t.controller]._tolls = (w.countries[t.controller]._tolls || 0) + fee; } }
+        // A state that lays a due on what crosses its soil is paid it the same way.
+        for (const d of a.r.dues || []) { const t = w.countries[d.to]; if (t?.alive) { const fee = Math.min(v * d.rate, Math.max(a.x.c.reserves, 0)); a.x.c.reserves -= fee; t.reserves += fee; t._tolls = (t._tolls || 0) + fee; } }
         b.c.lastBought[g] = (b.c.lastBought[g] || 0) + q;
         const k = key(b.c.id, a.x.c.id); (w.tradeFlows[k] ||= {}); w.tradeFlows[k][g] = (w.tradeFlows[k][g] || 0) + v;
       }
@@ -373,6 +431,7 @@ function trade(w, cs) {
     if (w.globalPrice[g] > before * 1.5 && before > BASE_PRICE[g]) news(w, `World ${GOOD_LABEL[g]} price rose sharply.`, { kind: 'economy' });
   }
   for (const c of cs) { c.lastExportGold = c._exportGold || 0; delete c._alloc; delete c._spare; delete c._exportGold; }
+  w.traffic = traffic;
   merchantStep(w, cs, carried);
 }
 

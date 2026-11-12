@@ -57,6 +57,8 @@ export const iced = (w, p) => !!p && p.port > 0 && p.terrain === 'tundra' && sea
 const surface = f => kindOf(f) !== 'submarine';
 // Whether an enemy of this country commands a stretch of water: some state it is at war with has ships at sea there that outweigh its own
 // and its allies'. A neutral squadron lying in the same water commands nothing for anybody.
+// The ways of a pair's trade that go by water: its wares, its heavy cargo, or both.
+const sails = r => [r, r?.bulk].filter((x, i, all) => x?.mode === 'sea' && all.indexOf(x) === i);
 export function enemyHolds(w, sea, id) {
   const p = w.seaPower?.[sea]; if (!p) return false;
   let mine = 0, theirs = 0;
@@ -129,7 +131,7 @@ export function navalStep(w) {
     if (m.left <= 0) { m.level -= 1; m.left = 8; }
     if (m.level <= 0 || !w.countries[m.by]?.alive) { delete w.mines[sea]; continue; }
     // A mine does not ask whose keel it is. Merchant ships of states at war with nobody are lost on them too, and their governments hear of it.
-    for (const [k, r] of Object.entries(w.routes || {})) { if (r.mode !== 'sea' || !r.path?.includes(sea)) continue; for (const id of k.split('|')) { const o = w.countries[id]; if (!o?.alive || id === m.by || atWar(w, id, m.by) || rand(w) >= .05 * m.level) continue;
+    for (const [k, r] of Object.entries(w.routes || {})) { if (!sails(r).some(x => x.path?.includes(sea))) continue; for (const id of k.split('|')) { const o = w.countries[id]; if (!o?.alive || id === m.by || atWar(w, id, m.by) || rand(w) >= .05 * m.level) continue;
       o.relations[m.by] = clamp((o.relations[m.by] ?? 0) - 8, -100, 100); const g = ((o.grudges ||= {})[m.by] ||= { incident: 0, kin: 0 }); g.incident += 5;
       news(w, `A merchant ship of ${o.name} was lost on a mine in ${seaName(w, sea)}. The mines there are ${w.countries[m.by].name}'s.`, { kind: 'war', countries: [id, m.by] }); } }
   }
@@ -349,7 +351,7 @@ export function merchantStep(w, cs, carried) {
   for (const c of cs) {
     // A war at sea is fought against merchant ships first: raiders and mines on a belligerent's trade routes sink his tonnage.
     let lost = 0; const where = new Set();
-    for (const [k, r] of Object.entries(w.routes || {})) { if (r.mode !== 'sea' || !k.split('|').includes(c.id)) continue; for (const s of r.path) { const raid = (w.seaRaids?.[s] || []).some(o => atWar(w, o, c.id)), m = w.mines?.[s]; if (where.has(s)) continue; if (raid) { lost += .03; where.add(s); } if (m && atWar(w, m.by, c.id)) { lost += .012 * m.level; where.add(s); } } }
+    for (const [k, r] of Object.entries(w.routes || {})) { if (!sails(r).length || !k.split('|').includes(c.id)) continue; for (const s of new Set(sails(r).flatMap(x => x.path))) { const raid = (w.seaRaids?.[s] || []).some(o => atWar(w, o, c.id)), m = w.mines?.[s]; if (where.has(s)) continue; if (raid) { lost += .03; where.add(s); } if (m && atWar(w, m.by, c.id)) { lost += .012 * m.level; where.add(s); } } }
     if (lost > 0 && c.shipping > .5) { const sunk = c.shipping * Math.min(lost, .12); c.shipping -= sunk; c._sunk = sunk; tell(w, c, `Enemy raiders and mines sank about ${Math.round(sunk * 10) / 10} of our merchant tonnage this quarter (${Math.round(c.shipping)} is left), in ${[...where].map(s => seaName(w, s)).slice(0, 4).join(', ')}. Cruisers on that water, or the raiders' bases taken, would stop it.`); } else c._sunk = 0;
     const target = fleetFor(w, c) * (1 + (w.freight || 0) * 2) + (c.shipBuilt || 0);
     c.shipBuilt = (c.shipBuilt || 0) * .985; c.shipping += (target - c.shipping) * (target > c.shipping ? .05 : .03); c._lifted = 0;
