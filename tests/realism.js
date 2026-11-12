@@ -3611,6 +3611,9 @@ chain('A report that is ordered lies on the desk the next morning, and a decisio
   assert.ok(/Said, and it is in the papers; nothing else was set in motion: The ruler speaks/.test(L.newOutcomes.at(-1)), 'a speech that was printed is said to be in the papers and nothing more');
   g.applyRuling(L, { narrative: 'Taxes change.', prob: 1, public: false, source: 'referee', ops: [{ op: 'set_tax', kind: 'income', rate: c.tax.income + .01 }] });
   assert.ok(/Succeeded: Taxes change/.test(L.newOutcomes.at(-1)), 'what was carried out is still said to have succeeded');
+  // World 17: "trade, stocks, economy" in one breath was looked for as one head and refused.
+  delete L.reportsDue; const many = g.applyRuling(L, { narrative: 'The ministries report.', prob: 1, public: false, source: 'referee', ops: [{ op: 'report', topic: 'trade, stocks; economy and army' }] });
+  assert.ok(many.results[0].ok && ['trade', 'stocks', 'economy', 'army'].every(t => L.reportsDue.includes(t)), `several matters named in one breath are several matters: ${many.results[0].msg}`);
   assert.ok(/report\{topic\}/.test(fs.readFileSync(new URL('../agents/prompts.js', import.meta.url), 'utf8')), 'the referee knows the order');
 });
 
@@ -3852,6 +3855,12 @@ chain('The smaller means of a seat: relief for people nobody names, a province l
   assert.ok(gone >= 14 && kept >= 4, `what is burned is mostly gone, not always (${gone} gone, ${kept} kept)`);
   const copy = applyOp(w, M, { op: 'destroy_evidence', about: 'commission' }); assert.ok(copy.ok && /a copy lies in somebody else's file already/.test(copy.msg) && M.secrets.some(s => /commission/.test(s.text)), 'what somebody else holds a copy of cannot be reached');
   assert.ok(!applyOp(w, M, { op: 'destroy_evidence' }).ok, 'the stove is lit once a quarter');
+  // World 17: twelve orders of twelve were refused: the order names what is to go in the person's own words ("the 1896 pay-roll ledgers"), and
+  // most were about a past he had written for himself, of which the world holds no trace: nobody can find that, so it is gone, and said to be.
+  { const x = structuredClone(w), m = x.characters[M.id]; m._quarter = {}; m.secrets = [{ turn: -20, text: 'In 1894: kept back part of the tax on the works.', old: true }]; x.rng = 12345;
+    const none = applyOp(x, m, { op: 'destroy_evidence', about: 'the 1887 burning of a rival\'s mill: payments to the men' }); assert.ok(none.ok && /It is burned\. Of that matter nothing is on paper any longer[^]*1 other matter of yours can still be found/.test(none.msg) && m.secrets.length === 1, `what the world holds no trace of is gone, and what it does hold is not touched: ${none.msg}`);
+    let hit = 0; for (let i = 0; i < 12; i++) { const y = structuredClone(x); y.rng = 40 + i * 7919; const r = applyOp(y, y.characters[M.id], { op: 'destroy_evidence', about: 'whatever papers remain of 1894' }); assert.ok(r.ok && !/It is burned\. Of that matter/.test(r.msg), r.msg); if (!y.characters[M.id].secrets.some(s => /1894: kept back/.test(s.text))) hit++; }
+    assert.ok(hit >= 6, `a trace is found by its year or a word of substance, not word for word (${hit} of 12 burned)`); }
   const doc = fs.readFileSync(new URL('../agents/prompts.js', import.meta.url), 'utf8'); for (const k of ['relief{to,amount', 'relieve_province{province', 'set_dues{rate}', 'note{target', 'post_person{character', 'destroy_evidence{about']) assert.ok(doc.includes(k), `the referee knows ${k}`);
   assert.ok(/relieve_province/.test(String(answer(w, L, 'unrest'))) && /set_dues/.test(String(answer(w, O, 'parties'))) && /note:/.test(String(answer(w, L, 'diplomacy'))) && /post_person/.test(String(answer(w, L, 'ministers'))) && /destroy_evidence/.test(String(answer(w, M, 'my_secrets'))), 'and each seat can read of it where the matter is read');
 });
@@ -3903,6 +3912,10 @@ chain('The state\'s buying put to tender: every house that could deliver is told
   const w = inherited(); run(w, 1); const c = w.countries.U1, L = ld(w, c), G = w.characters[c.general], M = w.characters[c.oligarch], f = Object.values(w.firms).find(x => x.owner === M.id && x.status === 'open'), good = f.sector === 'mine' ? f.resource : f.sector;
   const other = w.countries.U2, M2 = w.characters[other.oligarch], f2 = Object.values(w.firms).find(x => x.owner === M2.id && x.status === 'open'); f2.sector = f.sector; f2.resource = f.resource; M.aiControlled = true; M2.aiControlled = true; M.inbox = []; M2.inbox = []; w.newsThisTurn = [];
   assert.ok(!applyOp(w, M, { op: 'tender', good, amount: 3 }).ok, 'a tender is the state\'s to publish');
+  // World 17: two tenders for arms went out to no house at all, at a seventh of the day's price, and were then awarded by name to a maker of machines.
+  { const x = structuredClone(w), lx = x.characters[L.id], lone = Object.keys(x.globalPrice).find(k => !Object.values(x.firms).some(v => v.status === 'open' && v.owner !== 'state' && (v.sector === 'mine' ? v.resource : v.sector) === k) && k !== good) ?? 'oil';
+    const t9 = applyOp(x, lx, { op: 'tender', good: lone, amount: 5, max_price: (x.globalPrice[lone] ?? 10) * .1 }); assert.ok(t9.ok && /0 houses[^]*No house in the country owns a works that makes[^]*buy_goods/.test(t9.msg) && /is far under what the exchanges quote today/.test(t9.msg), `a tender nobody can answer says so on the day: ${t9.msg.slice(0, 420)}`);
+    const aw = applyOp(x, lx, { op: 'award_tender', tender: /TN\d+/.exec(t9.msg)[0], to: M.id }); assert.ok(!aw.ok && new RegExp(`${M.name} owns no works that makes`).test(aw.msg), `and a house that makes something else cannot be given it: ${aw.msg}`); }
   const day = w.globalPrice[good], t0 = applyOp(w, L, { op: 'tender', good, amount: 3, quarters: 4, open: 'all', max_price: day * 2 }), id = /TN\d+/.exec(t0.msg)[0];
   assert.ok(t0.ok && /Sealed prices are opened in/.test(t0.msg) && M.inbox.some(m => new RegExp(`invites tenders \\(${id}\\)`).test(m.text)) && M2.inbox.some(m => /invites tenders/.test(m.text)) && w.newsThisTurn.some(e => /invites tenders for/.test(e.text)), `every house that could deliver is told, abroad too: ${t0.msg.slice(0, 200)}`);
   assert.ok(new RegExp(`Tender ${id} of [^\\n]* is open to you`).test(desk(w, M)) && new RegExp(`Tender ${id} is open`).test(desk(w, L)), 'it lies on both desks');

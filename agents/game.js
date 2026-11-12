@@ -520,7 +520,8 @@ function safeApply(w, ch, op) { try { const { _law, _decree, _late, ...plain } =
 // "Have the treasury bring me the accounts", "the staff is to report on the frontier": an order to one's own people to lay a matter before one
 // is a lookup ordered for the next morning. It is answered then, fresh, from the same reports and under the same limits as a lookup.
 function orderReport(w, ch, op) {
-  const topics = [...new Set([].concat(op.topic ?? op.topics ?? []).map(t => String(t).trim()).filter(Boolean))].slice(0, 6);
+  // Several matters named in one breath are several matters. (World 17: "trade, stocks, economy" was looked for as one head, and refused.)
+  const topics = [...new Set([].concat(op.topic ?? op.topics ?? []).flatMap(t => String(t).split(/\s*[,;]\s*|\s+and\s+/)).map(t => t.trim()).filter(Boolean))].slice(0, 8);
   if (!topics.length) return { ok: false, msg: 'Say what is to be laid before you: a matter a lookup can ask for (budget, army, borders, building:P12, person:K12, war_plan:U3 and the like).' };
   const bad = topics.filter(t => /^No information on /.test(String(answer(w, ch, t))));
   if (bad.length) return { ok: false, msg: `Nobody in your offices keeps a report under that head: ${bad.join(', ')}. What your people can lay before you is what a lookup can ask for.` };

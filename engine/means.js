@@ -85,9 +85,14 @@ export function meansOp(w, actor, c, op, h) {
     }
     // Papers burned, a ledger rewritten: what was done stays done, but less of it is there to be found.
     case 'destroy_evidence': {
+      // What is to go is named in the person's own words; the traces the world keeps are in the engine's. A trace belongs to the order if it shares
+      // a year or a word of substance with it. (World 17: twelve orders of twelve were refused, because "the 1896 pay-roll ledgers" matched no
+      // trace word for word. Most of them were about a past the person had written for himself, of which the world holds no trace at all: nobody
+      // can ever find that, so the truthful answer is that it is gone, not that it could not be burned.)
+      const open = (actor.secrets || []).filter(s => !s.published), words = String(op.about ?? '').toLowerCase().match(/\b\d{4}\b|[a-z]{5,}/g) ?? [], dull = new Set(['about', 'paper', 'papers', 'ledger', 'ledgers', 'letters', 'entries', 'entry', 'archive', 'archives', 'records', 'record', 'evidence', 'whatever', 'remains', 'touching', 'anything', 'still', 'which', 'their', 'there', 'trace', 'traces', 'destroy', 'burned']);
+      const keys = words.filter(x => !dull.has(x)), mine = (op.about ? open.filter(s => keys.some(k => s.text.toLowerCase().includes(k))) : open).slice(-4);
+      if (!mine.length) return op.about ? { ok: true, msg: `It is burned. Of that matter nothing is on paper any longer that an inquiry, a dossier or a newspaper could turn up.${open.length ? ` ${open.length} other matter${open.length > 1 ? 's' : ''} of yours can still be found (my_secrets says which); naming ${open.length > 1 ? 'one of them' : 'it'}, or naming nothing, sends ${open.length > 1 ? 'them' : 'it'} to the stove as well.` : ''}` } : fail('There is nothing of yours on paper that could be destroyed.');
       if (h.allowance(actor, 'burn', 1, 1) <= 0) return fail('The stove has been lit once this quarter; twice would be noticed.');
-      let re = null; if (op.about) { try { re = new RegExp(String(op.about).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'); } catch { re = null; } }
-      const mine = (actor.secrets || []).filter(s => !s.published && (!re || re.test(s.text))).slice(-4); if (!mine.length) return fail(op.about ? 'Nothing of yours of that kind is on paper anywhere you can reach.' : 'There is nothing of yours on paper that could be destroyed.');
       const copied = text => Object.values(w.characters).some(x => x.alive && x.id !== actor.id && (x.dossiers?.[actor.id]?.facts || []).includes(text)), gone = [], held = [], seen = [];
       for (const s of mine) { if (copied(s.text)) held.push(s); else if (rand(w) < (s.old ? .85 : .65)) gone.push(s); else seen.push(s); }
       actor.secrets = actor.secrets.filter(s => !gone.includes(s));
