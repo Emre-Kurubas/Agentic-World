@@ -33,7 +33,10 @@ const ART_SYSTEM = 'You are a person living in a fictional game world and you pa
 const ACTOR_SYSTEM_FILE = 'ajan-sistem.txt';
 
 // With a session the character's own session continues; without one (referee, connection check) the call leaves no trace.
-function callClaude(prompt, model, { timeoutMs = 900000, session = null, cwd = null, frame = false } = {}) {
+// The effort a model works at is the command line's default (medium) unless the configuration names one for it (models.effort: { sonnet: 'high' }).
+// (World 19: every character answered at medium, because the call reads no user settings; the user set the Sonnet seats to high.)
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+function callClaude(prompt, model, { timeoutMs = 900000, session = null, cwd = null, frame = false, effort = null } = {}) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
     // Usage is billed to the Claude subscription, not the API.
@@ -43,7 +46,7 @@ function callClaude(prompt, model, { timeoutMs = 900000, session = null, cwd = n
     const dir = cwd ?? agentCwd();
     if (session || frame) fs.writeFileSync(path.join(dir, ACTOR_SYSTEM_FILE), frame ? ART_SYSTEM : ACTOR_SYSTEM);
     const system = session || frame ? ` --system-prompt-file ${ACTOR_SYSTEM_FILE}` : '';
-    const command = `claude -p --model ${model} --output-format json ${memory}${system} --tools "" --strict-mcp-config --disable-slash-commands --setting-sources project`;
+    const command = `claude -p --model ${model}${EFFORTS.includes(effort) ? ` --effort ${effort}` : ''} --output-format json ${memory}${system} --tools "" --strict-mcp-config --disable-slash-commands --setting-sources project`;
     const child = spawn(command, { shell: true, cwd: dir, env, windowsHide: true });
     let out = '', err = '';
     // On Windows child.kill only closes the shell; the whole tree is killed so no claude process stays open.
@@ -74,7 +77,7 @@ export async function checkClaude() {
 export function makeBackend(cfg, cwd = null) {
   if (cfg.backend === 'mock') return { kind: 'mock', ask: async () => { throw new Error('mock'); } };
   const FIX = 'IMPORTANT: Your previous response was not valid JSON. Return only a single valid JSON object.';
-  const blank = () => ({ calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, largest: 0 });
+  const blank = () => ({ calls: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, largest: 0 }), effortOf = model => cfg.models?.effort?.[model] ?? null;
   const backend = {
     kind: 'claude',
     usage: blank(),
@@ -85,14 +88,14 @@ export function makeBackend(cfg, cwd = null) {
       t.calls++; t.input += input; t.cacheRead += read; t.cacheWrite += write; t.output += num(u.output_tokens); t.largest = Math.max(t.largest, input + read + write);
     },
     // Images are produced outside the session: long SVGs should not bloat the character's memory.
-    async askText(prompt, model) { const r = await callClaude(prompt, model, { cwd, frame: true, timeoutMs: 600000 }); backend.record(r.usage); return r.text; },
+    async askText(prompt, model) { const r = await callClaude(prompt, model, { cwd, frame: true, timeoutMs: 600000, effort: effortOf(model) }); backend.record(r.usage); return r.text; },
     async ask(prompt, model, session = null) {
       let last, current = session;
       for (let i = 0; i < 2; i++) {
         // On the second try the session already knows the request; only the correction is written.
         const text = i ? (session ? FIX : `${prompt}\n\n${FIX}`) : prompt;
         try {
-          const r = await callClaude(text, model, { session: current, cwd });
+          const r = await callClaude(text, model, { session: current, cwd, effort: effortOf(model) });
           backend.record(r.usage);
           return extractJson(r.text);
         } catch (e) {

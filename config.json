@@ -21,7 +21,10 @@
       "opus",
       "sonnet"
     ],
-    "assign": {}
+    "assign": {},
+    "effort": {
+      "sonnet": "high"
+    }
   },
   "concurrency": 6,
   "wakeEvery": 1,
