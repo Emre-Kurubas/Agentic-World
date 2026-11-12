@@ -97,10 +97,11 @@ export function standingOp(w, actor, c, op, h) {
 }
 
 // The days an order can wait for, each of them something the engine itself knows to have happened.
-const FORMS = 'attacked (somebody goes to war with us; by: a state, if only that one counts), war_on (somebody goes to war with a named state), troops (the men of a state in a named province rise above or fall below a number), treaty (a paper comes into force, or ends), bill (a bill passes, or is rejected), lost (a province of ours falls into other hands), after (so many quarters)';
+const FORMS = 'attacked (somebody goes to war with us; by: a state, if only that one counts), mobilised (a named state, or with true any state on our frontier, calls up its reserve), war_on (somebody goes to war with a named state), troops (the men of a state in a named province rise above or fall below a number), treaty (a paper comes into force, or ends), bill (a bill passes, or is rejected), lost (a province of ours falls into other hands), after (so many quarters)';
 function normWhen(w, c, raw) {
   const k = raw && typeof raw === 'object' ? raw : {}, st = id => w.countries[id]?.alive ? id : null;
   if (k.attacked) { const by = st(k.by); return { when: { attacked: true, ...(by ? { by } : {}) }, words: `the day ${by ? nameOf(w, by) : 'any state'} goes to war with us` }; }
+  { const m = k.mobilised ?? k.mobilized; if (m) { const by = typeof m === 'string' ? st(m) : null; if (typeof m === 'string' && (!by || by === c.id)) return { no: `No such state to watch for a call-up: ${m}.` }; return { when: { mobilised: by ?? true }, words: by ? `the day ${nameOf(w, by)} calls up its reserve` : 'the day any state on our frontier calls up its reserve' }; } }
   if (k.war_on && st(k.war_on) && k.war_on !== c.id) { const by = st(k.by); return { when: { war_on: k.war_on, ...(by ? { by } : {}) }, words: `the day ${by ? nameOf(w, by) : 'any state'} goes to war with ${nameOf(w, k.war_on)}` }; }
   if (k.troops && w.provinces[k.troops.province]) { const p = w.provinces[k.troops.province], who = st(k.troops.country) ?? (p.controller !== c.id ? p.controller : null), above = Number(k.troops.above), below = Number(k.troops.below);
     if (!who) return { no: 'Say whose troops are to be counted there (country).' }; if (!(above >= 0) && !(below >= 0)) return { no: 'Say the number: above (so many thousand or more) or below (so many thousand or fewer).' };
@@ -113,6 +114,8 @@ function normWhen(w, c, raw) {
 }
 const holds = (w, so) => { const c = w.countries[so.country], k = so.when, fresh = w.wars.filter(x => x.active && !x.civil && x.start >= so.since);
   if (k.attacked) return fresh.some(x => (x.b.includes(c.id) && (!k.by || x.a.includes(k.by))) || (x.a.includes(c.id) && k.by && x.b.includes(k.by) && false));
+  // A call-up is known the day it is ordered: the order that waited for it is given in the same quarter.
+  if (k.mobilised) { const who = k.mobilised === true ? [...new Set(Object.values(w.provinces).filter(p => p.controller === c.id).flatMap(p => p.neighbors.map(n => w.provinces[n].controller)))].filter(id => id && id !== c.id) : [k.mobilised]; return who.some(id => w.countries[id]?.alive && (w.countries[id].calledUpAt ?? -1) >= so.since); }
   if (k.war_on) return fresh.some(x => x.b.includes(k.war_on) && (!k.by || x.a.includes(k.by)));
   if (k.troops) { const men = sum(Object.values(w.units).filter(u => u.country === k.troops.country && u.province === k.troops.province), u => u.men); return k.troops.above != null ? men >= k.troops.above : men <= k.troops.below; }
   if (k.treaty) { const t = w.treaties.find(x => x.id === k.treaty); return k.state === 'ended' ? !!t && !t.active && !t.pending : !!t?.active; }

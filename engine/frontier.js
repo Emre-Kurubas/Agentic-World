@@ -91,7 +91,7 @@ export function mobilize(w, c, op, pay, fail) {
   for (const p of provs) for (const k of ['peasants', 'workers']) p.pops[k].n = Math.max(1, p.pops[k].n - called * p.pops[k].n / Math.max(hands, 1e-9));
   // They form where the order says, and at the capital and the largest towns where it says nothing.
   const depots = named.length ? named.slice(0, 8) : [w.provinces[c.capital], ...provs.filter(p => p.id !== c.capital).sort((x, y) => provincePop(y) - provincePop(x))].filter(Boolean).slice(0, 3), each = called / depots.length;
-  for (const p of depots) { const u = makeUnit(w, c.id, p.id, each, .9, 55 + c.legitimacy * .3, 'infantry'); u.called = true; u.morale = 60; }
+  for (const p of depots) { const u = makeUnit(w, c.id, p.id, each, .9, 55 + c.legitimacy * .3, 'infantry'); u.called = true; u.calledAt = w.turn; u.morale = 60; }
   c.calledUpAt = w.turn; c.calledUpMen = called;
   news(w, `${c.name} has ordered mobilisation: about ${Math.round(called)} thousand reservists are joining the colours.`, { kind: 'war', countries: [c.id] });
   for (const o of aliveCountries(w)) { if (o.id === c.id) continue; const near = countryProvinces(w, o.id).some(p => p.neighbors.some(n => w.provinces[n].controller === c.id)); if (!near) continue;
@@ -99,7 +99,7 @@ export function mobilize(w, c, op, pay, fail) {
     for (const ch of [w.characters[o.leader], w.characters[o.general]]) if (ch?.alive) say(w, ch, 'General Staff', `${c.name} is mobilising: about ${Math.round(called)} thousand reservists called to the colours, on top of the standing army. They will be under arms within the quarter. Whether it is meant for us is not known.`); }
   // Whoever calls them up is told at once what he has taken on: what the forces now cost a quarter, and how much of that the vote for the army covers.
   const cost = upkeepCost(w, c), voted = c.budget.military * c.gdp * (c.paidRatio ?? 1), bill = ` With them the forces cost about ${Math.round(cost)} a quarter${inTheField(w, c.id) ? '' : ' in barracks, and twice that once they take the field'}; the military budget provides ${Math.round(voted)}, which is ${Math.round(voted / Math.max(cost, 1) * 100)} in the hundred of it. Below about 85 in the hundred men who are not paid go home, and the rest lose heart.`;
-  return { ok: true, msg: `About ${called} thousand reservists are called up and form at ${depots.map(p => p.name).join(', ')}; ${Math.round(c.reserve)} thousand remain in the reserve.${short} They left fields and works to come, they must be paid like the rest of the army, and every neighbour knows.${bill}${note}` };
+  return { ok: true, msg: `About ${called} thousand reservists are called up and form at ${depots.map(p => p.name).join(', ')}; ${Math.round(c.reserve)} thousand remain in the reserve.${short} They can march and hold ground at once; they are fit to go into an attack from next quarter, when they have come in, drawn their rifles and formed. They left fields and works to come, they must be paid like the rest of the army, and every neighbour knows.${bill}${note}` };
 }
 // Sending the reservists home again.
 // how: null stands every reservist down; a positive number is that many thousand men, a negative one that share of them; unit names one called-up body.

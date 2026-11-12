@@ -760,8 +760,8 @@ await (async () => {
   const { cfg, w } = sessionWorld(); const a = w.countries.U1.leader, b = w.countries.U2.leader, A = w.characters[a], B = w.characters[b], log = []; let judged = '';
   const backend = { kind: 'claude', async ask(p, model, session) {
     if (p.includes('rulings')) { if (p.includes('Plan A') || p.includes('Plan B')) judged += p; return { rulings: [] }; }
-    if (p.includes(A.name) && !p.includes('SAME QUARTER')) { log.push('A1'); return { decisions: ['Plan A'], messages: [{ to: 'U2', text: 'Shall we open the border?' }] }; }
-    if (p.includes(B.name) && !p.includes('SAME QUARTER')) { log.push('B1'); return { decisions: ['Plan B'], messages: [] }; }
+    if (p.includes('Your name: ' + A.name) && !p.includes('SAME QUARTER')) { log.push('A1'); return { decisions: ['Plan A'], messages: [{ to: 'U2', text: 'Shall we open the border?' }] }; }
+    if (p.includes('Your name: ' + B.name) && !p.includes('SAME QUARTER')) { log.push('B1'); return { decisions: ['Plan B'], messages: [] }; }
     if (p.includes('open the border')) { log.push('B2'); assert.ok(session.resume); return { inner_voice: 'All right.', messages: [{ to: a, text: 'Agreed, my condition is tariffs.' }] }; }
     if (p.includes('my condition is tariffs')) { log.push('A2'); return { decisions: ['Plan A: tariff-free border'], messages: [{ to: 'U2', text: 'We have a deal.' }] }; }
     return { decisions: [], messages: [] };
@@ -782,8 +782,8 @@ await (async () => {
   const backend = { kind: 'claude', async ask(p) {
     if (p.includes('rulings')) { judged += p; return { rulings: [] }; }
     if (p.includes('SAME QUARTER')) asked = p;
-    if (p.includes(A.name) && !p.includes('SAME QUARTER')) return { decisions: ['Plan A'], messages: [{ to: 'U2', text: 'Shall we open the border?' }] };
-    if (p.includes(B.name) && !p.includes('SAME QUARTER')) return { decisions: ['Plan B', 'Plan B the second'], messages: [] };
+    if (p.includes('Your name: ' + A.name) && !p.includes('SAME QUARTER')) return { decisions: ['Plan A'], messages: [{ to: 'U2', text: 'Shall we open the border?' }] };
+    if (p.includes('Your name: ' + B.name) && !p.includes('SAME QUARTER')) return { decisions: ['Plan B', 'Plan B the second'], messages: [] };
     if (p.includes('open the border')) return { inner_voice: 'Nothing to change.', decisions: [], messages: [{ to: a, text: 'Agreed, my condition is tariffs.' }] };
     if (p.includes('my condition is tariffs')) return { decisions: ['I withdraw every order I gave this quarter'], messages: [] };
     return { decisions: [], messages: [] };
@@ -813,7 +813,7 @@ await (async () => {
 
 await (async () => {
   const { cfg, w, leader } = sessionWorld(), mine = [], name = w.characters[leader].name;
-  const backend = { kind: 'claude', async ask(p, model, session) { if (session && p.includes(name) || mine.length && session?.id === mine[0].session.id) mine.push({ p, session: { ...session } }); return reply(p); } };
+  const backend = { kind: 'claude', async ask(p, model, session) { if (session && p.includes('Your name: ' + name) || mine.length && session?.id === mine[0].session.id) mine.push({ p, session: { ...session } }); return reply(p); } };
   const g = new Game({ world: w, cfg, backend, store: memoryStore() });
   await g.turn();
   assert.equal(mine.length, 2); assert.equal(mine[0].session.resume, false); assert.equal(mine[1].session.resume, true); assert.equal(mine[0].session.id, mine[1].session.id);
@@ -828,7 +828,7 @@ await (async () => {
 await (async () => {
   const { cfg, w, leader } = sessionWorld(), ch = w.characters[leader]; ch.diary.push('I swore an old oath.'); ch.persona = 'A skeptic.';
   const seen = []; let lost = true;
-  const backend = { kind: 'claude', async ask(p, model, session) { if (p.includes(ch.name)) { seen.push({ p, session: { ...session } }); if (session.resume && lost) { lost = false; throw new SessionLostError('none'); } } return reply(p, { decisions: [] }); } };
+  const backend = { kind: 'claude', async ask(p, model, session) { if (p.includes('Your name: ' + ch.name)) { seen.push({ p, session: { ...session } }); if (session.resume && lost) { lost = false; throw new SessionLostError('none'); } } return reply(p, { decisions: [] }); } };
   const store = memoryStore(), g = new Game({ world: w, cfg: { ...cfg, maxLookupRounds: 0 }, backend, store });
   g.sessions[leader] = { id: 'old', calls: 9, done: 9, intro: true };
   await g.turn();
@@ -840,7 +840,7 @@ await (async () => {
 
 await (async () => {
   const { cfg, w, leader } = sessionWorld(), ch = w.characters[leader], seen = []; let fail = true;
-  const backend = { kind: 'claude', async ask(p, model, session) { if (p.includes(ch.name)) { seen.push({ p, resume: session.resume }); if (fail) { fail = false; throw new LimitError('limit'); } } return reply(p); } };
+  const backend = { kind: 'claude', async ask(p, model, session) { if (p.includes('Your name: ' + ch.name)) { seen.push({ p, resume: session.resume }); if (fail) { fail = false; throw new LimitError('limit'); } } return reply(p); } };
   const g = new Game({ world: w, cfg: { ...cfg, maxLookupRounds: 0 }, backend, store: memoryStore() });
   await g.turn();
   assert.equal(seen.length, 2); assert.equal(seen[1].resume, true); assert.ok(!seen[0].p.includes('did not reach the system') && seen[1].p.includes('did not reach the system'), 'the unfinished turn is told to the character');
@@ -849,7 +849,7 @@ await (async () => {
 
 await (async () => {
   const { cfg, w, leader } = sessionWorld(), ch = w.characters[leader], prompts = [];
-  const backend = { kind: 'claude', async ask(p) { if (p.includes(ch.name) && !p.includes('rulings')) { prompts.push(p); return { decisions: ['New calendar'], messages: [] }; } if (p.includes('rulings')) return { rulings: [{ actor: leader, decision: 0, narrative: 'Calendar adopted', probability: 1, operations: [] }] }; return { decisions: [], messages: [] }; } };
+  const backend = { kind: 'claude', async ask(p) { if (p.includes('Your name: ' + ch.name) && !p.includes('rulings')) { prompts.push(p); return { decisions: ['New calendar'], messages: [] }; } if (p.includes('rulings')) return { rulings: [{ actor: leader, decision: 0, narrative: 'Calendar adopted', probability: 1, operations: [] }] }; return { decisions: [], messages: [] }; } };
   const g = new Game({ world: w, cfg: { ...cfg, maxLookupRounds: 0 }, backend, store: memoryStore() });
   await g.turn(); await g.turn(); await g.turn();
   assert.ok(!prompts[0].includes('Calendar adopted') && prompts[1].includes('Calendar adopted'), 'the outcome is reported at the next wake-up');
@@ -3687,7 +3687,7 @@ chain('A ruler\'s desk: what stands is shown as standing, what is only proposed 
   assert.ok(String(answer(w, L, 'budget')).includes(`One point more on the income tax would bring about ${point} a quarter`), 'the same figure the budget report gives');
   // The foreign office: a neighbour calls up.
   quiet(); assert.ok(applyOp(w, D, { op: 'mobilize', men: 20 }).ok); m = memoranda(w, c, L);
-  assert.ok(m.length === 1 && m[0][0] === 'Your foreign office notes:' && new RegExp(`${d.name} called up about 20 thousand reservists\\. What governments do short of war[^]*ultimatum[^]*call_conference[^]*Or nothing`).test(m[0][1][0]), `the foreign office speaks when a neighbour calls up: ${m[0]?.[1]?.[0]?.slice(0, 200)}`);
+  assert.ok(m.length === 1 && m[0][0] === 'Your foreign office notes:' && new RegExp(`${d.name} called up about 20 thousand reservists\\. A call-up can also be answered before it comes: an order laid down beforehand[^]*What governments do short of war[^]*ultimatum[^]*call_conference[^]*Or nothing`).test(m[0][1][0]), `the foreign office speaks when a neighbour calls up: ${m[0]?.[1]?.[0]?.slice(0, 200)}`);
   // The police: a province close to rising.
   quiet(); const hot = Object.values(w.provinces).find(p => p.controller === 'U1' && p.id !== c.capital); hot.unrest = 70; m = memoranda(w, c, L);
   assert.ok(m.length === 1 && /reports:$/.test(m[0][0]) && new RegExp(`${hot.name} \\(${hot.id}\\) is close to rising[^]*repress[^]*relieve_province[^]*Or nothing`).test(m[0][1][0]), 'the police speak of a province close to rising');
@@ -4179,6 +4179,93 @@ chain('The engine speaks of a woman as she and of a man as he', () => {
   assert.ok(/For the time she adds/.test(w2) && /She has renewed it/.test(w2) && !/\b(he|his|him|He)\b/.test(w2), `she gives time and says so as she: ${w2}`);
   assert.ok(/For the time he adds/.test(m2) && /He has renewed it/.test(m2) && !/\b(she|her|She)\b/.test(m2), `he gives time and says so as he: ${m2}`);
 });
+import { lackLines as lackLines_, worldLines as worldLines_, holdsIn as holdsIn_ } from '../agents/queries.js';
+chain('Men called to the colours this quarter attack from the next, a call-up can be answered the day it is ordered, and a ruler knows the world on the first morning: who the other states are, what they hold, and what his own is short of and where it lies', () => {
+  // World 17: a war was declared, the reserve called up and the province entered in one quarter, and the state struck had no quarter of
+  // warning; where there was a warning (four quarters, at Zoravia) there was a battle. And in five games no war was made for a coalfield or a
+  // market: the atlas and the yearbooks held it all, and nobody opened them. The owner: reservists called this quarter march and hold and do not
+  // attack; "if they call up, we call up" can be laid down beforehand; and the first morning tells every seat what kind of state each neighbour
+  // is and what it holds, and what the country lacks and where it lies.
+  const near = (w, a) => { for (const p of Object.values(w.provinces).filter(p => p.controller === a.id)) for (const n of p.neighbors) { const q = w.provinces[n]; if (q.controller && q.controller !== a.id && q.id !== w.countries[q.controller].capital) return { from: p, to: q, foe: w.countries[q.controller] }; } return null; };
+  { const w = inherited(), a = w.countries.U1, { from, to, foe } = near(w, a), L = ld(w, a), G = w.characters[a.general], old = soldier(w, 'U1', from.id, 40);
+    w.wars.push({ id: 'S-m', a: ['U1'], b: [foe.id], civil: false, active: true, start: w.turn, name: 'm' }); a.relations[foe.id] = -80; foe.relations.U1 = -80; a.reserve = Math.max(a.reserve || 0, 120); a.stock.arms = Math.max(a.stock.arms, 20);
+    const before = new Set(Object.keys(w.units)), m = applyOp(w, L, { op: 'mobilize', men: 30, at: [from.id] }); assert.ok(m.ok && /They can march and hold ground at once; they are fit to go into an attack from next quarter/.test(m.msg), m.msg);
+    const fresh = Object.values(w.units).find(u => !before.has(u.id) && u.country === 'U1'); assert.ok(fresh && fresh.called && fresh.calledAt === w.turn && fresh.province === from.id, 'the men form where they were told to, marked with the day they came');
+    const no = applyOp(w, G, { op: 'offensive', to: to.id, units: [fresh.id] }); assert.ok(!no.ok && /was called up this quarter: the men are still coming in[^]*they go into an attack from next quarter/.test(no.msg), no.msg);
+    assert.ok(!applyOp(w, G, { op: 'move', unit: fresh.id, to: to.id }).ok, 'nor do they march against ground the enemy holds');
+    assert.ok(applyOp(w, G, { op: 'set_posture', posture: 'defensive', unit: fresh.id }).ok && fresh.posture === 'defensive', 'they hold ground at once');
+    const both = applyOp(w, G, { op: 'offensive', to: to.id, units: [old.id, fresh.id] }); assert.ok(both.ok && old.attack?.to === to.id && !fresh.attack && new RegExp(`${fresh.id} was called up this quarter and does not go in`).test(both.msg), `the standing troops go in without them: ${both.msg.slice(-220)}`);
+    w.turn += 1; applyOp(w, G, { op: 'set_posture', posture: 'defensive', unit: fresh.id, on: false }); const yes = applyOp(w, G, { op: 'offensive', to: to.id, units: [fresh.id] }); assert.ok(yes.ok && fresh.attack?.to === to.id, `a quarter later they attack: ${yes.msg.slice(0, 160)}`); }
+  { // "If they call up, we call up."
+    const w = inherited(), a = w.countries.U1, { foe } = near(w, a), L = ld(w, a), F = ld(w, foe); a.reserve = Math.max(a.reserve || 0, 120); a.stock.arms = Math.max(a.stock.arms, 20); foe.reserve = Math.max(foe.reserve || 0, 120); foe.stock.arms = Math.max(foe.stock.arms, 20);
+    const so = applyOp(w, L, { op: 'standing_order', when: { mobilised: foe.id }, then: [{ op: 'mobilize', men: 30 }], label: 'answer their call-up' }); assert.ok(so.ok && new RegExp(`the day ${foe.name} calls up its reserve`).test(so.msg), so.msg);
+    lateOrders_(w); assert.ok(a.calledUpAt == null, 'nothing is done while they have not called up');
+    assert.ok(applyOp(w, F, { op: 'mobilize', men: 40 }).ok); L.inbox = []; lateOrders_(w);
+    assert.ok(a.calledUpAt === w.turn && Math.abs(a.calledUpMen - 30) < 1 && L.inbox.some(x => /has come to its day[^]*mobilize: About 30 thousand reservists are called up/.test(x.text)) && !(w.standingOrders || []).length, `the answer is given in the same quarter as their call-up: ${L.inbox.at(-1)?.text.slice(0, 200)}`);
+    const far = aliveCountries(w).find(x => x.id !== 'U1' && !Object.values(w.provinces).some(p => p.controller === 'U1' && p.neighbors.some(n => w.provinces[n].controller === x.id)));
+    const x = inherited(), ax = x.countries.U1, any = applyOp(x, ld(x, ax), { op: 'standing_order', when: { mobilised: true }, then: [{ op: 'set_posture', posture: 'defensive', all: true }] }); assert.ok(any.ok && /the day any state on our frontier calls up its reserve/.test(any.msg));
+    if (far) { x.countries[far.id].calledUpAt = x.turn; lateOrders_(x); assert.equal(x.standingOrders.length, 1, 'a call-up beyond the sea is not one on our frontier'); } x.countries[foe.id].calledUpAt = x.turn; lateOrders_(x); assert.equal((x.standingOrders || []).length, 0, 'a neighbour\'s is');
+    assert.ok(!applyOp(w, L, { op: 'standing_order', when: { mobilised: 'U99' }, then: [{ op: 'mobilize', men: 5 }] }).ok); }
+  // The first morning.
+  { const w = createWorld({ ...base, plainStates: false, seed: 2696855, countries: 8, provinces: 200 }), cs = aliveCountries(w);
+    for (const c of cs) { const L = ld(w, c), first = actorPrompt(w, L, [], false, { intro: true }), states = worldLines_(w, c), lack = lackLines_(w, c);
+      assert.ok(states.length === cs.length - 1 && cs.filter(o => o.id !== c.id).every(o => states.some(l => l.startsWith(`${o.name} (${o.id}): `) && / governs, /.test(l) && /Its people are /.test(l) && /million people; its output is /.test(l) && /Known fields: /.test(l) && /Abroad: /.test(l))), `${c.name}: every other state is described: what kind of state, whose faith, how large, what it holds, what binds it`);
+      assert.ok(first.includes('The other states of the world on this day, as the yearbooks, the atlas and the trade returns have them:') && states.every(l => first.includes(l)), `${c.name}: and it is in what the seat reads on the first morning`);
+      if (lack.length) assert.ok(first.includes('What the country is short of, and where it lies, by the atlas and the mining returns:') && lack.every(l => first.includes(l)));
+      for (const l of lack) { const m = /^(\w[\w ]*): we (make|raise) (none|about [\w ]+) of what we use/.exec(l); assert.ok(m, l); }
+      // What is said to lie on the frontier does.
+      for (const l of lack) for (const m of l.matchAll(/([\w' -]+) \((P\d+)\), held by ([^,]+), (on our frontier|one province beyond our frontier|\d+ provinces beyond our frontier|across the sea)/g)) { const p = w.provinces[m[2]], touch = p.neighbors.some(n => w.provinces[n].controller === c.id); assert.ok(p.controller !== c.id && w.countries[p.controller].name === m[3] && (m[4] === 'on our frontier') === touch, `${c.name}: ${m[0]}`); } }
+    const short = cs.filter(c => lackLines_(w, c).length); assert.ok(short.length >= 5 && short.some(c => lackLines_(w, c).some(l => /The nearest fields outside our frontier: [^.]*on our frontier/.test(l))), `most states lack something, and for some the nearest field lies on the frontier (${short.length} of ${cs.length})`);
+    const same = cs.flatMap(c => worldLines_(w, c)).filter(l => /which is our own faith/.test(l)).length, like = cs.flatMap(c => worldLines_(w, c)).filter(l => /governed much as we are|as differently from us as a state can be/.test(l)).length; assert.ok(same >= 2 && like >= 4, `whose faith is ours and who is governed as we are is said (${same}, ${like})`);
+    assert.ok(cs.flatMap(c => worldLines_(w, c)).some(l => /it claims [^;]+ \(held by /.test(l)) && cs.flatMap(c => worldLines_(w, c)).some(l => /it owes [^;]+ \d+ in gold/.test(l)), 'and what each claims and owes');
+    // The yearbook and the staff's plan say what a place holds.
+    const a = cs[0], b = cs.find(o => o.id !== a.id && Object.values(w.provinces).some(p => p.controller === a.id && p.neighbors.some(n => w.provinces[n].controller === o.id)));
+    assert.ok(/What it holds, by the atlas and the mining returns: Known fields: /.test(String(answer(w, ld(w, a), `country:${b.id}`))), 'the yearbook says what a state holds');
+    const plan = String(answer(w, w.characters[a.general], `war_plan:${b.id}`)); assert.ok(/it holds \d+ thousand people/.test(plan) && /What lies a march behind those: /.test(plan), `the staff's plan says what each road leads to: ${plan.slice(plan.indexOf('The roads into'), plan.indexOf('The roads into') + 400)}`);
+    const rich = Object.values(w.provinces).find(p => holdsIn_(w, p).length >= 2); assert.ok(rich, 'some province holds more than one thing of note'); }
+  // The keeper of the treasury speaks of a good bought abroad only when something has happened to it.
+  { const w = createWorld({ ...base, plainStates: false, seed: 2696855, countries: 8, provinces: 200 }), cs = aliveCountries(w), c = cs.find(x => leanFacts_(w, x).goods.some(g => g.share >= .3)), L = ld(w, c), g = leanFacts_(w, c).goods.find(x => x.share >= .3), seller = w.countries[g.top];
+    const calm = () => { c.lastBalance = 5; c.reserves = 5000; c._goldFlow = 10; c.militaryFunding = 1; c.cells = 0; c.treasury = c.till ?? 0; c.nextElection = w.turn + 9; for (const p of Object.values(w.provinces)) if (p.controller === c.id) p.unrest = 10; for (const x of cs) { delete x.calledUpAt; delete x.war; } for (const k of Object.values(c.grudges || {})) delete k.at; for (const k of Object.keys(c._need)) c.stock[k] = Math.max(c.stock[k] || 0, c._need[k] * 2); };
+    calm(); assert.ok(!memoranda(w, c, L).flat(3).some(t => /is bought abroad/.test(String(t))), 'on a quiet morning he says nothing of it');
+    seller.war = { on: true, since: w.turn, quarters: 1, foes: [], premium: .002, squeeze: .8 }; const m = memoranda(w, c, L).flat(3).map(String).find(t => /is bought abroad/.test(t));
+    assert.ok(m && new RegExp(`Of the [\\w ]+ we use, about [\\w ]+ is bought abroad, [\\w ]+ from ${seller.name}, and ${seller.name} is at war\\. What can be done, each with its price: buy ahead[^]*or nothing\\.`).test(m), `when the state that sells it goes to war he lays it before the ruler: ${m}`);
+    delete seller.war; c.stock[g.g] = c._need[g.g] * .2; assert.ok(memoranda(w, c, L).flat(3).map(String).some(t => /our stores hold 20 in the hundred of a quarter's need/.test(t)), 'and when the stores run down'); }
+});
+
+import { worldToday as worldToday_ } from '../agents/queries.js';
+chain('Every morning a seat is briefed: the state of the country as its offices have it, and the world as the foreign office and the papers have it', () => {
+  // World 17: in eleven quarters eight rulers asked for the economy three times, for the stores three times and for their trade once. What was
+  // only to be asked for was not asked for. The owner: "every morning they need a briefing: output, prices, production and use, the budgets,
+  // trade, resources, every side of the country's condition, and in short what goes on in the world".
+  const w = inherited(2696855, 8); w.status = 'playing'; run(w, 2); const c = aliveCountries(w).find(x => x.parliament) ?? aliveCountries(w)[0], L = ld(w, c), G = w.characters[c.general], O = w.characters[c.opposition], M = w.characters[c.oligarch];
+  const dl = desk(w, L), dg = desk(w, G), dopp = desk(w, O), dm = desk(w, M), head = 'The state of the country, as it stood when the quarter closed:';
+  assert.ok(new RegExp(`${head}\\nGDP \\d+, growth -?[\\d.]+%, inflation -?[\\d.]+%, unemployment [\\d.]+%`).test(dl), `the ruler's morning opens the country's books: ${dl.slice(dl.indexOf(head), dl.indexOf(head) + 200)}`);
+  for (const [re, what] of [[/Where last quarter's revenue came from: income tax \d+/, 'where the revenue came from'], [/Where it went: /, 'where it went'], [/In store, and in brackets what the country really used of it last quarter/, 'what is in store and what was used'], [/Sold abroad last quarter: /, 'what was sold and bought abroad'], [/Trade by partner last quarter/, 'with whom'], [/World prices: grain [\d.]+/, 'prices in the world'], [/Prices at home: /, 'and at home'], [/Peasants \(content \d+ of 100\)/, 'how each class stands'], [/About \d+ thousand people in \d+ provinces/, 'how many people']]) assert.ok(re.test(dl), `the ruler is told ${what}`);
+  if (Object.values(w.provinces).some(p => p.controller === c.id && Object.values(p.deposits || {}).some(d => d.known))) assert.ok(/The country's known fields: P\d+ /.test(dl), 'and what fields the country has');
+  // Each line is the lookup's own answer to that seat.
+  assert.ok(dl.includes(String(answer(w, L, 'economy')).split('\n')[0]) && dopp.includes(String(answer(w, O, 'economy')).split('\n')[0]), 'what is laid on the desk is what the lookup of that name would have answered that seat');
+  assert.ok(dg.includes(head) && /GDP /.test(dg) && /In store/.test(dg) && !/Where it went/.test(dg) && !/\(content (about )?\d+ of 100\)/.test(dg) && !/Trade by partner/.test(dg), 'the chief of staff has the country in a line and the stores, not the treasury\'s books');
+  assert.ok(dopp.includes(head) && /Sold abroad last quarter/.test(dopp) && /\(content (about )?\d+ of 100\)/.test(dopp) && !/Where it went/.test(dopp) && !/In store, and in brackets/.test(dopp), 'the opposition has what is public: the country\'s condition, its trade, the temper of the classes');
+  assert.ok(dm.includes(head) && /World prices: /.test(dm) && /Sold abroad last quarter/.test(dm) && !/Where it went/.test(dm), 'a man of business has the economy, the trade and the prices');
+  O.status = 'imprisoned'; assert.equal(desk(w, O), '', 'and a cell has no briefing'); O.status = 'free';
+  // The world.
+  assert.ok(/The world this morning:\nNo state is at war\./.test(dl) && /The world this morning:/.test(dg) && /The world this morning:/.test(dopp) && /The world this morning:/.test(dm), 'every seat is told how the world stands');
+  const [a, b, d, e] = aliveCountries(w).filter(x => x.id !== c.id), prize = Object.values(w.provinces).find(p => p.owner === b.id && p.id !== b.capital);
+  w.wars.push({ id: 'S-w', a: [a.id], b: [b.id], civil: false, active: true, start: w.turn, name: 'w', aims: { [a.id]: { provinces: [prize.id] } } }); prize.controller = a.id;
+  const far = Object.values(w.provinces).find(p => p.owner === e.id && p.id !== e.capital); assert.ok(applyOp(w, ld(w, d), { op: 'ultimatum', target: e.id, demand: 'Hand it over.', cede: [far.id], turns: 2 }).ok);
+  d.reserve = Math.max(d.reserve || 0, 100); d.stock.arms = Math.max(d.stock.arms, 20); assert.ok(applyOp(w, ld(w, d), { op: 'mobilize', men: 40 }).ok);
+  assert.ok(applyOp(w, ld(w, d), { op: 'propose_treaty', target: c.id, kind: 'nonaggression', terms: 'Neither attacks.' }).ok); assert.ok(applyOp(w, L, { op: 'accept_treaty', id: w.treaties.at(-1).id, _law: true }).ok);
+  e.defaulted = true; w.priceHistory = [0, 1, 2, 3, 4].map(i => ({ ...w.globalPrice, iron: w.globalPrice.iron * (i < 4 ? 1 : 1.2) }));
+  L.lastWake = w.turn; const lines = worldToday_(w, c, L), all = lines.join('\n');
+  assert.ok(new RegExp(`${a.name} is at war with ${b.name} since Q\\d \\d+ \\(${a.name} for [^:]*${prize.name}[^:]*\\): ${a.name} holds 1 of the other's provinces`).test(all), `who fights whom, for what, and how it stands: ${lines[0]}`);
+  assert.ok(new RegExp(`${d.name} has sent ${e.name} an ultimatum for ${far.name}; it runs out when Q\\d \\d+ closes`).test(all), 'what has been demanded');
+  assert.ok(new RegExp(`Reservists under arms: ${d.name} about 40 thousand \\(called since you last looked\\)`).test(all), 'who has called up');
+  assert.ok(new RegExp(`Signed since you last looked: nonaggression between ${d.name} and ${c.name}`).test(all) || new RegExp(`Signed since you last looked: nonaggression between ${c.name} and ${d.name}`).test(all), 'what was signed');
+  assert.ok(new RegExp(`${e.name} has stopped paying its creditors`).test(all) && /On the exchanges, against a year ago: iron up 20 in the hundred/.test(all), 'who has stopped paying, and what the exchanges have done');
+  assert.ok(!/No state is at war/.test(all) && desk(w, L).includes(lines[0]), 'and it is on the desk');
+  const secret = w.treaties.at(-1); secret.secret = true; assert.ok(!/nonaggression between/.test(worldToday_(w, a, ld(w, a)).join('\n')) && !/nonaggression between/.test(worldToday_(w, c, L).join('\n')), `a secret paper is in nobody's morning briefing: ${worldToday_(w, a, ld(w, a)).join(' | ')}`);
+});
+
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
   // The same fight, the same dice, the enemy warned both times: only the man in command differs.
   const hurt = skill => { const f = duel({ dug: 5, ground: { trench: 2 }, rng: 99, seen: true }); f.gen.skill = skill; const [b] = quarter(f.w); assert.ok(b, 'a battle'); assert.ok(!b.prisoners, 'nobody was routed'); return f.D - f.def.men; };
