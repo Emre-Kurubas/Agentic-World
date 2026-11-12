@@ -308,7 +308,12 @@ export function normalizeClauses(w, raw, parties) {
     else if (c?.type === 'troop_limit' && isParty(c.country)) { const ps = (Array.isArray(c.provinces) ? c.provinces : []).filter(p => typeof p === 'string' && Object.hasOwn(w.provinces, p)).slice(0, 12); out.push({ type: 'troop_limit', country: c.country, men: num(c.men, 0, 1e6, 0), ...(ps.length ? { provinces: ps } : {}), ...(ps.length > 1 && c.total === true ? { total: true } : {}) }); }
     // Officers of each party count the other's troops in named provinces: what stands there is known to both, exactly.
     else if (c?.type === 'observers' && Array.isArray(c.provinces)) { const ps = c.provinces.filter(p => typeof p === 'string' && Object.hasOwn(w.provinces, p)).slice(0, 12); if (ps.length) out.push({ type: 'observers', provinces: ps }); }
-    else if (c?.type === 'mutual_defense') out.push({ type: 'mutual_defense', called: {} });
+    // An alliance may be against named states only: "if Kamestan, alone or with its allies, attacks first". Then nothing is owed in any
+    // other war. (World 19: four of six alliances of the second year were written so, and the clause could only say "whoever is attacked".)
+    else if (c?.type === 'mutual_defense') { const against = [...new Set((Array.isArray(c.against) ? c.against : c.against ? [c.against] : []).filter(id => w.countries[id] && !isParty(id)))]; out.push({ type: 'mutual_defense', called: {}, ...(against.length ? { against } : {}) }); }
+    // What one party owes the other in gold already, put on new terms: the interest of a quarter, as a fraction. (World 19: an alliance was
+    // bought with "Kamestan will reschedule Tirara's 1667 gold debt at lower interest", and nothing could carry it.)
+    else if (c?.type === 'reschedule' && isParty(c.debtor) && isParty(c.creditor) && c.debtor !== c.creditor && c.rate != null) out.push({ type: 'reschedule', debtor: c.debtor, creditor: c.creditor, rate: num(c.rate, 0, .15, .012) });
   }
   return out;
 }
@@ -327,7 +332,8 @@ export function clauseText(w, cl) {
     case 'demilitarized_zone': return `${cl.country ? n(cl.country) : 'The parties'} shall station no troops in: ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')} (the zone is to be clear by the close of the quarter after this comes into force, and is first looked at then)`;
     case 'troop_limit': return `${n(cl.country)} keeps at most ${Math.round(cl.men)}k troops${cl.provinces?.length ? ` in ${cl.provinces.length > 1 ? (cl.total ? 'all of these together: ' : 'each of: ') : ''}${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}` : ''} (to be met by the close of the quarter after this comes into force; the first count is taken then)`;
     case 'observers': return `Officers of each party count the other's troops in: ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}`;
-    case 'mutual_defense': return 'Each party enters the war on the side of the party attacked';
+    case 'mutual_defense': return cl.against?.length ? `Each party enters the war on the side of the party attacked by ${cl.against.map(n).join(' or ')}, alone or with others; in a war with anybody else nothing is owed under this paper` : 'Each party enters the war on the side of the party attacked';
+    case 'reschedule': return `What ${n(cl.debtor)} owes ${n(cl.creditor)} in gold bears ${Math.round(cl.rate * 1000) / 10}% a quarter from the day this paper comes into force`;
     default: return cl.type;
   }
 }
@@ -337,6 +343,8 @@ export function activateClauses(w, t) {
   for (const cl of t.clauses || []) { if (cl.done != null) continue;
     if (cl.type === 'loan') { const a = w.countries[cl.from], b = w.countries[cl.to]; if (!a?.alive || !b?.alive) continue; const m = Math.min(Math.max(a.reserves, 0), cl.amount); a.reserves -= m; b.reserves += m; b.creditors[a.id] = (b.creditors[a.id] || 0) + m; if (cl.rate != null) (b.creditTerms ||= {})[a.id] = { rate: cl.rate, treaty: t.id }; cl.done = w.turn; cl.paid = m;
       for (const [x, text] of [[a, `${Math.round(m)} in gold has left the reserve for ${b.name} under ${t.id}: it is owed to us${cl.rate != null ? ` at ${Math.round(cl.rate * 1000) / 10}% a quarter` : ''} until it is repaid.`], [b, `${Math.round(m)} in gold has reached the reserve from ${a.name} under ${t.id}. It is owed back${cl.rate != null ? `, at ${Math.round(cl.rate * 1000) / 10}% a quarter on what we owe them` : ''}; the interest goes out in gold every quarter, before anything is bought abroad (repay_foreign pays it down).`]]) { const ch = w.characters[x.leader]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'The treasury', text }); } }
+    else if (cl.type === 'reschedule') { const d = w.countries[cl.debtor], k = w.countries[cl.creditor]; if (!d?.alive || !k?.alive) continue; const owed = d.creditors?.[k.id] || 0; (d.creditTerms ||= {})[k.id] = { rate: cl.rate, treaty: t.id }; cl.done = w.turn;
+      for (const [x, text] of [[d, `Under ${t.id} what we owe ${k.name} in gold (${Math.round(owed)} today) bears ${Math.round(cl.rate * 1000) / 10}% a quarter from now on, on that and on anything more we borrow of them: about ${Math.round(owed * cl.rate)} a quarter in gold as the debt stands.`], [k, `Under ${t.id} what ${d.name} owes us in gold (${Math.round(owed)} today) bears ${Math.round(cl.rate * 1000) / 10}% a quarter from now on: about ${Math.round(owed * cl.rate)} a quarter in gold as the debt stands.`]]) { const ch = w.characters[x.leader]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'The treasury', text }); } }
     else if (cl.type === 'assign') { const d = w.countries[cl.debtor], a = w.countries[cl.from], b = w.countries[cl.to]; if (!d || !a || !b) continue; const m = Math.min(d.creditors[a.id] || 0, cl.amount ?? Infinity); if (m > 0) { d.creditors[a.id] -= m; if (d.creditors[a.id] < .01) delete d.creditors[a.id]; d.creditors[b.id] = (d.creditors[b.id] || 0) + m; const ch = w.characters[d.leader]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'The treasury', text: `${a.name} has made over to ${b.name} ${Math.round(m)} of what we owe: from today that sum is owed to ${b.name}, and the interest on it goes there.` }); } cl.done = w.turn; cl.paid = m; }
     else if (cl.type === 'renounce') { const c = w.countries[cl.country]; let n = 0; for (const pid of cl.provinces) { const p = w.provinces[pid]; if (p?.lostBy === cl.country) { delete p.lostBy; delete p.lostIn; n++; } } cl.done = w.turn;
       // What a state signs away of its old claims is felt at home by those who put the nation first.
@@ -411,6 +419,7 @@ export function treatyStep(w) {
         // Every other signatory owes its help to the one attacked.
         for (const x of t.parties) for (const ally of t.parties) for (const war of w.wars) {
           const key = t.multi ? `${war.id}:${ally}` : war.id;
+          if (cl.against?.length && !war.a.some(id => cl.against.includes(id))) continue;
           if (ally === x || !war.active || war.civil || !war.b.includes(x) || war.a.includes(ally) || war.b.includes(ally) || war.a.some(id => atWar(w, ally, id)) || cl.called[key] || w.turn - war.start < 2 || war.start < (t.turn ?? 0)) continue;
           cl.called[key] = true;
           breach(w, t, cl, ally, `${w.countries[ally]?.name} did not enter the war on the side of ${w.countries[x]?.name}, which was attacked (${war.name}).`);

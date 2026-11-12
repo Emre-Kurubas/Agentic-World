@@ -3661,7 +3661,7 @@ chain('The small frictions of an order: a paper is found without its article, an
   const v = inherited(), d = v.countries.U2, clerk = Object.values(v.characters).find(x => x.country === 'U2' && x.alive && x.post === 'treasury'), spy = ld(v, v.countries.U1), own = ld(v, d); assert.ok(clerk, 'a keeper of the treasury'); clerk.greed = 60; clerk.loyalty = 40; spy.wealth = 500;
   let told = null, bought = 0, dutiful = 0; for (let i = 0; i < 24; i++) { const x = structuredClone(v); x.rng = 4000 + i * 7919; const r = applyOp(x, x.characters[spy.id], { op: 'recruit_informant', character: clerk.id, amount: 1 }); if (r.ok) bought++; else told ??= r.msg;
     const y = structuredClone(v); y.rng = 4000 + i * 7919; y.characters[clerk.id].loyalty = 80; if (applyOp(y, y.characters[own.id], { op: 'recruit_informant', character: clerk.id, amount: 0 }).ok) dutiful++; }
-  assert.ok(told && /would not be bought for 1: the sum was too small for the risk he would run; something nearer \d+ might have been heard differently/.test(told), `the refusal names a sum: ${told}`);
+  assert.ok(told && /would not be bought for 1: the sum was too small for the risk he would run; \d+ would be taken/.test(told), `the refusal names a sum: ${told}`);
   assert.ok(dutiful >= 18 && dutiful > bought + 6, `a loyal servant asked by his own government reports without being paid (${dutiful} of 24), where a foreign purse of 1 buys him seldom (${bought})`);
 });
 
@@ -4059,10 +4059,10 @@ chain('The first morning has last quarter\'s books on the desk, land beyond the 
     const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), off = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.role === 'officer' && !x.post); assert.ok(off, 'an officer with a command');
     const r = applyOp(w, L, { op: 'recruit_informant', character: off.id, amount: 0 }); assert.ok(!/No money|Name the sum/.test(r.msg), `the ruler asks an officer of the state for his duty, not for a price: ${r.msg}`);
     const G = w.characters[c.general], foe = aliveCountries(w)[1]; G.wealth = 0; let priced = null, x = null;
-    for (let i = 0; i < 40 && !priced; i++) { x = structuredClone(w); x.rng = 4000 + i * 7919; const g = x.characters[G.id], res = applyOp(x, g, { op: 'recruit_informant', office: 'army', target: foe.id, amount: 1 }); assert.ok(!/No money|your purse/.test(res.msg), `a man in a foreign staff is paid from the secret vote, not from the general's empty purse: ${res.msg}`); const m = /^(.+?) would not be bought for 1: the sum was too small[^]*nearer (\d+)/.exec(res.msg); if (m) priced = { name: m[1], sum: +m[2] }; }
+    for (let i = 0; i < 40 && !priced; i++) { x = structuredClone(w); x.rng = 4000 + i * 7919; const g = x.characters[G.id], res = applyOp(x, g, { op: 'recruit_informant', office: 'army', target: foe.id, amount: 1 }); assert.ok(!/No money|your purse/.test(res.msg), `a man in a foreign staff is paid from the secret vote, not from the general's empty purse: ${res.msg}`); const m = /^(.+?) would not be bought for 1: the sum was too small[^]*; (\d+) would be taken/.exec(res.msg); if (m) priced = { name: m[1], sum: +m[2] }; }
     assert.ok(priced, 'a clerk who names what would move him');
     const man = Object.values(x.characters).find(q => q.name === priced.name && q.country === foe.id); assert.ok(man && !man.nobody, 'is a person from then on');
-    x.turn += 1; beginTurn(x); let again = null; for (let i = 0; i < 30; i++) { const y = structuredClone(x); y.rng = 99 + i * 104729; again = applyOp(y, y.characters[G.id], { op: 'recruit_informant', office: 'army', target: foe.id, amount: priced.sum + 8 }); assert.ok(new RegExp('^' + priced.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(again.msg), `the second offer goes to the same man: ${again.msg}`); if (again.ok) break; }
+    x.turn += 1; beginTurn(x); let again = null; for (let i = 0; i < 30; i++) { const y = structuredClone(x); y.rng = 99 + i * 104729; again = applyOp(y, y.characters[G.id], { op: 'recruit_informant', office: 'army', target: foe.id, amount: priced.sum + 8 }); assert.ok(new RegExp('(^|\\. )' + priced.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' (took|would)').test(again.msg), `the second offer goes to the same man: ${again.msg}`); if (again.ok) break; }
     const P = w.characters[c.opposition]; P.wealth = 0; const poor = applyOp(w, P, { op: 'recruit_informant', office: 'police', amount: 5 }); assert.ok(!poor.ok && /It is paid from your own pocket, and your purse holds 0/.test(poor.msg), poor.msg); }
   { // Parties and papers.
     const w = inherited(2696855, 8), c = aliveCountries(w).find(x => leadsOf(w, x, w.characters[x.opposition]).length), O = w.characters[c.opposition], p = leadsOf(w, c, O)[0];
@@ -4337,8 +4337,8 @@ chain('World 18, second review: a ceiling on troops is counted once the men have
   { // The approach with no sum.
     const w = inherited(2696855, 8), [c, d] = aliveCountries(w), L = ld(w, c), t0 = c.treasury; let seen = null;
     for (let i = 0; i < 12 && !seen; i++) { const y = structuredClone(w); y.rng = 77 + i * 9973; const r = applyOp(y, y.characters[L.id], { op: 'recruit_informant', office: 'army', target: d.id }); if (/was sounded without a figure/.test(r.msg)) seen = { y, r }; }
-    assert.ok(seen && !seen.r.ok && /No sum was named, so nobody was bought\. [^]* \(K\d+\), a clerk on the general staff of [^,]*, was sounded without a figure: something near \d+ would be heard\. Name the sum \(amount\) and the next approach goes to (?:him|her); it is paid from the secret vote/.test(seen.r.msg), `an approach with no sum buys nobody and brings back the man and his price: ${seen?.r.msg}`);
-    const y = seen.y, id = /\((K\d+)\)/.exec(seen.r.msg)[1], man = y.characters[id], price = +/something near (\d+)/.exec(seen.r.msg)[1];
+    assert.ok(seen && !seen.r.ok && /No sum was named, so nobody was bought\. [^]* \(K\d+\), a clerk on the general staff of [^,]*, was sounded without a figure: \d+ would be taken\. Name the sum \(amount\) and the next approach goes to (?:him|her); it is paid from the secret vote/.test(seen.r.msg), `an approach with no sum buys nobody and brings back the man and his price: ${seen?.r.msg}`);
+    const y = seen.y, id = /\((K\d+)\)/.exec(seen.r.msg)[1], man = y.characters[id], price = +/: (\d+) would be taken/.exec(seen.r.msg)[1];
     assert.ok(man?.alive && !man.nobody && y.characters[L.id].sounded?.[`${d.id}:army`] === id && price === askingOf_(man).even && Math.abs(y.countries[c.id].treasury - t0) < 1e-6, 'the man who was sounded is a person now, nothing was paid, and the figure is the one the approach itself is decided by');
     y.turn += 1; const again = applyOp(y, y.characters[L.id], { op: 'recruit_informant', office: 'army', target: d.id, amount: price + 12 }); assert.ok(new RegExp(man.name).test(again.msg), `the next approach to that office, with a sum, goes to the same man: ${again.msg}`); }
   { // The courts, and a charge that is not cut short.
@@ -5076,6 +5076,42 @@ chain('World 19, first review: goods sold by treaty are paid for; a bargain can 
   { // A paper that was signed.
     const c = cs.find(x => ![a.id, b.id].includes(x.id)), C = ld(w, c), p = applyOp(w, A, { op: 'propose_treaty', target: c.id, kind: 'nonaggression', turns: 16, terms: 'Four years.' }); assert.ok(p.ok, p.msg); assert.ok(applyOp(w, C, { op: 'accept_treaty', id: p.treaty }).ok);
     const r = applyOp(w, A, { op: 'withdraw_treaty', id: p.treaty }); assert.ok(!r.ok && new RegExp(`${p.treaty} cannot be taken back: ${c.name} signed it this quarter and it is in force until Q\\d \\d{4}\\. A treaty in force is ended by the consent of those who signed it \\(end_treaty\\) or by breaking it`).test(r.msg), `a signed paper is not "which paper": ${r.msg}`); }
+});
+chain('World 19, second review: an alliance written against a named state owes nothing in another war; a debt between two states can be put on new terms by a treaty; the figure a man names for his services buys him when it is met; less money than was named is said to be less; and an offer that has lapsed is said to have lapsed', () => {
+  // Found in quarters five to eight of world 19. Four of six alliances were written "only if Kamestan (or Tirara) attacks first" and the
+  // clause could only say "whoever is attacked"; an alliance was bought with a debt "rescheduled at lower interest" that nothing carried; a
+  // clerk who had named fourteen was offered fourteen and "would not be bought this time"; "up to 27 from the secret vote" came back
+  // "would not be bought for 11"; and a refusal of an offer the house had let lapse came back "No such offer".
+  const w = inherited(2696855, 8); run(w, 1);
+  const cs = aliveCountries(w), [a, b, c, d] = cs, A = ld(w, a), B = ld(w, b);
+  { // Against whom.
+    const p = applyOp(w, A, { op: 'propose_treaty', target: b.id, kind: 'alliance', turns: 20, terms: `Each comes to the other's side only if ${c.name}, alone or with its allies, attacks first.`, clauses: [{ type: 'mutual_defense', against: [c.id] }] }); assert.ok(p.ok, p.msg);
+    const s = applyOp(w, B, { op: 'accept_treaty', id: p.treaty }), t = w.treaties.find(x => x.id === p.treaty); assert.ok(s.ok && new RegExp(`Each party enters the war on the side of the party attacked by ${c.name}, alone or with others; in a war with anybody else nothing is owed under this paper`).test(s.msg), `whoever signs reads against whom it is: ${s.msg}`);
+    assert.ok(new RegExp(`Bound to come to our side if we are attacked: ${b.name} \\(alliance ${t.id}, only against ${c.name}\\)\\. We are bound to come to the side of: ${b.name} \\(only against ${c.name}\\)`).test(desk(w, A)), 'and the desk says so every morning');
+    w.wars.push({ id: 'S-other', a: [d.id], b: [b.id], civil: false, active: true, start: w.turn - 3, name: 'another quarrel' }); t.turn = w.turn - 5; treatyStep(w); assert.equal(t.breaches.length, 0, 'in a war with anybody else nothing is owed');
+    w.wars.at(-1).active = false; w.wars.push({ id: 'S-named', a: [c.id, d.id], b: [b.id], civil: false, active: true, start: w.turn - 3, name: 'the war the paper was written for' }); treatyStep(w);
+    assert.ok(t.breaches.length === 1 && t.breaches[0].party === a.id, `when the named state attacks, the ally that stays out has broken its word: ${JSON.stringify(t.breaches).slice(0, 300)}`); w.wars.at(-1).active = false; }
+  { // A debt on new terms.
+    a.creditors[b.id] = 1000; const p = applyOp(w, B, { op: 'propose_treaty', target: a.id, kind: 'trade', turns: 20, terms: 'The debt is rescheduled at six in the thousand a quarter.', clauses: [{ type: 'reschedule', debtor: a.id, creditor: b.id, rate: .006 }] }); assert.ok(p.ok, p.msg); A.inbox = []; B.inbox = [];
+    const s = applyOp(w, A, { op: 'accept_treaty', id: p.treaty }); assert.ok(s.ok && a.creditTerms?.[b.id]?.rate === .006 && new RegExp(`What ${a.name} owes ${b.name} in gold bears 0\\.6% a quarter from the day this paper comes into force`).test(s.msg), `the new terms are the paper's, and are in force: ${s.msg}`);
+    assert.ok(A.inbox.some(m => /what we owe [^(]*\(1000 today\) bears 0\.6% a quarter from now on[^]*about 6 a quarter in gold/.test(m.text)) && B.inbox.some(m => /owes us in gold \(1000 today\) bears 0\.6% a quarter/.test(m.text)), 'both treasuries say what it comes to');
+    const bare = applyOp(w, B, { op: 'propose_treaty', target: a.id, kind: 'trade', turns: 8, terms: 'Lower interest, to be agreed.', clauses: [{ type: 'reschedule', debtor: a.id, creditor: b.id }] }); assert.ok(bare.ok && !w.treaties.find(x => x.id === bare.treaty).clauses.length, 'a paper that names no figure carries no such clause'); delete a.creditors[b.id]; }
+  { // The figure a man names.
+    const G = w.characters[a.general]; let done = false;
+    for (const o of cs.filter(x => x.id !== a.id)) { const sound = applyOp(w, G, { op: 'recruit_informant', office: 'army', target: o.id }), m = /\(K\d+\), a clerk on the general staff of [^,]*, was sounded without a figure: (\d+) would be taken/.exec(sound.msg); if (!m) continue;
+      const man = w.characters[G.sounded[`${o.id}:army`]]; assert.ok(G.quotes[man.id].sum === +m[1], 'the figure is his word');
+      run(w, 1); a.treasury = 500; const was = a.gdp; a.gdp = Math.max(a.gdp, G.quotes[man.id].sum / .002 + 1000); const r = applyOp(w, G, { op: 'recruit_informant', office: 'army', target: o.id, amount: G.quotes[man.id].sum }); a.gdp = was; assert.ok(r.ok && man.handler === G.id, `met a quarter later, it buys him: ${sound.msg} | ${r.msg}`); done = true; break; }
+    assert.ok(done, 'some clerk on a neighbour\'s staff names a figure'); }
+  { // Less than was named.
+    const G = w.characters[a.general], o = cs.find(x => x.id !== a.id && !G.sounded?.[`${x.id}:army`]) ?? cs[1]; run(w, 1); a.treasury = 5000; const all = a.gdp * .002;
+    const r = applyOp(w, G, { op: 'recruit_informant', office: 'army', target: o.id, amount: Math.round(all * 3) }); assert.ok(r.ok || new RegExp(`^Of the ${Math.round(all * 3)} named, \\d+ was put behind the approach: the secret vote is about ${Math.round(all)} a quarter for all such work, and (the rest of it was spent already|no more than that can be drawn on it in one quarter)\\.`).test(r.msg), `whoever named a sum the vote could not carry is told what was offered and why: ${r.msg}`); }
+  { // A paper that begins later.
+    const M = w.characters[a.oligarch], k0 = applyOp(w, M, { op: 'propose_contract', to: A.id, terms: 'Cloth from the new works, once they stand.', good: 'goods', amount: 1, seller: 'me', unit_price: 20, turns: 4, starts_in: 3 }); assert.ok(k0.ok && /for 4 quarters, beginning 3 quarters after it is signed/.test(k0.msg), k0.msg);
+    const k = w.contracts.find(x => x.id === k0.contract), s = applyOp(w, A, { op: 'accept_contract', id: k.id }); assert.ok(s.ok && /runs 4 quarters from the 3th quarter from now/.test(s.msg) && k.until === w.turn + 4 + 1 + 2, s.msg);
+    run(w, 3); assert.ok(k.lastDelivered == null && !(k.breaches || []).length, 'nothing is owed under it before its day'); run(w, 1); assert.ok(k.lastDelivered != null, 'and from its day it runs like any other'); }
+  { // An offer that lapsed.
+    const G = w.characters[a.general]; (w.offers ||= []).push({ id: 'OF-t', kind: 'supply', from: Object.values(w.characters).find(x => x.country === a.id && x.post === 'house')?.id, to: G.id, country: a.id, amount: 20, turn: w.turn - 9, status: 'lapsed', turns: 8 });
+    const r = applyOp(w, G, { op: 'decline_offer', id: 'OF-t' }); assert.ok(!r.ok && /Offer OF-t is no longer open: the house let it lapse unanswered\. Nothing is owed under it\./.test(r.msg), r.msg); }
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

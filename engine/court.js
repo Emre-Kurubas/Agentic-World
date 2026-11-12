@@ -191,6 +191,10 @@ export function refuseOffer(w, actor, id, governs) {
   if (mine) { mine.status = 'declined'; actor.houseRefused = w.turn; return { ok: true, msg: `Offer ${mine.id} was refused.` }; }
   const run = (w.offers || []).find(x => x.id === id && x.status === 'running' && x.country === actor.country);
   if (run && governs) { run.status = 'ended'; const banker = w.characters[run.from]; if (banker) banker.loyalty = clamp(banker.loyalty - 20, 0, 100); return { ok: true, msg: `The arrangement ${run.id} with the house of ${banker?.name ?? 'the bankers'} was ended; the money stays with the state from now on.` }; }
+  // An offer that is no longer open: what became of it. (World 19: an offer its general had been "not accepting yet" for a year lapsed, and
+  // his refusal came back "No such offer".)
+  const old = (w.offers || []).find(x => x.id === id && x.to === actor.id);
+  if (old) return { ok: false, msg: `Offer ${old.id} is no longer open: ${old.status === 'lapsed' ? 'the house let it lapse unanswered' : old.status === 'declined' ? 'you refused it already' : old.status === 'taken' || old.status === 'running' ? 'you took it' : `it is ${old.status}`}. Nothing is owed under it${old.status === 'taken' || old.status === 'running' ? ' beyond what was taken' : ''}.` };
   return null;
 }
 function payLeases(w, c) {
@@ -281,14 +285,21 @@ export function recruitInformant(w, actor, ch, amount) {
   // A servant of the state asked by his own government to report on those around him is asked for his duty, not for a betrayal: it is his
   // loyalty that decides, and money counts for less. (World 16: a president's instruction to his own treasury clerk was refused as a bribe too small.)
   const home = w.countries[ch.country], own = ch.country === actor.country && !!home && governs(w, home, actor) && inService(w, ch), duty = own ? .25 + ch.loyalty / 160 : 0;
-  const p = clamp(.12 + ch.greed / 170 + amount / 45 - (own ? 0 : ch.loyalty / 190) + duty, .04, .92), even = Math.ceil(45 * (.55 - .12 - ch.greed / 170 + ch.loyalty / 190));
+  const even = Math.ceil(45 * (.55 - .12 - ch.greed / 170 + ch.loyalty / 190));
+  // The figure a man named, when it is met, buys him: he is not asked twice to say what he would take. (World 19: a clerk on a foreign staff
+  // was sounded, "something near 14 would be heard", was offered 14 the next quarter, and "would not be bought this time".) The word holds
+  // four quarters, and only while he still stands toward his government as he did.
+  const quoted = actor.quotes?.[ch.id], kept = !!quoted && w.turn - quoted.turn <= 4 && amount >= quoted.sum - .5 && askingOf(ch).open;
+  const p = kept ? 1 : clamp(.12 + ch.greed / 170 + amount / 45 - (own ? 0 : ch.loyalty / 190) + duty, .04, .92);
   if (rand(w) >= p) {
     const host = w.countries[ch.country], ruler = w.characters[host?.leader];
     const told = ch.loyalty > 58 && ruler?.alive && ruler.id !== actor.id;
     if (told) { say(w, ruler, ch.name, `${ch.name} (${ch.id})${postOf(w, ch) ? `, ${postOf(w, ch)},` : ''} reports that ${actor.name} (${actor.id})${actor.country !== ch.country ? ` of ${w.countries[actor.country]?.name}` : ''} offered ${him(ch)} ${Math.round(amount)} to pass on what ${he(ch)} sees in ${his(ch)} post. ${He(ch)} refused. ${He(ch)} is known to you now, and at your disposal.`); trace(w, actor, `Tried to buy ${ch.name} as an informant.`); deal(w, ch, actor, `Refused ${actor.name}'s ${Math.round(amount)} to pass on what goes through ${his(ch)} post, and told the ruler.`); }
     // The one who asked learns what stood in the way: the sum, or the man.
     const atBest = clamp(.12 + ch.greed / 170 + Math.max(amount * 3, 30) / 45 - ch.loyalty / 190, .04, .92);
-    return { ok: false, told, priced: atBest >= .55 && p < .45, msg: `${ch.name} would not be bought${atBest >= .55 && p < .45 ? ` for ${Math.round(amount)}: the sum was too small for the risk ${he(ch)} would run; something nearer ${Math.max(even, Math.round(amount) + 1)} might have been heard differently` : atBest < .55 ? `: it was not the sum; ${he(ch)} will not sell what passes through ${his(ch)} hands while ${he(ch)} stands toward the government as ${he(ch)} does` : ' this time'}.` };
+    // Whoever is told a figure has the man's word for it.
+    const priced = atBest >= .55, near = Math.max(even, Math.round(amount) + 1); if (priced) (actor.quotes ||= {})[ch.id] = { sum: near, turn: w.turn };
+    return { ok: false, told, priced, msg: `${ch.name} would not be bought${priced ? ` for ${Math.round(amount)}: the sum was too small for the risk ${he(ch)} would run; ${near} would be taken` : `: it was not the sum; ${he(ch)} will not sell what passes through ${his(ch)} hands while ${he(ch)} stands toward the government as ${he(ch)} does`}.` };
   }
   ch.handler = actor.id; ch.stipend = amount; ch.boughtAt = w.turn;
   trace(w, actor, `Bought ${ch.name} as an informant.`); trace(w, ch, `Sold what passes through ${his(ch)} post to ${actor.name}.`);

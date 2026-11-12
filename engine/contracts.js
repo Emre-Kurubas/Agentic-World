@@ -33,7 +33,10 @@ export function proposeContract(w, actor, op, num) {
   const hasGoods = GOODS.includes(op.good);
   // A new offer to the same person replaces the one still lying unanswered on their desk.
   for (const old of w.contracts || []) if (old.status === 'proposed' && old.a === actor.id && old.b === other.id) { old.status = 'withdrawn'; old.closedAt = w.turn; }
-  const k = { id: nextId(w, 'CT'), a: actor.id, b: other.id, terms: String(op.terms || '').slice(0, 1500), payer: op.payer === 'them' ? other.id : op.payer === 'none' ? null : actor.id, pay: op.pay_per_turn != null ? num(op.pay_per_turn, 0, 1e6, 0) : hasGoods && op.unit_price != null ? num(op.unit_price, 0, 1e5, 0) * num(op.amount, 0, 1e5, 0) : 0, good: hasGoods ? op.good : null, amount: hasGoods ? num(op.amount, 0, 1e5, 0) : 0, seller: hasGoods ? (op.seller === 'them' ? other.id : actor.id) : null, turns: Math.round(num(op.turns, 1, 80, 8)), status: 'proposed', turn: w.turn };
+  const k = { id: nextId(w, 'CT'), a: actor.id, b: other.id, terms: String(op.terms || '').slice(0, 1500), payer: op.payer === 'them' ? other.id : op.payer === 'none' ? null : actor.id, pay: op.pay_per_turn != null ? num(op.pay_per_turn, 0, 1e6, 0) : hasGoods && op.unit_price != null ? num(op.unit_price, 0, 1e5, 0) * num(op.amount, 0, 1e5, 0) : 0, good: hasGoods ? op.good : null, amount: hasGoods ? num(op.amount, 0, 1e5, 0) : 0, seller: hasGoods ? (op.seller === 'them' ? other.id : actor.id) : null, turns: Math.round(num(op.turns, 1, 80, 8)), status: 'proposed', turn: w.turn,
+    // A paper may say that it begins later: "from the day my works stand", "from next spring". (World 19: a magnate sold arms from works a
+    // year from standing, the paper ran from the next quarter, and he bought abroad to keep it.)
+    ...(num(op.starts_in ?? op.start_in, 0, 40, 0) >= 2 ? { wait: Math.round(num(op.starts_in ?? op.start_in, 0, 40, 0)) - 1 } : {}) };
   const sc = signsForState(w, actor, op.state); if (sc) k.purse = { [actor.id]: sc.id };
   // To whom it is addressed. An offer of goods laid before whoever governs is laid before the state: no ruler clothes an army out of his own
   // pocket. It is the treasury's paper unless the one who wrote it says it is for the person (to_state:false), or the one who signs says so
@@ -43,7 +46,7 @@ export function proposeContract(w, actor, op, num) {
   const theirs = w.countries[other.country]; if (theirs?.alive && governs(w, theirs, other) && op.to_state !== false && (hasGoods && k.amount > 0 || op.to_state === true)) k.toState = theirs.id;
   { const at = dayOf(op); if (hasGoods && k.amount > 0 && at && op.pay_per_turn == null && !(Number(op.unit_price) > 0)) { k.at = at; if (!k.payer || k.payer === k.seller) k.payer = k.seller === actor.id ? other.id : actor.id; k.pay = (priceOfDay(w, k) ?? 0) * k.amount; } }
   (w.contracts ||= []).push(k);
-  say(w, other, actor.name, `Contract offer ${k.id}${sc ? `, made for the state of ${sc.name} and on its treasury's account` : ''}: ${k.terms}${k.at ? ` Payment at ${dayWords(k)} for what is delivered (about ${Math.round(k.pay)} a quarter as prices stand).` : k.pay ? ` Payment ${Math.round(k.pay)} per quarter.` : ''}${k.good ? ` Delivery ${few(k.amount)} ${GOOD_LABEL[k.good]} per quarter, from the quarter after it is signed.` : ''} Runs ${k.turns} quarters. Accept with accept_contract.${k.toState ? ` It is laid before the state of ${theirs.name}: signed by you as it stands, the treasury pays and is paid and the state's own works deliver; to take it on your own purse instead, sign with state:false.` : !sc && w.countries[other.country]?.leader === other.id && !k.purse?.[other.id] ? ' It is addressed to you in person: signed as it stands, what you owe under it comes from your own purse; signed for the state (accept_contract with state:true), the treasury pays and is paid and the state\'s own works deliver.' : ''}`);
+  say(w, other, actor.name, `Contract offer ${k.id}${sc ? `, made for the state of ${sc.name} and on its treasury's account` : ''}: ${k.terms}${k.at ? ` Payment at ${dayWords(k)} for what is delivered (about ${Math.round(k.pay)} a quarter as prices stand).` : k.pay ? ` Payment ${Math.round(k.pay)} per quarter.` : ''}${k.good ? ` Delivery ${few(k.amount)} ${GOOD_LABEL[k.good]} per quarter, from ${k.wait ? `the ${k.wait + 1}th quarter` : 'the quarter'} after it is signed.` : ''} Runs ${k.turns} quarters${k.wait ? ' from then' : ''}. Accept with accept_contract.${k.toState ? ` It is laid before the state of ${theirs.name}: signed by you as it stands, the treasury pays and is paid and the state's own works deliver; to take it on your own purse instead, sign with state:false.` : !sc && w.countries[other.country]?.leader === other.id && !k.purse?.[other.id] ? ' It is addressed to you in person: signed as it stands, what you owe under it comes from your own purse; signed for the state (accept_contract with state:true), the treasury pays and is paid and the state\'s own works deliver.' : ''}`);
   return k;
 }
 
@@ -61,7 +64,7 @@ export function acceptContract(w, actor, id, from, forState) {
   const k = named ? waiting.find(x => x.id.toLowerCase() === String(id).trim().toLowerCase()) : bySender.length === 1 ? bySender[0] : null; if (!k) return null;
   const sc = signsForState(w, actor, forState === false ? false : forState === true || k.toState === actor.country); if (sc) (k.purse ||= {})[actor.id] = sc.id;
   // Goods move and money is paid from the quarter after the signature: nobody delivers on the day the ink dries.
-  k.status = 'active'; k.signed = w.turn; k.until = w.turn + k.turns + 1; say(w, w.characters[k.a], actor.name, `Contract ${k.id} accepted${sc ? ` for the state of ${sc.name}, on its treasury's account` : ''}.`);
+  k.status = 'active'; k.signed = w.turn; k.until = w.turn + k.turns + 1 + (k.wait || 0); say(w, w.characters[k.a], actor.name, `Contract ${k.id} accepted${sc ? ` for the state of ${sc.name}, on its treasury's account` : ''}.`);
   return k;
 }
 
@@ -85,7 +88,7 @@ export function contractStep(w) {
     const A = w.characters[k.a], B = w.characters[k.b];
     if (!A?.alive || !B?.alive) { k.status = 'void'; k.closedAt = w.turn; continue; }
     if (w.turn >= k.until) { k.status = 'finished'; k.closedAt = w.turn; continue; }
-    if (k.signed === w.turn) continue;
+    if (w.turn <= k.signed + (k.wait || 0)) continue;
     // Goods first: the buyer pays for what was delivered, not for what was promised.
     let part = 1;
     if (k.good && k.amount > 0) {
