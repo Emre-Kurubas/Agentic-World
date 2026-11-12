@@ -8,6 +8,8 @@ import { clamp, rand, news, quarterLabel } from './util.js';
 import { provincePop, countryProvinces, atWar, ROLES } from './world.js';
 import { governs, leadsParties } from './polity.js';
 import { handsOf, isOpen } from './firms.js';
+import { he, his } from './names.js';
+const cap = s => s[0].toUpperCase() + s.slice(1);
 
 export const MEANS_OPS = new Set(['relief', 'relieve_province', 'set_dues', 'note', 'post_person', 'destroy_evidence']);
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
@@ -69,19 +71,19 @@ export function meansOp(w, actor, c, op, h) {
     // A servant of the state moved to another desk, raised, or sent away.
     case 'post_person': {
       const staff = c.general === actor.id; if (!state && !staff) return fail('Posts in the state\'s service are filled by whoever governs, and posts on the general staff by its chief.');
-      const ch = h.personFor(w, c, op, 'official'); if (!ch?.alive || ch.country !== c.id || ch.status !== 'free') return fail(h.noPerson('No such person in the state\'s service.')); if (ROLES.some(r => c[r] === ch.id)) return fail(`${ch.name} holds a seat of his own; he is dismissed or appointed, not posted.`);
+      const ch = h.personFor(w, c, op, 'official'); if (!ch?.alive || ch.country !== c.id || ch.status !== 'free') return fail(h.noPerson('No such person in the state\'s service.')); if (ROLES.some(r => c[r] === ch.id)) return fail(`${ch.name} holds a seat of ${his(ch)} own, and is dismissed or appointed, not posted.`);
       const office = String(op.office ?? '').trim().toLowerCase(), was = ch.post ?? ch.clerkOf ?? (ch.office ? 'office' : null), out = op.dismiss === true || office === 'none';
-      if (!state && !out && office !== 'staff') return fail('The chief of staff posts officers to his own staff and off it; other offices are the government\'s to fill.'); if (!state && out && ch.clerkOf !== 'army' && ch.role !== 'officer') return fail('He is not on the general staff.');
+      if (!state && !out && office !== 'staff') return fail('The chief of staff posts officers to his own staff and off it; other offices are the government\'s to fill.'); if (!state && out && ch.clerkOf !== 'army' && ch.role !== 'officer') return fail(`${ch.name} is not on the general staff.`);
       if (['treasury', 'police'].includes(office)) return fail('The keeper of the treasury and the chief of police are appointed as such (appoint_minister).'); if (office === 'governor') return fail('A governor is appointed as such (appoint_governor).');
       if (!out && !office) return fail('Say where he is posted (office): staff (the general staff), customs, or any office by its name; or that he is dismissed (dismiss:true).');
       if (ch.post) ch.post = null; const sawArmy = ch.clerkOf === 'army', sawMoney = ch.clerkOf === 'treasury' || was === 'treasury';
       if (out) { delete ch.clerkOf; delete ch.office; ch.loyalty = clamp(ch.loyalty - 15, 0, 100); say(w, ch, c.name, `You are relieved of your post${op.reason ? `: ${String(op.reason).slice(0, 200)}` : ''}.`);
-        return { ok: true, msg: `${ch.name} (${ch.id}) is out of the state's service and resents it. He sees nothing more of what passed over his desk${ch.handler ? '; whoever he reported to in secret hears nothing more from that desk' : ''}; what he knows already he still knows.` }; }
+        return { ok: true, msg: `${ch.name} (${ch.id}) is out of the state's service and resents it. ${cap(he(ch))} sees nothing more of what passed over ${his(ch)} desk${ch.handler ? `; whoever ${he(ch)} reported to in secret hears nothing more from that desk` : ''}; what ${he(ch)} knows already ${he(ch)} still knows.` }; }
       const place = own(w.provinces, op.province) && w.provinces[op.province].controller === c.id ? ` at ${w.provinces[op.province].name}` : '';
       if (office === 'staff') { ch.clerkOf = 'army'; ch.office = String(op.title ?? 'a post on the general staff').slice(0, 80); } else if (office === 'customs') { ch.clerkOf = 'treasury'; ch.office = String(op.title ?? `a collector's post in the customs${place}`).slice(0, 80); } else { delete ch.clerkOf; ch.office = String(op.title ?? `${op.office}${place}`).slice(0, 80); }
       const up = op.promote === true; ch.loyalty = clamp(ch.loyalty + (up ? 8 : was && !ch.clerkOf ? -4 : 2), 0, 100); if (up) ch.power = clamp((ch.power ?? 20) + 4, 0, 60);
       say(w, ch, c.name, `You are posted to ${ch.office}${up ? ', with promotion' : ''}.`);
-      return { ok: true, msg: `${ch.name} (${ch.id}) now holds ${ch.office}${up ? ' and has been raised for it' : ''}. ${ch.clerkOf === 'army' ? 'He sees what passes through the general staff.' : ch.clerkOf === 'treasury' ? 'He sees what passes through the treasury\'s hands.' : `He sees no longer what passed over his old desk${sawArmy ? ' on the general staff' : sawMoney ? ' in the treasury' : ''}.`}` };
+      return { ok: true, msg: `${ch.name} (${ch.id}) now holds ${ch.office}${up ? ' and has been raised for it' : ''}. ${ch.clerkOf === 'army' ? `${cap(he(ch))} sees what passes through the general staff.` : ch.clerkOf === 'treasury' ? `${cap(he(ch))} sees what passes through the treasury's hands.` : `${cap(he(ch))} sees no longer what passed over ${his(ch)} old desk${sawArmy ? ' on the general staff' : sawMoney ? ' in the treasury' : ''}.`}` };
     }
     // Papers burned, a ledger rewritten: what was done stays done, but less of it is there to be found.
     case 'destroy_evidence': {
@@ -96,7 +98,7 @@ export function meansOp(w, actor, c, op, h) {
       const copied = text => Object.values(w.characters).some(x => x.alive && x.id !== actor.id && (x.dossiers?.[actor.id]?.facts || []).includes(text)), gone = [], held = [], seen = [];
       for (const s of mine) { if (copied(s.text)) held.push(s); else if (rand(w) < (s.old ? .85 : .65)) gone.push(s); else seen.push(s); }
       actor.secrets = actor.secrets.filter(s => !gone.includes(s));
-      if (seen.length) { actor.secrets.push({ turn: w.turn, text: `Had papers destroyed to hide what he had done, and a page was kept by the hand that was to burn it.` }); actor.secrets = actor.secrets.slice(-12); }
+      if (seen.length) { actor.secrets.push({ turn: w.turn, text: `Had papers destroyed to hide what ${he(actor)} had done, and a page was kept by the hand that was to burn it.` }); actor.secrets = actor.secrets.slice(-12); }
       return { ok: true, msg: `${gone.length ? `${gone.length} matter${gone.length > 1 ? 's are' : ' is'} gone beyond finding: no inquiry and no dossier will turn ${gone.length > 1 ? 'them' : 'it'} up now. ` : ''}${held.length ? `${held.length} could not be reached: a copy lies in somebody else's file already. ` : ''}${seen.length ? `${seen.length} could not be destroyed cleanly: the clerk who was to burn the page kept it, so that what was done is still to be found, and that you tried to hide it as well. ` : ''}`.trim() };
     }
   }

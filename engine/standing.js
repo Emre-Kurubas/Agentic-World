@@ -9,6 +9,7 @@
 import { clamp, rand, news, nextId, quarterLabel } from './util.js';
 import { aliveCountries } from './world.js';
 import { governs } from './polity.js';
+import { he, him } from './names.js';
 
 export const STANDING_OPS = new Set(['watch', 'delegate', 'standing_order', 'cancel_order']);
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
@@ -142,7 +143,7 @@ export function watchStep(w) {
     if (!x.state) { if (by.wealth < x.fee) { drop(`The men watching ${watchWords(w, x)} have gone home unpaid.`); continue; } by.wealth -= x.fee; }
     if (x.kind === 'person') { const t = w.characters[x.key]; if (!t?.alive) { drop(`${t?.name ?? 'The person you had watched'} is dead; the watch is at an end.`); continue; }
       const eye = x.state ? clamp(.35 + (c.police ?? 40) / 200, .3, .85) : .3, seen = (t.secrets || []).filter(s => s.turn === w.turn && !s.old && !s.published && rand(w) < eye).map(s => s.text);
-      const circle = (w.plots || []).find(p => p.active && (p.leader === t.id || (p.members || []).includes(t.id))); if (circle && rand(w) < (x.state ? clamp(.2 + (c.police ?? 40) / 300, .2, .5) : .12)) seen.push(`${circle.leader === t.id ? 'Gathers people about him in secret and is at the head of something that is being prepared' : 'Goes by night to meetings he tells nobody of: he belongs to something that is being prepared'} (seen by the watch in ${quarterLabel(w.turn)}).`);
+      const circle = (w.plots || []).find(p => p.active && (p.leader === t.id || (p.members || []).includes(t.id))); if (circle && rand(w) < (x.state ? clamp(.2 + (c.police ?? 40) / 300, .2, .5) : .12)) seen.push(`${circle.leader === t.id ? `Gathers people about ${him(t)} in secret and is at the head of something that is being prepared` : `Goes by night to meetings ${he(t)} tells nobody of: ${he(t)} belongs to something that is being prepared`} (seen by the watch in ${quarterLabel(w.turn)}).`);
       if (seen.length) { const file = by.dossiers[t.id] ||= { turn: w.turn, about: t.name, facts: [] }; file.turn = w.turn; file.facts = [...new Set([...file.facts, ...seen])].slice(-12); say(w, by, 'The watch', `On ${t.name} (${t.id}) this quarter: ${seen.join(' ')} It is in your file on ${t.name}.`); }
       if (!x.noticed && rand(w) < clamp(.08 + t.power / 500 - (x.state ? (c.police ?? 40) / 500 : 0), .03, .3)) { x.noticed = w.turn; say(w, t, 'Your household', 'You are being watched: the same men stand across the street day after day, and your letters come a day late. Whose men they are you can guess.'); }
     } else if (x.kind === 'party') { const p = c.parties.find(q => q.id === x.key); if (!p) { drop('The party you had watched is no more.'); continue; }
