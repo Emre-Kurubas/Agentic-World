@@ -739,7 +739,8 @@ chain('Embezzlement → trace → dossier → blackmail and exposure lower legit
 });
 chain('Debt → money moves → it falls due → both parties learn, what follows is up to them', () => {
   const w = fresh(), c = w.countries.U1, ol = w.characters[c.oligarch], g = w.characters[c.general]; ol.wealth = 500; g.wealth = 10; g.aiControlled = true; ol.aiControlled = true; const loyal = g.loyalty;
-  const r = applyOp(w, ol, { op: 'lend_private', character: g.id, amount: 100, interest: .2, due_turns: 1, terms: 'Stay quiet.' }); assert.equal(r.ok, true); assert.equal(g.wealth, 110); assert.equal(ol.wealth, 400);
+  const r = applyOp(w, ol, { op: 'lend_private', character: g.id, amount: 100, interest: .2, due_turns: 1, terms: 'Stay quiet.' }); assert.equal(r.ok, true); assert.ok(g.wealth === 10 && ol.wealth === 500 && /Nothing is owed and no money has moved/.test(g.inbox.at(-1).text), 'a loan to somebody who answers for himself is an offer until he takes it');
+  assert.equal(applyOp(w, g, { op: 'accept_loan', debt: r.debt }).ok, true); assert.equal(g.wealth, 110); assert.equal(ol.wealth, 400);
   assert.ok(answer(w, g, 'debts').includes('you owe')); assert.ok(answer(w, ol, 'debts').includes('owes you'));
   const debt = w.debts.at(-1); run(w, 1); assert.equal(debt.status, 'open', 'not overdue before the due date');
   const snap = snapshotState(w); g.inbox = []; ol.inbox = []; beginTurn(w); stepWorld(w);
@@ -1639,7 +1640,7 @@ chain('A note of hand is property: its holder sells it for what it is worth to h
     const x = mk(), cheap = applyOp(x.w, x.gen, { op: 'borrow_private', amount: 5, interest: 0 }); assert.ok(!cheap.ok && /%/.test(cheap.msg) && !x.w.debts.length, `he does not lend below his price, and says what it is: ${cheap.msg}`);
     const z = mk(), old = z.note(z.gen, 500, 1); z.w.turn += 3; debtsOf(z.w); assert.equal(old.status, 'overdue'); const bad = applyOp(z.w, z.gen, { op: 'borrow_private', amount: 5 }); assert.ok(!bad.ok && /not honoured/.test(bad.msg), bad.msg); }
   // Where somebody plays the holder, the answer is his: an offer, and a sale he closes.
-  { const { w, rich, opp, gen } = mk(); gen.aiControlled = true; gen.wealth = 100; const lent = applyOp(w, gen, { op: 'lend_private', character: opp.id, amount: 20, interest: .25, due_turns: 4 }); assert.ok(lent.ok); const d = w.debts.at(-1);
+  { const { w, rich, opp, gen } = mk(); gen.aiControlled = true; gen.wealth = 100; const lent = applyOp(w, gen, { op: 'lend_private', character: opp.id, amount: 20, interest: .25, due_turns: 4 }); assert.ok(lent.ok && applyOp(w, opp, { op: 'accept_loan', debt: lent.debt }).ok); const d = w.debts.at(-1);
     const bid = applyOp(w, rich, { op: 'buy_debt', debt: d.id, price: 22 }); assert.ok(bid.ok && d.creditor === gen.id && rich.wealth === 500 && gen.inbox.some(m => m.text.includes('sell_debt')), bid.msg);
     assert.ok(lookUp(w, gen, 'debts').includes(rich.name) && /buy_debt/.test(lookUp(w, gen, 'debts')) && /ask_terms/.test(lookUp(w, opp, 'debts')), 'the holder reads the offer where he looks his debts up, and the rule with it');
     const purse = gen.wealth, sold = applyOp(w, gen, { op: 'sell_debt', debt: d.id, to: rich.id }); assert.ok(sold.ok && d.creditor === rich.id && rich.wealth === 478 && gen.wealth === purse + 22, sold.msg);
@@ -5149,6 +5150,47 @@ chain('The state\'s own gold, and a law for one trade: a government sells gold o
     assert.ok(applyOp(v, l, { op: 'set_labour_law', min_safety: .5, _law: true }).ok && lawFor_(k, mills[0]).safety === .5 && lawFor_(k, pits[0]).safety === .8, 'a general law beside it binds every works, and the pits keep the stricter');
     assert.ok(applyOp(v, l, { op: 'set_labour_law', min_safety: 0, sector: 'mine', _law: true }).ok && !k.labourLaw.sectors && lawFor_(k, pits[0]).safety === .5, 'the law for the mines repealed, the general one stands');
     assert.ok(/No such trade\. A law can name the mines \(sector: mine\) or one branch of works/.test(applyOp(v, l, { op: 'set_labour_law', min_safety: .5, sector: 'constructor', _law: true }).msg)); }
+});
+import { between as between_ } from '../engine/voice.js';
+import { pruneStep as pruneStep_ } from '../engine/politics.js';
+chain('World 19, third review: a loan is an offer until it is taken; capital goes where it is sent; a plan can be torn up and drawn afresh; an institution is known by its name; a note that was paid is paid in the banker\'s letters too; and the arms order is the part of their capacity the works are asked for', () => {
+  // Found by eight readers of the whole record of world 19 and confirmed in the code. An empress who had refused a loan by letter found
+  // 250 in her purse and 306 on her name; four fortunes ordered "to a bank in Andona" went to whatever state the engine chose; a plan
+  // known to be copied could not be redrawn; an order waiting on an act could not find the body the act founded; a banker dunned for
+  // three quarters for a note discharged a year before; and eleven orders for "forty", "sixty", "thirty in the hundred" of the arms
+  // works all meant flat out.
+  const w = inherited(2696855, 8); run(w, 1);
+  const cs = aliveCountries(w), c = cs[0], o = cs[1], L = ld(w, c), M = w.characters[c.oligarch], G = w.characters[c.general];
+  { // A loan offered.
+    M.wealth = 500; L.wealth = 10; L.inbox = [];
+    const r = applyOp(w, M, { op: 'lend_private', character: L.id, amount: 250, interest: .224, due_turns: 8, terms: 'For the roads.' });
+    assert.ok(r.ok && M.wealth === 500 && L.wealth === 10 && /Nothing is lent until [^.]* takes it by a decision/.test(r.msg) && /offers to lend you 250, to be paid back as 306 by Q\d \d{4}\. For the roads\. Nothing is owed and no money has moved/.test(L.inbox.at(-1).text), `a loan to somebody in a seat is an offer: ${r.msg}`);
+    const no = applyOp(w, L, { op: 'decline_loan', debt: r.debt }); assert.ok(no.ok && M.wealth === 500 && L.wealth === 10 && !w.debts.some(d => d.id === r.debt && ['open', 'overdue', 'offered'].includes(d.status)), `refused, nothing was lent and nothing is owed: ${no.msg}`);
+    const again = applyOp(w, M, { op: 'lend_private', character: L.id, amount: 100, interest: .1 }), yes = applyOp(w, L, { op: 'accept_loan', from: M.id });
+    assert.ok(yes.ok && M.wealth === 400 && L.wealth === 110 && Math.abs(w.debts.find(d => d.id === again.debt).owed - 110) < 1e-6 && /You owe 110 on note/.test(yes.msg), `taken, the money moves and the note stands: ${yes.msg}`);
+    const third = applyOp(w, M, { op: 'lend_private', character: L.id, amount: 50 }); M.inbox = []; run(w, 3); assert.ok(w.debts.find(d => d.id === third.debt)?.status === 'lapsed' && M.inbox.some(m => /was not taken and has lapsed/.test(m.text)) && M.wealth >= 350, 'left unanswered it lapses, and the lender is told');
+    const clerk = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'police'), had = clerk.wealth; assert.ok(applyOp(w, M, { op: 'lend_private', character: clerk.id, amount: 5 }).ok && clerk.wealth === had + 5, 'a clerk nobody plays takes what is put into his hand'); }
+  { // Where a fortune goes.
+    M.wealth = 400; M.abroad = 0; M.abroadIn = {}; c.capitalClosed = false; o.capitalClosed = false; c.reserves = Math.max(c.reserves, 2000);
+    const r = applyOp(w, M, { op: 'capital_flight', amount: 40, to: o.id }); assert.ok(r.ok && Math.abs(M.abroadIn[o.id] - 40) < 1e-6 && new RegExp(`^40 of your fortune now lies in ${o.name}`).test(r.msg), `it goes where it is sent, in the sum named: ${r.msg}`);
+    run(w, 1); const big = applyOp(w, M, { op: 'capital_flight', amount: 1000, to: o.name.split(' ').pop() }); assert.ok(big.ok && /Of the 1000 named: no more than half of what you hold at home can go out in one quarter without being seen\./.test(big.msg) && M.abroadIn[o.id] > 40, `less than was named is said to be less, and why: ${big.msg}`);
+    run(w, 1); o.capitalClosed = true; const shut = applyOp(w, M, { op: 'capital_flight', amount: 10, to: o.id }); assert.ok(shut.ok && new RegExp(`${o.name} has shut its doors to foreign money, so it went where it was safest`).test(shut.msg), shut.msg); o.capitalClosed = false; }
+  { // A plan drawn afresh.
+    assert.ok(applyOp(w, G, { op: 'prepare_plan', target: o.id }).ok); run(w, 2); const same = applyOp(w, G, { op: 'prepare_plan', target: o.id });
+    assert.ok(/lies ready[^]*can be torn up and drawn again from the first page \(fresh\), which takes two quarters/.test(same.msg), same.msg);
+    const since = c.plans[o.id].since, fresh = applyOp(w, G, { op: 'prepare_plan', target: o.id, fresh: true }); assert.ok(fresh.ok && c.plans[o.id].ready === w.turn + 2 && c.plans[o.id].since === w.turn && c.plans[o.id].since > since && /torn up and drawn afresh: two quarters' work[^]*Any copy of the old plan that has gone abroad is worthless from today/.test(fresh.msg), fresh.msg); }
+  { // An institution by its name.
+    const made = applyOp(w, L, { op: 'create_institution', name: 'Federal General Staff', description: 'A permanent staff.', budget_pct_gdp: .0005, powers: ['army'], _law: true }); assert.ok(made.ok, made.msg);
+    const r = applyOp(w, L, { op: 'appoint_institution', id: 'the federal general staff', character: G.id, role: 'head', _law: true }); assert.ok(!/No such institution/.test(r.msg), `the body an act founded is found by its name: ${r.msg}`); }
+  { // The banker's books.
+    const banker = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'house'), P = w.characters[c.opposition]; P.wealth = 50;
+    (w.debts ||= []).push({ id: 'B-t', creditor: banker.id, debtor: P.id, amount: 6, owed: 6.6, due: w.turn + 4, terms: '', status: 'open', turn: w.turn });
+    assert.ok(/owes [^ ]+ 7 on note B-t/.test(between_(w, banker, P).join(' ')), 'while it is owed he knows it is owed'); assert.ok(applyOp(w, P, { op: 'repay_debt', debt: 'B-t' }).ok);
+    assert.ok(/Note B-t between them \(the writer owed (him|her)\) was paid off in Q\d \d{4}: nothing is owed on it, whatever an earlier letter said/.test(between_(w, banker, P).join(' ')), `and once it is paid he knows that too: ${between_(w, banker, P).join(' ').slice(0, 400)}`); }
+  { // Forty in the hundred.
+    const r = applyOp(w, L, { op: 'set_arms_share', share: .4, _law: true }); assert.ok(r.ok && Math.abs(c.armShare - .1) < 1e-9 && /now asked for 40 in the hundred of what they can make/.test(r.msg), r.msg);
+    const full = applyOp(w, L, { op: 'set_arms_share', share: 1, _law: true }); assert.ok(Math.abs(c.armShare - .25) < 1e-9 && /now asked for 100 in the hundred[^]*\(it was 40\)/.test(full.msg), full.msg);
+    const low = applyOp(w, L, { op: 'set_arms_share', share: .05, _law: true }); assert.ok(Math.abs(c.armShare - .05) < 1e-9 && /now asked for 20 in the hundred[^]*never run at less than a fifth/.test(low.msg), low.msg); }
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

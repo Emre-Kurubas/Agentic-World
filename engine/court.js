@@ -160,9 +160,11 @@ function tempt(w, c) {
   const g = Math.max(c.gdp, 1), pressed = ch => ch.wealth < 15 || (w.debts || []).some(d => d.debtor === ch.id && ['open', 'overdue'].includes(d.status));
   const open = ch => ch?.alive && ch.status === 'free' && w.turn - (ch.houseAsked ?? -99) >= 8 && w.turn - (ch.houseRefused ?? -99) >= 16 && !(w.offers ||= []).some(o => o.status === 'open' && o.to === ch.id);
   const ruler = w.characters[c.leader], gen = w.characters[c.general], opp = w.characters[c.opposition], mine = unitsOf(w, c), kit = mine.length ? mine.reduce((a, u) => a + (u.equip ?? .8) * u.men, 0) / Math.max(mine.reduce((a, u) => a + u.men, 0), 1e-9) : 1;
-  const openings = [];
-  if (open(ruler) && ((c.treasury < g * .01 && (c.lastBalance ?? 0) < 0) || pressed(ruler))) openings.push([ruler, 'lease']);
-  if (open(gen) && gen.id !== c.leader && ((w.projects || []).some(x => x.country === c.id && !x.status && x.kind === 'unit') || kit < .75 || pressed(gen))) openings.push([gen, 'supply']);
+  // What is let is let once: while the house holds the customs or the army's supply it does not come back to buy them again. (World 19: a
+  // prince leased his customs in the second quarter and was offered, and took, the same lease in the tenth, with the first still running.)
+  const openings = [], runs = kind => (w.offers || []).some(o => o.status === 'running' && o.country === c.id && o.kind === kind);
+  if (open(ruler) && !runs('lease') && ((c.treasury < g * .01 && (c.lastBalance ?? 0) < 0) || pressed(ruler))) openings.push([ruler, 'lease']);
+  if (open(gen) && !runs('supply') && gen.id !== c.leader && ((w.projects || []).some(x => x.country === c.id && !x.status && x.kind === 'unit') || kit < .75 || pressed(gen))) openings.push([gen, 'supply']);
   if (open(opp) && opp.id !== c.leader && ((c.elections && c.nextElection >= w.turn && c.nextElection - w.turn <= 4) || (c.bills || []).some(b => b.status === 'pending' && (b.ops || []).some(o => ['nationalize', 'nationalize_company', 'set_tax', 'set_labour_law'].includes(o?.op))) || pressed(opp))) openings.push([opp, 'purse']);
   const pick = openings.find(() => rand(w) < .12 + banker.greed / 400); if (!pick) return;
   const [to, kind] = pick; to.houseAsked = w.turn;

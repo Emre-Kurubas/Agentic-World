@@ -626,6 +626,8 @@ export function debtStep(w) {
   // An offer for a note stands a year, and dies with the note.
   if (w.bids) w.bids = w.bids.filter(b => w.turn - b.turn < 4 && w.debts?.some(d => d.id === b.debt && ['open', 'overdue'].includes(d.status)));
   for (const d of w.debts ||= []) {
+    // A loan that was offered and not taken lapses after the quarter that follows it.
+    if (d.status === 'offered' && w.turn - (d.offered ?? w.turn) >= 2) { d.status = 'lapsed'; d.closedAt = w.turn; const l = w.characters[d.creditor]; if (l?.alive) l.inbox.push({ turn: w.turn, from: 'Notary', text: `The loan you offered ${w.characters[d.debtor]?.name ?? 'them'} (${d.id}) was not taken and has lapsed. Nothing was lent.` }); }
     if (!['open', 'overdue'].includes(d.status)) continue;
     const debtor = w.characters[d.debtor], creditor = w.characters[d.creditor];
     if (!debtor?.alive || !creditor?.alive) { d.status = 'void'; d.closedAt = w.turn; continue; }
@@ -639,7 +641,7 @@ export function debtStep(w) {
 
 export function pruneStep(w) {
   const keep = w.turn - 40;
-  w.debts = (w.debts || []).filter(d => ['open', 'overdue'].includes(d.status) || d.closedAt >= keep);
+  w.debts = (w.debts || []).filter(d => ['open', 'overdue', 'offered'].includes(d.status) || d.closedAt >= keep);
   for (const [id, ch] of Object.entries(w.characters)) if (!ch.alive) { ch.goneAt ??= w.turn; if (ch.goneAt < keep) delete w.characters[id]; }
   w.plots = w.plots.filter(p => p.active || p.start >= keep);
   w.treaties = w.treaties.filter(t => t.active || t.turn >= keep);
