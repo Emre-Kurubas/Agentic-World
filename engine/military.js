@@ -478,9 +478,11 @@ function resolve(w, pid, us) {
   if (!atkSide.length || !defSide.length) return;
   const defCountry = defSide.includes(p.controller) ? p.controller : defSide[0];
   const D = us.filter(u => defSide.includes(u.country)), A = us.filter(u => atkSide.includes(u.country));
-  const pass = w.strategic.find(s => s.ref === pid && s.type === 'pass'), bridge = !pass && w.strategic.find(s => s.ref === pid && s.type === 'bridge'), point = pass ? 1.5 : bridge ? 1.25 : 1;
+  const pass = w.strategic.find(s => s.ref === pid && s.type === 'pass'), bridge = !pass && w.strategic.find(s => s.ref === pid && s.type === 'bridge'), point = 1;
   // A river is a line to hold: whoever must cross it under fire pays for it, except when it is frozen.
-  const river = holds0(w, p, owners) && !bridge && !pass && (p.river || 0) >= .3 && season(w) !== 'winter' ? 1 + Math.min(.2, p.river * .25) : 1;
+  // (A named pass or crossing used to be worth half as much again to its defender, whatever the ground: its worth is now the hills, the
+  // river and the fortress that stand there, and the trade that goes over it.)
+  const river = holds0(w, p, owners) && (p.river || 0) >= .3 && season(w) !== 'winter' ? 1 + Math.min(.2, p.river * .25) : 1;
   const natural = TERRAIN_DEF[p.terrain] * (1 + p.infra * .08) * point * river, built = holds ? 1 + (p.fort || 0) * .3 + (p.trench || 0) * .15 : 1, men = xs => sum(xs, u => u.men);
   // Troops told to fall back if pressed do not wait to be beaten by clearly stronger numbers: they give up the province and go back one toward
   // their own country, leaving stragglers and gear on the road. Whoever of their side was told nothing of the kind stays and fights without them.

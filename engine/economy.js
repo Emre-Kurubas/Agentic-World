@@ -44,6 +44,10 @@ export const paceOf = (c, t) => (t === 'electricity' ? clamp(1 + (c.budget.infra
 // noticing, and a toll at a strait was paid by ships that had open water beside them. World 18: a state that held three straits on a
 // neighbour's whole sea trade never knew it, and by measurement would have taken a third of its revenue in tolls from ships that could not
 // go round.)
+// (A stage by wagon road costs three times a stage by rail for wares and five times for heavy cargo. The difference the railway made was
+// larger than that; with road at eight times rail the configured world traded as before, but in other inherited worlds a poor state was
+// drained of its gold within two years and the pits ran slack, so the larger figure waits until the trades the states inherit are settled
+// against it. Measured in the configured world, trade stays between a twentieth and a tenth of what the states turn out.)
 export const CARRY = { rail: .003, road: .009, bulkRail: 1.6, bulkRoad: 2.6, border: .008, load: .025, quay: .012, sea: .008, home: .6, trains: 1.5, waste: .05 };
 const GROUND = { plains: 1, desert: 1.3, hills: 1.3, forest: 1.2, tundra: 1.5, marsh: 1.6, mountain: 2 };
 // A sea is closed to two countries' trade when an enemy of either holds it in strength; held thinly, runners still get through, at a price.
@@ -66,7 +70,7 @@ export function carry(w, a, b, bulk = false, without = null) {
   const pass = {}, open = id => { if (id in pass) return pass[id]; const t = w.countries[id]; return pass[id] = !!t?.alive && (id === a.id || id === b.id || lets(w, t, a, b)); };
   const enter = p => p.id !== without && !p.siege && open(p.controller);
   const dist = { [from]: 0 }, prev = {}, how = {}, heap = [from], done = new Set();
-  const relax = (x, n, d, kind) => { if (d < (dist[n] ?? Infinity) - 1e-12) { dist[n] = d; prev[n] = x; how[n] = kind; heap.push(n); } };
+  const cut = {}, relax = (x, n, d, kind, canal) => { if (d < (dist[n] ?? Infinity) - 1e-12) { dist[n] = d; prev[n] = x; how[n] = kind; if (canal) cut[n] = canal; else delete cut[n]; heap.push(n); } };
   while (heap.length) {
     heap.sort((x, y) => dist[x] - dist[y]); const x = heap.shift(); if (done.has(x)) continue; done.add(x); if (x === to) break;
     const p = w.provinces[x];
@@ -81,8 +85,8 @@ export function carry(w, a, b, bulk = false, without = null) {
     } else {
       const sea = w.seas[x]; if (!sea) continue;
       for (const n of sea.neighbors) { if (n === without || seaLocked(w, n, a.id, b.id)) continue; const st = straitAt(w, n); if (st?.closed && st.controller !== a.id && st.controller !== b.id) continue; relax(x, n, dist[x] + CARRY.sea + seaCost(w, n, a, b) + tollAt(st, a, b), 'sea'); }
-      for (const k of canalsAt(w, x)) { const n = k.a === x ? k.b : k.a, cut = w.strategic.find(s => s.type === 'canal' && s.ref === k.province), holder = w.provinces[k.province]?.controller; if (n === without || k.province === without || seaLocked(w, n, a.id, b.id)) continue; if (cut?.closed && holder !== a.id && holder !== b.id) continue; if (holder && holder !== a.id && holder !== b.id && !open(holder)) continue; relax(x, n, dist[x] + CARRY.sea + seaCost(w, n, a, b) + tollAt(cut && { ...cut, controller: holder }, a, b), 'canal'); }
-      for (const pid of sea.coast) { const q = w.provinces[pid]; if (!q || !(q.port > 0) || iced(w, q) || !enter(q)) continue; relax(x, pid, dist[x] + CARRY.load - (q.port - 1) * CARRY.quay, 'port'); }
+      for (const k of canalsAt(w, x)) { const n = k.a === x ? k.b : k.a, dug = w.strategic.find(s => s.type === 'canal' && s.ref === k.province), holder = w.provinces[k.province]?.controller; if (n === without || k.province === without || seaLocked(w, n, a.id, b.id)) continue; if (dug?.closed && holder !== a.id && holder !== b.id) continue; if (holder && holder !== a.id && holder !== b.id && !open(holder)) continue; relax(x, n, dist[x] + CARRY.sea + seaCost(w, n, a, b) + tollAt(dug && { ...dug, controller: holder }, a, b), 'canal', k.province); }
+      for (const pid of sea.coast) { const q = w.provinces[pid]; if (!q || !(q.port > 0) || iced(w, q) || !enter(q)) continue; const third = q.controller !== a.id && q.controller !== b.id ? w.countries[q.controller] : null; relax(x, pid, dist[x] + CARRY.load - (q.port - 1) * CARRY.quay + (third ? (transitOf(third, a.id).toll + transitOf(third, b.id).toll) / 2 + (third.war?.on ? WAR_RISK.land : 0) : 0), 'port'); }
     }
   }
   if (!(to in dist)) return null;
@@ -91,8 +95,11 @@ export function carry(w, a, b, bulk = false, without = null) {
   // A strait's keeper takes his toll once from a cargo, however many of his narrows it passes.
   const tolled = seas.map(s => straitAt(w, s)).filter(s => tollAt(s, a, b) > 0), keepers = {}; let twice = 0;
   for (const s of tolled) { if (keepers[s.controller]) twice += s.toll; else keepers[s.controller] = s; }
+  for (const s of seas.filter(x => how[x] === 'canal' && cut[x])) { const d = w.strategic.find(y => y.type === 'canal' && y.ref === cut[s]), holder = w.provinces[cut[s]]?.controller; if (d && tollAt({ ...d, controller: holder }, a, b) > 0 && !keepers[holder]) keepers[holder] = d; }
   const stages = { rail: 0, road: 0 }; for (const id of nodes) if (how[id] === 'rail' || how[id] === 'road') stages[how[id]]++;
   const water = seas.length ? sum(nodes.filter(id => ['port', 'sea', 'canal'].includes(how[id])), id => dist[id] - dist[prev[id]]) : 0;
+  // A canal passed is a place passed, for whoever counts what goes where.
+  nodes.push(...seas.filter(s => how[s] === 'canal' && cut[s]).map(s => cut[s]));
   const dues = vias.map(id => ({ to: id, rate: (transitOf(w.countries[id], a.id).toll + transitOf(w.countries[id], b.id).toll) / 2 })).filter(d => d.rate > 0);
   return { mode: seas.length ? 'sea' : vias.length ? 'transit' : 'land', way: dist[to] - twice, path: seas, land, nodes, tolls: Object.values(keepers).map(s => s.id), dues, ...(vias.length ? { via: vias[0], vias } : {}), stages, water };
 }
@@ -157,8 +164,18 @@ function routeNews(w, before) {
     const why = now ? whyChanged(w, x, y, was, now) : whyClosed(w, x, y, was); for (const [n, v] of [[x, y], [y, x]]) { const ch = w.characters[n.leader]; if (ch?.alive) { ch.inbox.push({ turn: w.turn, from: 'Board of Trade', text: !now ? `Our trade with ${v.name} has no way open to it any longer${why ? `: ${why}` : ''}.` : `Carriage between us and ${v.name} now adds about ${Math.round((now.cost - 1) * 100)} in the hundred to a cargo (it was ${Math.round((was.cost - 1) * 100)})${why ? `: ${why}` : ''}.` }); } } }
   for (const [k, now] of Object.entries(w.routes)) if (!before[k] && Object.keys(before).length) { const [x, y] = k.split('|').map(id => w.countries[id]); for (const [n, v] of [[x, y], [y, x]]) { const ch = w.characters[n.leader]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'Board of Trade', text: `A way is open again for our trade with ${v.name}: ${wayOf(w, now)}; carriage adds about ${Math.round((now.cost - 1) * 100)} in the hundred.` }); } }
 }
+// What the loss of one province or sea would do to the trade of a pair that used it: the way it would take then and what that adds to a
+// cargo, or that it would have none. The measure of what a place is worth to commerce.
+export function detour(w, key, id) {
+  const [x, y] = key.split('|').map(k => w.countries[k]), r = w.routes[key]; if (!x?.alive || !y?.alive || !r) return null;
+  // (Both ways are reckoned as things stand today, so that like is set against like: the way on record was found when the quarter opened.)
+  const heavy = !(r.nodes || []).includes(id) && (r.bulk?.nodes || []).includes(id), was = carry(w, x, y, heavy) ?? (heavy ? r.bulk : r), now = carry(w, x, y, heavy, id);
+  return { heavy, shut: !now, adds: now ? Math.max(0, now.way - was.way) : null, way: now };
+}
 const names = (w, ids) => ids.map(id => w.provinces[id]?.name ?? w.seas[id]?.name ?? id);
 // A way in words: what it crosses, and how.
+// The same in a few words, for where many ways are named at once.
+export const wayBrief = (w, r) => `${r.mode === 'sea' ? `by sea through ${r.path.length} water${r.path.length > 1 ? 's' : ''}${r.stages?.road + r.stages?.rail ? ' and overland to the harbours' : ''}` : `overland${r.stages ? ` (${r.stages.rail} stage${r.stages.rail === 1 ? '' : 's'} by rail, ${r.stages.road} by road)` : ''}`}${r.vias?.length ? ` across ${r.vias.map(id => w.countries[id]?.name).join(' and ')}` : ''}`;
 export function wayOf(w, r) {
   const land = r.land || [], through = r.vias?.length ? ` across ${r.vias.map(id => w.countries[id]?.name).join(' and ')}` : '';
   const stages = r.stages ? [r.stages.rail ? `${r.stages.rail} stage${r.stages.rail > 1 ? 's' : ''} by rail` : '', r.stages.road ? `${r.stages.road} by wagon road` : ''].filter(Boolean).join(' and ') : '';
