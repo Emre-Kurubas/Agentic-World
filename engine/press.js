@@ -68,7 +68,9 @@ export function setPaper(w, c, actor, op) {
     if (k === 'owner') delete n.serves; else n.serves = party ? party.id : k;
   }
   for (const k of ['targets', 'spare']) if (op[k] != null) {
-    const got = [], lost = []; for (const who of [].concat(op[k]).slice(0, 8)) { const x = findPerson(w, c, who); if (x && x.country === c.id && x.id !== actor.id) got.push(x.id); else lost.push(String(who)); }
+    const got = [], lost = []; let self = false; for (const who of [].concat(op[k]).slice(0, 8)) { const x = findPerson(w, c, who); if (x && x.id === actor.id) self = true; else if (x && x.country === c.id) got.push(x.id); else lost.push(String(who)); }
+    // A paper does not go after the hand that owns it, whatever list is given it; naming the owner changes nothing and is not an unknown name.
+    if (self) notes.push(k === 'spare' ? 'it never goes after its own owner, so you need not be named among those it spares' : 'it does not go after its own owner');
     if (got.length) n[k] = [...new Set(got)]; else delete n[k];
     if (lost.length) notes.push(`${lost.join(', ')} ${lost.length > 1 ? 'are' : 'is'} not among the people of ${c.name} its reporters can reach, and ${lost.length > 1 ? 'were' : 'was'} left out`);
   }

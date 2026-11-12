@@ -142,19 +142,23 @@ export function aimsMet(w, c, aim, foe, paid = 0) {
 }
 export const aimsText = (w, aim) => [aim.provinces?.length ? `${aim.provinces.map(pid => `${w.provinces[pid]?.name} (${pid})`).join(', ')}` : '', aim.reparations > 0 ? `an indemnity of ${Math.round(aim.reparations * 100)}% of a quarter's output` : '', aim.regime ? `the fall of ${w.characters[aim.rulerThen]?.name ?? 'the government'}` : '', aim.treaty ? `the end of treaty ${aim.treaty}` : ''].filter(Boolean).join('; ') || aim.text || '';
 
+// Whether the two have brought a paper into force between them since that quarter (since the day the demand was made).
+const settledSince = (w, a, b, turn) => w.treaties.some(t => t.active && !t.ultimatum && t.parties.includes(a) && t.parties.includes(b) && (t.since ?? -99) >= turn);
 export function diplomacyStep(w) {
   const cs = aliveCountries(w);
   for (const c of cs) {
     // A good name comes back slowly, by years in which nothing is broken.
     if (honourOf(c) < 70 && w.turn - (c.honourLog?.at(-1)?.turn ?? -99) >= 4) c.honour = Math.min(70, honourOf(c) + .5);
     // A threat with a date on it and nothing behind it.
-    for (const [id, until] of Object.entries(c.casus || {})) { if (w.turn <= until) continue; delete c.casus[id]; const o = w.countries[id]; if (!o?.alive || atWar(w, c.id, id)) continue; shame(w, c, -6, `its ultimatum to ${o.name} came to nothing`); c.legitimacy = clamp(c.legitimacy - 3, 0, 100); news(w, `${c.name}'s ultimatum to ${o.name} has run out and nothing has followed.`, { kind: 'diplomacy', countries: [c.id, id] }); say(w, w.characters[c.leader], 'Foreign Ministry', `The ultimatum to ${o.name} ran out unanswered and we have not acted. Abroad and at home it is being called a bluff.`); }
+    // A quarrel that ended in a signed paper between the two was not a bluff: the demand was answered at a table and not in the field.
+    // (World 18: a crisis closed by a commission treaty two quarters after the ultimatum was booked three quarters later as a threat that came to nothing.)
+    for (const [id, until] of Object.entries(c.casus || {})) { if (w.turn <= until && !settledSince(w, c.id, id, c.casusSince?.[id] ?? until - 3)) continue; delete c.casus[id]; const o = w.countries[id]; if (!o?.alive || atWar(w, c.id, id) || settledSince(w, c.id, id, c.casusSince?.[id] ?? until - 3)) continue; shame(w, c, -6, `its ultimatum to ${o.name} came to nothing`); c.legitimacy = clamp(c.legitimacy - 3, 0, 100); news(w, `${c.name}'s ultimatum to ${o.name} has run out and nothing has followed.`, { kind: 'diplomacy', countries: [c.id, id] }); say(w, w.characters[c.leader], 'Foreign Ministry', `The ultimatum to ${o.name} ran out unanswered and we have not acted. Abroad and at home it is being called a bluff.`); }
   }
   // Demands whose day has passed.
   for (const t of w.treaties) {
     if (!t.pending || !t.ultimatum || w.turn < t.ultimatum.deadline) continue;
     t.pending = false; const from = w.countries[t.proposer], to = w.countries[t.parties.find(x => x !== t.proposer)]; if (!from?.alive || !to?.alive) continue;
-    (from.casus ||= {})[to.id] = w.turn + 3;
+    (from.casus ||= {})[to.id] = w.turn + 3; (from.casusSince ||= {})[to.id] = t.turn ?? w.turn;
     news(w, `${to.name} has let ${from.name}'s ultimatum run out unanswered.`, { kind: 'diplomacy', countries: [from.id, to.id] });
     say(w, w.characters[from.leader], 'Foreign Ministry', `${to.name} has not accepted the ultimatum (${t.id}). For three quarters the country and the world will take a declaration of war as the consequence you announced. If nothing follows, the threat will be remembered as empty.`);
   }

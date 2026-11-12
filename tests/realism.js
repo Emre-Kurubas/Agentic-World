@@ -410,11 +410,12 @@ chain('The state reaches remote provinces poorly, a governor extends it, collect
   const before = far.admin; assert.equal(applyOp(w, w.characters[c.leader], { op: 'appoint_governor', province: far.id, character: c.general }).ok, true); for (let i = 0; i < 30; i++) adminStep(w); assert.ok(far.admin > before, 'a governor raises reach'); assert.ok(c._adminFactor > 0);
   far.admin = .1; assert.ok(adminPressure(far) > 0, 'weak administration means unrest');
 });
-chain('A contract starts on acceptance, payment and delivery run, a breach is written', () => {
+chain('A contract starts the quarter after it is signed, payment and delivery run, a breach is written', () => {
   const w = fresh(), c = w.countries.U1, a = w.characters[c.oligarch], b = w.characters[w.countries.U2.oligarch], A0 = 500; a.wealth = A0; b.wealth = 100; run(w, 1); w.routes['U1|U2'] = { mode: 'land', cost: 1, path: [], tolls: [] };
   const r = applyOp(w, a, { op: 'propose_contract', to: b.id, terms: 'Iron agreement', pay_per_turn: 10, good: 'iron', amount: 5, seller: 'them', turns: 3 }); assert.equal(r.ok, true); assert.equal(a.wealth, A0, 'no money moves before acceptance'); const k = w.contracts.at(-1);
   contractStep(w); assert.equal(k.status, 'proposed'); assert.equal(applyOp(w, b, { op: 'accept_contract', id: k.id }).ok, true); w.firms.SRY = { id: 'SRY', status: 'open', owner: b.id, sector: 'mine', resource: 'iron', country: 'U2', province: countryProvinces(w, 'U2')[0].id, stake: 0, cash: 0, lastProfit: 0, bad: 0, lastUnits: 50 };
-  w.countries.U2.stock.iron = 100; c.stock.iron = 0; contractStep(w); assert.equal(a.wealth, A0 - 10); assert.equal(b.wealth, 110); assert.equal(c.stock.iron, 5);
+  w.countries.U2.stock.iron = 100; c.stock.iron = 0; contractStep(w); assert.equal(a.wealth, A0, 'nothing is delivered or paid in the quarter of the signature'); assert.equal(c.stock.iron, 0);
+  w.turn += 1; contractStep(w); assert.equal(a.wealth, A0 - 10); assert.equal(b.wealth, 110); assert.equal(c.stock.iron, 5);
   w.firms.SRY.lastUnits = 2; contractStep(w); assert.equal(c.stock.iron, 7, 'a seller delivers what their own works turn out, not what lies in the national stores'); w.firms.SRY.lastUnits = 50; a.wealth += 10; b.wealth -= 10; k.lastBreach = -99; k.breaches = [];
   w.countries.U2.stock.iron = 0; contractStep(w); assert.ok(k.breaches?.some(x => x.who === b.id), 'short delivery is a breach'); assert.ok(a.inbox.some(m => m.text.includes('breached')));
   w.turn = k.until; contractStep(w); assert.equal(k.status, 'finished');
@@ -1401,10 +1402,10 @@ chain('What the state buys the treasury pays for: a contract signed for the stat
   const w = fresh(), c = w.countries.U1, boss = ld(w, c), rich = w.characters[c.oligarch], gen = w.characters[c.general]; w.contracts = []; beginTurn(w);
   c.treasury = 500; boss.wealth = 30; rich.wealth = 50; const near = (a, b, what) => assert.ok(Math.abs(a - b) < 1e-6, `${what}: ${a} against ${b}`);
   let o = applyOp(w, boss, { op: 'propose_contract', to: rich.id, terms: 'Boots', pay_per_turn: 10, payer: 'me', turns: 4 }); assert.ok(applyOp(w, rich, { op: 'accept_contract', id: o.contract }).ok);
-  contractStep(w); near(boss.wealth, 20, 'signed in her own name, her own purse pays'); near(rich.wealth, 60, 'the seller is paid'); near(c.treasury, 500, 'the treasury is not touched');
+  w.turn += 1; contractStep(w); near(boss.wealth, 20, 'signed in her own name, her own purse pays'); near(rich.wealth, 60, 'the seller is paid'); near(c.treasury, 500, 'the treasury is not touched');
   assert.ok(applyOp(w, boss, { op: 'cancel_contract', id: o.contract }).ok);
   o = applyOp(w, boss, { op: 'propose_contract', to: rich.id, terms: 'Boots for the army', pay_per_turn: 10, payer: 'me', turns: 4, state: true }); assert.ok(applyOp(w, rich, { op: 'accept_contract', id: o.contract }).ok);
-  contractStep(w); near(boss.wealth, 20, 'signed for the state, her purse is left alone'); near(rich.wealth, 70, 'the seller is paid'); near(c.treasury, 490, 'by the treasury');
+  w.turn += 1; contractStep(w); near(boss.wealth, 20, 'signed for the state, her purse is left alone'); near(rich.wealth, 70, 'the seller is paid'); near(c.treasury, 490, 'by the treasury');
   c.treasury = 0; const owed = c.debt; contractStep(w); near(rich.wealth, 80, 'an empty treasury still pays'); near(c.debt, owed + 10, 'on credit');
   const g = applyOp(w, gen, { op: 'propose_contract', to: rich.id, terms: 'Fodder', pay_per_turn: 5, payer: 'me', turns: 2, state: true }); assert.ok(!w.contracts.find(k => k.id === g.contract).purse, 'only the one who governs can pledge the treasury');
   const was = c.leader; c.leader = gen.id; assert.ok(applyOp(w, gen, { op: 'cancel_contract', id: o.contract }).ok, 'whoever governs next can end what was signed for the state'); c.leader = was;
@@ -2281,7 +2282,7 @@ chain('State sells grain → out of the stores → paid for what arrived, and no
   assert.equal(applyOp(w, B, { op: 'accept_contract', id: k.contract, state: true }).ok, true);
   const kk = w.contracts.find(x => x.id === k.contract), net = c => c.treasury - c.debt; w.contracts = [kk];
   assert.ok(!Object.values(w.firms).some(f => f.country === 'U4' && f.owner === STATE && (f.sector === 'grain' || f.resource === 'grain')), 'no state works grow grain');
-  b.stock.grain = 500; let paid = net(a), got = net(b), had = a.stock.grain; contractStep(w);
+  b.stock.grain = 500; let paid = net(a), got = net(b), had = a.stock.grain; w.turn += 1; contractStep(w);
   assert.ok(Math.abs(kk.lastDelivered - 40) < 1e-6 && a.stock.grain > had + 35 && Math.abs(b.stock.grain - 460) < 1e-6, 'a state delivers out of the stores of the country');
   assert.ok(Math.abs((paid - net(a)) - 200) < 1e-6 && Math.abs((net(b) - got) - 200) < 1e-6, 'and is paid the 200 for the 40');
   b.stock.grain = 10; paid = net(a); contractStep(w);
@@ -3455,7 +3456,9 @@ chain('A signature ordered for a treaty that has not yet arrived waits for it an
   assert.ok(corps.target === far.id && corps.posture !== 'defensive' && /dig in there/.test(dig.msg) && /stand on the defensive where its march ends/.test(answer(m.w, m.gen, 'army')), dig.msg.slice(-260));
   { const g2 = new Game({ world: m.w, cfg: base, backend: { kind: 'mock' }, store: nullStore() }), put = soldier(m.w, 'U1', m.e2.id, 20), rr = g2.applyRuling(m.gen, { narrative: 'hold it', prob: 1, public: false, source: 'referee', ops: [{ op: 'move', unit: put.id, to: m.e2.id }, { op: 'set_posture', unit: put.id, posture: 'defensive', if_done: 0 }] });
     assert.ok(rr.results[0].ok && /already, and stays/.test(rr.results[0].msg) && !rr.results[1].skipped && put.posture === 'defensive', `ordered to hold the place it stands in, it does: ${JSON.stringify(rr.results.map(x => x.msg.slice(0, 80)))}`); }
-  m.w.turn++; const halt = applyOp(m.w, m.gen, { op: 'set_posture', unit: corps.id, posture: 'defensive' }); assert.ok(!corps.target && corps.posture === 'defensive' && /from an earlier quarter; those are cancelled/.test(halt.msg), halt.msg.slice(-300));
+  // The same order said over again a quarter later leaves them on their way; to halt them where they stand the order says so.
+  m.w.turn++; const again = applyOp(m.w, m.gen, { op: 'set_posture', unit: corps.id, posture: 'defensive' }); assert.ok(corps.target === far.id && corps.digAt === far.id && /still on the march with orders to dig in where it ends: nothing is changed by saying it again/.test(again.msg), again.msg.slice(-300));
+  const halt = applyOp(m.w, m.gen, { op: 'set_posture', unit: corps.id, posture: 'defensive', here: true }); assert.ok(!corps.target && corps.posture === 'defensive' && /from an earlier quarter; those are cancelled/.test(halt.msg), halt.msg.slice(-300));
 });
 
 chain('A war is paid for beyond the army\'s pay, at home and in the world, and the exchanges say why: lenders ask more of a state at war and carry less of its debt, money leaves it for a quiet country, its cargoes pay a war premium that goes to the insurers and its customers buy elsewhere, its army is fed before its towns, its builders are crowded out; a price that rises for a war is explained in print; and every seat can read it', () => {
@@ -4278,7 +4281,7 @@ chain('World 18, first review: a signature waits for the contract it was ordered
     assert.ok(k.status === 'active' && k.purse?.[L.id] === c.id && L.inbox.some(m => /arrived, and it was signed as you had ordered[^]*on the treasury's account/.test(m.text)) && !(w.signingContracts || []).length, `the paper that came the same morning is signed, for the state as ordered: ${L.inbox.at(-1)?.text}`);
     const none = applyOp(w, L, { op: 'accept_contract', from: M.id }); assert.ok(none.ok && none.waits); L.inbox = []; carrySigned(w); assert.ok(L.inbox.some(m => /Nothing was signed with [^]* this quarter: no single offer of theirs reached you/.test(m.text)), 'and where none comes, the one who ordered it is told');
     assert.ok(!applyOp(w, L, { op: 'accept_contract', id: 'CT99999' }).ok, 'a paper named by a number nobody knows is not waited for');
-    assert.ok(applyOp(w, M, { op: 'propose_contract', to: L.id, terms: 'Boots.', good: 'goods', amount: 1, unit_price: 30, seller: 'me', payer: 'them', turns: 2 }).ok && L.inbox.some(m => /It is addressed to you in person[^]*signed for the state \(accept_contract with state:true\), the treasury pays/.test(m.text)), 'an offer addressed to whoever governs says it can be signed for the state'); }
+    assert.ok(applyOp(w, M, { op: 'propose_contract', to: L.id, terms: 'Boots.', good: 'goods', amount: 1, unit_price: 30, seller: 'me', payer: 'them', turns: 2 }).ok && L.inbox.some(m => /It is laid before the state of [^:]*: signed by you as it stands, the treasury pays and is paid[^]*to take it on your own purse instead, sign with state:false/.test(m.text)), 'an offer of goods to whoever governs is laid before the state, and says so'); }
   { const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), f = Object.values(w.firms).find(x => x.country === c.id && x.status === 'open'), p = countryProvinces(w, c.id)[1], t0 = c.treasury + 0;
     const r = applyOp(w, L, { op: 'relief', to: f.id, from: 'treasury', _law: true }); assert.ok(r.ok && /no sum was named: what is customary was given, about a tenth of what its hands earn in a quarter/.test(r.msg), r.msg);
     const r2 = applyOp(w, L, { op: 'relief', to: p.id, from: 'treasury', _law: true }); assert.ok(r2.ok && /a hundredth of what its people earn in a quarter/.test(r2.msg), r2.msg);
@@ -4808,6 +4811,93 @@ chain('A landmass large enough for a state has a state of its own: an island of 
   const land = c => new Set(countryProvinces(w, c.id).flatMap(p => p.neighbors.map(n => w.provinces[n].owner)).filter(id => id !== c.id)).size, cs = aliveCountries(w);
   assert.ok(cs.filter(c => c.seaState).length <= 1 && cs.every(c => c.seaState || land(c) >= 2), `in the configured world every mainland state has two neighbours by land: ${cs.map(c => `${c.archetype} ${land(c)}`).join(', ')}`);
   assert.ok(Math.max(...cs.map(c => c.gdp)) / Math.min(...cs.map(c => c.gdp)) < 2.4 && cs.every(c => !w.provinces[c.capital].neighbors.some(n => w.provinces[n].owner !== c.id)), 'no state is a fraction of another and no capital lies on a frontier');
+});
+import { between as betweenOf } from '../engine/voice.js';
+import { postReport as postReportOf } from '../engine/court.js';
+import { fitToPrint } from '../agents/game.js';
+chain('World 18, third review: a signature goes to the paper it names or to none; what the treasury pays under a contract is in its books; gold sold is gold bought; an order that names no number raises nobody; one order from two desks is one order; a treaty can be ended by consent; a quarrel settled at a table was no bluff; the papers print what happened and not what the clerks said of it; and a banker keeps his clients\' counsel', () => {
+  // Found by reading the whole record of world 18 (sixteen quarters, eight states). Three signatures went to a paper other than the one
+  // named; four treasuries paid for goods that stood in no line of their books; four sales took gold out of the world; "one unit of heavy
+  // artillery" raised a hundred men; the same detachment and the same line of works were ordered twice by two desks; two states agreed to
+  // end a treaty and it bound them for a year more; a crisis closed by a treaty was booked as a bluff; the papers printed an arrest that
+  // had been stood off and a sentence about what the engine cannot do; and four bankers recited their clients' secrets to their rulers.
+  { // The paper that is named.
+    const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), M = w.characters[c.oligarch];
+    const first = applyOp(w, M, { op: 'propose_contract', to: L.id, terms: 'A first paper.', pay_per_turn: 3, payer: 'me', turns: 4 }); assert.ok(first.ok, first.msg);
+    const second = applyOp(w, M, { op: 'propose_contract', to: L.id, terms: 'A second paper in its place.', pay_per_turn: 5, payer: 'me', turns: 4 }); assert.ok(second.ok, second.msg);
+    const one = w.contracts.find(k => k.id === first.contract), two = w.contracts.find(k => k.id === second.contract); assert.ok(one.status === 'withdrawn' && two.status === 'proposed');
+    const r = applyOp(w, L, { op: 'accept_contract', id: one.id });
+    assert.ok(!r.ok && two.status === 'proposed' && new RegExp(`${one.id} does not wait for your signature: [^.]* took it back before it was signed\\. Nothing was signed in its place\\. What does lie before you unsigned: ${two.id} from `).test(r.msg), `a paper that was taken back is not replaced by the one that lies beside it: ${r.msg}`);
+    const s = applyOp(w, L, { op: 'accept_contract', id: two.id }); assert.ok(s.ok && two.status === 'active' && /runs 4 quarters from the next: no goods move under it; [^]* pays 5 a quarter/.test(s.msg), `the paper that is named is signed, and whoever signs is told what it carries: ${s.msg}`); }
+  { // The treasury's paper, and its books.
+    const w = inherited(2696855, 8), c = aliveCountries(w).find(x => Object.values(w.firms).some(f => f.country === x.id && f.status === 'open' && f.owner === x.oligarch)), L = ld(w, c), M = w.characters[c.oligarch];
+    const f = Object.values(w.firms).find(x => x.country === c.id && x.status === 'open' && x.owner === M.id), good = f.sector === 'mine' ? f.resource : f.sector; w.contracts = []; beginTurn(w);
+    const o = applyOp(w, M, { op: 'propose_contract', to: L.id, terms: 'For the army.', good, amount: 2, unit_price: 30, seller: 'me', payer: 'them', turns: 4 }); assert.ok(o.ok, o.msg);
+    const k = w.contracts.find(x => x.id === o.contract); assert.ok(k.toState === c.id, 'an offer of goods laid before whoever governs is laid before the state');
+    const own = structuredClone(w), ko = own.contracts[0]; assert.ok(applyOp(own, own.characters[L.id], { op: 'accept_contract', id: k.id, state: false }).ok && !ko.purse?.[L.id], 'signed with state:false it is the ruler\'s own');
+    const s = applyOp(w, L, { op: 'accept_contract', id: k.id }); assert.ok(s.ok && k.purse?.[L.id] === c.id && /on the treasury's account/.test(s.msg), `signed as it stands it is the treasury's: ${s.msg}`);
+    const t0 = c.treasury - c.debt, p0 = L.wealth; c._outlay = {}; contractStep(w); assert.ok(Math.abs(c.treasury - c.debt - t0) < 1e-6 && !(c._outlay.contracts > 0), 'nothing is delivered or paid in the quarter of the signature');
+    w.turn += 1; f.lastUnits = 50; c.stock[good] = Math.max(c.stock[good] || 0, 100); contractStep(w);
+    assert.ok(Math.abs(t0 - (c.treasury - c.debt) - 60) < 1e-6 && Math.abs(L.wealth - p0) < 1e-6 && Math.abs(c._outlay.contracts - 60) < 1e-6, `the quarter after, the treasury pays the 60 and the books have a line for it: ${JSON.stringify(c._outlay)}`); }
+  { // Gold sold is gold bought.
+    const w = inherited(2696855, 8), cs = aliveCountries(w), c = cs[0], L = ld(w, c), world = () => cs.reduce((a, x) => a + x.reserves, 0), before = world(), had = c.reserves, tr = c.treasury;
+    const r = applyOp(w, L, { op: 'sell_gold', amount: 200, _law: true }); assert.ok(r.ok && /sold to the banks and bullion dealers of other states/.test(r.msg), r.msg);
+    assert.ok(Math.abs(world() - before) < 1e-6 && Math.abs(had - c.reserves - 200) < 1e-6 && c.treasury > tr + 150, `the gold left this reserve and no gold left the world: ${world()} against ${before}`); }
+  { // An order with no number; and the sum that was cut.
+    const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), p = countryProvinces(w, c.id)[1], men = () => Object.values(w.units).filter(u => u.country === c.id).length + (w.projects || []).filter(x => x.kind === 'unit' && x.country === c.id).length, n0 = men();
+    const r = applyOp(w, L, { op: 'recruit', province: p.id, unit_kind: 'artillery', _law: true });
+    assert.ok(!r.ok && men() === n0 && /Say how many men are to be raised \(men, in thousands\)\. [^]* can give up to about [\d.]+ thousand this quarter; a thousand artillery cost about [\d.]+ to raise/.test(r.msg), `an order to raise troops that names no number raises none and says what can be had: ${r.msg}`);
+    c.treasury = 5000; const want = Math.round(c.gdp * .002 * 3), f = applyOp(w, L, { op: 'fund_party', amount: want, state: true, _law: true });
+    assert.ok(f.ok && new RegExp(`That is [\\d.]+ of the ${want} ordered: the treasury pays the parties no more than about [\\d.]+ in a quarter`).test(f.msg) && c._outlay?.parties > 0, `a sum from the treasury that was cut says so, and is in the books: ${f.msg}`); }
+  { // One order from two desks; works in hand; one commander.
+    const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), G = w.characters[c.general], us = () => Object.values(w.units).filter(u => u.country === c.id);
+    const corps = us().sort((a, b) => b.men - a.men)[0], to = w.provinces[corps.province].neighbors.map(n => w.provinces[n]).find(q => q.controller === c.id), n0 = us().length, m0 = corps.men;
+    const a = applyOp(w, L, { op: 'move', unit: corps.id, to: to.id, men: 2 }), b = applyOp(w, G, { op: 'move', unit: corps.id, to: to.id, men: 2 });
+    assert.ok(a.ok && b.ok && b.twice && us().length === n0 + 1 && Math.abs(m0 - corps.men - 2) < 1e-6 && /gave this same order this morning and it has been carried out\. It is one order/.test(b.msg), `the ruler and the chief of staff who write down the same detachment detach it once: ${b.msg}`);
+    w.turn += 1; assert.ok(applyOp(w, G, { op: 'move', unit: corps.id, to: to.id, men: 2 }).ok && us().length === n0 + 2, 'the same order in another quarter is another order');
+    const p = countryProvinces(w, c.id).find(q => q.id !== c.capital); p.trench = 1; c.treasury = 5000; c.stock.steel = 100; const d0 = c.debt, t0 = c.treasury;
+    const x = applyOp(w, L, { op: 'build', province: p.id, kind: 'trench', amount: 200, _law: true }); assert.ok(x.ok, x.msg); const paid = t0 - c.treasury + c.debt - d0;
+    w.turn += 1; const y = applyOp(w, L, { op: 'build', province: p.id, kind: 'trench', amount: 200, _law: true }); assert.ok(!y.ok && /is in hand already \(PR\d+, ordered [^)]*\) and takes up all the place can still hold: nothing more was ordered and nothing more is paid/.test(y.msg) && Math.abs(t0 - c.treasury + c.debt - d0 - paid) < 1e-6, `a work that is being built is not ordered and paid for a second time: ${y.msg}`);
+    const u = us().find(q => !w.characters[q.commander]?.alive) ?? us()[0]; delete u.commander; delete u.commandSince;
+    const one = applyOp(w, L, { op: 'appoint_commander', unit: u.id }), first = u.commander, two = applyOp(w, G, { op: 'appoint_commander', unit: u.id });
+    assert.ok(one.ok && two.ok && u.commander === first && /was given [^ ]* this morning and keeps it; nobody else was named/.test(two.msg), `a command given this morning is not given again to somebody else by an order that names nobody: ${two.msg}`); }
+  { // A treaty ended by consent; and a quarrel that ended at a table.
+    const w = inherited(2696855, 8), [a, b] = aliveCountries(w), A = ld(w, a), B = ld(w, b);
+    assert.ok(applyOp(w, A, { op: 'propose_treaty', target: b.id, kind: 'commission', terms: 'A paper to be unmade.' }).ok); const t = w.treaties.at(-1); assert.ok(applyOp(w, B, { op: 'accept_treaty', id: t.id }).ok && t.active);
+    const ha = honourIn(a), hb = honourIn(b), ra = b.relations[a.id]; B.inbox = [];
+    const e1 = applyOp(w, A, { op: 'end_treaty', id: t.id }); assert.ok(e1.ok && t.active && /has been asked for its own\. Until it is given the paper binds as before/.test(e1.msg) && B.inbox.some(m => /proposes that treaty [^ ]* \(commission\) be ended by the consent of all who signed it/.test(m.text)), `one government's consent ends nothing and the other is asked: ${e1.msg}`);
+    const e2 = applyOp(w, B, { op: 'end_treaty', id: t.id }); assert.ok(e2.ok && !t.active && honourIn(a) === ha && honourIn(b) === hb && b.relations[a.id] === ra && /ended by consent of all who signed it: nothing in it binds any longer, and nobody broke it/.test(e2.msg), `when both have given it the paper is ended and nobody's name suffers: ${e2.msg}`);
+    assert.ok(!applyOp(w, A, { op: 'end_treaty', id: t.id }).ok && /end_treaty\{id\}/.test(refereePrompt(w, a, [{ actor: A, decisions: ['End it.'] }])), 'and the referee knows the order');
+    const bluff = settle => { const y = structuredClone(w), ya = y.countries[a.id], yb = y.countries[b.id]; ya.casus = { [yb.id]: y.turn - 1 }; ya.casusSince = { [yb.id]: y.turn - 5 }; y.treaties = y.treaties.filter(x => !(x.parties.includes(ya.id) && x.parties.includes(yb.id)));
+      if (settle) y.treaties.push({ id: 'AX', kind: 'commission', parties: [ya.id, yb.id], active: true, since: y.turn - 3, terms: 'Settled.' }); const h = honourIn(ya), l = ya.legitimacy; diplomacyOf(y); return { lost: h - honourIn(ya), legit: l - ya.legitimacy, open: ya.casus?.[yb.id] != null }; };
+    const empty = bluff(false), settled = bluff(true); assert.ok(empty.lost > 3 && empty.legit > 2 && settled.lost <= 0 && settled.legit <= 0 && !settled.open, `an ultimatum that came to nothing is a bluff; one that ended in a paper between the two is not: ${JSON.stringify([empty, settled])}`); }
+  { // A note paid as it was shown; a tame bench halts nothing.
+    const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), O = w.characters[c.opposition], H = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'house');
+    (w.debts ||= []).push({ id: 'B-T1', debtor: L.id, creditor: H.id, amount: 12, owed: 13.2, status: 'open', due: w.turn + 4, turn: w.turn }); L.wealth = 40;
+    const r = applyOp(w, L, { op: 'repay_debt', debt: 'B-T1', amount: 13 }); assert.ok(r.ok && w.debts.at(-1).status === 'paid' && /note B-T1 is discharged/.test(r.msg) && Math.abs(L.wealth - 26.8) < 1e-6, `whoever pays the 13 on a note shown as 13 has paid the note: ${r.msg}`);
+    let tame = 0, free = 0, said = '';
+    for (let i = 0; i < 40; i++) { for (const [courts, count] of [[20, () => tame++], [95, () => free++]]) { const y = structuredClone(w); y.rng = 31 + i * 7919; y.countries[c.id].courts = courts; const x = applyOp(y, y.characters[L.id], { op: 'purge', character: O.id, fate: 'imprisoned', _law: true }); if (/The court halted the order/.test(x.msg)) { count(); if (courts === 95) said = x.msg; } } }
+    assert.ok(tame === 0 && free > 5 && /a bench that is its own master will not always let a person be taken on the ruler's word alone/.test(said), `a bench that is the government's creature halts no arrest; one that is its own master sometimes does, and says why: ${tame}, ${free}, ${said}`); }
+  { // What the papers print.
+    assert.equal(fitToPrint('The frontier is closed to imports of arms. The ban is meant to last until the gold reserve is back above 800, but the engine cannot wait on that figure, so lifting it will need a new order.'), 'The frontier is closed to imports of arms.');
+    assert.equal(fitToPrint('The regimental death grant could not be paid: no operation open to the chief of staff pays money to the families.'), '');
+    assert.equal(fitToPrint('The ruling party votes the budget. The house rises for the summer!'), 'The ruling party votes the budget. The house rises for the summer!');
+    const w = inherited(2696855, 8), c = aliveCountries(w).find(x => x.pressFreedom >= 40) ?? aliveCountries(w)[0], L = ld(w, c), p = countryProvinces(w, c.id)[1], g = new Game({ world: w, cfg: base, backend: { kind: 'mock' }, store: nullStore() }); L.outcomes ||= [];
+    const said = () => w.newsThisTurn.map(e => e.text).join(' | '); w.newsThisTurn = [];
+    const half = g.applyRuling(L, { narrative: 'A regiment of heavy guns is raised and a day of thanksgiving is proclaimed.', prob: 1, public: true, source: 'referee', ops: [{ op: 'custom', label: 'a day of thanksgiving' }, { op: 'recruit', province: p.id, unit_kind: 'artillery' }] });
+    assert.ok(!half.printed && !/heavy guns/.test(said()), `an account of an order the world refused in part is not printed as done: ${said()}`);
+    const talk = g.applyRuling(L, { narrative: 'A day of thanksgiving is proclaimed for the harvest. No operation carries the bell-ringing, so it is recorded only as an instruction.', note: 'The bell-ringing could not be entered.', prob: 1, public: true, source: 'referee', ops: [{ op: 'custom', label: 'a day of thanksgiving' }] });
+    assert.ok(talk.printed && /A day of thanksgiving is proclaimed for the harvest\.$/.test(w.newsThisTurn.at(-1).text) && !/operation|instruction/.test(said()) && /Your secretary adds: The bell-ringing could not be entered/.test(L.outcomes.at(-1)), `what the clerks say of a ruling goes to whoever gave the order and not into the papers: ${said()} || ${L.outcomes.at(-1)}`);
+    const pr = refereePrompt(w, c, [{ actor: L, decisions: ['Proclaim it.'] }]); assert.ok(/"note":""/.test(pr) && /It never speaks of the engine, of operations/.test(pr) && /Never give an operation that nobody ordered/.test(pr) && /Never choose a person, a place, a sum or a quantity/.test(pr) && /to_state\?/.test(pr), 'and the referee is told so'); }
+  { // What a banker says, and how an officer speaks of his men.
+    const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), O = w.characters[c.opposition], H = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'house');
+    (w.offers ||= []).push({ id: 'OFT', kind: 'purse', from: H.id, to: O.id, country: c.id, amount: 25, turn: w.turn, status: 'taken', text: '25 for goodwill' }); (w.debts ||= []).push({ id: 'B-T2', debtor: O.id, creditor: H.id, amount: 30, owed: 33, status: 'open', due: w.turn + 4, turn: w.turn });
+    const told = betweenOf(w, H, L).join('\n');
+    assert.ok(!/the house has paid (?!to anybody)/.test(told) && !/for goodwill/.test(told) && /the house's client and not its master: of what the house has paid to anybody else, and of the paper it holds on anybody else, (he|she) tells the writer nothing unasked/.test(told), `a banker does not recite to the ruler what he has paid the opposition: ${told}`);
+    assert.ok(/holds note B-T2[^]*A house does not speak of one client's paper to another/.test(told), 'and speaks of a client\'s note only when asked about it');
+    const officer = Object.values(w.characters).find(x => x.alive && x.country === c.id && (x.role === 'officer' || Object.values(w.units).some(u => u.commander === x.id))), rep = postReportOf(w, c, officer ?? { role: 'officer' });
+    assert.ok(/the army stands as follows/.test(rep) && !/loyalty \d/.test(rep) && /(devoted to the government|sound|steady enough|grumbling|sullen|not to be relied on)/.test(rep), `an officer speaks of his men in a soldier's words, not in a figure: ${rep.slice(0, 200)}`);
+    assert.ok(!/richness|mine level|reserve \d/.test(answer(w, L, 'resources')) && /(a very rich field|a rich field|a fair field|a thin field), (good for|nearly worked out)/.test(answer(w, L, 'resources')), 'and a deposit is described as a survey describes it'); }
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

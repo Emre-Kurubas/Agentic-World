@@ -96,8 +96,15 @@ export function creditLeft(c) {
 }
 export function openCredit(c) { c._room = creditRoom(c); c._taken = 0; }
 // The treasury pays what it can in cash and borrows the rest while lenders agree. Returns what was actually paid.
-export function treasuryPays(c, cost) {
+// Whatever leaves the treasury outside the budget is kept by kind (what), so that the quarter's books can say where the money went.
+// (World 18: what four treasuries paid for goods under contracts signed in the state's name, 130 to 350 a quarter, stood in no line of
+// their books; one government read a deficit of 100 while its debt grew by 450.)
+export function treasuryPays(c, cost, what) {
   if (!(cost > 0)) return 0;
+  const paid = payOut(c, cost); if (what && paid > 0) (c._outlay ||= {})[what] = (c._outlay[what] || 0) + paid;
+  return paid;
+}
+function payOut(c, cost) {
   // The working balance is the last money spent: first the cash above it, then lenders, and only then the till itself.
   const cash = Math.min(Math.max(c.treasury - (c.till || 0), 0), cost), loan = Math.min(cost - cash, creditLeft(c)), last = Math.min(cost - cash - loan, Math.max(c.treasury - cash, 0));
   c.treasury -= cash + last; c.debt += loan; c._loans = (c._loans || 0) + loan; c._taken = (c._taken || 0) + loan;

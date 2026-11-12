@@ -5,7 +5,7 @@ import { RECIPE } from './economy.js';
 import { queueProject, durationOf, plantPrice, minePrice, machinesFor, MAX_PLANT, MAX_MINE } from './projects.js';
 import { governs } from './polity.js';
 
-const SCALE = .05, MAX_PER_COUNTRY = 14, BANKRUPT_TURNS = 6;
+const SCALE = .05, MAX_PER_COUNTRY = 20, BANKRUPT_TURNS = 6;
 export const STATE = 'state';
 export const isOpen = f => f.status === 'open';
 const sectorName = f => f.sector === 'mine' ? `${GOOD_LABEL[f.resource]} mine` : PLANTS[f.sector];
@@ -183,7 +183,7 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
       if (host.id !== c.id && host.capitalClosed) return fail('This country is closed to foreign capital.');
       if (!mine && !(typeof sector === 'string' && Object.hasOwn(PLANTS, sector))) return fail('No such sector.');
       if (mine && (!DEPOSITS.includes(op.resource) || op.resource === 'gold' || !p.deposits[op.resource]?.known)) return fail('No known deposit.');
-      if (openCount(w, host.id) >= MAX_PER_COUNTRY) return fail('No registry room left in this country.');
+      if (openCount(w, host.id) >= MAX_PER_COUNTRY) return fail(`The register of ${host.name} holds ${MAX_PER_COUNTRY} houses and is full: a new one can be entered only when one of them is wound up, sold into another or taken over. A works you own already can be extended instead (invest_company), in the same trade and place.`);
       const state = isHead && op.state === true, amount = Math.min(num(op.amount, 0, 1e9, 0), state ? Math.max(c.treasury, 0) : actor.wealth);
       if (!(amount >= 1)) { const purse = `${state ? 'the treasury holds' : 'your purse holds'} ${Math.round(Math.max(state ? c.treasury : actor.wealth, 0) * 10) / 10}`; return fail(num(op.amount, 0, 1e9, 0) >= 1 ? `Not enough capital: ${purse}.` : `No capital was named: say how much is put into it (amount). A works is as large as the money put in; ${purse}, and the engineers' price for a works of the ordinary size there is in the survey (building:${p.id}).`); }
       const f = makeFirm(w, host, p, sector, mine ? op.resource : null, state ? STATE : actor.id, 0, String(op.name || '').slice(0, 60) || `${p.name} Company`);
@@ -256,7 +256,7 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
       if (!firm || !isOpen(firm) || firm.country !== c.id || firm.owner === STATE) return fail('No company to seize.');
       seizeFirm(w, c, firm, tell); c.ownership = clamp(c.ownership + .02, 0, 1); c.blocs.capital.sat = clamp(c.blocs.capital.sat - 5, 0, 100);
       news(w, `${c.name}: ${firm.name} was nationalized.`, { kind: 'economy', countries: [c.id] });
-      return ok();
+      return { ok: true, msg: `${firm.name} (${firm.id}) is the state's: its works, its till and its profits. Its owner was paid nothing and has been told; the men of business take it as a warning to all of them, and are that much less content.` };
     }
     case 'privatize_company': {
       if (!isHead) return fail('Only the leader can sell.');

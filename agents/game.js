@@ -357,7 +357,7 @@ export class Game {
       for (const h of Array.isArray(r?.rulings) ? r.rulings : []) {
         const ch = w.characters[h.actor];
         if (!ch || !actors.some(a => a.id === ch.id)) continue;
-        rulings.push(this.applyRuling(ch, { narrative: String(h.narrative || '').slice(0, 1500), prob: Number.isFinite(Number(h.probability ?? 1)) ? clamp(Number(h.probability ?? 1), 0, 1) : 1, public: !!h.public, ops: Array.isArray(h.operations) ? h.operations.slice(0, 16) : [], decision: h.decision, decisionText: this.pending.actors[ch.id]?.decisions?.[h.decision], source: 'referee' }));
+        rulings.push(this.applyRuling(ch, { narrative: String(h.narrative || '').slice(0, 1500), note: String(h.note || '').slice(0, 1500), prob: Number.isFinite(Number(h.probability ?? 1)) ? clamp(Number(h.probability ?? 1), 0, 1) : 1, public: !!h.public, ops: Array.isArray(h.operations) ? h.operations.slice(0, 16) : [], decision: h.decision, decisionText: this.pending.actors[ch.id]?.decisions?.[h.decision], source: 'referee' }));
       }
     }
     // What the referee still left without a ruling is written down and told to the person who decided it.
@@ -388,7 +388,7 @@ export class Game {
   // quarter (ships still on their way), what hangs on it waits with it. An attack is such an order whatever the quarter: it is accepted today and
   // decided by the fighting, so what hangs on an offensive (or on a move against ground the enemy holds) waits for the place to fall, or for the
   // attack on it to fail (ops.js hangOn, carryTaken); and an operation may name the place it waits for itself (once_taken).
-  applyRuling(ch, { narrative, prob, public: pub, ops, source, decision, decisionText }) {
+  applyRuling(ch, { narrative, note, prob, public: pub, ops, source, decision, decisionText }) {
     const w = this.w, c = w.countries[ch.country];
     const chancy = op => op?.op === 'custom', diced = prob > 0 && prob < 1 && (!ops.length || ops.some(chancy)), luck = prob >= 1 || (prob > 0 && (!diced || rand(w) < prob));
     const results = prob > 0 ? carryList(w, ch, ops, (plain, op) => chancy(op) && !luck ? { ok: false, chance: true, msg: 'It did not come off.' } : plain.op === 'report' ? orderReport(w, ch, plain) : safeApply(w, ch, plain)) : [];
@@ -398,8 +398,14 @@ export class Game {
     // What is announced is what happened: an order the world refused does not make the papers as if it had been done. And what was never meant for the
     // papers is not in them: the engine, not the referee's flag, keeps orders to troops, secret-service work and secret treaties out of print. A word
     // or a gesture that no operation carries is printed where there is a press to print it; from a gagged country it travels as rumour does.
-    const printed = !!(narrative && pub && carried && source === 'referee' && printable(w, ops));
-    if (printed) news(w, `${c?.name ?? ''}: ${narrative}`, { kind: 'politics', countries: [ch.country], ...(ops.every(op => op?.op === 'custom') && (c?.pressFreedom ?? 50) < 35 && c?.leader !== ch.id ? { hush: true } : {}) });
+    // And only what happened in full: where the world refused any part of an order, or part of it still waits on the quarter, the account of
+    // the whole is not printed as done (what was carried out makes its own news where the engine prints news of it). Nor is a sentence
+    // about the ruling itself: what the clerks could not enter is told to whoever gave the order, not to the country.
+    // (World 18: "has Renzo Albano arrested" was printed of an arrest that had been stood off; "founds a weekly" of a founding that was
+    // refused; and "the engine cannot wait on that figure", "no operation open to the chief of staff pays money to the families" and "no
+    // offer of a second tranche of 50 is on the table" stood in the papers of three states.)
+    const fit = fitToPrint(narrative), printed = !!(fit && pub && carried && !refused.length && !waits && source === 'referee' && printable(w, ops));
+    if (printed) news(w, `${c?.name ?? ''}: ${fit}`, { kind: 'politics', countries: [ch.country], ...(ops.every(op => op?.op === 'custom') && (c?.pressFreedom ?? 50) < 35 && c?.leader !== ch.id ? { hush: true } : {}) });
     // The person who gave the order is told what actually came of it, in the engine's own words, not only what was intended.
     if (source === 'referee' && narrative) {
       const plain = m => m && !['Applied.', 'Recorded.'].includes(m), said = results.filter(r => plain(r.msg)).map(r => `${r.ok ? '' : `${r.op} was NOT carried out: `}${r.msg}`).join(' ');
@@ -407,10 +413,10 @@ export class Game {
       // rulings came back "Succeeded", and a ruler waited ten quarters for an account he had "successfully" ordered.)
       const words = !said && !results.some(r => !['custom', 'noop'].includes(r.op));
       const verdict = !success ? 'Failed' : refused.length === results.length && results.length ? 'Not carried out' : refused.length ? 'Only partly carried out' : waits ? (results.some(r => String(r.waits).startsWith('take:')) ? 'Ordered; part of it waits on the fighting' : 'Ordered, and waiting on the quarter') : words ? (printed ? 'Said, and it is in the papers; nothing else was set in motion' : 'Recorded as words only; nothing was set in motion') : 'Succeeded';
-      ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: ${verdict}: ${narrative}${said ? ` [${said.slice(0, 1500)}]` : ''}`); ch.outcomes = ch.outcomes.slice(-60); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
+      ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: ${verdict}: ${narrative}${note ? ` (Your secretary adds: ${note})` : ''}${said ? ` [${said.slice(0, 1500)}]` : ''}`); ch.outcomes = ch.outcomes.slice(-60); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
     }
     // What is recorded as the probability is the chance that was actually rolled; where the referee named one and no dice were due, its figure is kept beside it.
-    return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, probability: diced || prob <= 0 ? prob : 1, ...(prob > 0 && prob < 1 && !diced ? { refereeProbability: prob } : {}), success, results, source, decision, decisionText, ops, printed };
+    return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, ...(note ? { note } : {}), probability: diced || prob <= 0 ? prob : 1, ...(prob > 0 && prob < 1 && !diced ? { refereeProbability: prob } : {}), success, results, source, decision, decisionText, ops, printed };
   }
 
   async turn() {
@@ -447,6 +453,11 @@ export class Game {
 // A letter may be addressed by id, by country or by name.
 // A message addressed to a conference that is sitting goes to every government at the table: the host and whoever was invited and has not
 // declined. Only a government with a seat there can speak to it; from anyone else it is a letter to nobody.
+// What of a referee's account a newspaper could print: its sentences about the world, without those about the ruling itself (what could not
+// be entered, what the engine can or cannot do, what is or is not on the table). Empty when nothing else is left.
+const CLERKS = /\b(engine|operations?|cannot be (carried|entered|ordered|done|paid)|could not be (carried|entered|ordered|done|paid)|(is|was|are|were) not carried|not on the table|no such (paper|offer|contract|person|unit|province|bill)|instruction only|undertakings? only|only as a promise|is on record to receive|names no (newspaper|person|sum|province)|needs? a new order)\b/i;
+export const fitToPrint = text => String(text || '').split(/(?<=[.!?])\s+/).filter(s => s.trim() && !CLERKS.test(s)).join(' ').trim();
+
 export function toTable(w, ch, messages) {
   return (messages || []).flatMap(m => {
     const cf = (w.conferences || []).find(x => x.open && x.id === String(m.to).trim()); if (!cf) return [m];

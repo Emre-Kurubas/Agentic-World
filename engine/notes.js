@@ -65,7 +65,7 @@ function assign(w, d, to, price, quiet) {
 }
 // Whoever governs may buy a paper with the state's secret money; anyone else pays from his own purse. Returns what was paid, or 0.
 function payFor(w, c, actor, price, state, allowance) {
-  if (state) { const limit = Math.max(c.gdp, 1) * .002; if (limit - spent(w, c, 'secret_funds') < price - .01) return 0; const m = treasuryPays(c, allowance(w, c, 'secret_funds', limit, price)); if (m < price - .01) { c.treasury += m; return 0; } return m; }
+  if (state) { const limit = Math.max(c.gdp, 1) * .002; if (limit - spent(w, c, 'secret_funds') < price - .01) return 0; const m = treasuryPays(c, allowance(w, c, 'secret_funds', limit, price)); if (m < price - .01) { c.treasury += m; return 0; } (c._outlay ||= {}).secret = (c._outlay.secret || 0) + m; return m; }
   if (actor.wealth < price) return 0; actor.wealth -= price; return price;
 }
 
@@ -117,7 +117,7 @@ export function noteOp(w, actor, c, op, { fail, num, governs, allowance }) {
         trace(w, actor, `Tried to buy up ${who.name}'s note of hand from ${h.name}.`); deal(w, h, actor, `Refused to sell ${actor.name} the note ${d.id} of ${who.name}, and told ${who.name}.`);
         return fail(`${h.name} will not put ${who.name}'s paper into another's hands: it is not the sum; ${he(h)} stands by the government, and such a man may say who asked.`);
       }
-      if (price < a.price) { deal(w, h, actor, `Refused ${actor.name}'s ${r1(price)} for note ${d.id} of ${who.name}; ${his(h)} price is ${a.price}.`); return fail(`${h.name} will not part with note ${d.id} for ${r1(price)}. ${who.name} owes ${Math.round(d.owed)} on it${a.cov >= .8 ? ' and can pay' : a.cov < .3 ? ' and has little to pay with' : ''}${a.hold ? ', and a note on someone in a seat is a hold ${he(h)} would be giving up' : ''}: ${he(h)} names ${a.price}.`); }
+      if (price < a.price) { deal(w, h, actor, `Refused ${actor.name}'s ${r1(price)} for note ${d.id} of ${who.name}; ${his(h)} price is ${a.price}.`); return fail(`${h.name} will not part with note ${d.id} for ${r1(price)}. ${who.name} owes ${Math.round(d.owed)} on it${a.cov >= .8 ? ' and can pay' : a.cov < .3 ? ' and has little to pay with' : ''}${a.hold ? `, and a note on someone in a seat is a hold ${he(h)} would be giving up` : ''}: ${he(h)} names ${a.price}.`); }
       const paid = payFor(w, c, actor, price, state, allowance); if (!paid) return fail(state ? 'The secret funds cannot cover that this quarter.' : `You have not got ${r1(price)}.`);
       h.wealth += paid; if (state) trace(w, actor, `Paid for ${who.name}'s note of hand with ${Math.round(paid)} of the treasury's money.`);
       deal(w, h, actor, `Sold ${actor.name} the note ${d.id} of ${who.name} for ${r1(paid)}.`);
