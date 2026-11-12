@@ -289,8 +289,10 @@ export class Game {
   }
 
   // Letters to people nobody plays are answered for them, country by country, from what the engine knows of each. They are written once the
-  // quarter's orders have been carried out, so that a banker who was asked to sell a note this quarter writes that he has sold it, or why he
-  // would not, and not that he will think on it; the answers go by the same post and are in the inbox next morning.
+  // quarter's orders have been carried out and the quarter has been played, so that a banker who was asked to sell a note this quarter writes
+  // that he has sold it, or why he would not, and a keeper of the treasury writes the reserve as the quarter left it: the answers are in the
+  // inbox next morning beside the morning's own figures, and the two agree. (World 19: a prince read "one thousand and forty-two" in his
+  // treasurer's letter and "three hundred and ninety-seven" on his desk the same morning, and resolved to find out which clerk was lying.)
   async answerLetters(actors, log) {
     const w = this.w, cfg = this.cfg;
     if (this.backend.kind === 'mock') return;
@@ -429,8 +431,8 @@ export class Game {
     await this.judge(actors);
     this.setStatus('world processing', 'Calculating economy, war and politics');
     const before = snapshotState(w), log = this.execute(actors);
-    await this.answerLetters(actors, log);
     stepWorld(w);
+    await this.answerLetters(actors, log);
     const entries = buildEntries(w, log, before, this.pending.lookups);
     this.store.commit(w, entries);
     await this.artStep(entries);

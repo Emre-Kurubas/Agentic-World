@@ -724,7 +724,18 @@ function applyOne(w, actor, op) {
       return { ok: true, msg: `For ${scope}: ${[rule.language ? `language ${rule.language}` : '', rule.faith ? `faith ${rule.faith}` : ''].filter(Boolean).join(', ')}. Where a rule names both a province and a people it goes before one that names only the people, that before one for the province, and all of them before the country's policy (language ${c.languagePolicy}, faith ${c.faithPolicy}).` };
     }
     case 'appoint_governor': { const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('Province not yours.'); if (op.remove) { tell(w, w.characters[p.governor], c.name, `You are removed as governor of ${p.name}.`); p.governor = null; return ok(); } const ch = personFor(w, c, op, 'governor'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); p.governor = ch.id; tell(w, ch, c.name, `You are appointed governor of ${p.name}.`); return { ok: true, msg: `${ch.name} (${ch.id}) governs ${p.name}.` }; }
-    case 'appoint_commander': { if (op.fleet) { const f = w.fleets[op.fleet]; if (!f || f.country !== c.id) return fail('No such fleet of yours.'); const ch = personFor(w, c, op, 'officer'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); f.commander = ch.id; tell(w, ch, c.name, `You now command the squadron ${f.id}.`); return { ok: true, msg: `${ch.name} (${ch.id}) commands the squadron ${f.id}.` }; }
+    case 'appoint_commander': {
+      // An officer named by where he serves, not by name: "the senior captain of G528 to command G392". The officer who commands that body
+      // is the one meant, and he leaves it; where it has none on record, a senior officer of it is named and the order says who. Where
+      // nobody is named at all, the staff puts a name forward and says that it did. (World 19: two such orders each produced an officer
+      // nobody had asked for, and a government believed for a year that another man held the squadron.)
+      let how = '';
+      if (!op.character && !String(op.name ?? '').trim()) { const key = op.of ?? op.from_unit ?? op.from_fleet, body = key != null ? w.units[key] ?? w.fleets[key] : null;
+        if (key != null && (!body || body.country !== c.id)) return fail('No such unit or squadron of ours to take its senior officer from.');
+        const k = body ? w.characters[body.commander] : null;
+        if (k?.alive && k.status === 'free') { op = { ...op, character: k.id }; body.commander = null; how = ` ${k.name} was the senior officer of ${body.id}, as ordered, and ${body.id} is without a commander until one is named.`; }
+        else how = body ? ` ${body.id} had no commander on record: the staff named a senior officer of it, as ordered.` : ' Nobody was named in the order: the staff put this officer forward.'; }
+      if (op.fleet) { const f = w.fleets[op.fleet]; if (!f || f.country !== c.id) return fail('No such fleet of yours.'); const ch = personFor(w, c, op, 'officer'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); f.commander = ch.id; tell(w, ch, c.name, `You now command the squadron ${f.id}.`); return { ok: true, msg: `${ch.name} (${ch.id}) commands the squadron ${f.id}.${how}` }; }
       // "The reservists forming at Ordgaron are placed under Colonel Aksoy": the unit may be named by where it stands (the largest of ours there
       // that has no commander of its own, else the largest).
       // Troops sent there this very quarter count as the troops of that place (world 16: "detach five thousand to Tolhanir under Demirhan"
@@ -737,7 +748,7 @@ function applyOne(w, actor, op) {
       // morning where he is; one that names somebody else relieves him, and he is told. (World 18: two officers were each told, the same
       // morning, that the corps was theirs.)
       { const was = w.characters[u.commander], fresh = u.commandSince === w.turn && was?.alive && was.id !== ch.id; if (fresh) tell(w, was, c.name, `The order that gave you unit ${u.id} was changed the same day: ${ch.name} commands it.`); }
-      u.commander = ch.id; u.commandSince = w.turn; tell(w, ch, c.name, `You now command unit ${u.id}.`); return { ok: true, msg: `${ch.name} (${ch.id}) commands ${u.id}.` }; }
+      u.commander = ch.id; u.commandSince = w.turn; tell(w, ch, c.name, `You now command unit ${u.id}.`); return { ok: true, msg: `${ch.name} (${ch.id}) commands ${u.id}.${how}` }; }
     case 'propose_contract': { const k = proposeContract(w, actor, op, num); if (!k) return fail('No such counterparty.');
       // The paper as it will be read by whoever is asked to sign it: what moves each quarter, and from whose account.
       const nm = id => w.characters[id]?.name ?? id, r = v => Math.round(v * 10) / 10, onState = id => k.purse?.[id] ? ` (on the account of ${w.countries[k.purse[id]]?.name})` : id === k.b && k.toState ? ` (the paper is laid before ${w.countries[k.toState]?.name}: signed as it stands it is on that treasury's account, not on ${nm(id)}'s own purse)` : '';
