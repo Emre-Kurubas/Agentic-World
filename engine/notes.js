@@ -7,6 +7,7 @@ import { clamp, nextId, quarterLabel } from './util.js';
 import { ROLES } from './world.js';
 import { favourFor, seize, deal } from './court.js';
 import { treasuryPays } from './money.js';
+import { he, He, him, his } from './names.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 const trace = (w, ch, text) => { if (!ch) return; (ch.secrets ||= []).push({ turn: w.turn, text }); ch.secrets = ch.secrets.slice(-12); };
@@ -51,7 +52,7 @@ export function creditFor(w, l, ch) {
 // The terms in words, for the debtor who looks his debts up and for whoever writes the holder's letters.
 export function termsWords(w, d) {
   const h = w.characters[d.creditor], t = termsFor(w, d), fee = r1(d.owed * t.rate);
-  return `${t.time ? `${h.name} would give time on it for about ${fee} added to the note for each quarter` : `${h.name} has renewed it ${t.renewed} times, sees too little behind it and will give no more time`}; ${t.floor >= d.owed - .5 ? 'he would take nothing less than the whole' : `he would take ${t.floor} now and call it settled`}`;
+  return `${t.time ? `${h.name} would give time on it for about ${fee} added to the note for each quarter` : `${h.name} has renewed it ${t.renewed} times, sees too little behind it and will give no more time`}; ${t.floor >= d.owed - .5 ? `${he(h)} would take nothing less than the whole` : `${he(h)} would take ${t.floor} now and call it settled`}`;
 }
 
 function assign(w, d, to, price, quiet) {
@@ -76,8 +77,8 @@ export function noteOp(w, actor, c, op, { fail, num, governs, allowance }) {
     if (!l?.alive || l.id === actor.id) return fail(`No such lender.${house ? ` The largest banking house here is that of ${house.name} (${house.id}).` : ''}`);
     const want = num(op.amount, 0, 1e6, 0), turns = Math.round(num(op.due_turns, 1, 40, 8)); if (!(want >= 1)) return fail('No sum was named.');
     if (l.status !== 'free') return fail(`${l.name} is in no position to lend.`);
-    if (l.aiControlled) { say(w, l, actor.name, `${actor.name} asks to borrow ${r1(want)} of you for ${turns} quarters${op.interest != null ? `, offering ${Math.round(num(op.interest, 0, 2, 0) * 100)}% in all` : ''}. Lending it is yours to decide (lend_private with character ${actor.id}).`); return ok(`The request has gone to ${l.name}; whether to lend, and on what terms, is his to decide.`); }
-    if (allowance(w, actor, `borrow:${l.id}`, 1, 1) <= 0) return fail(`${l.name} has given his answer this quarter; he can be asked again in the next.`);
+    if (l.aiControlled) { say(w, l, actor.name, `${actor.name} asks to borrow ${r1(want)} of you for ${turns} quarters${op.interest != null ? `, offering ${Math.round(num(op.interest, 0, 2, 0) * 100)}% in all` : ''}. Lending it is yours to decide (lend_private with character ${actor.id}).`); return ok(`The request has gone to ${l.name}; whether to lend, and on what terms, is ${his(l)} to decide.`); }
+    if (allowance(w, actor, `borrow:${l.id}`, 1, 1) <= 0) return fail(`${l.name} has given ${his(l)} answer this quarter; ${he(l)} can be asked again in the next.`);
     const k = creditFor(w, l, actor), total = Math.min(1, k.rate * turns), perQ = op.rate != null ? num(op.rate, 0, 1, 0) : null; let offered = op.interest != null ? num(op.interest, 0, 2, 0) : perQ != null ? perQ * turns : null;
     // People speak of what money costs by the quarter. A figure too small to be the whole charge and about right as the charge for one quarter is
     // the charge for one quarter. (World 17: "at the quoted 4.4% a quarter" was written as 4.4% for two years and refused four times in fifteen.)
@@ -85,11 +86,11 @@ export function noteOp(w, actor, c, op, { fail, num, governs, allowance }) {
     // Whoever offers the house about what it asks borrows at what it asks.
     if (offered != null && offered >= total * .95) offered = Math.max(offered, total);
     if (k.bad) return fail(`${l.name} lends you nothing: your name is on a note that was not honoured, and that is remembered for years.`);
-    if (k.room < 1) return fail(`${l.name} will put nothing on your name: ${k.thin ? 'his own house cannot spare it' : 'by his reckoning what you have and what you are do not cover what you already owe'}.`);
-    if (offered != null && offered < total - .005) return fail(`${l.name} does not lend for ${turns} quarters at ${Math.round(offered * 100)}% in all (${r1(offered / turns * 100)}% a quarter): on your name he wants ${Math.ceil(total * 100)}% in all, about ${r1(total / turns * 100)}% a quarter. He would put up as much as ${k.room}.`);
+    if (k.room < 1) return fail(`${l.name} will put nothing on your name: ${k.thin ? `${his(l)} own house cannot spare it` : `by ${his(l)} reckoning what you have and what you are do not cover what you already owe`}.`);
+    if (offered != null && offered < total - .005) return fail(`${l.name} does not lend for ${turns} quarters at ${Math.round(offered * 100)}% in all (${r1(offered / turns * 100)}% a quarter): on your name ${he(l)} wants ${Math.ceil(total * 100)}% in all, about ${r1(total / turns * 100)}% a quarter. ${He(l)} would put up as much as ${k.room}.`);
     const m = Math.min(want, k.room), interest = Math.max(total, offered ?? 0), d = { id: nextId(w, 'B-'), creditor: l.id, debtor: actor.id, amount: m, owed: r1(m * (1 + interest)), due: w.turn + turns, terms: `Borrowed from ${l.post === 'house' ? `the banking house of ${l.name}` : l.name} in ${quarterLabel(w.turn)}.`, status: 'open', turn: w.turn };
     l.wealth -= m; actor.wealth += m; (w.debts ||= []).push(d); trace(w, actor, `Borrowed ${Math.round(m)} from ${l.post === 'house' ? `the banking house of ${l.name}` : l.name}.`); deal(w, l, actor, `Lent ${actor.name} ${r1(m)} on note ${d.id}; ${d.owed} is due ${quarterLabel(d.due)}.`);
-    return { ok: true, debt: d.id, msg: `${l.name} lent you ${r1(m)}${m < want - .01 ? `, not the ${r1(want)} asked: that is what he will put on your name` : ''}. You owe ${d.owed} on note ${d.id} by ${quarterLabel(d.due)} (${Math.round(interest * 100)}% for the ${turns} quarters). ${l.post === 'house' ? 'Unpaid, the house first names what it would take to forget it, and then takes what the law gives it, and the town hears.' : 'Unpaid, it is his to press, to sell or to hold over you.'}` };
+    return { ok: true, debt: d.id, msg: `${l.name} lent you ${r1(m)}${m < want - .01 ? `, not the ${r1(want)} asked: that is what ${he(l)} will put on your name` : ''}. You owe ${d.owed} on note ${d.id} by ${quarterLabel(d.due)} (${Math.round(interest * 100)}% for the ${turns} quarters). ${l.post === 'house' ? 'Unpaid, the house first names what it would take to forget it, and then takes what the law gives it, and the town hears.' : `Unpaid, it is ${his(l)} to press, to sell or to hold over you.`}` };
   }
   const d = noteOf(w, op.debt ?? op.id ?? op.note);
   if (!d) { const mine = (w.debts || []).filter(x => live(x) && [x.creditor, x.debtor].includes(actor.id)).map(x => x.id); return fail(`No such note is open.${mine.length ? ` Those you are party to: ${mine.join(', ')}.` : ''}`); }
@@ -103,18 +104,18 @@ export function noteOp(w, actor, c, op, { fail, num, governs, allowance }) {
         if (!(price > 0)) return fail('No price was offered.');
         const bids = w.bids ||= [], old = bids.findIndex(b => b.debt === d.id && b.from === actor.id), bid = { debt: d.id, from: actor.id, price, state, quiet, turn: w.turn }; if (old >= 0) bids[old] = bid; else bids.push(bid);
         say(w, h, actor.name, `${actor.name} offers you ${r1(price)} for note ${d.id}, on which ${who.name} owes you ${Math.round(d.owed)} (${dueWords(d)}). Selling it is yours to decide (sell_debt with debt ${d.id} and to ${actor.id}); the offer stands for a year.`);
-        return ok(`Your offer of ${r1(price)} for note ${d.id} has gone to ${h.name}, who holds it. Selling is his to decide; the offer stands for four quarters, and a new one replaces it.`);
+        return ok(`Your offer of ${r1(price)} for note ${d.id} has gone to ${h.name}, who holds it. Selling is ${his(h)} to decide; the offer stands for four quarters, and a new one replaces it.`);
       }
       const a = askFor(w, d, actor), ruler = w.characters[w.countries[h.country]?.leader];
-      if (!(price > 0)) return fail(a.bound ? `No price was offered; and ${h.name} would not put ${who.name}'s paper into another's hands at any price while he stands toward the government as he does.` : `No price was offered. ${h.name} would part with note ${d.id} (${who.name} owes ${Math.round(d.owed)}, ${dueWords(d)}) for ${a.price}.`);
-      if (allowance(w, actor, `bid:${d.id}`, 1, 1) <= 0) return fail(`${h.name} has given his answer on that note this quarter; he can be asked again in the next.`);
+      if (!(price > 0)) return fail(a.bound ? `No price was offered; and ${h.name} would not put ${who.name}'s paper into another's hands at any price while ${he(h)} stands toward the government as ${he(h)} does.` : `No price was offered. ${h.name} would part with note ${d.id} (${who.name} owes ${Math.round(d.owed)}, ${dueWords(d)}) for ${a.price}.`);
+      if (allowance(w, actor, `bid:${d.id}`, 1, 1) <= 0) return fail(`${h.name} has given ${his(h)} answer on that note this quarter; ${he(h)} can be asked again in the next.`);
       if (a.bound) {
         // A loyal man tells his ruler who came for the ruler's paper, and it goes into the ruler's file.
-        if (ruler?.alive) { say(w, ruler, h.name, `${h.name} (${h.id}) reports that ${actor.name} (${actor.id}) offered ${r1(price)} for your note ${d.id}, to hold it in his own hands. He was refused.`); const f = ruler.dossiers[actor.id] ||= { turn: w.turn, about: actor.name, facts: [] }; f.facts.push(`Tried in ${quarterLabel(w.turn)} to buy up ${ruler.name}'s note of hand from ${h.name}.`); f.facts = f.facts.slice(-8); }
+        if (ruler?.alive) { say(w, ruler, h.name, `${h.name} (${h.id}) reports that ${actor.name} (${actor.id}) offered ${r1(price)} for your note ${d.id}, to hold it in ${his(actor)} own hands. ${He(actor)} was refused.`); const f = ruler.dossiers[actor.id] ||= { turn: w.turn, about: actor.name, facts: [] }; f.facts.push(`Tried in ${quarterLabel(w.turn)} to buy up ${ruler.name}'s note of hand from ${h.name}.`); f.facts = f.facts.slice(-8); }
         trace(w, actor, `Tried to buy up ${who.name}'s note of hand from ${h.name}.`); deal(w, h, actor, `Refused to sell ${actor.name} the note ${d.id} of ${who.name}, and told ${who.name}.`);
-        return fail(`${h.name} will not put ${who.name}'s paper into another's hands: it is not the sum; he stands by the government, and such a man may say who asked.`);
+        return fail(`${h.name} will not put ${who.name}'s paper into another's hands: it is not the sum; ${he(h)} stands by the government, and such a man may say who asked.`);
       }
-      if (price < a.price) { deal(w, h, actor, `Refused ${actor.name}'s ${r1(price)} for note ${d.id} of ${who.name}; his price is ${a.price}.`); return fail(`${h.name} will not part with note ${d.id} for ${r1(price)}. ${who.name} owes ${Math.round(d.owed)} on it${a.cov >= .8 ? ' and can pay' : a.cov < .3 ? ' and has little to pay with' : ''}${a.hold ? ', and a note on someone in a seat is a hold he would be giving up' : ''}: he names ${a.price}.`); }
+      if (price < a.price) { deal(w, h, actor, `Refused ${actor.name}'s ${r1(price)} for note ${d.id} of ${who.name}; ${his(h)} price is ${a.price}.`); return fail(`${h.name} will not part with note ${d.id} for ${r1(price)}. ${who.name} owes ${Math.round(d.owed)} on it${a.cov >= .8 ? ' and can pay' : a.cov < .3 ? ' and has little to pay with' : ''}${a.hold ? ', and a note on someone in a seat is a hold ${he(h)} would be giving up' : ''}: ${he(h)} names ${a.price}.`); }
       const paid = payFor(w, c, actor, price, state, allowance); if (!paid) return fail(state ? 'The secret funds cannot cover that this quarter.' : `You have not got ${r1(price)}.`);
       h.wealth += paid; if (state) trace(w, actor, `Paid for ${who.name}'s note of hand with ${Math.round(paid)} of the treasury's money.`);
       deal(w, h, actor, `Sold ${actor.name} the note ${d.id} of ${who.name} for ${r1(paid)}.`);
@@ -123,11 +124,11 @@ export function noteOp(w, actor, c, op, { fail, num, governs, allowance }) {
     case 'sell_debt': {
       if (h.id !== actor.id) return fail('That note is not yours to sell.');
       const key = String(op.to ?? op.character ?? '').trim(), to = Object.hasOwn(w.characters, key) ? w.characters[key] : Object.values(w.characters).find(x => x.alive && x.name.toLowerCase() === key.toLowerCase());
-      if (!to?.alive || to.id === actor.id || to.id === who.id) return fail(to?.id === who.id ? `${who.name} is the debtor: to let him off for a sum, take the sum and forgive the note.` : 'No such buyer.');
+      if (!to?.alive || to.id === actor.id || to.id === who.id) return fail(to?.id === who.id ? `${who.name} is the debtor: to let ${him(who)} off for a sum, take the sum and forgive the note.` : 'No such buyer.');
       const bid = bidsOn(w, d.id).find(b => b.from === to.id), want = op.price != null ? num(op.price, 0, 1e6, 0) : null;
       if (bid) {
         if (want != null && want > bid.price + .01) return fail(`${to.name} has offered ${r1(bid.price)} for it, not ${r1(want)}.`);
-        const tc = w.countries[to.country], paid = payFor(w, tc, to, bid.price, bid.state && tc?.alive && tc.leader === to.id, allowance); if (!paid) return fail(`${to.name} no longer has the ${r1(bid.price)} he offered.`);
+        const tc = w.countries[to.country], paid = payFor(w, tc, to, bid.price, bid.state && tc?.alive && tc.leader === to.id, allowance); if (!paid) return fail(`${to.name} no longer has the ${r1(bid.price)} ${he(to)} offered.`);
         actor.wealth += paid; say(w, to, actor.name, assign(w, d, to, paid, bid.quiet)); return ok(`Note ${d.id} is sold to ${to.name} for ${r1(paid)}.`);
       }
       // A banking house discounts paper: it buys a note for less than it expects to see of it. Nobody else nobody plays buys notes.
@@ -137,36 +138,36 @@ export function noteOp(w, actor, c, op, { fail, num, governs, allowance }) {
         if (want != null && want > worth) return fail(`The house of ${to.name} would give ${worth} for note ${d.id}, not ${r1(want)}.`);
         to.wealth -= worth; actor.wealth += worth; assign(w, d, to, worth, false); deal(w, to, actor, `Bought the note ${d.id} of ${who.name} from ${actor.name} for ${worth}.`); return ok(`The house of ${to.name} took note ${d.id} for ${worth}. ${who.name} owes the house now.`);
       }
-      if (want == null) return fail(`${to.name} has made no offer for that note: name a price to put it to him.`);
-      say(w, to, actor.name, `${actor.name} offers to sell you note ${d.id}, on which ${who.name} owes ${Math.round(d.owed)} (${dueWords(d)}), for ${r1(want)}. To take it, offer that price (buy_debt with debt ${d.id}).`); return ok(`The offer has gone to ${to.name}; if he bids, the sale is yours to close.`);
+      if (want == null) return fail(`${to.name} has made no offer for that note: name a price to put it to ${him(to)}.`);
+      say(w, to, actor.name, `${actor.name} offers to sell you note ${d.id}, on which ${who.name} owes ${Math.round(d.owed)} (${dueWords(d)}), for ${r1(want)}. To take it, offer that price (buy_debt with debt ${d.id}).`); return ok(`The offer has gone to ${to.name}; if ${he(to)} bids, the sale is yours to close.`);
     }
     case 'ask_terms': {
-      if (who.id !== actor.id) return fail(h.id === actor.id ? 'You hold that note: the terms are yours to give (extend_debt, forgive_debt).' : `That is ${who.name}'s note, not yours: its terms are between him and ${h.name}. The paper itself can be bought (buy_debt).`);
+      if (who.id !== actor.id) return fail(h.id === actor.id ? 'You hold that note: the terms are yours to give (extend_debt, forgive_debt).' : `That is ${who.name}'s note, not yours: its terms are between ${him(who)} and ${h.name}. The paper itself can be bought (buy_debt).`);
       const n = op.extend != null ? Math.round(num(op.extend, 1, 8, 4)) : 0, offer = op.offer != null ? num(op.offer, 0, 1e6, 0) : null, forgive = op.forgive === true;
-      if (h.aiControlled) { say(w, h, actor.name, `${actor.name} asks your terms on note ${d.id} (${Math.round(d.owed)} owed to you, ${dueWords(d)})${n ? `: ${n} more quarter${n > 1 ? 's' : ''}` : ''}${offer != null ? `${n ? ', or' : ':'} ${r1(offer)} now in full discharge` : ''}${forgive ? `${n || offer != null ? ', or' : ':'} that it be forgotten` : ''}. Time is yours to give (extend_debt), and so is taking less or forgetting it (forgive_debt).`); return ok(`Your request has gone to ${h.name}, who holds the note; the answer is his.`); }
+      if (h.aiControlled) { say(w, h, actor.name, `${actor.name} asks your terms on note ${d.id} (${Math.round(d.owed)} owed to you, ${dueWords(d)})${n ? `: ${n} more quarter${n > 1 ? 's' : ''}` : ''}${offer != null ? `${n ? ', or' : ':'} ${r1(offer)} now in full discharge` : ''}${forgive ? `${n || offer != null ? ', or' : ':'} that it be forgotten` : ''}. Time is yours to give (extend_debt), and so is taking less or forgetting it (forgive_debt).`); return ok(`Your request has gone to ${h.name}, who holds the note; the answer is ${his(h)}.`); }
       const t = termsFor(w, d);
       if (offer != null) {
         // A figure he has named stands for half a year: whoever comes back with it is not told a higher one. (World 17: "he would take 212"; 212
         // was brought, and the answer was 224, and then the whole.)
         const named = d.quote && d.quote.by === h.id && w.turn - d.quote.turn <= 2 ? d.quote.floor : null, floor = named != null ? Math.min(t.floor, named) : t.floor;
-        if (offer < floor) { const whole = floor >= d.owed - .5; if (!whole) d.quote = { floor, turn: named != null ? d.quote.turn : w.turn, by: h.id }; return fail(`${h.name} will not call ${Math.round(d.owed)} settled for ${r1(offer)}. ${whole ? 'By his reckoning you can pay the whole, and he wants the whole.' : `He would take ${floor} now in full discharge; the figure stands until ${quarterLabel(d.quote.turn + 2)}.`}`); }
+        if (offer < floor) { const whole = floor >= d.owed - .5; if (!whole) d.quote = { floor, turn: named != null ? d.quote.turn : w.turn, by: h.id }; return fail(`${h.name} will not call ${Math.round(d.owed)} settled for ${r1(offer)}. ${whole ? `By ${his(h)} reckoning you can pay the whole, and ${he(h)} wants the whole.` : `${He(h)} would take ${floor} now in full discharge; the figure stands until ${quarterLabel(d.quote.turn + 2)}.`}`); }
         const m = Math.min(offer, d.owed); if (actor.wealth < m) return fail(`You have not got ${r1(m)}.`);
         actor.wealth -= m; h.wealth += m; d.status = 'paid'; d.settled = m; d.closedAt = w.turn; deal(w, h, actor, `Took ${r1(m)} from ${actor.name} in full discharge of note ${d.id}.`);
         return ok(`${h.name} took ${r1(m)} and note ${d.id} is discharged${m < d.owed - .5 ? `, ${r1(d.owed - m)} short of what was owed` : ''}.`);
       }
       if (n) {
         if (d.renewedAt === w.turn) return fail(`Note ${d.id} has been written out afresh this quarter; it stands at ${r1(d.owed)}, due ${quarterLabel(d.due)}.`);
-        if (!t.time) return fail(`${h.name} has renewed note ${d.id} ${t.renewed} times and sees too little behind it: he gives no more time. ${t.floor < d.owed - .5 ? `He would take ${t.floor} now and call it settled.` : 'He wants his money.'}`);
+        if (!t.time) return fail(`${h.name} has renewed note ${d.id} ${t.renewed} times and sees too little behind it: ${he(h)} gives no more time. ${t.floor < d.owed - .5 ? `${He(h)} would take ${t.floor} now and call it settled.` : `${He(h)} wants ${his(h)} money.`}`);
         const fee = r1(d.owed * t.rate * n); d.due = Math.max(d.due, w.turn) + n; d.owed = r1(d.owed + fee); d.status = 'open'; d.dunned = null; d.renewed = t.renewed + 1; d.renewedAt = w.turn; deal(w, h, actor, `Gave ${actor.name} until ${quarterLabel(d.due)} on note ${d.id}, for ${fee} added to it.`);
-        return ok(`${h.name} gives you until ${quarterLabel(d.due)} on note ${d.id}. For the time he adds ${fee} to it: ${d.owed} is owed now. He has renewed it ${d.renewed} time${d.renewed > 1 ? 's' : ''}; after the third he gives time only to someone he can see is good for it.`);
+        return ok(`${h.name} gives you until ${quarterLabel(d.due)} on note ${d.id}. For the time ${he(h)} adds ${fee} to it: ${d.owed} is owed now. ${He(h)} has renewed it ${d.renewed} time${d.renewed > 1 ? 's' : ''}; after the third ${he(h)} gives time only to someone ${he(h)} can see is good for it.`);
       }
       if (forgive) {
         const hc = w.countries[h.country], o = h.post === 'house' && hc?.alive ? (w.offers || []).find(x => x.status === 'open' && x.forgive === d.id) ?? favourFor(w, hc, h, actor, d) : null;
-        if (o) { deal(w, h, actor, `Named his price for forgetting note ${d.id}: offer ${o.id}.`); return ok(`${h.name} names what he would take in place of money: ${o.text}. It is offer ${o.id}; accept_offer takes it, and it stands for a year.`); }
-        if (t.kin && d.owed <= Math.max(h.wealth, 0)) { d.status = 'forgiven'; d.closedAt = w.turn; deal(w, h, actor, `Forgave ${actor.name}, his own blood, the note ${d.id}.`); return ok(`${h.name} is of your blood and lets the note go: ${d.id} is forgiven.`); }
-        return fail(`${h.name} sees nothing you could do for him that is worth the note. In money, ${t.floor >= d.owed - .5 ? 'he wants the whole' : `he would take ${t.floor} now and call it settled`}.`);
+        if (o) { deal(w, h, actor, `Named ${his(h)} price for forgetting note ${d.id}: offer ${o.id}.`); return ok(`${h.name} names what ${he(h)} would take in place of money: ${o.text}. It is offer ${o.id}; accept_offer takes it, and it stands for a year.`); }
+        if (t.kin && d.owed <= Math.max(h.wealth, 0)) { d.status = 'forgiven'; d.closedAt = w.turn; deal(w, h, actor, `Forgave ${actor.name}, ${his(h)} own blood, the note ${d.id}.`); return ok(`${h.name} is of your blood and lets the note go: ${d.id} is forgiven.`); }
+        return fail(`${h.name} sees nothing you could do for ${him(h)} that is worth the note. In money, ${t.floor >= d.owed - .5 ? `${he(h)} wants the whole` : `${he(h)} would take ${t.floor} now and call it settled`}.`);
       }
-      return ok(`Note ${d.id}: you owe ${h.name} ${r1(d.owed)}, ${dueWords(d)}. ${termsWords(w, d)}${h.post === 'house' && ['leader', 'general'].includes(seatOf(w, actor)) ? '; and he has a favour in mind that he would take in place of money (ask with forgive)' : ''}.`);
+      return ok(`Note ${d.id}: you owe ${h.name} ${r1(d.owed)}, ${dueWords(d)}. ${termsWords(w, d)}${h.post === 'house' && ['leader', 'general'].includes(seatOf(w, actor)) ? `; and ${he(h)} has a favour in mind that ${he(h)} would take in place of money (ask with forgive)` : ''}.`);
     }
     case 'extend_debt': {
       if (h.id !== actor.id) return fail('That note is not yours to give time on.');

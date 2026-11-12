@@ -6,6 +6,7 @@ import { clamp, news, quarterLabel } from './util.js';
 import { ROLES, hasTreaty } from './world.js';
 import { succeed, replaceSlot, stripPosts } from './politics.js';
 import { incapacitated } from './health.js';
+import { he, He, him, himself } from './names.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 const trace = (w, ch, text) => { if (!ch) return; (ch.secrets ||= []).push({ turn: w.turn, text }); ch.secrets = ch.secrets.slice(-12); };
@@ -28,10 +29,10 @@ export function seatOp(w, actor, c, op, { fail, num, governs, personFor }) {
       const r = c.rising; if (!r || r.asked !== actor.id) return fail('Nobody has asked you to lead a rising. A rising of one\'s own making is a plot (start_plot with kind uprising).');
       const yes = op.accept !== false && op.refuse !== true, warn = !yes && op.warn === true, ruler = w.characters[c.leader], first = r.answer == null && !r.warned;
       r.answer = yes;
-      if (yes) { if (first) trace(w, actor, `Agreed in ${quarterLabel(w.turn)} to put himself at the head of a rising of the provinces.`); return { ok: true, msg: 'Your word has gone back to the provinces. When they rise this coming quarter you are proclaimed at their head: you leave your seat and everything you hold under the government, and you lead the rising\'s government in a civil war. Until then you may still take it back.' }; }
+      if (yes) { if (first) trace(w, actor, `Agreed in ${quarterLabel(w.turn)} to put ${himself(actor)} at the head of a rising of the provinces.`); return { ok: true, msg: 'Your word has gone back to the provinces. When they rise this coming quarter you are proclaimed at their head: you leave your seat and everything you hold under the government, and you lead the rising\'s government in a civil war. Until then you may still take it back.' }; }
       if (warn && !r.warned) {
         r.warned = true; trace(w, actor, `Was asked in ${quarterLabel(w.turn)} to lead a rising of the provinces, and gave the government warning of it.`);
-        if (ruler?.alive && ruler.id !== actor.id) { say(w, ruler, actor.name, `${actor.name}, leader of the opposition, lets you know that men from the provinces came to him: half the country means to rise in the coming quarter, and asked him to lead it. He has refused them. You have a quarter.`); const f = ruler.dossiers[actor.id] ||= { turn: w.turn, about: actor.name, facts: [] }; f.turn = w.turn; f.facts.push(`Gave warning in ${quarterLabel(w.turn)} that the provinces meant to rise, having refused to lead them.`); f.facts = f.facts.slice(-8); }
+        if (ruler?.alive && ruler.id !== actor.id) { say(w, ruler, actor.name, `${actor.name}, leader of the opposition, lets you know that men from the provinces came to ${him(actor)}: half the country means to rise in the coming quarter, and asked ${him(actor)} to lead it. ${He(actor)} has refused them. You have a quarter.`); const f = ruler.dossiers[actor.id] ||= { turn: w.turn, about: actor.name, facts: [] }; f.turn = w.turn; f.facts.push(`Gave warning in ${quarterLabel(w.turn)} that the provinces meant to rise, having refused to lead them.`); f.facts = f.facts.slice(-8); }
         return { ok: true, msg: `You have refused, and ${ruler?.name ?? 'the government'} has your warning: the provinces mean to rise in the coming quarter. They will rise under a man of their own if they still can. That you were asked, refused and told is on record with the government, and those who came to you will learn of it sooner or later.` };
       }
       if (first) trace(w, actor, `Was asked in ${quarterLabel(w.turn)} to lead a rising of the provinces, refused, and told the government nothing.`);
@@ -49,7 +50,7 @@ export function seatOp(w, actor, c, op, { fail, num, governs, personFor }) {
       // What he led without an office ends with him; what he owns stays his.
       for (const pl of w.plots || []) { if (!pl.active) continue; if (pl.leader === actor.id) pl.active = false; else pl.members = (pl.members || []).filter(id => id !== actor.id); }
       actor.retired = w.turn; actor.everAI = false; actor.power = Math.min(actor.power ?? 0, 15);
-      news(w, `${c.name}: ${actor.name}, once ${SEAT[actor.role] ?? 'in public life'}, has let it be known${where} that he withdraws from public life${words}.`, { kind: 'politics', countries: [c.id] });
+      news(w, `${c.name}: ${actor.name}, once ${SEAT[actor.role] ?? 'in public life'}, has let it be known${where} that ${he(actor)} withdraws from public life${words}.`, { kind: 'politics', countries: [c.id] });
       return { ok: true, msg: 'You have withdrawn from public life. This was your last morning at the centre of things: you are not called on again unless a government gives you an office. What you own is still yours, and letters still reach you.' };
     }
     // Laying down an office.
@@ -104,7 +105,7 @@ export function seatOp(w, actor, c, op, { fail, num, governs, personFor }) {
         news(w, `${c.name}: ${actor.name}, who had been banished, was arrested at the frontier.`, { kind: 'politics', countries: [c.id] });
         return { ok: true, msg: `You crossed the frontier of ${c.name} against the order that banished you, were recognised, and are in a cell. A police as strong as this one knows a banished face.` };
       }
-      actor.status = 'free'; actor.outSince = w.turn; const seen = c.intelligence >= 40; if (seen) say(w, ruler, 'Police', `${actor.name}, who had been banished, is back in the country in spite of the order. The police did not stop him at the frontier and know where he is.`);
+      actor.status = 'free'; actor.outSince = w.turn; const seen = c.intelligence >= 40; if (seen) say(w, ruler, 'Police', `${actor.name}, who had been banished, is back in the country in spite of the order. The police did not stop ${him(actor)} at the frontier and know where ${he(actor)} is.`);
       return { ok: true, msg: `You are back in ${c.name} against the order that banished you. The police did not know you at the frontier${seen ? ', but the government has heard that you are back' : ', and the government has not heard of it'}. The order still stands: you can be arrested like anyone.` };
     }
     // Who takes a seat when it falls vacant: whoever governs says it for the chief of staff's, the holder of a house or of the opposition's seat for his own.
@@ -117,7 +118,7 @@ export function seatOp(w, actor, c, op, { fail, num, governs, personFor }) {
       const n = personFor(w, c, op, seat === 'general' ? 'officer' : seat === 'oligarch' ? 'heir' : 'official');
       if (!n?.alive || n.country !== c.id || n.status !== 'free' || n.id === c[seat] || ROLES.some(r => c[r] === n.id) || incapacitated(n)) return fail(n ? `${n.name} cannot be named: a deputy is someone at liberty in the country who holds none of the four seats.` : 'No such person to name. Give a character, or a name for someone new.');
       list[seat] = n.id; say(w, n, actor.name, `You are named deputy to the ${SEAT[seat]}: if the seat falls vacant, it is yours the same day.`);
-      return { ok: true, msg: `${n.name} (${n.id}) is the deputy named for the seat of ${SEAT[seat]}. If it falls vacant by death, arrest, flight, resignation or promotion, he takes it the same day${seat === 'general' ? ', and no stranger put forward by the army' : ''}. It stands until you change it or he is no longer at liberty here.` };
+      return { ok: true, msg: `${n.name} (${n.id}) is the deputy named for the seat of ${SEAT[seat]}. If it falls vacant by death, arrest, flight, resignation or promotion, ${he(n)} takes it the same day${seat === 'general' ? ', and no stranger put forward by the army' : ''}. It stands until you change it or ${he(n)} is no longer at liberty here.` };
     }
   }
   return fail('Invalid operation.');

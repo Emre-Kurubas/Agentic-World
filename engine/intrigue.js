@@ -4,6 +4,7 @@
 import { clamp, news, rand, quarterLabel } from './util.js';
 import { atWar } from './world.js';
 import { shame } from './diplomacy.js';
+import { he, His, his } from './names.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 const keep = (w, ch, s) => { (ch.secrets ||= []).push({ turn: w.turn, ...s }); ch.secrets = ch.secrets.slice(-12); };
@@ -77,6 +78,6 @@ export function denounce(w, actor, x, to, op) {
   const fresh = facts.filter(f => !file.facts.includes(f)); file.facts = [...file.facts, ...fresh].slice(-8); if (forged.length) file.forged = [...new Set([...(file.forged || []), ...forged])].filter(f => file.facts.includes(f));
   if (said) { (file.said ||= []).push(`${actor.name}, in ${quarterLabel(w.turn)}: "${said}"`); file.said = file.said.slice(-4); }
   keep(w, actor, { text: `Denounced ${x.name} to ${to.name} in ${quarterLabel(w.turn)}.` });
-  say(w, to, actor.name, `${actor.name} (${actor.id}) lays before you what he knows of ${x.name} (${x.id})${facts.length ? `: ${facts.join(' ')}` : '.'}${said ? ` And he states: "${said}"` : ''} ${fresh.length ? `${fresh.length} paper${fresh.length > 1 ? 's are' : ' is'} new to your file on ${x.name}.` : facts.length ? 'You held these papers already.' : ''}${said ? ' His statement is kept with the file; it is his word and not a paper, and a court counts only papers.' : ''}`);
-  return { ok: true, msg: `${to.name} has what you know of ${x.name}: ${fresh.length} paper${fresh.length === 1 ? '' : 's'} new to his file${facts.length > fresh.length ? ` (${facts.length - fresh.length} he held already)` : ''}${said ? ', and your statement, which is your word and no paper' : ''}. ${x.name} has not been told. That you went to ${to.name} is a thing that can be found out.` };
+  say(w, to, actor.name, `${actor.name} (${actor.id}) lays before you what ${he(actor)} knows of ${x.name} (${x.id})${facts.length ? `: ${facts.join(' ')}` : '.'}${said ? ` And ${he(actor)} states: "${said}"` : ''} ${fresh.length ? `${fresh.length} paper${fresh.length > 1 ? 's are' : ' is'} new to your file on ${x.name}.` : facts.length ? 'You held these papers already.' : ''}${said ? ` ${His(actor)} statement is kept with the file; it is ${his(actor)} word and not a paper, and a court counts only papers.` : ''}`);
+  return { ok: true, msg: `${to.name} has what you know of ${x.name}: ${fresh.length} paper${fresh.length === 1 ? '' : 's'} new to ${his(to)} file${facts.length > fresh.length ? ` (${facts.length - fresh.length} ${he(to)} held already)` : ''}${said ? ', and your statement, which is your word and no paper' : ''}. ${x.name} has not been told. That you went to ${to.name} is a thing that can be found out.` };
 }

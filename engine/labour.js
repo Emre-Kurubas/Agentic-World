@@ -3,6 +3,7 @@
 // What a careless owner saves on timbering and pumps he may pay for in one morning.
 import { clamp, rand, news, sum, pick } from './util.js';
 import { STATE, isOpen } from './firms.js';
+import { him, himself } from './names.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 const trace = (w, ch, text) => { if (!ch) return; (ch.secrets ||= []).push({ turn: w.turn, text }); ch.secrets = ch.secrets.slice(-12); };
@@ -103,7 +104,7 @@ export function labourOp(w, actor, c, op, { fail, num, governs, tell, allowance 
         // The order asked for more than the state can make an owner do. Both are told: the government why nothing moved, the owner what is
         // asked of him. (World 16: "already spends 0.3 of 1 on safety; the order changes nothing" was read by a prince as his decree defied.)
         if (boss && boss.id !== actor.id) tell(w, boss, home.name, `By order of the government ${f.name} is to ${wages ? `pay at least ${r2(asked)} of the going wage` : `spend at least ${r2(asked)} of 1 on safety`}; it ${wages ? 'pays' : 'spends'} ${was}. The inspectors have not the means to hold you to it: whether it is kept is yours to decide, and the government will see which.`);
-        return { ok: true, msg: `The order went to ${f.name}, which belongs to ${boss?.name ?? 'no one in particular'}, and by itself changed nothing: the works ${wages ? 'pays' : 'spends'} ${was}, and the state's officials and inspectors can hold an owner to only about ${Math.round(kept * 100)} in the hundred of what is ordered (here ${r2(wages ? asked * (kept * .4 + .6) : asked * kept)}). The owner has been told what is asked of him and may raise it himself. A stronger administration, or an inspectorate with the power to audit, enforces more; a law (set_labour_law) binds every works alike, as far as the same officials reach.` };
+        return { ok: true, msg: `The order went to ${f.name}, which belongs to ${boss?.name ?? 'no one in particular'}, and by itself changed nothing: the works ${wages ? 'pays' : 'spends'} ${was}, and the state's officials and inspectors can hold an owner to only about ${Math.round(kept * 100)} in the hundred of what is ordered (here ${r2(wages ? asked * (kept * .4 + .6) : asked * kept)}). The owner has been told what is asked of ${him(boss)} and may raise it ${himself(boss)}. A stronger administration, or an inspectorate with the power to audit, enforces more; a law (set_labour_law) binds every works alike, as far as the same officials reach.` };
       }
       if (wages) f.wage = to; else f.safety = to; home.mods.push({ key: 'sat.capital', delta: -.6, turns: 4, label: `The order to ${f.name}` });
       const boss = bossOf(w, home, f); if (boss && boss.id !== actor.id) tell(w, boss, home.name, `By order of the government ${f.name} is to ${wages ? `pay at least ${r2(num(op.level, .5, 1.6, was))} of the going wage` : `spend at least ${r2(num(op.level, 0, 1, was))} of 1 on safety`}. The inspectors have brought it to ${to}.`);
