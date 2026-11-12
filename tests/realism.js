@@ -4898,6 +4898,13 @@ chain('World 18, third review: a signature goes to the paper it names or to none
     const officer = Object.values(w.characters).find(x => x.alive && x.country === c.id && (x.role === 'officer' || Object.values(w.units).some(u => u.commander === x.id))), rep = postReportOf(w, c, officer ?? { role: 'officer' });
     assert.ok(/the army stands as follows/.test(rep) && !/loyalty \d/.test(rep) && /(devoted to the government|sound|steady enough|grumbling|sullen|not to be relied on)/.test(rep), `an officer speaks of his men in a soldier's words, not in a figure: ${rep.slice(0, 200)}`);
     assert.ok(!/richness|mine level|reserve \d/.test(answer(w, L, 'resources')) && /(a very rich field|a rich field|a fair field|a thin field), (good for|nearly worked out)/.test(answer(w, L, 'resources')), 'and a deposit is described as a survey describes it'); }
+  { // A letter under a state's address that greets somebody; the seat that is gone; a chief of police who has something to say.
+    const w = inherited(2696855, 8), [c, d] = aliveCountries(w), L = ld(w, c), M = w.characters[c.oligarch], O = w.characters[c.opposition], far = ld(w, d);
+    assert.ok(recipient(w, c.id, far, `${M.name}, I thank you for your offer of steel. My stores are full for now.`)?.id === M.id && recipient(w, c.name, far, `${M.name}, I thank you for your offer.`)?.id === M.id, 'a letter addressed to a state that greets one of its people by name is that person\'s');
+    assert.ok(recipient(w, c.id, far, 'Your Excellency, the frontier is quiet.')?.id === L.id && recipient(w, c.id, far)?.id === L.id, 'and one that greets nobody is the ruler\'s, as before');
+    O.inbox = []; const r = applyOp(w, L, { op: 'purge', character: O.id, fate: 'exiled', _law: true }); if (r.ok) assert.ok(c.opposition !== O.id && O.inbox.some(m => /The leadership of the opposition and of your party is in the hands of [^(]*\(K\d+\) now\. It does not come back of itself/.test(m.text)), `whoever loses a seat and lives is told who holds it: ${O.inbox.map(m => m.text).join(' | ')}`);
+    const chief = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'police'); c.cells = 34; c.lastAttempt = { turn: w.turn, text: 'a bomb was thrown at the ruler' };
+    const rep = postReportOf(w, c, chief); assert.ok(/the armed underground is strong enough to try for a life[^;]*a bomb was thrown at the ruler/.test(rep) && /watch/.test(rep), `the chief of police reports the underground and what his force is set to watch: ${rep}`); }
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

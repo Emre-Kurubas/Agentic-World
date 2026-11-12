@@ -19,7 +19,7 @@ function strike(w, c) {
   let roll = rand(w) * sum(marks, m => m[1]), target = marks[0][0]; for (const [x, wgt] of marks) { if (roll < wgt) { target = x; break; } roll -= wgt; }
   const head = target.id === c.leader, guard = head ? .08 + c.police / 320 : c.police / 600, p = clamp(.16 + c.cells / 280 - guard, .03, .55), r = rand(w);
   const outcome = r < p * .5 ? 'killed' : r < p ? 'wounded' : 'missed', bomb = rand(w) < .55, others = bomb && outcome !== 'killed' ? Math.round(1 + rand(w) * 9) : 0;
-  const deed = bomb ? `A bomb was thrown at ${target.name}` : `A man fired a revolver at ${target.name}`, where = w.provinces[c.capital]?.name ?? c.name;
+  const deed = bomb ? `A bomb was thrown at ${target.name}` : `A man fired a revolver at ${target.name}`, where = w.provinces[c.capital]?.name ?? c.name; c.lastAttempt = { turn: w.turn, text: deed.replace(/^A /, 'a ') };
   c.cells = clamp(c.cells - 12, 0, 100); c.lastDeed = w.turn;
   news(w, `${c.name}: ${deed} in ${where}. ${outcome === 'killed' ? `${target.name} is dead.` : outcome === 'wounded' ? `${target.name} was wounded.` : `${target.name} was not hurt.`}${others ? ` ${others} bystanders were killed.` : ''} The attacker belonged to the armed underground.`, { kind: 'plot', countries: [c.id], province: c.capital });
   if (outcome === 'killed') die(w, target, 'was killed by an assassin of the underground', { quiet: true, shock: head ? 8 : 0 });

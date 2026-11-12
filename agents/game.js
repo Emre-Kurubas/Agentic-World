@@ -220,7 +220,7 @@ export class Game {
       const unread = new Map();
       for (const from of [...actors]) {
         for (const m of this.pending.actors[from.id]?.messages ?? []) {
-          const target = reachable.get(recipient(w, m.to, from)?.id);
+          const target = reachable.get(recipient(w, m.to, from, m.text)?.id);
           if (m.read || !target || target.id === from.id || talk.skip[target.id] || this.pending.actors[target.id]?.fallback) continue;
           if (!unread.has(target.id)) unread.set(target.id, []);
           unread.get(target.id).push({ m, from });
@@ -295,7 +295,7 @@ export class Game {
     const w = this.w, cfg = this.cfg;
     if (this.backend.kind === 'mock') return;
     const mail = {};
-    for (const ch of actors) for (const m of this.pending.actors[ch.id]?.messages ?? []) { const to = recipient(w, m.to, ch); if (to?.alive && to.status === 'free' && isMinor(to) && !to.aiControlled && to.id !== ch.id) (mail[to.country] ||= []).push({ from: ch, to, text: m.text }); }
+    for (const ch of actors) for (const m of this.pending.actors[ch.id]?.messages ?? []) { const to = recipient(w, m.to, ch, m.text); if (to?.alive && to.status === 'free' && isMinor(to) && !to.aiControlled && to.id !== ch.id) (mail[to.country] ||= []).push({ from: ch, to, text: m.text }); }
     const posts = Object.entries(mail).filter(([cid]) => w.countries[cid]?.alive && !this.pending.replies?.[cid]);
     if (!posts.length) { this.deliverReplies(log); return; }
     this.setStatus('referee judging', `answering ${posts.reduce((a, [, l]) => a + l.length, 0)} letters to people around the seats`);
@@ -314,7 +314,7 @@ export class Game {
   }
   // One letter through the post: delivered, or returned to its writer; read by the censor of a prison or copied by a watchful state on the way.
   post(m) {
-    const w = this.w, target = recipient(w, m.to, m.from);
+    const w = this.w, target = recipient(w, m.to, m.from, m.text);
     if (!target?.alive || target.id === m.from.id) { m.undelivered = true; bounce(w, m, target); }
     if (target) m.to = target.id === w.countries[m.to]?.leader ? m.to : target.id;
     if (m.undelivered) return;
@@ -376,7 +376,7 @@ export class Game {
     return { trace, rulings, system: [...(w.engineNotes || []).splice(0), ...(this.sysLog ||= []).splice(0)], messages: outgoing.map(m => this.posted(m)) };
   }
   // A letter as the record keeps it.
-  posted(m) { const w = this.w, target = recipient(w, m.to, m.from); return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, intercepted: !!m.intercepted, readBy: m.readBy ?? [], npc: !!m.npc, read: !!m.read, round: m.round ?? 0 }; }
+  posted(m) { const w = this.w, target = recipient(w, m.to, m.from, m.text); return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, intercepted: !!m.intercepted, readBy: m.readBy ?? [], npc: !!m.npc, read: !!m.read, round: m.round ?? 0 }; }
 
   // The dice are rolled only for what the engine cannot judge: an act that no operation carries (a go-between who may not get through, a letter
   // that may be stopped). Whatever an operation does, the engine judges for itself: whether there is a road, money, ships on station, authority,
@@ -471,8 +471,13 @@ export function toTable(w, ch, messages) {
 // by a firm (its owner), or by a surname only one living person bears. In five games one letter in eight went to "K12", the example in the answer
 // format, and was lost without a word to the writer; what finds no one now comes back to whoever wrote it (see bounce).
 const SEATS = [['general', /\b(chief of (the )?(general )?staff|general staff|commander[- ]in[- ]chief)\b/], ['opposition', /\bopposition\b/], ['oligarch', /\b(magnate|oligarch)\b/], ['leader', /\b(ruler|leader|president|chairman|chairwoman|king|queen|prince|princess|premier|prime minister|head of state|sovereign|majesty|regent)\b/]];
-export function recipient(w, to, from = null) {
+// A letter addressed to a state goes to whoever governs it, unless its first line greets somebody else of that state by name: "Ines Cordero,
+// I thank you for your offer of steel" under the address of her country is hers. (World 18: four such letters to a mill owner were laid on
+// her ruler's desk, who read them as a leak.)
+const greeted = (w, state, text, living) => { const head = String(text ?? '').slice(0, 90).toLowerCase(), hit = living.filter(x => x.country === state.id && head.includes(x.name.toLowerCase())); return hit.length === 1 && hit[0].id !== state.leader ? hit[0] : null; };
+export function recipient(w, to, from = null, text = '') {
   const key = String(to ?? '').trim(); if (!key) return null;
+  if (w.countries[key]?.alive && text) { const g = greeted(w, w.countries[key], text, Object.values(w.characters).filter(x => x.alive)); if (g) return g; }
   const direct = w.characters[key] ?? w.characters[w.countries[key]?.leader]; if (direct) return direct;
   const ids = key.match(/\b[KU]\d+\b/g) || [], byId = ids.map(id => w.characters[id]).find(Boolean); if (byId) return byId;
   const low = key.toLowerCase().replace(/^k[\s?\-:.]+/, ''), bare = low.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').replace(/[\s.,;:]+$/, '').trim(), living = Object.values(w.characters).filter(x => x.alive);
@@ -480,7 +485,7 @@ export function recipient(w, to, from = null) {
   const states = Object.values(w.countries).filter(c => c.alive), state = states.find(c => c.name.toLowerCase() === bare) ?? ids.map(id => w.countries[id]).find(c => c?.alive) ?? states.find(c => low.includes(c.name.toLowerCase()));
   const seat = SEATS.find(([, re]) => re.test(bare))?.[0], home = state ?? w.countries[from?.country];
   if (seat && home?.alive && !living.some(x => bare.endsWith(x.name.toLowerCase()))) return w.characters[home[seat]] ?? null;
-  if (state && (bare === state.name.toLowerCase() || !bare)) return w.characters[state.leader] ?? null;
+  if (state && (bare === state.name.toLowerCase() || !bare)) return (text && greeted(w, state, text, living)) || (w.characters[state.leader] ?? null);
   const titled = living.filter(x => bare.endsWith(x.name.toLowerCase())); if (titled.length === 1) return titled[0];
   const firm = Object.values(w.firms || {}).find(f => f.name?.toLowerCase() === bare && w.characters[f.owner]?.alive); if (firm) return w.characters[firm.owner];
   const sur = bare.split(' ').at(-1), same = living.filter(x => x.name.toLowerCase().split(' ').at(-1) === sur), near = same.filter(x => x.country === from?.country);

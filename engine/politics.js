@@ -227,6 +227,9 @@ export function fillSeat(w, c, role, gone, how) {
 export function replaceSlot(w, c, ch) {
   if (!ROLES.includes(ch.role) || c[ch.role] !== ch.id || ch.role === 'leader') return;
   ch.outSince = w.turn; const { n, fresh } = fillSeat(w, c, ch.role, ch, fateOf(ch));
+  // Whoever loses a seat and lives is told who sits in it now, and that it does not come back of itself. (World 18: an opposition leader
+  // arrested, tried and acquitted went on giving her party orders for a year, and learned from a refusal that it was no longer hers.)
+  if (ch.alive && n) ch.inbox.push({ turn: w.turn, from: 'A friend', text: `${{ general: 'The general staff', opposition: 'The leadership of the opposition and of your party', oligarch: 'Your house and its works' }[ch.role] ?? 'Your seat'} ${ch.role === 'oligarch' ? 'are' : 'is'} in the hands of ${n.name} (${n.id}) now. It does not come back of itself: an acquittal, a release or a return from abroad sets you free and gives you nothing else. What was the seat's to order is no longer yours to order.` });
   // A business house outlives its head, and its fortune is the one it had: whoever takes it over takes over what was left of it, most of it if
   // the old head is dead, what could be reached at home if he sits in a cell or abroad. No new fortune comes with a new name.
   if (ch.role === 'oligarch') { const left = Math.round(ch.status === 'dead' ? Math.max(0, ch.wealth) * .8 : Math.max(0, ch.wealth - (ch.abroad || 0)) * .7); n.wealth = fresh ? left : n.wealth + left; ch.wealth = ch.status === 'dead' ? 0 : ch.wealth - left; }
