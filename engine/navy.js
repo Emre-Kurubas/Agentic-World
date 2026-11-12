@@ -306,30 +306,43 @@ const AFFINITY = { merchant: 2, republic: 1.2, federation: 1.2, monarchy: 1, rev
 export const LIFT = 2, MERCHANT = 1;
 const harbours = (w, c) => sum(countryProvinces(w, c.id), p => p.port || 0);
 // What a country's own traffic asks of ships: its coasting trade, by the size of its harbours, and half of every cargo it sends or receives by sea.
-const traffic = (w, c, sea) => harbours(w, c) + sea / 2, fleetFor = (w, c) => (harbours(w, c) * 1.5 + (c._seaVol || 0)) * (AFFINITY[c.archetype] ?? 1);
+const fleetFor = (w, c) => (harbours(w, c) * 1.5 + (c._seaVol || 0)) * (AFFINITY[c.archetype] ?? 1);
 // An army goes aboard at a quay: a harbour embarks so many thousand men with their horses and stores in a quarter for each size it has, and
 // tonnage beyond that waits in the roads. (Asked without a world, the answer is what the ships alone could carry.)
 export const QUAY = 40;
 export const liftOf = (c, w) => Math.max(0, Math.min((c.shipping ?? 20) * LIFT, w ? sum(countryProvinces(w, c.id).filter(p => p.owner === c.id), p => p.port || 0) * QUAY : Infinity) - (c._lifted || 0) * LIFT);
-// carried: every shipment that went by sea this quarter, as [exporter, importer, quantity, freight paid]. Each end of a shipment carries half
-// of it if it has the ships; what neither end can carry is carried by whoever in the world has ships to spare, and the freight goes with the cargo.
+// carried: every shipment that went by sea this quarter, as [exporter, importer, quantity, freight paid].
+// A state's merchants give their own flag the first call on a share of their own cargoes, at either end (FLAG, or what its government has laid
+// down: flagShare, navigation_act), as far as it has ships free after its coasting trade. Everything else is offered on the open market and goes
+// to whoever has ships lying free, in proportion to them: the freight goes with the cargo. So tonnage earns whatever flag the cargo sails for,
+// and the state with half the world's ships carries about half the world's cargoes. (Before, each end carried half of every cargo of its own
+// if it had the ships at all, and the world's largest merchant fleet carried what was left: under a third of the freight for half the tonnage.)
+export const FLAG = .2;
+const flagOf = c => clamp(c?.flagShare ?? FLAG, 0, .6);
 export function merchantStep(w, cs, carried) {
-  const vol = {}, st = {}; let needAll = 0, shortAll = 0, spareAll = 0, pool = 0;
-  for (const [x, b, q] of carried) { vol[x] = (vol[x] || 0) + q; vol[b] = (vol[b] || 0) + q; }
+  const vol = {}, want = {}, st = {}; let cargo = 0, openCap = 0, coastNeed = 0, coastShort = 0;
+  for (const [x, b, q] of carried) { vol[x] = (vol[x] || 0) + q; vol[b] = (vol[b] || 0) + q; cargo += q; want[x] = (want[x] || 0) + q * flagOf(w.countries[x]); want[b] = (want[b] || 0) + q * flagOf(w.countries[b]); }
   for (const c of cs) {
-    const seaborne = vol[c.id] || 0, need = traffic(w, c, seaborne); c._seaVol = c._seaVol == null ? seaborne : c._seaVol * .7 + seaborne * .3;
+    const seaborne = vol[c.id] || 0; c._seaVol = c._seaVol == null ? seaborne : c._seaVol * .7 + seaborne * .3;
     if (c.shipping == null) c.shipping = fleetFor(w, c);
-    const cap = Math.max(0, c.shipping - (c._lifted || 0)), own = Math.min(cap, need);
-    st[c.id] = { cover: need > 0 ? own / need : 1, spare: cap - own }; needAll += need; shortAll += need - own; spareAll += cap - own; c._freightIn = 0; c._freightOut = 0;
+    const cap = Math.max(0, c.shipping - (c._lifted || 0)), coasting = harbours(w, c), coast = Math.min(cap, coasting), free = cap - coast, own = Math.min(free, want[c.id] || 0);
+    st[c.id] = { cover: (want[c.id] || 0) > 0 ? own / want[c.id] : 1, open: free - own }; openCap += free - own; coastNeed += coasting; coastShort += coasting - coast;
+    c._freightIn = 0; c._freightOut = 0; c._carried = {}; c._hauled = 0;
   }
-  const hired = shortAll > 0 ? Math.min(shortAll, spareAll) / shortAll : 0;
-  for (const [x, b, , f] of carried) {
-    const X = w.countries[x], B = w.countries[b], theirs = f * .5 * st[b].cover, out = f * .5 * (2 - st[x].cover - st[b].cover) * hired, due = theirs + out, pay = Math.min(due, Math.max(X.reserves, 0)), k = due > 0 ? pay / due : 0;
-    X.reserves -= pay; X._freightOut += pay; B.reserves += theirs * k; B._freightIn += theirs * k; pool += out * k;
+  const part = id => openCap > 0 ? st[id].open / openCap : 0, carry = (c, flag, q) => { if (q > 0) c._carried[flag] = (c._carried[flag] || 0) + q; }; let openCargo = 0, pool = 0;
+  for (const [x, b, q, f] of carried) {
+    const X = w.countries[x], B = w.countries[b], sx = flagOf(X) * st[x].cover, sb = flagOf(B) * st[b].cover, so = Math.max(0, 1 - sx - sb); openCargo += q * so;
+    // The exporter was paid the freight with the price. What his own ships carried he keeps; the rest he pays on to those who carried it.
+    const due = f * (sb + so), pay = Math.min(due, Math.max(X.reserves, 0)), k = due > 0 ? pay / due : 1;
+    X.reserves -= pay; X._freightOut += pay; X._freightIn += f * sx; B.reserves += f * sb * k; B._freightIn += f * sb * k; pool += f * so * k;
+    X._hauled += q * sx; B._hauled += q * sb;
+    for (const end of [X, B]) { carry(end, x, q * sx); carry(end, b, q * sb); for (const c of cs) carry(end, c.id, q * so * part(c.id)); }
   }
-  if (spareAll > 0) for (const c of cs) { const g = pool * st[c.id].spare / spareAll; c.reserves += g; c._freightIn += g; }
+  for (const c of cs) { const g = pool * part(c.id); c.reserves += g; c._freightIn += g; c._hauled += openCargo * part(c.id); }
+  w.seaCargo = cargo;
   // When the world has fewer ships than cargoes, every freight rises.
-  w.freight = (w.freight ?? 0) * .5 + clamp(needAll > 0 ? Math.max(0, shortAll - spareAll) / needAll * .6 : 0, 0, .35) * .5;
+  const needAll = cargo + coastNeed, short = Math.max(0, openCargo - openCap) + coastShort;
+  w.freight = (w.freight ?? 0) * .5 + clamp(needAll > 0 ? short / needAll * .6 : 0, 0, .35) * .5;
   for (const c of cs) {
     // A war at sea is fought against merchant ships first: raiders and mines on a belligerent's trade routes sink his tonnage.
     let lost = 0; const where = new Set();

@@ -4,7 +4,7 @@ import { standingWords } from '../engine/standing.js';
 import { inquiryWords } from '../engine/inquiry.js';
 import { meansWords } from '../engine/means.js';
 import { tenderWords } from '../engine/tender.js';
-import { countryProvinces, aliveCountries, atWar, hasTreaty, GOODS, GOOD_LABEL, PLANTS, TECHS, provincePop } from '../engine/world.js';
+import { countryProvinces, aliveCountries, atWar, hasTreaty, GOODS, GOOD_LABEL, PLANTS, TECHS, provincePop, BASE_PRICE } from '../engine/world.js';
 import { clauseText, leadsParties, governmentSeats, GATED, whipCount, observes, mustPassParliament } from '../engine/polity.js';
 import { isOpen, ownerName } from '../engine/firms.js';
 import { holdOf, handsOf, firmValue } from '../engine/firms.js';
@@ -26,7 +26,7 @@ import { termsWords, bidsOn } from '../engine/notes.js';
 import { bondsOf, holdersOf, marketPrice } from '../engine/bonds.js';
 import { season, TERRAIN_DEF, FRONTAGE, postureWords, marchQuarters, supplyWords, supplyOf, railWorks, shellsFor, abilityWord, commanderOf } from '../engine/military.js';
 import { holdsFire } from '../engine/frontier.js';
-import { SHIPS, kindOf, orderWords, fromBase, readiness, baseMap, liftOf, LIFT, QUAY, iced } from '../engine/navy.js';
+import { SHIPS, kindOf, orderWords, fromBase, readiness, baseMap, liftOf, LIFT, QUAY, FLAG, iced } from '../engine/navy.js';
 import { claimsOf, UNFOUGHT } from '../engine/ops.js';
 import { quarterLabel, clamp } from '../engine/util.js';
 import { quote, wasteOf, durationOf, projectYield, projectLabel, WORKS } from '../engine/projects.js';
@@ -40,7 +40,7 @@ function booksText(c) {
   const n = v => Math.round(v), sign = v => `${v >= 0 ? '+' : ''}${Math.round(v)}`, lost = [`a bureaucracy of ${n(c.bureaucracy)} can collect ${pct(k.collect)} of what is owed`, `graft takes ${pct(k.graft)} of that`, k.unrest > .005 ? `unrest ${pct(k.unrest)}` : '', k.reach < .995 ? `the state's weak hold on some provinces ${pct(1 - k.reach)}` : ''].filter(Boolean).join(', ');
   const names = { military: 'the armed forces', welfare: 'relief and welfare', infrastructure: 'roads and public works', education: 'schools', police: 'police', administration: 'administration' };
   const due = sumOf(Object.values(k.programs)) + k.agencies + k.interest, was = k.before;
-  return `Where last quarter's revenue came from: income tax ${n(k.income)}, land tax ${n(k.land)}, tax on business ${n(k.business)}, customs ${n(k.customs)}${k.levy > .05 ? `, the levy on peoples under disabilities ${n(k.levy)}` : ''}${k.tolls > .5 ? `, tolls ${n(k.tolls)}` : ''}. Of every 100 owed in tax about ${n(k.eff * 100)} reached the treasury: ${lost}.${k.works > .5 ? ` Outside the budget, the state's own works paid ${n(k.works)} in profit into the treasury.` : ''}
+  return `Where last quarter's revenue came from: income tax ${n(k.income)}, land tax ${n(k.land)}, tax on business ${n(k.business)}${k.shipping > .5 ? ` (${n(k.shipping)} of it from what the country's ships earned in freight)` : ''}, customs ${n(k.customs)}${k.levy > .05 ? `, the levy on peoples under disabilities ${n(k.levy)}` : ''}${k.tolls > .5 ? `, tolls ${n(k.tolls)}` : ''}. Of every 100 owed in tax about ${n(k.eff * 100)} reached the treasury: ${lost}.${k.works > .5 ? ` Outside the budget, the state's own works paid ${n(k.works)} in profit into the treasury.` : ''}
 Where it went: ${Object.entries(k.programs).sort((a, b) => b[1] - a[1]).map(([key, v]) => `${names[key] ?? key} ${n(v)}`).join(', ')}, standing institutions ${n(k.agencies)}, interest on the debt ${n(k.interest)}${k.abroad > .5 ? ` (of which ${n(k.abroad)} to foreign creditors, in gold)` : ''}.${sumOf(Object.values(k.outlay || {})) > .5 ? ` Outside the budget the treasury also paid out, in cash or on credit: ${Object.entries(k.outlay).filter(([, v]) => v > .5).map(([key, v]) => `${{ building: 'building and surveys', forces: 'raising troops and laying down ships', purchases: 'purchases abroad', persons: 'payments to persons', other: 'other orders' }[key] ?? key} ${n(v)}`).join(', ')}.` : ''}${was ? ` Against the quarter before: revenue ${sign(k.income + k.land + k.business + k.customs + k.tolls - was.revenue)}, spending due ${sign(due - was.due)}.` : ''}
 `;
 }
@@ -256,7 +256,7 @@ const routeOf = (w, a, b) => w.routes?.[a < b ? `${a}|${b}` : `${b}|${a}`], flow
 const waters = (w, r) => r.path?.length ? r.path.join(' > ') : '';
 function wayWords(w, o, x, r) {
   if (!r) return atWar(w, o.id, x.id) ? 'none: they are at war' : o.embargo?.includes(x.id) || x.embargo?.includes(o.id) ? 'none: an embargo stands between them' : 'none: no road or open water joins them';
-  if (r.mode === 'land') return 'overland, across their common frontier';
+  if (r.mode === 'land') return `overland, across their common frontier${r.bulk?.mode === 'sea' ? `; grain, coal, ore, timber and oil go round by sea through ${waters(w, r.bulk)} (${Math.round((r.bulk.cost - 1) * 100)} in the hundred on what goes that way), in whatever ships are free` : r.bulk ? `; grain, coal, ore, timber and oil pay the railway's price for what is heavy (${Math.round((r.bulk.cost - 1) * 100)} in the hundred)` : ''}`;
   if (r.mode === 'transit') return `through ${w.countries[r.via]?.name ?? 'a third state'}, whose roads and harbours it uses`;
   const raided = r.path.filter(s => (w.seaRaids?.[s] || []).some(k => atWar(w, k, o.id) || atWar(w, k, x.id))), mined = r.path.filter(s => w.mines?.[s] && (atWar(w, w.mines[s].by, o.id) || atWar(w, w.mines[s].by, x.id)));
   return `by sea through ${waters(w, r)}${r.tolls?.length ? ', paying toll at a strait' : ''}${raided.length ? `, with raiders out in ${raided.join(', ')}` : ''}${mined.length ? `, through mines in ${mined.join(', ')}` : ''}`;
@@ -326,7 +326,8 @@ export function answer(w, ch, raw) {
     },
     trade: () => {
       const sold = Object.entries(c.lastSold || {}).filter(([, q]) => q > .5), bought = Object.entries(c.lastBought || {}).filter(([, q]) => q > .5), open = aliveCountries(w).filter(o => o.id !== c.id && w.routes[c.id < o.id ? `${c.id}|${o.id}` : `${o.id}|${c.id}`]);
-      const marine = `\nMerchant marine: ${Math.round(c.shipping ?? 0)} of tonnage (a unit carries a unit of cargo a quarter; the country's coasting trade and half of every cargo it sends or receives by sea are its to carry, and what it cannot carry foreign ships carry for the freight). Last quarter it earned ${round(c._freightIn ?? 0, 1)} in freight and ${round(c._freightOut ?? 0, 1)} went to other shipowners.${(c._sunk ?? 0) > .05 ? ` Raiders and mines sank ${round(c._sunk, 1)} of it.` : ''} ${(w.freight ?? 0) > .02 ? `The world is short of ships: freights by sea stand ${Math.round(w.freight * 100)} in the hundred above the usual.` : 'There are ships enough in the world and freights are ordinary.'} Tonnage grows of itself toward what the country's harbours and trade can employ, faster when freights are high, and by what the state lays down (build_ship with kind merchant).`;
+      const world = sumOf(aliveCountries(w).map(o => o.shipping ?? 0)), flag = Math.round((c.flagShare ?? FLAG) * 100);
+      const marine = `\nMerchant marine: ${Math.round(c.shipping ?? 0)} of tonnage, of about ${Math.round(world)} in the world (a unit carries a unit of cargo a quarter). The coasting trade comes first. Of every cargo the country sends or receives by sea, ${flag} in the hundred is offered first to its own flag (navigation_act changes that share); everything else in the world is carried by whoever has ships lying free, in proportion to them, and the freight goes with the cargo whatever flag the goods belong to. Between neighbours, too, grain, coal, ore, timber and oil go round by sea where that is cheaper than the railway. Last quarter its ships carried about ${Math.round((c._hauled ?? 0) / Math.max(w.seaCargo ?? 0, 1e-9) * 100)} in the hundred of all that crossed the sea and earned ${round(c._freightIn ?? 0, 1)} in freight, which pays the tax on business like any other earnings; ${round(c._freightOut ?? 0, 1)} was paid out for the carriage of the country's own exports.${(c._sunk ?? 0) > .05 ? ` Raiders and mines sank ${round(c._sunk, 1)} of it.` : ''} ${(w.freight ?? 0) > .02 ? `The world is short of ships: freights by sea stand ${Math.round(w.freight * 100)} in the hundred above the usual.` : 'There are ships enough in the world and freights are ordinary.'} Tonnage grows of itself toward what the country's harbours and trade can employ, faster when freights are high, and by what the state lays down (build_ship with kind merchant).`;
       // What the country lives by, as the board of trade would put it.
       const grown = c._need?.grain > 0 ? (c._raw?.grain ?? 0) / c._need.grain : 1, works = c._need?.goods > 0 ? (c._capAll?.goods ?? 0) / c._need.goods : 1, pc = v => Math.round(v * 20) * 5;
       const lives = `\nWhat the country lives by: it grows about ${pc(grown)} in the hundred of the bread it eats${grown < .95 ? ', and buys the rest abroad' : grown > 1.05 ? ', and sells what it does not eat' : ''}; its works can turn out about ${pc(works)} in the hundred of the wares its people use${works < .95 ? ', and the rest comes from abroad or is gone without' : works > 1.1 ? ', and the surplus is its trade' : ''}. A duty makes the foreign thing dearer at home: fewer of it come in (wares fall off fastest, bread least), the customs take their share of what does, and what the country cannot make or grow for itself is then missing from shops and bakeries. Merchants pay for what they bring in with the exchange the country's own sales earn; the gold reserve is drawn on freely for bread and for whatever the government itself orders abroad (buy_goods), and for other things only while it stands above the floor the banks are told to keep${can(ch, 'economy') ? ` (${Math.round(c.goldFloor ?? c.reserves * .6)} now)` : ''}, a quarter of the excess at a time: a country that sells little buys little. Where that floor stands is the government's decision (set_gold_floor): lower, and more comes in while the gold lasts; higher, and the gold stays while the shops go without. A country refused by its suppliers, or blockaded, goes without what it bought.`;
@@ -451,6 +452,42 @@ ${(() => { const by = k => Math.round(men(us.filter(u => u.posture === k))), d =
 // every country, for anyone who buys the book. Round figures, rounder from a country whose press is gagged. What is exact, current or secret
 // (the treasury's real books, where the troops stand, plots, secret papers) is not in it: that is what a secret service and bought men are for.
 // Who is bound to come to our side, whom we are bound to, and with whom peace is promised: from the treaties in force that this person may see.
+// What a state leans on others for, and who leans on it: whose ships carry its cargoes, what it cannot do without from abroad and who sells it,
+// whom it owes, where its own goods find their buyers. All of it can be added up from the trade returns, the shipping lists and the printed
+// accounts of the treasuries, so it stands in every yearbook; a government has it on its desk; and it is among the facts a country is handed
+// down with. (The owner, after two games in which the state with a sixth of the world's output, most of its gold and half its ships was
+// written to by nobody: "the facts must be seen: half their sea trade sails in Andona's ships, a third of their steel comes from there".)
+const partWord = v => v >= .9 ? 'nearly all' : v >= .7 ? 'about three quarters' : v >= .58 ? 'about two thirds' : v >= .42 ? 'about half' : v >= .29 ? 'about a third' : v >= .22 ? 'about a quarter' : v >= .15 ? 'about a fifth' : 'about a tenth';
+export function leanFacts(w, c) {
+  const live = aliveCountries(w), worth = g => w.globalPrice?.[g] ?? BASE_PRICE[g] ?? 1, out = { carriers: [], goods: [], owes: [], markets: [] };
+  const car = c._carried || {}, all = sumOf(Object.values(car)); out.sea = all;
+  if (all > .5) out.carriers = Object.entries(car).filter(([id]) => w.countries[id]?.alive).map(([id, q]) => ({ id, share: q / all })).filter(x => x.share >= .12).sort((a, b) => b.share - a.share);
+  for (const [g, from] of Object.entries(c._from || {})) { const q = sumOf(Object.values(from)), use = c._need?.[g] || 0; if (!(use > 0) || !(q > 0) || q / use < .15) continue; const [top, tq] = Object.entries(from).sort((a, b) => b[1] - a[1])[0]; out.goods.push({ g, share: Math.min(1, q / use), top, topShare: tq / q, weight: q * worth(g) * Math.min(1, q / use) }); }
+  out.goods.sort((a, b) => b.weight - a.weight);
+  out.owes = Object.entries(c.creditors || {}).filter(([id, v]) => v >= 1 && w.countries[id]?.alive).map(([id, v]) => ({ id, gold: v, rate: c.creditTerms?.[id]?.rate })).sort((a, b) => b.gold - a.gold);
+  const sold = {}; for (const o of live) if (o.id !== c.id) for (const [g, from] of Object.entries(o._from || {})) if (from[c.id] > 0) (sold[g] ||= {})[o.id] = from[c.id];
+  for (const [g, to] of Object.entries(sold)) { const q = sumOf(Object.values(to)), value = q * worth(g); if (value < Math.max(c.gdp, 1) * .003) continue; const [top, tq] = Object.entries(to).sort((a, b) => b[1] - a[1])[0]; if (tq / q >= .4) out.markets.push({ g, top, share: tq / q, value }); }
+  out.markets.sort((a, b) => b.value - a.value);
+  return out;
+}
+export function leanLines(w, c, own = false) {
+  const nm = id => w.countries[id]?.name ?? id, f = leanFacts(w, c), lines = [], good = g => GOOD_LABEL[g] ?? g, list = xs => xs.length > 1 ? `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}` : xs[0];
+  if (f.carriers.length) lines.push(`Of the cargoes ${own ? 'we send and receive' : 'it sends and receives'} by sea, ${list(f.carriers.slice(0, 3).map(x => x.id === c.id ? `${own ? 'our' : 'its'} own ships carry ${partWord(x.share)}` : `ships of ${nm(x.id)} carry ${partWord(x.share)}`))}.`);
+  else if (!(f.sea > .5)) lines.push(`${own ? 'We send and receive' : 'It sends and receives'} next to nothing by sea.`);
+  for (const x of f.goods.slice(0, 4)) lines.push(`Of the ${good(x.g)} ${own ? 'we use' : 'it uses'}, ${partWord(x.share)} is bought abroad, ${x.topShare >= .55 ? 'most of it' : 'the largest part'} from ${nm(x.top)}.`);
+  for (const x of f.owes.slice(0, 3)) lines.push(`${own ? 'We owe' : 'It owes'} ${nm(x.id)} ${Math.round(x.gold)} in gold${x.rate != null ? `, at ${Math.round(x.rate * 1000) / 10}% a quarter` : ''}.`);
+  for (const x of f.markets.slice(0, 3)) lines.push(`${partWord(x.share).replace(/^a/, 'A').replace(/^n/, 'N')} of the ${good(x.g)} ${own ? 'we sell' : 'it sells'} abroad goes to ${nm(x.top)}.`);
+  // And the other way: who leans on this state.
+  const on = [];
+  for (const o of aliveCountries(w)) { if (o.id === c.id) continue; const g = leanFacts(w, o), why = [];
+    const ships = g.carriers.find(x => x.id === c.id); if (ships && ships.share >= .25) why.push(`${partWord(ships.share)} of its sea trade sails in ${own ? 'our' : 'its'} ships`);
+    for (const x of g.goods.filter(x => x.top === c.id && x.share * x.topShare >= .12).slice(0, 2)) why.push(`${partWord(x.share * x.topShare)} of the ${good(x.g)} it uses comes from ${own ? 'us' : 'it'}`);
+    const debt = g.owes.find(x => x.id === c.id); if (debt) why.push(`it owes ${own ? 'us' : 'it'} ${Math.round(debt.gold)} in gold`);
+    for (const x of g.markets.filter(x => x.top === c.id && x.share >= .5).slice(0, 1)) why.push(`${partWord(x.share)} of the ${good(x.g)} it sells abroad is bought ${own ? 'by us' : 'by it'}`);
+    if (why.length) on.push(`${o.name} (${why.join('; ')})`); }
+  lines.push(on.length ? `Leaning on ${own ? 'us' : 'it'}: ${on.join('; ')}.` : `No other state leans on ${own ? 'us' : 'it'} for ships, for goods or for gold.`);
+  return lines;
+}
 function bondsText(w, c, ch) {
   const nm = id => w.countries[id]?.name ?? id, b = pledgesOf(w, c, t => seesTreaty(w, ch, t)), until = t => t.expires != null ? ` until ${quarterLabel(t.expires)}` : '';
   const toUs = [...b.allies.map(x => `${nm(x.id)} (alliance ${x.t.id}${x.t.secret ? ', secret' : ''})`), ...b.for.map(g => `${nm(g.by)} (its guarantee of our independence)`), ...b.wards.filter(t => t.protector !== c.id).map(t => `${nm(t.protector)} (our protector)`)];
@@ -475,7 +512,7 @@ function yearbook(w, c, o, ch) {
   const law = lawOfPeoples(w, o);
   const papers = `Treaties it is openly party to: ${[...new Set(open)].join('; ') || 'none'}.`;
   const staff = inOffice(w, ch) && ['leader', 'general'].includes(ch.role) ? `\n${serviceWord(c.intel[o.id] ?? 15)} Agents can also wreck works there or pay for a rising (spy with kind sabotage or fund_uprising), and a process they have mastered can be stolen (steal_tech).` : '';
-  return `From the yearbooks:\n${money}\n${politics}\n${offices}\n${peoples} ${law}\n${papers}\n${recordOf(o)}\n${lifelines(w, c, o).split('\nHow a trade is cut.')[0]}${staff}`;
+  return `From the yearbooks:\n${money}\n${politics}\n${offices}\n${peoples} ${law}\n${papers}\n${recordOf(o)}\nWhat it leans on others for, and who leans on it (from the trade returns, the shipping lists and the treasuries' accounts): ${leanLines(w, o).join(' ')}\n${lifelines(w, c, o).split('\nHow a trade is cut.')[0]}${staff}`;
 }
 // How a state stands toward the peoples and faiths inside it: its policy, the rules made for single provinces or peoples, and what its law lays on whom. It is public law.
 const disabilityWords = s => [s.vote ? '' : 'have no vote', s.office ? '' : 'may hold no office', s.arms ? '' : 'may not bear arms', s.levy ? `pay a levy of ${Math.round(s.levy * 1000) / 10} in the hundred` : '', s.shielded ? '' : 'are left without the protection of the police'].filter(Boolean).join(', ');
@@ -587,6 +624,7 @@ export function desk(w, ch) {
     put('What the state takes from business:', `Tax on business ${Math.round(c.tax.business * 100)}%, general tariff ${Math.round(c.tariff * 100)}%.`);
   }
   if (rules || seat === 'oligarch' || seat === 'opposition') put('The markets and the wars:', marketsAndWars(w, c));
+  if (rules || seat === 'oligarch') put('Whom the country leans on, and who leans on it:', leanLines(w, c, true));
   // What stands until it is changed is laid out as that, so that no morning is spent giving the same orders again. (World 16: of 553 orders of
   // posture 378 ordered what already stood, and a third of the rulings that were only words said "everything stays as it is".)
   const stand = [], nmc = id => w.countries[id]?.name ?? id;

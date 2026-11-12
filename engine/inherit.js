@@ -376,7 +376,8 @@ export function inheritStates(w) {
 // and earned) is taken from it; nothing else is. (World 17: on the first morning every treasury read "revenue 0" and every works "turned out 0".)
 function lastQuarter(w, cs) {
   const trial = structuredClone(w); trial.status = 'playing'; beginTurn(trial); stepWorld(trial);
-  for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive) continue; for (const k of Object.keys(t)) if (/^last[A-Z]/.test(k) && t[k] != null) c[k] = structuredClone(t[k]); if (t.interestRate != null) c.interestRate = t.interestRate; if (t.paidRatio != null) c.paidRatio = t.paidRatio; for (const k of ['_made', '_raw']) if (t[k]) c[k] = structuredClone(t[k]); }
+  for (const c of cs) { const t = trial.countries[c.id]; if (!t?.alive) continue; for (const k of Object.keys(t)) if (/^last[A-Z]/.test(k) && t[k] != null) c[k] = structuredClone(t[k]); if (t.interestRate != null) c.interestRate = t.interestRate; if (t.paidRatio != null) c.paidRatio = t.paidRatio; for (const k of ['_made', '_raw', '_from', '_carried', '_hauled', '_freightIn', '_freightOut']) if (t[k] != null) c[k] = structuredClone(t[k]); }
+  w.seaCargo = trial.seaCargo ?? 0;
   for (const f of Object.values(w.firms || {})) { const t = trial.firms?.[f.id]; if (!t || t.strike || t.lockout || t.halted) continue; for (const k of ['lastProfit', 'lastUnits', 'lastTax', 'lastPrice', 'earn']) if (t[k] != null) f[k] = structuredClone(t[k]); }
 }
 

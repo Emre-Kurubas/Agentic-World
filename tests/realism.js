@@ -4122,6 +4122,48 @@ chain('What a treaty lends is lent: gold leaves the lender, is owed at the rate 
     delete L.condition; assert.ok(/In this state war is declared by the [^:]*: a declaration is laid before it as a bill/.test(String(answer(w, L, 'wars'))), 'and the ruler of a state whose house holds the power of war can read that it does'); }
 });
 
+import { routeFor as routeFor_, BULK as BULK_, LAND_BULK as LAND_BULK_ } from '../engine/economy.js';
+import { merchantStep as merchantStep_, FLAG as FLAG_ } from '../engine/navy.js';
+import { leanLines as leanLines_, leanFacts as leanFacts_ } from '../agents/queries.js';
+chain('The sea carries what is heavy, ships earn whatever flag the cargo sails for, and who leans on whom is a fact everybody can read', () => {
+  // Two games: the state with a sixth of the world's output, most of its gold and half its merchant tonnage was written to by nobody. Every
+  // cargo between neighbours went by land, each end of a cargo carried its own half if it had a ship at all, and the largest merchant fleet in
+  // the world earned under a third of the freight. The owner: "sea trade must grow: freight and carrying must really pay", and "the facts must
+  // be seen: half their sea trade sails in Andona's ships, a third of their steel comes from there".
+  const w = inherited(2696855, 8), cs = aliveCountries(w), land = Object.entries(w.routes).filter(([, r]) => r.mode === 'land');
+  const round = land.filter(([, r]) => r.bulk?.mode === 'sea'), rail = land.filter(([, r]) => r.bulk?.mode === 'land');
+  assert.ok(land.every(([, r]) => r.bulk) && round.length >= 3, `between neighbours with harbours on waters that join, bulk goes round by sea (${round.length} of ${land.length} land frontiers)`);
+  for (const [k, r] of round) assert.ok(routeFor_(r, 'grain') === r.bulk && routeFor_(r, 'coal').mode === 'sea' && routeFor_(r, 'machines') === r && routeFor_(r, 'goods').mode === 'land' && r.bulk.cost < r.cost + LAND_BULK_ && r.bulk.path.length > 0, `${k}: grain and coal by sea, machines and cloth by rail`);
+  for (const [k, r] of rail) assert.ok(Math.abs(r.bulk.cost - r.cost - LAND_BULK_) < 1e-9, `${k}: where no water joins them, bulk pays the railway's price`);
+  assert.ok(BULK_.has('iron') && !BULK_.has('steel') && !BULK_.has('arms'));
+  { const x = structuredClone(w); x.freight = .3; updateRoutes(x); const back = Object.entries(x.routes).filter(([k, r]) => r.mode === 'land' && round.some(([q]) => q === k) && r.bulk.mode === 'land').length; assert.ok(back >= round.length - 1, `when freights by sea are dear, bulk goes back on the railway (${back} of ${round.length})`); }
+  // Who carries: tonnage, whatever the flag of the cargo.
+  { const x = structuredClone(w), [A, B, C] = [...aliveCountries(x)].sort((p, q) => (q.shipping || 0) - (p.shipping || 0)), rest = aliveCountries(x).filter(c => ![A, B, C].includes(c)); for (const c of rest) c.shipping = 0; A.shipping = 200; B.shipping = 30; C.shipping = 30; for (const c of aliveCountries(x)) { delete c.flagShare; c._lifted = 0; }
+    const gold = () => aliveCountries(x).reduce((s, c) => s + c.reserves, 0), g0 = gold(); merchantStep_(x, aliveCountries(x), [[B.id, C.id, 20, 10]]);
+    assert.ok(Math.abs(gold() - g0) < 1e-6, 'freight moves gold from one state to another and makes none');
+    assert.ok(A._freightIn > B._freightIn && A._freightIn > C._freightIn && A._freightIn > 3.5 && Math.abs(A._freightIn + B._freightIn + C._freightIn - 10) < 1e-6, `a cargo between two states is carried mostly by the third, which has the ships (${[A, B, C].map(c => Math.round(c._freightIn * 10) / 10).join(', ')} of 10)`);
+    assert.ok(Math.abs((B._carried[A.id] || 0) - (C._carried[A.id] || 0)) < 1e-9 && B._carried[A.id] > B._carried[B.id] && Math.abs(x.seaCargo - 20) < 1e-9 && A._hauled > 8, 'and both ends know whose ships carried their trade');
+    const before = B._freightIn; assert.ok(applyOp(x, ld(x, B), { op: 'navigation_act', share: .6, _law: true }).ok && B.flagShare === .6); merchantStep_(x, aliveCountries(x), [[B.id, C.id, 20, 10]]);
+    assert.ok(B._freightIn > before * 1.8 && A._freightIn < 6, `a state that reserves its cargoes to its own flag keeps more of the freight, as far as it has the ships (${Math.round(before * 10) / 10} to ${Math.round(B._freightIn * 10) / 10})`);
+    B.shipping = 0; merchantStep_(x, aliveCountries(x), [[B.id, C.id, 20, 10]]); assert.ok(B._freightIn < 1e-9, 'and nothing where it has none'); }
+  // The world as it is played (eight states, two hundred provinces, the trading state alone on its island), left alone for two years.
+  const played = createWorld({ ...base, plainStates: false, seed: 2696855, countries: 8, provinces: 200 });
+  { const x = structuredClone(played); x.status = 'playing'; const acc = Object.fromEntries(aliveCountries(x).map(c => [c.id, { haul: 0, fin: 0, gdp: 0 }])); let cargo = 0; for (let i = 0; i < 8; i++) { beginTurn(x); stepWorld(x); cargo += x.seaCargo; for (const c of aliveCountries(x)) { acc[c.id].haul += c._hauled; acc[c.id].fin += c._freightIn; acc[c.id].gdp += c.gdp; } }
+    const m = aliveCountries(x).find(c => c.archetype === 'merchant'), a = acc[m.id], tons = aliveCountries(x).reduce((s, c) => s + c.shipping, 0);
+    assert.ok(a.haul / cargo > .35 && a.haul / cargo < .7 && Math.abs(a.haul / cargo - m.shipping / tons) < .15, `the trading state carries about its share of the world's tonnage (${Math.round(a.haul / cargo * 100)}% of the cargo with ${Math.round(m.shipping / tons * 100)}% of the ships)`);
+    assert.ok(a.fin / a.gdp > .008 && a.fin / a.gdp < .04, `and it pays: freight earned is ${Math.round(a.fin / a.gdp * 1000) / 10}% of its output`);
+    assert.ok(m.lastBooks.shipping > 5 && /of it from what the country's ships earned in freight/.test(String(answer(x, ld(x, m), 'budget'))), `the treasury has its part through the tax on business (${Math.round(m.lastBooks.shipping)} a quarter)`);
+    assert.ok(/Last quarter its ships carried about \d+ in the hundred of all that crossed the sea and earned [\d.]+ in freight/.test(String(answer(x, ld(x, m), 'trade'))), 'and the board of trade says what the ships did'); }
+  // Who leans on whom.
+  { const w = played, cs = aliveCountries(w), m = cs.find(c => c.archetype === 'merchant'), other = cs.find(c => c.id !== m.id), M = ld(w, m), O = ld(w, other), own = leanLines_(w, m, true), book = String(answer(w, O, `country:${m.id}`));
+    assert.ok(leanFacts_(w, other).carriers.some(x => x.id === m.id && x.share > .25), 'on the first morning already it is known whose ships carry whose trade');
+    const on = own.find(l => /^Leaning on us: /.test(l)); assert.ok(on && (on.match(/sea trade sails in our ships/g) || []).length >= 4, `the trading state's ruler reads who leans on it: ${on?.slice(0, 300)}`);
+    assert.ok(/What it leans on others for, and who leans on it[^]*Leaning on it: [^]*sea trade sails in its ships/.test(book), `and so does anybody who opens its yearbook: ${book.slice(book.indexOf('What it leans'), book.indexOf('What it leans') + 260)}`);
+    assert.ok(/Whom the country leans on, and who leans on it:[^]*Of the cargoes we send and receive by sea, ships of [^]* carry about/.test(desk(w, O)) && /Whom the country leans on/.test(desk(w, w.characters[other.oligarch])) && !/Whom the country leans on/.test(desk(w, w.characters[other.general])), 'a government has it on its desk');
+    const first = actorPrompt(w, O, [], false, { intro: true }); assert.ok(/What the country and the others need of one another, as the trade returns, the shipping lists and the treasuries' accounts show it:\n- Of the cargoes we send and receive by sea/.test(first), 'and it is among the facts a country is handed down with');
+    const debtor = cs.find(c => Object.keys(c.creditors || {}).length); if (debtor) { const [cid] = Object.keys(debtor.creditors); assert.ok(leanLines_(w, debtor, true).some(l => new RegExp(`^We owe ${w.countries[cid].name} \\d+ in gold`).test(l)) && leanLines_(w, w.countries[cid], true).some(l => new RegExp(`${debtor.name} \\([^)]*it owes us \\d+ in gold`).test(l)), 'a debt between states is read from both ends'); } }
+});
+
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
   // The same fight, the same dice, the enemy warned both times: only the man in command differs.
   const hurt = skill => { const f = duel({ dug: 5, ground: { trench: 2 }, rng: 99, seen: true }); f.gen.skill = skill; const [b] = quarter(f.w); assert.ok(b, 'a battle'); assert.ok(!b.prisoners, 'nobody was routed'); return f.D - f.def.men; };

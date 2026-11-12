@@ -77,6 +77,24 @@ export function updateStrategic(w) {
   }
 }
 
+// Bulk: what is heavy for its price. Between two states that touch by land a cargo goes by rail and road; but grain, coal, ore, timber and oil
+// carried overland cost a good deal more for what they are worth (LAND_BULK on top of the land route), and where both states have harbours on
+// waters that join, such cargoes go round by sea whenever that is the cheaper way. So neighbours with coasts send each other their bulk in
+// ships, and a war, a blockade or a dear freight puts it back on the railway. (Before, every cargo between neighbours went by land: half the
+// world's trade never saw a ship, and the state with half the world's ships earned next to nothing by them.)
+export const BULK = new Set(['grain', 'timber', 'coal', 'iron', 'copper', 'oil', 'phosphate']), LAND_BULK = .05;
+export const routeFor = (r, g) => r && r.bulk && BULK.has(g) ? r.bulk : r;
+function seaLeg(w, a, b, risk, hot) {
+  const path = seaRoute(w, a, b); if (!path) return null;
+  const tolls = path.map(s => straitAt(w, s)).filter(s => s && s.toll && s.controller && ![a.id, b.id].includes(s.controller));
+  const raided = path.filter(s => (w.seaRaids?.[s] || []).some(x => atWar(w, x, a.id) || atWar(w, x, b.id))).length;
+  // Mines laid by an enemy of either make every passage through that water a risk; laid by anyone else they are a lesser one.
+  const runners = sum(path, s => closure(w, s, a.id, b.id));
+  const mined = sum(path, s => { const m = w.mines?.[s]; return !m ? 0 : atWar(w, m.by, a.id) || atWar(w, m.by, b.id) ? .1 * m.level : [a.id, b.id].includes(m.by) ? 0 : .02 * m.level; });
+  // A deep harbour with quays and cranes turns ships round faster than an open roadstead: each step of harbour at either end takes a little off the freight.
+  const quay = (o, sea) => Math.max(1, ...countryProvinces(w, o.id).filter(p => p.port > 0 && p.controller === o.id && p.seas.includes(sea)).map(p => p.port));
+  return { mode: 'sea', cost: 1.05 + risk + path.length * .008 - (quay(a, path[0]) + quay(b, path.at(-1)) - 2) * .012 + sum(tolls, t => t.toll) + raided * .15 + mined + runners * .35 + (w.freight || 0) + hot * WAR_RISK.sea, path, tolls: tolls.map(t => t.id), ...(hot ? { war: hot * WAR_RISK.sea } : {}) };
+}
 export function updateRoutes(w) {
   const cs = aliveCountries(w), before = w.routes || {}; w.routes = {};
   for (let i = 0; i < cs.length; i++) for (let j = i + 1; j < cs.length; j++) {
@@ -85,18 +103,9 @@ export function updateRoutes(w) {
     if (a.embargo.includes(b.id) || b.embargo.includes(a.id) || atWar(w, a.id, b.id) || !dealsWith(w, a.id, b.id)) continue;
     // A cargo to or from a state at war pays for the risk at each such end: insurers, carriers and the buyer's own caution (warcost.js).
     const risk = tieOf(w, a.id, b.id) === 'broken' ? .08 : 0, hot = warEnds(a, b).length;
-    if (landBorder(w, a, b)) { w.routes[k] = { mode: 'land', cost: 1.04 + risk + hot * WAR_RISK.land, path: [], tolls: [], ...(hot ? { war: hot * WAR_RISK.land } : {}) }; continue; }
-    const path = seaRoute(w, a, b);
-    if (path) {
-      const tolls = path.map(s => straitAt(w, s)).filter(s => s && s.toll && s.controller && ![a.id, b.id].includes(s.controller));
-      const raided = path.filter(s => (w.seaRaids?.[s] || []).some(x => atWar(w, x, a.id) || atWar(w, x, b.id))).length;
-      // Mines laid by an enemy of either make every passage through that water a risk; laid by anyone else they are a lesser one.
-      const runners = sum(path, s => closure(w, s, a.id, b.id));
-      const mined = sum(path, s => { const m = w.mines?.[s]; return !m ? 0 : atWar(w, m.by, a.id) || atWar(w, m.by, b.id) ? .1 * m.level : [a.id, b.id].includes(m.by) ? 0 : .02 * m.level; });
-      // A deep harbour with quays and cranes turns ships round faster than an open roadstead: each step of harbour at either end takes a little off the freight.
-      const quay = (o, sea) => Math.max(1, ...countryProvinces(w, o.id).filter(p => p.port > 0 && p.controller === o.id && p.seas.includes(sea)).map(p => p.port));
-      w.routes[k] = { mode: 'sea', cost: 1.05 + risk + path.length * .008 - (quay(a, path[0]) + quay(b, path.at(-1)) - 2) * .012 + sum(tolls, t => t.toll) + raided * .15 + mined + runners * .35 + (w.freight || 0) + hot * WAR_RISK.sea, path, tolls: tolls.map(t => t.id), ...(hot ? { war: hot * WAR_RISK.sea } : {}) };
-    }
+    if (landBorder(w, a, b)) { const land = { mode: 'land', cost: 1.04 + risk + hot * WAR_RISK.land, path: [], tolls: [], ...(hot ? { war: hot * WAR_RISK.land } : {}) }, byRail = { ...land, cost: land.cost + LAND_BULK }, round = seaLeg(w, a, b, risk, hot);
+      w.routes[k] = { ...land, bulk: round && round.cost < byRail.cost ? round : byRail }; continue; }
+    const leg = seaLeg(w, a, b, risk, hot); if (leg) w.routes[k] = leg;
   }
   // A state at war with nobody whose ships are turned back from a blockaded coast protests to whoever turned them back.
   for (const [k, r] of Object.entries(before)) { if (r.mode !== 'sea' || w.routes[k]?.mode === 'sea') continue; const [x, y] = k.split('|').map(id => w.countries[id]); if (!x?.alive || !y?.alive || atWar(w, x.id, y.id)) continue;
@@ -251,7 +260,7 @@ const aimedTrade = (c, g, from) => c.tariffDeals?.[from] != null || c.aimed?.[fr
 const banned = (w, buyer, seller, g) => { const out = seller.bans?.[buyer.id]?.sell.includes(g) ? sealOf(w, seller) : 0, inn = buyer.bans?.[seller.id]?.buy.includes(g) ? sealOf(w, buyer) : 0; return 1 - (1 - out) * (1 - inn); };
 
 function trade(w, cs) {
-  w.tradeFlows = {}; const carried = [];
+  w.tradeFlows = {}; const carried = []; for (const c of cs) c._from = {};
   const insurer = [...cs].filter(c => !c.war?.on).sort((a, b) => (b.shipping || 0) - (a.shipping || 0))[0] ?? null; for (const c of cs) c._premiums = 0;
   const key = routeKey;
   for (const c of cs) { c.lastSold = {}; c.lastBought = {}; c.lastOrders = []; }
@@ -288,7 +297,7 @@ function trade(w, cs) {
     let wanted = sum(buyers, b => Math.min(b.d, Math.max(0, b.c.reserves - (b.c._debtService || 0)) / Math.max(price, .01))), moved = 0; const offered = sum(sellers, s => s.s);
     for (let pass = 0; pass < 2; pass++) for (const b of buyers) {
       if (b.d <= 0) continue;
-      const acc = sellers.map(x => ({ x, r: w.routes[key(b.c.id, x.c.id)] })).filter(a => a.x.s > 0 && a.x.c.id !== b.c.id && a.r);
+      const acc = sellers.map(x => ({ x, r: routeFor(w.routes[key(b.c.id, x.c.id)], g) })).filter(a => a.x.s > 0 && a.x.c.id !== b.c.id && a.r);
       // How much of the trade between a buyer and one seller the law leaves standing: all of it, unless a duty is aimed at that seller or goods are banned between the two.
       const open = a => aimedTrade(b.c, g, a.x.c.id) * (1 - banned(w, b.c, a.x.c, g));
       // Merchants shun a risk more than they shun its price: between a seller at war and one at peace the custom goes to the one at peace when he has the goods.
@@ -307,6 +316,8 @@ function trade(w, cs) {
         const gold = v * a.r.cost, risk = insurer && insurer.id !== a.x.c.id ? v * (a.r.war || 0) : 0; a.x.c.stock[g] -= q; b.c.stock[g] += q; a.x.c.reserves += gold - risk; b.c.reserves -= gold;
         if (risk > 0) { insurer.reserves += risk; insurer._premiums = (insurer._premiums || 0) + risk; }
         if (a.r.mode === 'sea') carried.push([a.x.c.id, b.c.id, q, v * (a.r.cost - 1 - (a.r.war || 0))]);
+        // Who sold whom what, for the yearbooks: a state's dependence on another is a fact anybody can add up from the trade returns.
+        ((b.c._from ||= {})[g] ||= {})[a.x.c.id] = ((b.c._from[g] ||= {})[a.x.c.id] || 0) + q;
         if (b.c._alloc) { const own = Math.min(b.c._alloc[g] ?? 0, gold); b.c._alloc[g] = (b.c._alloc[g] ?? 0) - own; b.c._spare = Math.max(0, (b.c._spare ?? 0) - (gold - own)); }
         // Duty is paid on what came through the customs house, at the rate that good pays; smuggled goods pay none.
         a.x.c._exportGold = (a.x.c._exportGold || 0) + gold - risk; b.c._duty = (b.c._duty || 0) + v * duty * b.taxed;
@@ -488,7 +499,9 @@ function consume(w, c, prev) {
 export const FULL_KIT = 1.3;
 function fiscal(w, c) {
   const eff = clamp((.4 + c.bureaucracy / 120) * (1 - c.corruption / 130) * (1 - (c.unrest ?? 0) / 400) * (c._adminFactor ?? 1) * (c.service?.treasury ?? 1), .2, 1);
-  const land = c._raw.grain * 10 * c.priceLevel * c.tax.land, business = (sum(RAW.filter(g => g !== 'grain'), g => c._raw[g] * BASE_PRICE[g]) + sum(Object.keys(RECIPE), g => (c._made[g] || 0) * BASE_PRICE[g] * .45)) * c.priceLevel * c.tax.business;
+  // What the country's ships earned carrying cargoes is a business like another and pays the tax on business: the freights come in as gold.
+  const shipping = (c._freightIn || 0) * (c.rate || 1) * c.tax.business;
+  const land = c._raw.grain * 10 * c.priceLevel * c.tax.land, business = (sum(RAW.filter(g => g !== 'grain'), g => c._raw[g] * BASE_PRICE[g]) + sum(Object.keys(RECIPE), g => (c._made[g] || 0) * BASE_PRICE[g] * .45)) * c.priceLevel * c.tax.business + shipping;
   // Customs are what each good paid at the rate set for it; goods that came in past the customs house paid nothing.
   const customs = (c._duty ?? (c._imports || 0) * c.tariff) * c.priceLevel;
   // A levy laid by law on some peoples or faiths alone is collected like any other tax, by the same offices and with the same losses.
@@ -542,7 +555,7 @@ function fiscal(w, c) {
   creditStanding(w, c, paid === 1 && !short);
   // The quarter's books in their parts: which tax brought what, what was lost in the collecting, where the money went, and how it stood the quarter before.
   c.lastBooks = { eff, collect: clamp(.4 + c.bureaucracy / 120, 0, 1), graft: c.corruption / 130, unrest: (c.unrest ?? 0) / 400, reach: c._adminFactor ?? 1,
-    income: c.gdp * .45 * c.tax.income * eff, land: land * eff, business: business * eff, customs: customs * eff, levy: levy * eff, tolls: (c._tolls || 0) * c.priceLevel, works: c._stateProfit || 0,
+    income: c.gdp * .45 * c.tax.income * eff, land: land * eff, business: business * eff, shipping: shipping * eff, customs: customs * eff, levy: levy * eff, tolls: (c._tolls || 0) * c.priceLevel, works: c._stateProfit || 0,
     programs: Object.fromEntries(Object.keys(b).map(k => [k, k === 'military' ? drawn : b[k] * c.gdp])), forces: { voted, usable, drawn }, agencies, interest, abroad: extPaid * (c.rate || 1), outlay: c._outlay || {},
     before: c.lastRevenue != null ? { revenue: c.lastRevenue, due: c.lastRevenue - (c.lastBalance ?? 0) } : null };
   c._stateProfit = 0; c._outlay = {};
