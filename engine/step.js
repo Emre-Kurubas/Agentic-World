@@ -1,4 +1,5 @@
 import { economyStep } from './economy.js';
+import { openGold, closeGold } from './gold.js';
 import { militaryStep, depotStep } from './military.js';
 import { satisfactionStep, plotStep, uprisingStep, electionStep, collapseStep, relationDrift, lifeStep, pruneStep, partyStep, debtStep } from './politics.js';
 import { treatyStep, institutionStep, billStep } from './polity.js';
@@ -27,7 +28,7 @@ import { countryProvinces, aliveCountries, provincePop } from './world.js';
 import { sum, quarterLabel } from './util.js';
 import { openCredit } from './money.js';
 
-export function beginTurn(w) { w.newsThisTurn = []; w.battles = []; w.seaFights = []; w.awaited = []; for (const c of aliveCountries(w)) openCredit(c); }
+export function beginTurn(w) { w.newsThisTurn = []; w.battles = []; w.seaFights = []; w.awaited = []; for (const c of aliveCountries(w)) { openCredit(c); openGold(c); } }
 
 export function stepWorld(w) {
   // Signatures ordered for papers that had not yet arrived are given now that every government's orders of the quarter are in.
@@ -75,6 +76,8 @@ export function stepWorld(w) {
   inquiryStep(w);
   watchStep(w);
   for (const c of aliveCountries(w)) {
+    // The quarter's gold account is shut: what came in and what went out, item by item (gold.js).
+    closeGold(c, w.turn);
     const provs = countryProvinces(w, c.id);
     c.history.push({
       fuel: +((c.fuelRatio ?? 1) * 100).toFixed(0), t: w.turn, gdp: Math.round(c.realGdp), infl: +(c.inflation * 100).toFixed(1), unemp: +(c.unemployment * 100).toFixed(1), debt: +((c.debt / Math.max(c.gdp * 4, 1)) * 100).toFixed(0),

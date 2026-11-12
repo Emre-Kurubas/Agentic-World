@@ -8,6 +8,7 @@ import { hasTech } from './economy.js';
 import { fighting, commanderOf, season, leadOf } from './military.js';
 import { die } from './politics.js';
 import { his } from './names.js';
+import { moved as goldMoved } from './gold.js';
 
 // power: what one hull counts for in a line of battle, a cruiser being one. speed: who can decline a fight. coal: what a hull burns in a
 // quarter at sea. cells: how far it steams in a quarter. reach: how many seas from a base it can keep station at all.
@@ -339,11 +340,11 @@ export function merchantStep(w, cs, carried) {
     const X = w.countries[x], B = w.countries[b], sx = flagOf(X) * st[x].cover, sb = flagOf(B) * st[b].cover, so = Math.max(0, 1 - sx - sb); openCargo += q * so;
     // The exporter was paid the freight with the price. What his own ships carried he keeps; the rest he pays on to those who carried it.
     const due = f * (sb + so), pay = Math.min(due, Math.max(X.reserves, 0)), k = due > 0 ? pay / due : 1;
-    X.reserves -= pay; X._freightOut += pay; X._freightIn += f * sx; B.reserves += f * sb * k; B._freightIn += f * sb * k; pool += f * so * k;
+    X.reserves -= pay; goldMoved(X, 'freight', -pay); X._freightOut += pay; X._freightIn += f * sx; B.reserves += f * sb * k; goldMoved(B, 'freight', f * sb * k); B._freightIn += f * sb * k; pool += f * so * k;
     X._hauled += q * sx; B._hauled += q * sb;
     for (const end of [X, B]) { carry(end, x, q * sx); carry(end, b, q * sb); for (const c of cs) carry(end, c.id, q * so * part(c.id)); }
   }
-  for (const c of cs) { const g = pool * part(c.id); c.reserves += g; c._freightIn += g; c._hauled += openCargo * part(c.id); }
+  for (const c of cs) { const g = pool * part(c.id); c.reserves += g; goldMoved(c, 'freight', g); c._freightIn += g; c._hauled += openCargo * part(c.id); }
   w.seaCargo = cargo;
   // When the world has fewer ships than cargoes, every freight rises.
   const needAll = cargo + coastNeed, short = Math.max(0, openCargo - openCap) + coastShort;
@@ -400,7 +401,7 @@ function gunboatStep(w) {
     const held = by?.alive && of?.alive && port?.controller === s.of && (p[s.by] || 0) > 0 && (p[s.by] || 0) > (p[s.of] || 0);
     if (!held || owed < .5) { s.over = true; if (by?.alive && of?.alive) { news(w, owed < .5 ? `${of.name}'s debt to ${by.name} is cleared: the customs house at ${port?.name} is handed back.` : `${by.name}'s squadron no longer holds ${port?.name}: the customs house is back in ${of.name}'s hands.`, { kind: 'diplomacy', countries: [s.by, s.of] }); tell(w, by, owed < .5 ? `${of.name}'s debt to us is collected in full; our officers have left the customs house at ${port?.name}.` : `Our squadron no longer commands the water off ${port?.name}: the customs house there is lost to us, with ${Math.round(owed)} in gold still owed.`); } continue; }
     const rate = of.rate || 1, take = Math.min(owed, Math.max(0, Math.min((of.lastBooks?.customs ?? 0) * .8, of.treasury)) / rate);
-    of.treasury -= take * rate; by.reserves += take; of.creditors[s.by] = owed - take; s.taken = (s.taken || 0) + take;
+    of.treasury -= take * rate; by.reserves += take; goldMoved(by, 'customs', take); of.creditors[s.by] = owed - take; s.taken = (s.taken || 0) + take;
     of.legitimacy = clamp(of.legitimacy - 1.5, 0, 100); const g = ((of.grudges ||= {})[s.by] ||= { incident: 0, kin: 0 }); g.incident += 5;
     // Paid in full: the officers go home the same quarter.
     if (of.creditors[s.by] < .5) { delete of.creditors[s.by]; s.over = true; news(w, `${of.name}'s debt to ${by.name} is cleared: the customs house at ${port.name} is handed back.`, { kind: 'diplomacy', countries: [s.by, s.of] }); tell(w, by, `The last ${Math.round(take * 10) / 10} in gold came in at ${port.name}: ${of.name}'s debt to us is collected in full, and our officers have left its customs house.`); tell(w, of, `${by.name} has taken the last of what we owed out of the customs at ${port.name} and handed the customs house back.`); continue; }

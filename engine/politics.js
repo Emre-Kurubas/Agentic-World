@@ -9,6 +9,7 @@ import { culturePenalty, leaderForeignness, minorityShare, votersOf } from './cu
 import { adminPressure } from './admin.js';
 import { afflict, healthStep, incapacitated } from './health.js';
 import { shut } from './underground.js';
+import { moved as goldMoved } from './gold.js';
 import { he, He, his } from './names.js';
 
 const CLASS_AXES = { peasants: { econ: -15, auth: 15, nation: 15, faith: 35 }, workers: { econ: -55, auth: -10, nation: 5, faith: 0 }, middle: { econ: 20, auth: -35, nation: 0, faith: -10 }, elite: { econ: 65, auth: 25, nation: 15, faith: 10 } };
@@ -311,7 +312,7 @@ export function startCivilWar(w, c, leaderCh, label, seedProvinces = [], { only 
   const share = take.length / Math.max(provs.length, 1);
   for (const g of Object.keys(c.stock)) { f.stock[g] = c.stock[g] * share; c.stock[g] *= 1 - share; }
   f.treasury = c.treasury * share * .4; c.treasury *= 1 - share * .6;
-  f.reserves = c.reserves * share * .5; c.reserves *= 1 - share * .5;
+  f.reserves = c.reserves * share * .5; goldMoved(c, 'secession', -f.reserves); c.reserves *= 1 - share * .5;
   f.money = c.money * share; c.money *= 1 - share; f._lastMoney = f.money; c._lastMoney = c.money;
   // The debt goes with the land that was to pay it.
   f.debt = c.debt * share; c.debt *= 1 - share; c.gdp *= 1 - share; f.gdp = c.gdp * share / Math.max(1 - share, .1); f.realGdp = f.gdp / f.priceLevel; c.realGdp *= 1 - share;

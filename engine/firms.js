@@ -2,6 +2,7 @@
 import { clamp, news, nextId, rand } from './util.js';
 import { PLANTS, BASE_PRICE, GOOD_LABEL, DEPOSITS, aliveCountries, countryProvinces } from './world.js';
 import { RECIPE } from './economy.js';
+import { moved as goldMoved } from './gold.js';
 import { queueProject, durationOf, plantPrice, minePrice, machinesFor, MAX_PLANT, MAX_MINE } from './projects.js';
 import { governs } from './polity.js';
 
@@ -144,7 +145,7 @@ export function firmStep(w) {
       if (f.owner === STATE) { c.treasury += dividend * (c.rate || 1); c._stateProfit = (c._stateProfit || 0) + dividend * (c.rate || 1); }
       else if (owner) {
         owner.wealth += dividend;
-        if (owner.country !== f.country) { const paid = Math.min(Math.max(c.reserves, 0), dividend); c.reserves -= paid; if (w.countries[owner.country]?.alive) w.countries[owner.country].reserves += paid; }
+        if (owner.country !== f.country) { const paid = Math.min(Math.max(c.reserves, 0), dividend); c.reserves -= paid; goldMoved(c, 'dividends', -paid); if (w.countries[owner.country]?.alive) { w.countries[owner.country].reserves += paid; goldMoved(w.countries[owner.country], 'dividends', paid); } }
       }
     } else f.cash += profit;
     // A private company that earns and has cash in hand builds: this is where industry's own growth comes from. Sick banks, dear credit and unrest make owners wait.

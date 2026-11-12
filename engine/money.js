@@ -1,6 +1,7 @@
 // Currencies and exchange. Reserves are in gold; the rate is the local-currency price of one gold unit.
 // The decision belongs to the agent (regime, devaluation, debt); rates and crises come out of these calculations.
 import { clamp, news, sum } from './util.js';
+import { moved as goldMoved } from './gold.js';
 import { aliveCountries, BASE_PRICE, GOODS } from './world.js';
 
 const UNITS = ['crown', 'thaler', 'mark', 'florin', 'ducat', 'shilling', 'dirham', 'guilder'];
@@ -156,7 +157,7 @@ export function declareDefault(w, c, why) {
   // Those who hold the state's paper by name lose with everyone else, and know whom to thank.
   for (const b of w.bonds || []) if (b.country === c.id) { b.amount *= .55; const h = w.characters[b.holder]; if (h?.alive) { h.inbox.push({ turn: w.turn, from: 'Your banker', text: `${c.name} has defaulted. The paper you hold is written down to ${Math.round(b.amount)}.` }); if (h.loyalty != null && h.country === c.id) h.loyalty = clamp(h.loyalty - 30, 0, 100); } } c.bankHealth = clamp(c.bankHealth - clamp(20 + weight * 60, 25, 55), 0, 100);
   // Gold runs from a defaulter to wherever it is safest; it does not vanish from the world.
-  if (c.reserves > 0) { const haven = aliveCountries(w).filter(o => o.id !== c.id && !o.capitalClosed).sort((a, b) => b.legitimacy - a.legitimacy)[0], out = c.reserves * .3; if (haven) { c.reserves -= out; haven.reserves += out; } }
+  if (c.reserves > 0) { const haven = aliveCountries(w).filter(o => o.id !== c.id && !o.capitalClosed).sort((a, b) => b.legitimacy - a.legitimacy)[0], out = c.reserves * .3; if (haven) { c.reserves -= out; haven.reserves += out; goldMoved(c, 'flight', -out); goldMoved(haven, 'flight', out); } }
   // The creditors' loss is the part of their claim that is written off; no gold of theirs vanishes on top of it.
   for (const [cid, amt] of Object.entries(c.creditors)) { const o = w.countries[cid]; if (o?.alive) { o.relations[c.id] = clamp((o.relations[c.id] ?? 0) - 40, -100, 100); o.bankHealth = clamp(o.bankHealth - 12, 0, 100); c.creditors[cid] = amt * .55; } else delete c.creditors[cid]; }
   news(w, `${c.name} ${why}; ${Object.keys(c.creditors).length ? 'creditor countries are furious' : 'its bondholders are ruined'}.`, { kind: 'economy', countries: [c.id] });

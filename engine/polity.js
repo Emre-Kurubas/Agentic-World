@@ -1,6 +1,7 @@
 // Institutions, parliament and treaty clauses. The agent writes freely what to found, the referee translates it to these rules, the code decides the outcome.
 import { clamp, sum, news, rand, nextId, quarterLabel } from './util.js';
 import { treasuryPays } from './money.js';
+import { moved as goldMoved } from './gold.js';
 import { GOODS, GOOD_LABEL, aliveCountries, atWar } from './world.js';
 import { distance, installLeader } from './politics.js';
 import { incapacitated } from './health.js';
@@ -349,7 +350,7 @@ export function clauseText(w, cl) {
 export function activateClauses(w, t) {
   for (const cl of t.clauses || []) { if (cl.turns) cl.until = w.turn + cl.turns; cl.text = clauseText(w, cl); }
   for (const cl of t.clauses || []) { if (cl.done != null) continue;
-    if (cl.type === 'loan') { const a = w.countries[cl.from], b = w.countries[cl.to]; if (!a?.alive || !b?.alive) continue; const m = Math.min(Math.max(a.reserves, 0), cl.amount); a.reserves -= m; b.reserves += m; b.creditors[a.id] = (b.creditors[a.id] || 0) + m; if (cl.rate != null) (b.creditTerms ||= {})[a.id] = { rate: cl.rate, treaty: t.id }; cl.done = w.turn; cl.paid = m;
+    if (cl.type === 'loan') { const a = w.countries[cl.from], b = w.countries[cl.to]; if (!a?.alive || !b?.alive) continue; const m = Math.min(Math.max(a.reserves, 0), cl.amount); a.reserves -= m; b.reserves += m; goldMoved(a, 'lent', -m); goldMoved(b, 'borrowed', m); b.creditors[a.id] = (b.creditors[a.id] || 0) + m; if (cl.rate != null) (b.creditTerms ||= {})[a.id] = { rate: cl.rate, treaty: t.id }; cl.done = w.turn; cl.paid = m;
       for (const [x, text] of [[a, `${Math.round(m)} in gold has left the reserve for ${b.name} under ${t.id}: it is owed to us${cl.rate != null ? ` at ${Math.round(cl.rate * 1000) / 10}% a quarter` : ''} until it is repaid.`], [b, `${Math.round(m)} in gold has reached the reserve from ${a.name} under ${t.id}. It is owed back${cl.rate != null ? `, at ${Math.round(cl.rate * 1000) / 10}% a quarter on what we owe them` : ''}; the interest goes out in gold every quarter, before anything is bought abroad (repay_foreign pays it down).`]]) { const ch = w.characters[x.leader]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'The treasury', text }); } }
     else if (cl.type === 'reschedule') { const d = w.countries[cl.debtor], k = w.countries[cl.creditor]; if (!d?.alive || !k?.alive) continue; const owed = d.creditors?.[k.id] || 0; (d.creditTerms ||= {})[k.id] = { rate: cl.rate, treaty: t.id }; cl.done = w.turn;
       for (const [x, text] of [[d, `Under ${t.id} what we owe ${k.name} in gold (${Math.round(owed)} today) bears ${Math.round(cl.rate * 1000) / 10}% a quarter from now on, on that and on anything more we borrow of them: about ${Math.round(owed * cl.rate)} a quarter in gold as the debt stands.`], [k, `Under ${t.id} what ${d.name} owes us in gold (${Math.round(owed)} today) bears ${Math.round(cl.rate * 1000) / 10}% a quarter from now on: about ${Math.round(owed * cl.rate)} a quarter in gold as the debt stands.`]]) { const ch = w.characters[x.leader]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'The treasury', text }); } }
@@ -396,7 +397,7 @@ export function treatyStep(w) {
         if (!payer?.alive || !other?.alive || !t.parties.includes(payer.id) || !t.parties.includes(other.id)) continue;
         // Tribute is owed in gold, so it is measured against what the country really produces, not against its paper prices.
         const due = Math.max(payer.realGdp, 1) * cl.pct_gdp, paid = Math.min(Math.max(payer.reserves, 0), due);
-        payer.reserves -= paid; other.reserves += paid;
+        payer.reserves -= paid; other.reserves += paid; goldMoved(payer, 'treaty', -paid); goldMoved(other, 'treaty', paid);
         if (paid < due * .95) breach(w, t, cl, cl.payer, `${payer.name} could not pay its tribute in full.`);
       } else if (cl.type === 'delivery') {
         const from = w.countries[cl.from], to = w.countries[cl.to ?? t.parties.find(x => x !== cl.from)];
@@ -405,7 +406,7 @@ export function treatyStep(w) {
         // pays its supplier in its own money, as for any purchase abroad, and the delivering treasury is paid for what left its stores.
         const unit = cl.credit ? 0 : unitPrice(w, cl), has = Math.min(Math.max(from.stock[cl.good] || 0, 0), cl.amount), moved = unit > 0 ? Math.min(has, Math.max(to.reserves, 0) / unit) : has, unpaid = unit > 0 && moved < has * .95;
         from.stock[cl.good] = (from.stock[cl.good] || 0) - moved; to.stock[cl.good] = (to.stock[cl.good] || 0) + moved;
-        if (unit > 0 && moved > 0) { const gold = moved * unit; to.reserves -= gold; from.reserves += gold; treasuryPays(to, gold * (to.rate || 1), 'purchases'); from.treasury += gold * (from.rate || 1); cl.paid = (cl.paid || 0) + gold; cl.lastPaid = { turn: w.turn, units: moved, gold }; }
+        if (unit > 0 && moved > 0) { const gold = moved * unit; to.reserves -= gold; from.reserves += gold; goldMoved(to, cl.good, -gold); goldMoved(from, cl.good, gold); treasuryPays(to, gold * (to.rate || 1), 'purchases'); from.treasury += gold * (from.rate || 1); cl.paid = (cl.paid || 0) + gold; cl.lastPaid = { turn: w.turn, units: moved, gold }; }
         if (unpaid) breach(w, t, cl, to.id, `${to.name} had not the gold to pay for its ${GOOD_LABEL[cl.good]} in full, and took only what it could pay for.`);
         // A delivery made against a debt is struck off the debt at what the world pays for the good that day.
         if (cl.credit && moved > 0) { const owed = from.creditors?.[to.id] || 0, worth = moved * (w.globalPrice?.[cl.good] ?? 0), off = Math.min(owed, worth); if (off > 0) { from.creditors[to.id] = owed - off; if (from.creditors[to.id] < .01) delete from.creditors[to.id]; cl.credited = (cl.credited || 0) + off; } }

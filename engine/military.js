@@ -2,6 +2,7 @@ import { clamp, sum, news, between, rand } from './util.js';
 import { CLASSES, atWar, hasTreaty, countryProvinces, aliveCountries, provincePop, makeUnit, goHome, markFought } from './world.js';
 import { hasTech } from './economy.js';
 import { drillOf } from './frontier.js';
+import { moved as goldMoved } from './gold.js';
 import { originPull } from './culture.js';
 import { die, garrisonHold } from './politics.js';
 import { afflict, incapacitated } from './health.js';
@@ -642,7 +643,7 @@ export function capture(w, p, by) {
     loser.legitimacy = clamp(loser.legitimacy - (loser.capitalsLost === 1 ? 10 : 5), 0, 100);
     if (to === by) { // The vaults of a capital fall with it.
       const gold = Math.max(loser.reserves, 0) * .3, cash = Math.max(loser.treasury, 0) * .3;
-      loser.reserves -= gold; taker.reserves += gold; loser.treasury -= cash; taker.treasury += cash / (loser.rate || 1) * (taker.rate || 1);
+      loser.reserves -= gold; taker.reserves += gold; goldMoved(loser, 'loot', -gold); goldMoved(taker, 'loot', gold); loser.treasury -= cash; taker.treasury += cash / (loser.rate || 1) * (taker.rate || 1);
     }
     if (nextCap) news(w, `${loser.name} lost its capital; the government withdrew to ${nextCap.name}.`, { kind: 'war', countries: [from], province: nextCap.id });
   }

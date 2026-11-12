@@ -1,5 +1,6 @@
 import { clamp, sum, news, between, rand } from './util.js';
 import { hungerOf } from './politics.js';
+import { moved as goldMoved } from './gold.js';
 import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_LABEL, PLANTS, TECHS, countryProvinces, provincePop, aliveCountries, atWar, hasTreaty } from './world.js';
 import { dealsWith, tieOf } from './diplomacy.js';
 import { migrate, levyShare } from './culture.js';
@@ -276,7 +277,7 @@ function extract(w, c) {
     const pop = provincePop(p); popAll += pop; dev += p.devastation * pop;
   }
   c._pop = popAll; c._dev = popAll ? dev / popAll : 0; c._raw = raw; c._services = services; c._capAll = { ...c._cap };
-  c.reserves += gold * 12;
+  c.reserves += gold * 12; goldMoved(c, 'mines', gold * 12);
   for (const g of RAW) c.stock[g] = (c.stock[g] || 0) + raw[g];
 }
 
@@ -401,8 +402,8 @@ function trade(w, cs) {
         // Freight goes to the exporter, customs to the buyer's own treasury: gold does not vanish from the world.
         // The war premium on a cargo is not the exporter's: it is paid to the houses that insure and carry at their own risk, which sit in the
         // state at peace with the most ships. (Gold does not vanish: one country's war is that country's business.)
-        const gold = v * a.r.cost, risk = insurer && insurer.id !== a.x.c.id ? v * (a.r.war || 0) : 0; a.x.c.stock[g] -= q; b.c.stock[g] += q; a.x.c.reserves += gold - risk; b.c.reserves -= gold;
-        if (risk > 0) { insurer.reserves += risk; insurer._premiums = (insurer._premiums || 0) + risk; }
+        const gold = v * a.r.cost, risk = insurer && insurer.id !== a.x.c.id ? v * (a.r.war || 0) : 0; a.x.c.stock[g] -= q; b.c.stock[g] += q; a.x.c.reserves += gold - risk; b.c.reserves -= gold; goldMoved(a.x.c, g, gold - risk); goldMoved(b.c, g, -gold);
+        if (risk > 0) { insurer.reserves += risk; goldMoved(insurer, 'insurance', risk); insurer._premiums = (insurer._premiums || 0) + risk; }
         if (a.r.mode === 'sea') carried.push([a.x.c.id, b.c.id, q, v * (a.r.water || 0)]);
         // What passed where, for whoever asks what a place is worth to the world's trade (w.traffic).
         for (const id of [...(a.r.nodes || []), ...(a.r.cuts || [])]) { const t = (traffic[id] ||= { v: 0, by: {} }), pair = key(b.c.id, a.x.c.id); t.v += v; t.by[pair] = (t.by[pair] || 0) + v; }
@@ -414,9 +415,9 @@ function trade(w, cs) {
         a.x.c._exports = (a.x.c._exports || 0) + v; b.c._imports = (b.c._imports || 0) + v;
         a.x.c._rawExp = (a.x.c._rawExp || 0) + (RAW.includes(g) && g !== 'grain' ? v : 0);
         // The toll is part of what the buyer paid; it is passed on to whoever holds the strait, not minted anew.
-        for (const tid of a.r.tolls) { const t = w.strategic.find(s => s.id === tid); if (t?.controller) { const fee = Math.min(v * t.toll, Math.max(a.x.c.reserves, 0)); a.x.c.reserves -= fee; w.countries[t.controller].reserves += fee; w.countries[t.controller]._tolls = (w.countries[t.controller]._tolls || 0) + fee; } }
+        for (const tid of a.r.tolls) { const t = w.strategic.find(s => s.id === tid); if (t?.controller) { const fee = Math.min(v * t.toll, Math.max(a.x.c.reserves, 0)); a.x.c.reserves -= fee; w.countries[t.controller].reserves += fee; goldMoved(a.x.c, 'tolls', -fee); goldMoved(w.countries[t.controller], 'tolls', fee); w.countries[t.controller]._tolls = (w.countries[t.controller]._tolls || 0) + fee; } }
         // A state that lays a due on what crosses its soil is paid it the same way.
-        for (const d of a.r.dues || []) { const t = w.countries[d.to]; if (t?.alive) { const fee = Math.min(v * d.rate, Math.max(a.x.c.reserves, 0)); a.x.c.reserves -= fee; t.reserves += fee; t._tolls = (t._tolls || 0) + fee; } }
+        for (const d of a.r.dues || []) { const t = w.countries[d.to]; if (t?.alive) { const fee = Math.min(v * d.rate, Math.max(a.x.c.reserves, 0)); a.x.c.reserves -= fee; t.reserves += fee; goldMoved(a.x.c, 'tolls', -fee); goldMoved(t, 'tolls', fee); t._tolls = (t._tolls || 0) + fee; } }
         b.c.lastBought[g] = (b.c.lastBought[g] || 0) + q;
         const k = key(b.c.id, a.x.c.id); (w.tradeFlows[k] ||= {}); w.tradeFlows[k][g] = (w.tradeFlows[k][g] || 0) + v;
       }
@@ -484,7 +485,7 @@ function warFlight(w, cs) {
   for (const c of cs) { c._warFlight = 0; const x = c.war; if (!x?.on) continue;
     const share = (x.begun ? (x.struck ? .03 : .06) : x.losing ? .02 : 0) * (c.capitalClosed ? 1 - sealOf(w, c) : 1); if (!(share > 0)) continue;
     const haven = cs.filter(o => o.id !== c.id && !o.war?.on && !o.capitalClosed).sort((a, b) => b.legitimacy - a.legitimacy)[0], out = haven ? Math.max(c.reserves, 0) * share : 0; if (!(out > .5)) continue;
-    c.reserves -= out; haven.reserves += out; c._warFlight = out; (from[haven.id] ||= []).push([c, out]);
+    c.reserves -= out; haven.reserves += out; goldMoved(c, 'flight', -out); goldMoved(haven, 'flight', out); c._warFlight = out; (from[haven.id] ||= []).push([c, out]);
     if (x.begun) tell(w.characters[c.leader], `War has frightened money. About ${Math.round(out)} in gold left the country this quarter for ${haven.name}${c.capitalClosed ? ', past the controls on capital' : '; closing the movement of capital would hold most of what is still here'}, and more will go for as long as the enemy holds more of our land than we hold of his. ${lendersWords(c)}`); }
   for (const [id, xs] of Object.entries(from)) { const h = w.countries[id], n = sum(xs, x => x[1]); h._haven = n; if (n >= Math.max(5, h.reserves * .005)) tell(w.characters[h.leader], `Money is coming in from states at war: about ${Math.round(n)} in gold this quarter, out of ${xs.map(x => x[0].name).join(' and ')}. It came because this country is at peace and thought safe, and it adds to the reserve.`); }
   for (const c of cs) if (!from[c.id]) c._haven = 0;
@@ -605,7 +606,7 @@ function fiscal(w, c) {
   // past the controls). The gold is not lost to the world; it is lost to this reserve, and the currency and the import trade rest on that.
   { const past = Math.max(0, c.tax.business - (1 - (c.profitBase ?? 1 - c.tax.business))), want = past > 0 ? business / Math.max(c.tax.business, .01) * past * .5 / (c.rate || 1) * (c.capitalClosed ? 1 - sealOf(w, c) : 1) : 0;
     const haven = want > 0 ? aliveCountries(w).filter(o => o.id !== c.id && !o.capitalClosed).sort((a, b) => b.legitimacy - a.legitimacy)[0] : null, out = haven ? Math.min(Math.max(c.reserves, 0), want) : 0;
-    if (out > 0) { c.reserves -= out; haven.reserves += out; } c._flight = out; }
+    if (out > 0) { c.reserves -= out; haven.reserves += out; goldMoved(c, 'flight', -out); goldMoved(haven, 'flight', out); } c._flight = out; }
   // A vote is leave to spend, not money spent. The forces draw what they can use: their keep, and up to three tenths over it for better pay,
   // stores and training (the same bound past which more money buys the army nothing, military.js upkeep). What is voted beyond that is not
   // drawn and stays in the treasury; a shrunken army on its old vote does not go on costing what the old one did.
@@ -625,7 +626,7 @@ function fiscal(w, c) {
   let interest = !c.defaulted ? owed : w.turn - (c.defaultedAt ?? -99) < 4 ? 0 : Math.min(owed, spare);
   // External debt is in gold: when the currency falls, the same interest costs the budget more.
   const external = sum(Object.values(c.creditors), x => x), extRate = foreignRate(c, external); let extDue = 0, extPaid = 0;
-  for (const [cid, amt] of Object.entries(c.creditors)) if (w.countries[cid]?.alive) { const due = amt * (c.creditTerms?.[cid]?.rate ?? extRate), pay = Math.min(Math.max(c.reserves, 0), due); c.reserves -= pay; w.countries[cid].reserves += pay; extDue += due; extPaid += pay;
+  for (const [cid, amt] of Object.entries(c.creditors)) if (w.countries[cid]?.alive) { const due = amt * (c.creditTerms?.[cid]?.rate ?? extRate), pay = Math.min(Math.max(c.reserves, 0), due); c.reserves -= pay; w.countries[cid].reserves += pay; goldMoved(c, 'interest', -pay); goldMoved(w.countries[cid], 'interest', pay); extDue += due; extPaid += pay;
     // Interest that could not be paid in gold is owed still, and the creditor hears of it (crises.js).
     if (pay < due - .5) (c._unpaid ||= {})[cid] = { due, pay }; }
   interest += extPaid * (c.rate || 1);
