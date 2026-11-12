@@ -1,7 +1,7 @@
 import { clamp, news, rand, nextId, pick, sum, quarterLabel } from './util.js';
 import { CLASSES, GOODS, countryProvinces, atWar, hasTreaty, makeUnit, aliveCountries, clampRel, provincePop, goHome, hasFought } from './world.js';
 import { executePlot, neutralize, die, SUCCESSION, distance } from './politics.js';
-import { joinUnits, capture, pathStep, roadTo, upkeepCost, PAY_FIRST, settleOccupations, marchQuarters, POSTURES, postureWords, MANNERS, commanderOf, supplyOf, shellsFor, abilityWord, closedNow, season } from './military.js';
+import { joinUnits, capture, pathStep, roadTo, upkeepCost, PAY_FIRST, settleOccupations, marchQuarters, POSTURES, postureWords, MANNERS, commanderOf, supplyOf, shellsFor, abilityWord, closedNow, season, calledIn } from './military.js';
 import { makeFleet, TECHS, PLANTS, DEPOSITS, GOOD_LABEL, ROLES, spawnCharacter, bfsSea } from './world.js';
 import { hasTech, sealOf, importOrder, SPREAD } from './economy.js';
 import { FX_REGIMES, foreignRate, externalDebt, creditLeft, declareDefault, treasuryPays } from './money.js';
@@ -9,7 +9,7 @@ import { firmOp, seizeFirm, STATE } from './firms.js';
 import { queueProject, durationOf, WORKS, quote, ground, projectYield, wasteOf } from './projects.js';
 import { LANGUAGE_POLICY, FAITH_POLICY, groupsOf, removePeople, settlePeople, PEOPLE_OPS, peopleOp, hits, armedOf, privilege } from './culture.js';
 import { incapacitated } from './health.js';
-import { isMinor, recruitInformant, takeOffer, refuseOffer, standing, inService } from './court.js';
+import { isMinor, recruitInformant, takeOffer, refuseOffer, standing, inService, askingOf } from './court.js';
 import { approach, openTo } from './deeds.js';
 import { labourOp } from './labour.js';
 import { noteOp } from './notes.js';
@@ -527,7 +527,7 @@ function proposeMany(w, c, op, others, mediator = false) {
   for (let i = 0; i < invited.length; i++) for (let j = i + 1; j < invited.length; j++) { const a = invited[i], b = invited[j];
     if (!dealsWith(w, a, b) && kind !== 'peace') return fail(`${cname(w, a)} and ${cname(w, b)} do not recognise each other as states: they sign nothing together but a peace.`);
     if (!maySign(w, a, b, kind, !!cf || mediator)) return fail(`Between ${cname(w, a)} and ${cname(w, b)} stand ${tieWord(tieOf(w, a, b))}: nothing of this kind can be signed between them unless a third state carries it (a mediator, a conference).`); }
-  if (['peace', 'armistice'].includes(kind) && !invited.some((a, i) => invited.some((b, j) => j > i && atWar(w, a, b)))) return fail('There is no war among them to end or to halt.');
+  if (['peace', 'armistice'].includes(kind) && !invited.some((a, i) => invited.some((b, j) => j > i && atWar(w, a, b)))) return fail('There is no war among them to end or to halt. A quarrel short of war is not ended by a peace: a third state offers its good offices by letter, or calls the states concerned to a conference on the question (call_conference), where a paper of any kind can be laid before the table and signed.');
   const of = kind === 'guarantee' ? alive(w, op.of) : null; if (kind === 'guarantee' && (!of || invited.includes(of.id))) return fail('Name the state whose independence is guaranteed (of); it is not itself a signatory.');
   const need = mediator ? invited.length : clamp(Math.round(num(op.need, 2, invited.length, invited.length)), 2, invited.length), secret = !!op.secret && !['peace', 'armistice'].includes(kind);
   // In a treaty among several, land goes where the treaty says, by name: each province to one of the parties.
@@ -611,7 +611,7 @@ export function applyOp(w, actor, op) {
   if (LABOUR_OPS.has(op.op)) return labourOp(w, actor, c, op, { fail, num, governs: governs(w, c, actor), tell, allowance });
   if (PEOPLE_OPS.has(op.op)) { const r = peopleOp(w, actor, c, op, { fail, num, pay, allowance, rules: governs(w, c, actor), leads: leadsParties(w, c, actor), leaveTrace, NO_FUNDS }); c._privilege = privilege(w, c); return r; }
   if (NOTE_OPS.has(op.op)) return noteOp(w, actor, c, op, { fail, num, governs: governs(w, c, actor), allowance });
-  if (STANDING_OPS.has(op.op)) return standingOp(w, actor, c, op, { fail, num, known: k => typeof k === 'string' && /^[a-z_]{3,}$/.test(k) });
+  if (STANDING_OPS.has(op.op)) return standingOp(w, actor, c, op, { fail, num, known: k => typeof k === 'string' && /^[a-z_]{3,}$/.test(k), may: k => !perm || perm.has(k) || delegated(c, actor, k) });
   if (INQUIRY_OPS.has(op.op)) return inquiryOp(w, actor, c, op, { fail, num, allowance: (key, cap, want) => allowance(w, c, key, cap, want), pays: m => treasuryPays(c, m), leads: leadsParties(w, c, actor).some(p => (c.parliament?.seats?.[p.id] ?? 0) > 0) });
   if (TENDER_OPS.has(op.op)) return tenderOp(w, actor, c, op, { fail, num });
   if (MEANS_OPS.has(op.op)) return meansOp(w, actor, c, op, { fail, num, target, pay: (cost, what) => pay(c, cost, what), allowance: (who, key, cap, want) => allowance(w, who, key, cap, want), personFor, noPerson });
@@ -723,6 +723,12 @@ export function applyOp(w, actor, op) {
       const ruler = governs(w, c, actor), state = ruler || (c.general === actor.id && ch.country !== c.id && (ch.clerkOf === 'army' || ch.role === 'officer')), want = num(op.amount, 0, 1e6, 0), m = state ? treasuryPays(c, allowance(w, c, 'secret_funds', gdp * .002, want)) : Math.min(Math.max(actor.wealth, 0), want);
       // A government that tells its own servant to report to it asks for his duty and need put no money behind the asking.
       const servant = ruler && ch.country === c.id && inService(w, ch);
+      // No sum named: nobody is bought, but the man is found and sounded, and what he would listen for is brought back. (World 18: "recruit an
+      // informant on their staff" named no figure three times in four quarters and was each time sent back for one with no word of what such a
+      // man costs; the offers that followed were a third of the price.)
+      if (!(m >= 1) && !servant && want < 1) { const a = askingOf(ch), who = `${ch.name} (${ch.id})${ch.clerkOf ? `, a clerk ${ch.clerkOf === 'house' ? 'of the banking house' : ch.clerkOf === 'army' ? 'on the general staff' : `in the ${ch.clerkOf}`}${ch.country !== c.id ? ` of ${w.countries[ch.country]?.name}` : ''},` : ''}`;
+        if (ch.nobody) { if (a.open) delete ch.nobody; else delete w.characters[ch.id]; } if (desk && a.open) (actor.sounded ||= {})[desk] = ch.id;
+        return fail(a.open ? `No sum was named, so nobody was bought. ${who} was sounded without a figure: something near ${a.even} would be heard. Name the sum (amount) and the next approach goes to ${him(ch)}; it is paid ${state ? 'from the secret vote' : 'from your own purse'}.` : `No sum was named, so nobody was bought. The one who was sounded is not to be had for money as ${he(ch)} stands toward ${his(ch)} government; another approach may find another. Name the sum that is put behind it (amount): people in such posts have seldom been had for less than twenty.`); }
       if (!(m >= 1) && !servant) { if (ch.nobody) delete w.characters[ch.id]; return fail(want < 1 ? 'Name the sum that is put behind the approach (amount): nobody outside the state\'s own service reports for nothing.' : state ? 'The secret vote is spent for this quarter and the treasury can add nothing to it.' : `It is paid from your own pocket, and your purse holds ${Math.round(Math.max(actor.wealth, 0) * 10) / 10}${c.general === actor.id ? ' (a man in a foreign army is paid from the staff\'s secret vote: office army, with the state named as target)' : ''}.`); }
       const r = recruitInformant(w, actor, ch, m); if (r.ok && !state) actor.wealth -= m; if (!r.ok && state) c.treasury += m;
       if (desk && !r.ok && r.priced) (actor.sounded ||= {})[desk] = ch.id; else if (desk && actor.sounded) delete actor.sounded[desk];
@@ -869,6 +875,10 @@ export function applyOp(w, actor, op) {
       if (pl) { const out = executePlot(w, pl); if (c.leader !== actor.id) return fail(`${ch.name} answered the dismissal with the stroke ${he(ch)} had prepared. ${out}`); return { ok: true, msg: `${ch.name} answered the dismissal with the stroke ${he(ch)} had prepared, and it failed. ${out}` }; }
       // Whoever is named in the order takes the office; failing that the standing deputy, if one was named; failing that a man the army puts forward.
       const standby = w.characters[c.deputies?.general], next = op.successor || op.name ? personFor(w, c, { character: op.successor, name: op.name }, 'officer') : standby?.alive && standby.status === 'free' && standby.country === c.id && standby.id !== ch.id ? standby : spawnCharacter(w, c.id, 'general', c.axes);
+      // The one named to take the office holds it already: nothing is done, and nobody is dismissed. (World 18: a chief of staff was arrested
+      // with her successor named, the successor took the office, and a second order that morning, "remove her and name the same successor",
+      // dismissed the successor in her own favour; the army took it as a dismissal and the papers printed that she had replaced herself.)
+      if (next && next.id === ch.id) return { ok: true, msg: `${ch.name} (${ch.id}) holds the office of chief of the general staff already; nobody was dismissed and nothing was changed.` };
       if (next && c.deputies?.general === next.id) delete c.deputies.general;
       if (!next?.alive || next.country !== c.id || next.status !== 'free' || ROLES.some(r => r !== 'general' && c[r] === next.id)) return fail(noPerson(`No such person to put in ${his(ch)} place.`));
       for (const u of Object.values(w.units)) if (u.commander === next.id) u.commander = null;
@@ -1207,7 +1217,11 @@ export function applyOp(w, actor, op) {
       return { ok: true, msg: `${count} went home. ${u.id} keeps ${menText(u.men)} under arms.` };
     }
     case 'mobilize': return mobilize(w, c, op, pay, fail);
-    case 'demobilize': return demobilize(w, c, op.men != null ? num(op.men, 0, 1e6, 0) : op.share != null ? -num(op.share, 0, 1, 1) : null, op.unit) ?? fail('No reservists are under arms.');
+    case 'demobilize': { const sent = demobilize(w, c, op.men != null ? num(op.men, 0, 1e6, 0) : op.share != null ? -num(op.share, 0, 1, 1) : null, op.unit); if (sent) return sent;
+      // A body that was named and has gone home already is said to have gone home. (World 18: an order that had waited a quarter to send two
+      // brigades home found them sent home by hand that morning, and reported only "no reservists are under arms", with thirty thousand under arms.)
+      const called = Object.values(w.units).filter(u => u.country === c.id && calledIn(u) > .05);
+      return fail(op.unit ? `No reservists are under arms in ${op.unit}: it has gone home already, or it never held any.${called.length ? ` Called-up men stand in ${called.map(u => `${u.id} (${Math.round(calledIn(u))} thousand)`).join(', ')}.` : ' No called-up men remain under arms anywhere.'}` : 'No reservists are under arms.'); }
     case 'move': {
       const u = w.units[op.unit]; if (!u || u.country !== c.id) return fail(`Invalid movement order: no unit of ours is called ${op.unit ?? '(none was named)'}. The army list has the units and their numbers.`); if (!w.provinces[op.to]) return fail(`Invalid movement order: no such province to march to (${op.to ?? 'none was named'}).`);
       if (freshlyCalled(w)(u) && w.provinces[op.to].controller !== c.id && atWar(w, c.id, w.provinces[op.to].controller)) return fail(`${u.id} was called up this quarter: it can march on our own ground and hold it, and goes against ground the enemy holds from next quarter.`);
@@ -1649,7 +1663,7 @@ export function applyOp(w, actor, op) {
       if (!op._law && !governs(w, c, actor)) return fail('Only whoever governs, or a law, sets the budget of a state institution.');
       inst.budget = num(op.budget_pct_gdp, 0, MAX_AGENCY_BUDGET, inst.budget); return ok();
     }
-    case 'appoint_institution': { const inst = (c.institutions || []).find(i => i.id === op.id); if (!inst) return fail('No such institution.'); if (!governs(w, c, actor) && actor.id !== inst.head && actor.id !== inst.sponsor) return fail('You cannot make appointments to this institution.');
+    case 'appoint_institution': { const inst = (c.institutions || []).find(i => i.id === op.id); if (!inst) return fail('No such institution.'); if (!governs(w, c, actor) && actor.id !== inst.head && actor.id !== inst.sponsor) return fail(`You cannot make appointments to ${inst.name}: its members are named by ${[w.characters[inst.head]?.alive ? `its head, ${w.characters[inst.head].name}` : '', w.characters[inst.sponsor]?.alive ? `its founder, ${w.characters[inst.sponsor].name}` : '', 'whoever governs'].filter(Boolean).join(', or by ')}. A name put to one of them by letter is theirs to seat or to refuse.`);
       // A member who is given no name is a seat filled from the ranks, not a figure in public life: the body is larger by one, and nobody new enters the world.
       if (!op.character && !String(op.name ?? '').trim() && op.role !== 'head') { const seats = inst.seats || 0; if (op.remove) { if (!seats) return fail('It has no unnamed members to remove.'); inst.seats = seats - 1; return { ok: true, msg: `One unnamed member left ${inst.name}.` }; } if (seats >= 12) return fail(`${inst.name} has all the ordinary members it can seat.`); inst.seats = seats + 1; return { ok: true, msg: `An ordinary member was seated; ${inst.name} now has ${inst.members.length + inst.seats} members besides its head. Only a member appointed by name becomes a person others can deal with.` }; }
       const ch = personFor(w, c, op, 'official'); if (!ch?.alive || ch.country !== c.id) return fail(noPerson('No such target.')); inst.members = inst.members.filter(x => x !== ch.id); if (op.remove) { if (inst.head === ch.id) inst.head = null; tell(w, ch, inst.name, `You were removed from ${inst.name}.`); return ok(); } if (ch.status !== 'free') return fail(`${ch.name} is ${ch.status} and can hold no post.`); if (op.role === 'head') { if (inst.head) inst.members.push(inst.head); inst.head = ch.id; } else if (inst.head !== ch.id) inst.members.push(ch.id); tell(w, ch, inst.name, op.role === 'head' ? `You were appointed head of ${inst.name}.` : `You were made a member of ${inst.name}.`); return ok(); }

@@ -275,6 +275,8 @@ export const leaseDrain = (w, c) => (w.offers || []).filter(o => o.status === 'r
 // country he works in has a chance to catch him.
 // In the state's service: the keeper of the treasury, the chief of police, an officer with a command or a garrison, a clerk in one of the offices.
 export const inService = (w, ch) => isMinor(ch) && (!!ch.post || !!ch.clerkOf || ch.role === 'officer' || !!commandOf(w, ch));
+// What a person in a post would listen for, and whether money moves him at all: the same reckoning the approach itself is decided by.
+export const askingOf = ch => ({ even: Math.max(2, Math.ceil(45 * (.55 - .12 - ch.greed / 170 + ch.loyalty / 190))), open: clamp(.12 + ch.greed / 170 + 30 / 45 - ch.loyalty / 190, .04, .92) >= .55 });
 export function recruitInformant(w, actor, ch, amount) {
   // A servant of the state asked by his own government to report on those around him is asked for his duty, not for a betrayal: it is his
   // loyalty that decides, and money counts for less. (World 16: a president's instruction to his own treasury clerk was refused as a bribe too small.)

@@ -164,8 +164,17 @@ function pruneFirms(w) {
 
 const openCount = (w, id) => Object.values(w.firms).filter(f => isOpen(f) && f.country === id).length;
 
+// A works is named by its number or by its name; and where no name was given at all, the one works its owner founded this very morning is the
+// one he means. (World 18: "found Albano Steel Works; it pays the going wage and spends 0.4 on safety" set neither wage nor safety, because the
+// works was named by its name and its number did not yet exist when the order was written.)
+export function firmBy(w, actor, ref) {
+  const all = w.firms || {}, key = String(ref ?? '').trim(); if (key && Object.hasOwn(all, key)) return all[key];
+  const norm = s => String(s ?? '').toLowerCase().replace(/^the\s+/, '').replace(/[^a-z0-9]+/g, ' ').trim(), want = norm(key), open = Object.values(all).filter(isOpen), near = f => (f.owner === actor?.id ? 2 : 0) + (f.country === actor?.country ? 1 : 0);
+  if (want) { const named = open.filter(f => norm(f.name) === want).sort((a, b) => near(b) - near(a)); return named[0] ?? null; }
+  const fresh = open.filter(f => f.owner === actor?.id && f.founded === w.turn); return fresh.length === 1 ? fresh[0] : null;
+}
 export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
-  const firm = w.firms && Object.hasOwn(w.firms, String(op.id)) ? w.firms[op.id] : null, isHead = governs(w, c, actor);
+  const firm = op.op === 'found_company' ? null : firmBy(w, actor, op.id ?? op.company), isHead = governs(w, c, actor);
   switch (op.op) {
     case 'found_company': {
       const p = w.provinces[op.province]; if (!p) return fail('No such province.');
@@ -176,7 +185,7 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
       if (mine && (!DEPOSITS.includes(op.resource) || op.resource === 'gold' || !p.deposits[op.resource]?.known)) return fail('No known deposit.');
       if (openCount(w, host.id) >= MAX_PER_COUNTRY) return fail('No registry room left in this country.');
       const state = isHead && op.state === true, amount = Math.min(num(op.amount, 0, 1e9, 0), state ? Math.max(c.treasury, 0) : actor.wealth);
-      if (!(amount >= 1)) return fail('Not enough capital.');
+      if (!(amount >= 1)) { const purse = `${state ? 'the treasury holds' : 'your purse holds'} ${Math.round(Math.max(state ? c.treasury : actor.wealth, 0) * 10) / 10}`; return fail(num(op.amount, 0, 1e9, 0) >= 1 ? `Not enough capital: ${purse}.` : `No capital was named: say how much is put into it (amount). A works is as large as the money put in; ${purse}, and the engineers' price for a works of the ordinary size there is in the survey (building:${p.id}).`); }
       const f = makeFirm(w, host, p, sector, mine ? op.resource : null, state ? STATE : actor.id, 0, String(op.name || '').slice(0, 60) || `${p.name} Company`);
       const refused = expand(w, host, f, state ? amount / Math.max(c.priceLevel, .01) : amount, fail);
       if (refused) { delete w.firms[f.id]; return refused; }

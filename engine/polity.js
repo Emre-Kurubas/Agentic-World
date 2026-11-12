@@ -316,8 +316,8 @@ export function clauseText(w, cl) {
     case 'assign': return `${n(cl.from)} makes over to ${n(cl.to)} ${cl.amount != null ? `${Math.round(cl.amount)} of ` : ''}what ${n(cl.debtor)} owes it: from that day ${n(cl.debtor)} owes it to ${n(cl.to)}`;
     case 'renounce': return `${n(cl.country)} gives up its claim to ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}`;
     case 'tariff': return `Mutual tariff of ${Math.round(cl.rate * 100)}%`;
-    case 'demilitarized_zone': return `${cl.country ? n(cl.country) : 'The parties'} shall station no troops in: ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}`;
-    case 'troop_limit': return `${n(cl.country)} keeps at most ${Math.round(cl.men)}k troops${cl.provinces?.length ? ` in ${cl.provinces.length > 1 ? (cl.total ? 'all of these together: ' : 'each of: ') : ''}${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}` : ''}`;
+    case 'demilitarized_zone': return `${cl.country ? n(cl.country) : 'The parties'} shall station no troops in: ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')} (the zone is to be clear by the close of the quarter after this comes into force, and is first looked at then)`;
+    case 'troop_limit': return `${n(cl.country)} keeps at most ${Math.round(cl.men)}k troops${cl.provinces?.length ? ` in ${cl.provinces.length > 1 ? (cl.total ? 'all of these together: ' : 'each of: ') : ''}${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}` : ''} (to be met by the close of the quarter after this comes into force; the first count is taken then)`;
     case 'observers': return `Officers of each party count the other's troops in: ${cl.provinces.map(p => w.provinces[p]?.name ?? p).join(', ')}`;
     case 'mutual_defense': return 'Each party enters the war on the side of the party attacked';
     default: return cl.type;
@@ -343,6 +343,10 @@ export function moneyStops(w, t, only) {
   return null;
 }
 
+// A ceiling on troops, or a zone to be cleared of them, is first counted at the close of the quarter after the one in which the paper came into
+// force: the men have to march and the reservists to be sent home. (World 18: three papers that set a ceiling were each recorded as breached in
+// the very quarter they were signed, before one order under them could be carried out, and four governments paid for it in their name abroad.)
+export const TIME_TO_COMPLY = 2, counted = (w, t) => w.turn >= (t.since ?? -99) + TIME_TO_COMPLY;
 function breach(w, t, cl, party, text) {
   if (w.turn - (cl.lastBreach ?? -99) < 4) return;
   cl.lastBreach = w.turn;
@@ -383,14 +387,14 @@ export function treatyStep(w) {
         const ps = t.parties.map(x => w.countries[x]).filter(o => o?.alive);
         for (const a of ps) for (const b of ps) if (a !== b) a.tariffDeals[b.id] = Math.min(a.tariffDeals[b.id] ?? 1, cl.rate);
       } else if (cl.type === 'demilitarized_zone') {
-        for (const u of Object.values(w.units)) if (cl.provinces.includes(u.province) && (cl.country ? u.country === cl.country : t.parties.includes(u.country))) { breach(w, t, cl, u.country, `${w.countries[u.country]?.name} moved troops into the demilitarized zone: ${w.provinces[u.province]?.name}.`); break; }
+        if (counted(w, t)) for (const u of Object.values(w.units)) if (cl.provinces.includes(u.province) && (cl.country ? u.country === cl.country : t.parties.includes(u.country))) { breach(w, t, cl, u.country, `${w.countries[u.country]?.name} moved troops into the demilitarized zone: ${w.provinces[u.province]?.name}.`); break; }
       } else if (cl.type === 'troop_limit') {
         // Named for several provinces, the limit is for each of them, as such papers are written ("no more than seventy thousand in any frontier
         // province"); total:true makes it one figure for all of them together. (World 17: two governments that had agreed seventy thousand a
         // province were both recorded in breach of one figure for three.)
         const count = ps => sum(Object.values(w.units).filter(u => u.country === cl.country && (!ps?.length || ps.includes(u.province))), u => u.men), each = cl.provinces?.length > 1 && !cl.total;
         const over = each ? cl.provinces.map(p => [p, count([p])]).filter(([, m]) => m > cl.men + .5) : null, men = each ? Math.max(0, ...cl.provinces.map(p => count([p]))) : count(cl.provinces);
-        if (each ? over.length : men > cl.men + .5) breach(w, t, cl, cl.country, `${w.countries[cl.country]?.name} exceeded its troop limit${cl.provinces?.length ? ` in ${(each ? over.map(([p]) => p) : cl.provinces).map(p => w.provinces[p]?.name ?? p).join(', ')}` : ''} (${Math.round(men)}k against ${Math.round(cl.men)}k).`);
+        if (counted(w, t) && (each ? over.length : men > cl.men + .5)) breach(w, t, cl, cl.country, `${w.countries[cl.country]?.name} exceeded its troop limit${cl.provinces?.length ? ` in ${(each ? over.map(([p]) => p) : cl.provinces).map(p => w.provinces[p]?.name ?? p).join(', ')}` : ''} (${Math.round(men)}k against ${Math.round(cl.men)}k).`);
       } else if (cl.type === 'mutual_defense') {
         // Every other signatory owes its help to the one attacked.
         for (const x of t.parties) for (const ally of t.parties) for (const war of w.wars) {

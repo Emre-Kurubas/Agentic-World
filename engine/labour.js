@@ -2,7 +2,7 @@
 // its own. Bad pay and dead comrades make men walk out; a walkout stops the works until someone gives way, is starved back, or is shot back.
 // What a careless owner saves on timbering and pumps he may pay for in one morning.
 import { clamp, rand, news, sum, pick } from './util.js';
-import { STATE, isOpen } from './firms.js';
+import { STATE, isOpen, firmBy } from './firms.js';
 import { him, himself } from './names.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
@@ -91,7 +91,7 @@ export function labourEnd(w) { for (const f of Object.values(w.firms || {})) if 
 
 // ---- What people can do about it ----
 export function labourOp(w, actor, c, op, { fail, num, governs, tell, allowance }) {
-  const f = w.firms?.[op.id ?? op.company], home = f && w.countries[f.country], p = f && w.provinces[f.province];
+  const f = firmBy(w, actor, op.id ?? op.company), home = f && w.countries[f.country], p = f && w.provinces[f.province];
   if (!f || !isOpen(f) || !home?.alive) return fail('No such company.');
   const mine = f.owner === actor.id || (f.owner === STATE && home.id === c.id && governs);
   switch (op.op) {

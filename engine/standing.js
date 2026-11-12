@@ -33,7 +33,11 @@ export const standingWords = (w, ch) => {
   const out = [], mine = watchesOf(w, ch); if (mine.length) out.push(`Kept under watch: ${mine.map(x => watchWords(w, x)).join(', ')}.`);
   const c = w.countries[ch.country];
   for (const d of c?.delegations || []) { const to = d.seat ? w.characters[c[d.seat]] : w.characters[d.to]; if (d.by === ch.id || governs(w, c, ch)) out.push(`Left in the hands of ${to?.name ?? d.seat ?? d.to}: ${d.ops.join(', ')}.`); else if (to?.id === ch.id) out.push(`Left in your hands by ${w.characters[d.by]?.name ?? 'the government'}, to order as your own: ${d.ops.join(', ')}.`); }
-  for (const so of (w.standingOrders || []).filter(x => x.by === ch.id)) out.push(`Order ${so.id}, waiting: ${so.words}, then ${so.then.map(o => o.op).join(', ')}${so.label ? ` ("${so.label}")` : ''}.`);
+  // An order whose day is this morning is given with this morning's orders, and says so: a ruler who reads "waiting" on the day gives it by
+  // hand, and the order then finds its work done. (World 18: "Let standing order SO642 go ahead", twice, and each time the order reported
+  // afterwards that there was nobody left to send home.)
+  for (const so of (w.standingOrders || []).filter(x => x.by === ch.id)) { let due = false; try { due = so.firedAt !== w.turn && holds(w, so); } catch { due = false; }
+    out.push(due ? `Order ${so.id}${so.label ? ` ("${so.label}")` : ''} has come to its day (${so.words}): ${so.then.map(o => o.op).join(', ')} ${so.then.length > 1 ? 'are' : 'is'} given in your name with this morning's orders, and you are told tomorrow what came of it. There is no need to give it yourself; to stop it, withdraw it this morning (cancel_order).` : `Order ${so.id}, waiting: ${so.words}, then ${so.then.map(o => o.op).join(', ')}${so.label ? ` ("${so.label}")` : ''}.`); }
   return out;
 };
 
@@ -89,7 +93,9 @@ export function standingOp(w, actor, c, op, h) {
       if (!then.length) return fail('Say what is to be done when the day comes: one or more operations (then).');
       const so = { id: nextId(w, 'SO'), by: actor.id, country: c.id, when: k.when, words: k.words, then, label: String(op.label ?? '').slice(0, 160), since: w.turn, again: op.again === true };
       w.standingOrders.push(so);
-      return { ok: true, msg: `Order ${so.id} is entered and waits: ${k.words}, ${then.map(o => o.op).join(', ')} will be ordered in your name the same quarter, as if you had given it that morning, and you are told what came of it. It lapses in five years, or when you withdraw it (cancel_order).` };
+      // An order is given on its day with the powers its owner has that day. What is not his to order today is said today.
+      const beyond = h.may ? [...new Set(then.map(o => o.op).filter(o => o !== 'report' && !h.may(o)))] : [];
+      return { ok: true, msg: `Order ${so.id} is entered and waits: ${k.words}, ${then.map(o => o.op).join(', ')} will be ordered in your name the same quarter, as if you had given it that morning, and you are told what came of it. It lapses in five years, or when you withdraw it (cancel_order).${beyond.length ? ` Mark this: ${beyond.join(', ')} ${beyond.length > 1 ? 'are' : 'is'} not yours to order as things stand today, and on its day the order is given with the powers you hold that day. Unless whoever governs has left it in your hands by then (delegate), or gives it as his own, that part will be turned back.` : ''}` };
     }
     case 'cancel_order': { const list = w.standingOrders || [], i = list.findIndex(x => x.by === actor.id && (x.id === op.id || (op.id == null && list.filter(y => y.by === actor.id).length === 1))); if (i < 0) return fail(`No such order of yours is waiting.${list.some(x => x.by === actor.id) ? ` Waiting: ${list.filter(x => x.by === actor.id).map(x => x.id).join(', ')}.` : ''}`); const [so] = list.splice(i, 1); return { ok: true, msg: `Order ${so.id} is withdrawn.` }; }
   }
@@ -134,7 +140,9 @@ export function standingStep(w, apply, carry) {
     if (so.firedAt === w.turn || !holds(w, so)) continue;
     // The parts of the order that hang on one another are carried as they would be in a ruling: what was to follow the taking of a place waits
     // for the place, and what was ordered for the case of a refusal is ordered only on a refusal.
-    const one = o => { try { return apply(w, ch, o); } catch (e) { return { ok: false, msg: `Error: ${e.message}` }; } }, out = carry ? carry(w, ch, so.then.map(plainOp), one) : so.then.map(o => ({ op: o.op, ...one(plainOp(o)) }));
+    // "Lay the accounts before me when the bill has passed": a report ordered for a day lies on the desk the morning after it.
+    const one = o => { if (o?.op === 'report') { const topics = [...new Set([].concat(o.topic ?? o.topics ?? []).flatMap(t => String(t).split(/\s*[,;]\s*|\s+and\s+/)).map(t => t.trim()).filter(Boolean))].slice(0, 8); if (!topics.length) return { ok: false, msg: 'No matter was named for the report.' }; ch.reportsDue = [...new Set([...(ch.reportsDue || []), ...topics])].slice(0, 8); return { ok: true, msg: `Your people will lay it on your desk tomorrow morning: ${topics.join(', ')}.` }; }
+      try { return apply(w, ch, o); } catch (e) { return { ok: false, msg: `Error: ${e.message}` }; } }, out = carry ? carry(w, ch, so.then.map(plainOp), one) : so.then.map(o => ({ op: o.op, ...one(plainOp(o)) }));
     const results = out.map(r => `${r.op}: ${r.ok === false ? 'NOT carried out: ' : ''}${r.msg ?? ''}`);
     say(w, ch, 'Your secretary', `Order ${so.id}${so.label ? ` ("${so.label}")` : ''} has come to its day (${so.words}) and was given in your name. ${results.join(' ')}`);
     (w.standingFired ||= []).push({ id: so.id, turn: w.turn, by: so.by, results });

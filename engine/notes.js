@@ -93,7 +93,9 @@ export function noteOp(w, actor, c, op, { fail, num, governs, allowance }) {
     return { ok: true, debt: d.id, msg: `${l.name} lent you ${r1(m)}${m < want - .01 ? `, not the ${r1(want)} asked: that is what ${he(l)} will put on your name` : ''}. You owe ${d.owed} on note ${d.id} by ${quarterLabel(d.due)} (${Math.round(interest * 100)}% for the ${turns} quarters). ${l.post === 'house' ? 'Unpaid, the house first names what it would take to forget it, and then takes what the law gives it, and the town hears.' : `Unpaid, it is ${his(l)} to press, to sell or to hold over you.`}` };
   }
   const d = noteOf(w, op.debt ?? op.id ?? op.note);
-  if (!d) { const mine = (w.debts || []).filter(x => live(x) && [x.creditor, x.debtor].includes(actor.id)).map(x => x.id); return fail(`No such note is open.${mine.length ? ` Those you are party to: ${mine.join(', ')}.` : ''}`); }
+  if (!d) { const mine = (w.debts || []).filter(x => live(x) && [x.creditor, x.debtor].includes(actor.id)).map(x => x.id), shut = (w.debts || []).find(x => x.id === String(op.debt ?? op.id ?? op.note ?? '') && !live(x));
+    if (shut) return fail(`Note ${shut.id} is no longer open: it was ${shut.status === 'paid' ? 'paid' : shut.status}${shut.closedAt != null ? ` in ${quarterLabel(shut.closedAt)}` : ''}, and nothing stands on it. A file that still names it was written before that.`);
+    return fail(`No such note is open.${mine.length ? ` Those you are party to: ${mine.join(', ')}.` : ''}`); }
   const h = w.characters[d.creditor], who = w.characters[d.debtor]; if (!h?.alive || !who?.alive) return fail('That note is void: one of its parties is dead.');
   switch (op.op) {
     case 'buy_debt': {

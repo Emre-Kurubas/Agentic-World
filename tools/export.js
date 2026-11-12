@@ -19,6 +19,10 @@ fs.rmSync(out, { recursive: true, force: true }); fs.mkdirSync(artOut, { recursi
 const write = (f, data) => fs.writeFileSync(path.join(out, f), typeof data === 'string' ? data : JSON.stringify(data, null, 1));
 
 const entries = store.sources().flatMap(s => store.entriesOf(s.name)).sort((a, b) => a.t - b.t || a.i - b.i);
+// A note on the engine added after the last quarter that was played has no later quarter's ledger to be written into: where a game was ended
+// with such a note waiting, it goes into the timeline here, after everything else, so that whoever tells the story has it.
+{ const kept = JSON.parse(fs.readFileSync(path.join(dir, 'world.json'), 'utf8')), last = entries.at(-1), t = last?.t ?? kept.turn ?? 0;
+  (kept.engineNotes || []).forEach((y, k) => { const i = (last?.i ?? 0) + 1 + k; entries.push({ id: `${t}-${i}`, t, i, d: last?.d ?? kept.date, k: 'system', s: 'engine', c: [], n: y.name, imp: 0, text: y.text }); }); }
 write('timeline.ndjson', entries.map(e => JSON.stringify(e)).join('\n'));
 
 const world = store.loadWorld(), people = store.people(), art = store.artIndex();

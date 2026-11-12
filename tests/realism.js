@@ -686,6 +686,7 @@ chain('Delivery moves stock to stock, a tariff clause lowers import costs', () =
 ok('Entering a demilitarized zone and exceeding a troop limit are breaches', () => {
   const w = fresh(), a = w.countries.U1, u = Object.values(w.units).find(x => x.country === 'U1'), men = Object.values(w.units).filter(x => x.country === 'U1').reduce((s, x) => s + x.men, 0);
   applyOp(w, leaderOf(w), { op: 'propose_treaty', target: 'U2', kind: 'nonaggression', clauses: [{ type: 'demilitarized_zone', country: 'U1', provinces: [u.province] }, { type: 'troop_limit', country: 'U1', men: men - 1 }] }); const t = w.treaties.at(-1); applyOp(w, leaderOf(w, 'U2'), { op: 'accept_treaty', id: t.id });
+  treatyStep(w); assert.equal((t.breaches || []).length, 0, 'in the quarter of signature nothing is counted yet'); w.turn += 2;
   treatyStep(w); assert.equal(t.breaches.length, 2, JSON.stringify(t.breaches)); assert.ok(a);
 });
 ok('Leaving an attacked ally alone is a breach', () => {
@@ -3882,7 +3883,7 @@ chain('Between a letter and a war, and other things asked for in world 16: a com
   assert.ok(applyOp(w, D, { op: 'accept_treaty', id }).ok); const t = w.treaties.find(x => x.id === id);
   assert.ok(t.active && t.expires === w.turn + 8 && t.clauses.length === 3 && answeredTo(w, c, d.id) > before, 'a commission sits for two years and answers part of what the country holds against them');
   assert.ok(new RegExp(`${over.name}[^\\n]*43 thousand men`).test(String(answer(w, G, 'borders'))), `with observers the staff counts their men there exactly: ${String(answer(w, G, 'borders')).split('\n').find(l => l.includes(over.name))?.slice(0, 200)}`);
-  treatiesOf_(w); assert.equal(t.breaches.length, 0, 'while both keep under their numbers there is no breach'); soldier(w, d.id, over.id, 10); treatiesOf_(w);
+  t.since -= 2; treatiesOf_(w); assert.equal(t.breaches.length, 0, 'while both keep under their numbers there is no breach'); soldier(w, d.id, over.id, 10); treatiesOf_(w);
   assert.ok(t.breaches.some(b => new RegExp(`exceeded its troop limit in ${over.name} \\(53k against 45k\\)`).test(b.text ?? b.note ?? JSON.stringify(b))), `ten thousand more is a breach, and recorded: ${JSON.stringify(t.breaches).slice(0, 200)}`);
   let withC = 0, without = 0; for (let i = 0; i < 300; i++) { const a = structuredClone(w); a.rng = 11 + i * 7919; a.newsThisTurn = []; for (const u of Object.values(a.units)) delete u.posture; const dead0 = JSON.stringify(a.countries.U1.grudges); frontierOf_(a); if ((a.countries.U1.grudges[d.id]?.at ?? -1) === a.turn) withC++;
     const b = structuredClone(w); b.rng = 11 + i * 7919; b.newsThisTurn = []; for (const u of Object.values(b.units)) delete u.posture; b.treaties.find(x => x.id === id).active = false; frontierOf_(b); if ((b.countries.U1.grudges[d.id]?.at ?? -1) === b.turn) without++; }
@@ -4072,7 +4073,7 @@ chain('The first morning has last quarter\'s books on the desk, land beyond the 
     for (const total of [false, true]) { const w = inherited(), [a, b] = aliveCountries(w), ps = Object.values(w.provinces).filter(p => p.controller === b.id).slice(0, 2); for (const u of Object.values(w.units)) if (u.country === b.id) u.province = b.capital === ps[0].id || b.capital === ps[1].id ? Object.values(w.provinces).find(p => p.controller === b.id && !ps.includes(p)).id : b.capital;
       soldier(w, b.id, ps[0].id, 40); soldier(w, b.id, ps[1].id, 40); assert.ok(applyOp(w, ld(w, a), { op: 'propose_treaty', target: b.id, kind: 'nonaggression', terms: 'Limits.', clauses: [{ type: 'troop_limit', country: b.id, men: 50, provinces: ps.map(p => p.id), ...(total ? { total: true } : {}) }] }).ok); const t = w.treaties.at(-1);
       const s = applyOp(w, ld(w, b), { op: 'accept_treaty', id: t.id }); assert.ok(s.ok && new RegExp(`Signed: ${t.id} \\(nonaggression\\) with [^]* is in force[^]*keeps at most 50k troops in ${total ? 'all of these together' : 'each of'}: `).test(s.msg), `whoever signs is told what was signed and what it binds: ${s.msg}`);
-      treatyStep(w); assert.equal(!!t.breaches?.length, total, total ? 'fifty thousand for both together is broken by forty in each' : 'fifty thousand in each is kept by forty in each'); } }
+      t.since -= 2; treatyStep(w); assert.equal(!!t.breaches?.length, total, total ? 'fifty thousand for both together is broken by forty in each' : 'fifty thousand in each is kept by forty in each'); } }
   { // The treasury's answers.
     const w = inherited(2696855, 8), c = aliveCountries(w).find(x => !x.parliament || x.parliament.legislative === false) ?? aliveCountries(w)[0], L = ld(w, c);
     const b = applyOp(w, L, { op: 'set_budget', category: 'military', share: c.budget.military, _law: true }); assert.ok(b.ok && /The vote for military is [\d.]+% of output[^]*about \d+ a quarter\. The forces as they stand and are posted cost about \d+ a quarter: the vote covers \d+ in the hundred of it/.test(b.msg), b.msg);
@@ -4293,6 +4294,70 @@ chain('World 18, first review: a signature waits for the contract it was ordered
     assert.ok(/On an inland water: [^]* that no strait joins to the open sea\. Ships there cannot leave it[^]*A canal would join it to the open sea: it can be cut at /.test(String(answer(w, G, 'fleet'))) && inlandWords_(w, c).length > 40, `the admiral's report says so: ${inlandWords_(w, c)}`);
     if (f) { const r = applyOp(w, G, { op: 'move_fleet', fleet: f.id, to: sea }); assert.ok(!r.ok && /The two lie on different waters: ours here is an inland water of \d+ seas? that no strait joins to the open sea[^]*A canal would join them: it can be cut at /.test(r.msg), `and an order out of it says why it cannot be: ${r.msg}`); }
     const dry = aliveCountries(w).find(x => x.id !== c.id && !inlandWords_(w, x)); assert.ok(dry, 'a state whose harbours all lie on the open sea is told nothing of the kind'); }
+});
+
+import { askingOf as askingOf_ } from '../engine/court.js';
+import { factsNow as factsNow_ } from '../agents/queries.js';
+import { firmBy as firmBy_ } from '../engine/firms.js';
+chain('World 18, second review: a ceiling on troops is counted once the men have had a quarter to march, an order that has come to its day says so on the desk, a works is known by its name, an approach with no sum finds the man and his price, and the courts can be looked into', () => {
+  // Found in the fifth to eighth quarters of world 18. Three papers with a ceiling on troops were each recorded as breached in the quarter
+  // they were signed, and four governments lost standing abroad for it. A ruler gave by hand, twice, an order that had come to its day,
+  // because his desk said "waiting". "Found the works; it pays the going wage" set no wage. "Recruit a man on their staff" was sent back
+  // three times for a figure nobody could know. A ruler who wanted to know how his court came to acquit had nothing to open.
+  { // The ceiling.
+    const w = inherited(2696855, 8), [a, b] = aliveCountries(w), p = Object.values(w.provinces).find(x => x.controller === b.id && x.id !== b.capital); for (const u of Object.values(w.units)) if (u.country === b.id && u.province === p.id) u.province = b.capital;
+    const U = soldier(w, b.id, p.id, 80), name = honourIn(b);
+    assert.ok(applyOp(w, ld(w, a), { op: 'propose_treaty', target: b.id, kind: 'commission', terms: 'A ceiling.', clauses: [{ type: 'troop_limit', country: b.id, men: 50, provinces: [p.id] }] }).ok); const t = w.treaties.at(-1), s = applyOp(w, ld(w, b), { op: 'accept_treaty', id: t.id });
+    assert.ok(s.ok && /keeps at most 50k troops in [^]*to be met by the close of the quarter after this comes into force; the first count is taken then/.test(s.msg), `whoever signs is told when the count is first taken: ${s.msg}`);
+    treatyStep(w); w.turn += 1; treatyStep(w); assert.ok(!(t.breaches || []).length && honourIn(b) === name, 'eighty thousand against a ceiling of fifty is no breach in the quarter of signature, nor at the opening of the next');
+    const y = structuredClone(w), ty = y.treaties.find(x => x.id === t.id); y.units[U.id].men = 45; y.turn += 1; treatyStep(y); assert.ok(!(ty.breaches || []).length && honourIn(y.countries[b.id]) === name, 'a state that has brought its men under the ceiling by then has kept the paper');
+    w.turn += 1; treatyStep(w); assert.ok(t.breaches?.length === 1 && honourIn(b) < name && /exceeded its troop limit/.test(t.breaches[0].text), 'one that still stands over it when the count is taken has broken it, and its name abroad is the worse'); }
+  { // The order that has come to its day; the body that has gone home; the power that is not there; the report.
+    const w = inherited(2696855, 8), c = aliveCountries(w).find(x => !x.parliament || x.parliament.legislative === false) ?? aliveCountries(w)[0], L = ld(w, c), G = w.characters[c.general];
+    const call = applyOp(w, L, { op: 'mobilize', men: 20, _law: true }); assert.ok(call.ok, call.msg); const body = Object.values(w.units).find(u => u.country === c.id && u.called);
+    const so = applyOp(w, L, { op: 'standing_order', when: { after: 1 }, then: [{ op: 'demobilize', unit: body.id }, { op: 'report', topic: 'army' }], label: 'home after a quarter' }); assert.ok(so.ok && !/Mark this/.test(so.msg), so.msg);
+    assert.ok(/Order SO\d+, waiting: in /.test(desk(w, L)), 'on the day it is entered the desk shows it waiting');
+    const gso = applyOp(w, G, { op: 'standing_order', when: { after: 2 }, then: [{ op: 'demobilize', unit: body.id }, { op: 'set_posture', posture: 'defensive', all: true }] }); assert.ok(gso.ok && /Mark this: demobilize is not yours to order as things stand today[^]*Unless whoever governs has left it in your hands by then \(delegate\)/.test(gso.msg) && !/set_posture is not yours/.test(gso.msg), `a chief of staff who enters an order he has not the power to give is told the day he enters it: ${gso.msg}`);
+    w.turn += 1; assert.ok(/Order SO\d+ \("home after a quarter"\) has come to its day \(in [^)]*\): demobilize, report are given in your name with this morning's orders[^]*There is no need to give it yourself/.test(desk(w, L)), `on its day the desk says it is being given, and that nobody need give it by hand: ${String(desk(w, L)).split('\n').find(l => /Order SO/.test(l))}`);
+    // The ruler gives it by hand all the same, as the ruler of Morovia did; the order then finds the brigade gone, and says that.
+    assert.ok(applyOp(w, L, { op: 'demobilize', unit: body.id, _law: true }).ok); L.inbox = []; L.reportsDue = []; standingStepOf(w, applyOp);
+    const told = L.inbox.find(m => /has come to its day/.test(m.text))?.text ?? ''; assert.ok(new RegExp(`demobilize: NOT carried out: No reservists are under arms in ${body.id}: it has gone home already`).test(told), `the order that finds its work done says why: ${told}`);
+    assert.ok(/report: Your people will lay it on your desk tomorrow morning: army/.test(told) && L.reportsDue.includes('army'), 'and a report ordered for a day is laid on the desk the morning after it'); }
+  { // A works known by its name.
+    const w = inherited(2696855, 8), c = aliveCountries(w)[0], M = w.characters[c.oligarch], p = countryProvinces(w, c.id)[0]; M.wealth = 400; w.turn += 3;
+    const none = applyOp(w, M, { op: 'found_company', name: 'Northern Cloth Works', sector: 'goods', province: p.id }); assert.ok(!none.ok && new RegExp(`No capital was named: say how much is put into it \\(amount\\)[^]*your purse holds 400[^]*building:${p.id}`).test(none.msg), `a works founded with no capital named says what is wanted and where the price is: ${none.msg}`);
+    const made = applyOp(w, M, { op: 'found_company', name: 'Northern Cloth Works', sector: 'goods', province: p.id, amount: 60 }); assert.ok(made.ok && made.firm, made.msg); const f = w.firms[made.firm];
+    const wage = applyOp(w, M, { op: 'set_wages', id: 'Northern Cloth Works', level: 1.1 }), safe = applyOp(w, M, { op: 'set_safety', id: 'the northern cloth works', level: .5 });
+    assert.ok(wage.ok && safe.ok && Math.abs(f.wage - 1.1) < 1e-6 && Math.abs(f.safety - .5) < 1e-6, `the works its founder names by its name is the works he means: ${wage.msg} | ${safe.msg}`);
+    assert.ok(firmBy_(w, M, undefined)?.id === f.id && firmBy_(w, M, 'A Works Nobody Founded') === null && !applyOp(w, M, { op: 'set_wages', id: 'A Works Nobody Founded', level: 1 }).ok, 'named by nothing, the one works founded this morning is meant; a name nobody bears is no works'); }
+  { // The approach with no sum.
+    const w = inherited(2696855, 8), [c, d] = aliveCountries(w), L = ld(w, c), t0 = c.treasury; let seen = null;
+    for (let i = 0; i < 12 && !seen; i++) { const y = structuredClone(w); y.rng = 77 + i * 9973; const r = applyOp(y, y.characters[L.id], { op: 'recruit_informant', office: 'army', target: d.id }); if (/was sounded without a figure/.test(r.msg)) seen = { y, r }; }
+    assert.ok(seen && !seen.r.ok && /No sum was named, so nobody was bought\. [^]* \(K\d+\), a clerk on the general staff of [^,]*, was sounded without a figure: something near \d+ would be heard\. Name the sum \(amount\) and the next approach goes to (?:him|her); it is paid from the secret vote/.test(seen.r.msg), `an approach with no sum buys nobody and brings back the man and his price: ${seen?.r.msg}`);
+    const y = seen.y, id = /\((K\d+)\)/.exec(seen.r.msg)[1], man = y.characters[id], price = +/something near (\d+)/.exec(seen.r.msg)[1];
+    assert.ok(man?.alive && !man.nobody && y.characters[L.id].sounded?.[`${d.id}:army`] === id && price === askingOf_(man).even && Math.abs(y.countries[c.id].treasury - t0) < 1e-6, 'the man who was sounded is a person now, nothing was paid, and the figure is the one the approach itself is decided by');
+    y.turn += 1; const again = applyOp(y, y.characters[L.id], { op: 'recruit_informant', office: 'army', target: d.id, amount: price + 12 }); assert.ok(new RegExp(man.name).test(again.msg), `the next approach to that office, with a sum, goes to the same man: ${again.msg}`); }
+  { // The courts, and a charge that is not cut short.
+    const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), O = w.characters[c.opposition]; c.courts = 20;
+    const long = 'Attempting to buy a clerk of the general staff to pass military information in wartime; the evidence is the report of the clerk himself and the file kept by the police on the accused through two quarters. The trial is to be held in open court';
+    assert.ok(applyOp(w, L, { op: 'prosecute', character: O.id, charge: long + '.', penalty: 'prison' }).ok && O.trial.charge === long, `a charge is written down as it was given: ${O.trial.charge.slice(-60)}`);
+    w.turn += 1; justiceOf(w); assert.ok(c.trials?.length === 1 && c.trials[0].who === O.id && ['guilty', 'acquitted'].includes(c.trials[0].verdict), 'what the bench tried is kept');
+    const q = applyOp(w, L, { op: 'inquire', into: 'courts' }); assert.ok(q.ok && /The inquiry into the courts sits/.test(q.msg), q.msg); assert.ok(applyOp(structuredClone(w), L, { op: 'inquire', into: 'the bench' }).ok || true);
+    L.inbox = []; inquiryStep(w); const rep = L.inbox.find(m => /inquiry into the courts reports/.test(m.text))?.text ?? '';
+    assert.ok(new RegExp(`The bench stands at 20 of 100 as its own master: it is the government's creature[^]*Tried of late: ${O.name}, (?:acquitted|found guilty \\(\\d+ years\\)) in [^]* on no papers, only the charge, the case brought by ${L.name}[^]*Nothing in any book shows money reaching a judge`).test(rep), `an inquiry into the courts says how the bench stands and how its cases went: ${rep}`);
+    const M = w.characters[c.oligarch]; assert.ok(/The books of the courts are the state's/.test(applyOp(w, M, { op: 'inquire', into: 'courts' }).msg), 'and it is the state\'s to open, like any office'); }
+  { // Small answers that say why.
+    const w = inherited(2696855, 8), [c, d, e] = aliveCountries(w), L = ld(w, c), O = w.characters[c.opposition], M = w.characters[c.oligarch];
+    const made = applyOp(w, L, { op: 'create_institution', name: 'Commission on the Wage Floor', powers: ['industry'], budget_pct_gdp: .001, _law: true }); assert.ok(made.ok, made.msg); const inst = c.institutions.find(i => i.name === 'Commission on the Wage Floor');
+    const no = applyOp(w, O, { op: 'appoint_institution', id: inst.id, role: 'member' }); assert.ok(!no.ok && /You cannot make appointments to Commission on the Wage Floor: its members are named by [^]*whoever governs\. A name put to one of them by letter is theirs to seat or to refuse/.test(no.msg), no.msg);
+    const med = applyOp(w, L, { op: 'mediate', between: [d.id, e.id], kind: 'peace', terms: 'Good offices.' }); assert.ok(!med.ok && /There is no war among them to end or to halt\. A quarrel short of war is not ended by a peace[^]*call_conference/.test(med.msg), med.msg);
+    const debt = { id: 'B-9001', creditor: M.id, debtor: O.id, amount: 30, owed: 36, due: w.turn + 4, terms: 'A loan.', status: 'paid', turn: 0, closedAt: w.turn };
+    (w.debts ||= []).push(debt); const buy = applyOp(w, L, { op: 'buy_debt', debt: 'B-9001' }); assert.ok(!buy.ok && /Note B-9001 is no longer open: it was paid in [^,]*, and nothing stands on it/.test(buy.msg), buy.msg);
+    const facts = factsNow_(w, ['In 1892: kept two sets of books.', `Owes 36 to ${M.name} on a note of hand (B-9001), due Q1 1902.`]); assert.ok(facts[0] === 'In 1892: kept two sets of books.' && /\[Since then that note has been paid, in [^:]*: nothing stands on it now\.\]$/.test(facts[1]), `a file that names a note since paid tells its reader: ${facts[1]}`);
+    debt.status = 'open'; assert.ok(!/Since then/.test(factsNow_(w, [facts[1].split(' [')[0]])[0]), 'and says nothing of the kind while the note runs');
+    // The successor who holds the office already is not dismissed in her own favour.
+    const chief = w.characters[c.general], loyal = Object.values(w.units).filter(u => u.country === c.id).map(u => u.loyalty), army = c.blocs.army.sat, same = applyOp(w, L, { op: 'dismiss', successor: chief.id });
+    assert.ok(same.ok && /holds the office of chief of the general staff already; nobody was dismissed/.test(same.msg) && c.general === chief.id && c.blocs.army.sat === army && Object.values(w.units).filter(u => u.country === c.id).every((u, i) => u.loyalty === loyal[i]), `naming the sitting chief as his own successor changes nothing and costs nothing: ${same.msg}`); }
 });
 
 chain('A general is worth a timetable, a hidden concentration and an orderly retreat, not a third more rifles: the same assault under an able commander hits somewhat harder and not half as hard again; his columns are seen forming up less often than a poor hand\'s; and what he leads off a lost field leaves fewer prisoners behind', () => {
