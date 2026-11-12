@@ -275,8 +275,11 @@ export class WorldMap {
     for (const [k, r] of Object.entries(w.routes || {})) {
       const [a, b] = k.split('|'), v = Object.values(flows[k] || {}).reduce((s, n) => s + n, 0); if (!v) continue;
       const A = cap(a), B = cap(b); if (!A || !B) continue;
-      const pts = r.mode === 'sea' ? [[A.cx, A.cy], ...r.path.map(s => [w.seas[s].cx, w.seas[s].cy]), [B.cx, B.cy]] : [[A.cx, A.cy], [B.cx, B.cy]];
-      x += `<polyline class="route" stroke="${r.mode === 'sea' ? '#f6df98' : '#6c3f1c'}" stroke-width="${Math.min(8, 1 + Math.sqrt(v) * .07)}" stroke-dasharray="${r.tolls.length ? '7 5' : '0'}" points="${pts.map(q => q.join()).join(' ')}"/>`;
+      // The way a trade takes is drawn where it goes: stage by stage over the provinces and waters it crosses, the water part light, the land part dark.
+      const at = id => w.provinces[id] ?? w.seas[id], line = (ids, sea) => ids.length > 1 ? `<polyline class="route" stroke="${sea ? '#f6df98' : '#6c3f1c'}" stroke-width="${Math.min(8, 1 + Math.sqrt(v) * .07)}" stroke-dasharray="${sea && (r.tolls || []).length ? '7 5' : '0'}" points="${ids.map(id => at(id)).filter(Boolean).map(q => `${q.cx},${q.cy}`).join(' ')}"/>` : '';
+      if (!r.nodes?.length) { const pts = r.mode === 'sea' ? [[A.cx, A.cy], ...r.path.map(s => [w.seas[s].cx, w.seas[s].cy]), [B.cx, B.cy]] : [[A.cx, A.cy], [B.cx, B.cy]]; x += `<polyline class="route" stroke="${r.mode === 'sea' ? '#f6df98' : '#6c3f1c'}" stroke-width="${Math.min(8, 1 + Math.sqrt(v) * .07)}" points="${pts.map(q => q.join()).join(' ')}"/>`; continue; }
+      let run = [r.nodes[0]]; for (let i = 1; i < r.nodes.length; i++) { const id = r.nodes[i], wet = !!w.seas[id] || !!w.seas[r.nodes[i - 1]], was = run.length > 1 ? (!!w.seas[run.at(-1)] || !!w.seas[run.at(-2)]) : wet; if (wet !== was) { x += line(run, was); run = [r.nodes[i - 1]]; } run.push(id); }
+      x += line(run, run.some(id => w.seas[id]));
     }
     return x;
   }

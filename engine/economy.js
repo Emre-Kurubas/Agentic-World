@@ -99,9 +99,9 @@ export function carry(w, a, b, bulk = false, without = null) {
   const stages = { rail: 0, road: 0 }; for (const id of nodes) if (how[id] === 'rail' || how[id] === 'road') stages[how[id]]++;
   const water = seas.length ? sum(nodes.filter(id => ['port', 'sea', 'canal'].includes(how[id])), id => dist[id] - dist[prev[id]]) : 0;
   // A canal passed is a place passed, for whoever counts what goes where.
-  nodes.push(...seas.filter(s => how[s] === 'canal' && cut[s]).map(s => cut[s]));
+  const cuts = seas.filter(s => how[s] === 'canal' && cut[s]).map(s => cut[s]);
   const dues = vias.map(id => ({ to: id, rate: (transitOf(w.countries[id], a.id).toll + transitOf(w.countries[id], b.id).toll) / 2 })).filter(d => d.rate > 0);
-  return { mode: seas.length ? 'sea' : vias.length ? 'transit' : 'land', way: dist[to] - twice, path: seas, land, nodes, tolls: Object.values(keepers).map(s => s.id), dues, ...(vias.length ? { via: vias[0], vias } : {}), stages, water };
+  return { mode: seas.length ? 'sea' : vias.length ? 'transit' : 'land', way: dist[to] - twice, path: seas, land, nodes, tolls: Object.values(keepers).map(s => s.id), dues, ...(vias.length ? { via: vias[0], vias } : {}), ...(cuts.length ? { cuts } : {}), stages, water };
 }
 const tollAt = (st, a, b) => st && st.toll && st.controller && st.controller !== a.id && st.controller !== b.id ? st.toll : 0;
 // What the dangers of one sea add to a cargo of these two states: raiders, mines, a blockade that is run.
@@ -404,7 +404,7 @@ function trade(w, cs) {
         if (risk > 0) { insurer.reserves += risk; insurer._premiums = (insurer._premiums || 0) + risk; }
         if (a.r.mode === 'sea') carried.push([a.x.c.id, b.c.id, q, v * (a.r.water || 0)]);
         // What passed where, for whoever asks what a place is worth to the world's trade (w.traffic).
-        for (const id of a.r.nodes || []) { const t = (traffic[id] ||= { v: 0, by: {} }), pair = key(b.c.id, a.x.c.id); t.v += v; t.by[pair] = (t.by[pair] || 0) + v; }
+        for (const id of [...(a.r.nodes || []), ...(a.r.cuts || [])]) { const t = (traffic[id] ||= { v: 0, by: {} }), pair = key(b.c.id, a.x.c.id); t.v += v; t.by[pair] = (t.by[pair] || 0) + v; }
         // Who sold whom what, for the yearbooks: a state's dependence on another is a fact anybody can add up from the trade returns.
         ((b.c._from ||= {})[g] ||= {})[a.x.c.id] = ((b.c._from[g] ||= {})[a.x.c.id] || 0) + q;
         if (b.c._alloc) { const own = Math.min(b.c._alloc[g] ?? 0, gold); b.c._alloc[g] = (b.c._alloc[g] ?? 0) - own; b.c._spare = Math.max(0, (b.c._spare ?? 0) - (gold - own)); }
