@@ -91,6 +91,8 @@ export function outfitFleets(w) {
     if (!home) { f.kind = 'cruiser'; continue; }
     const heavy = home.port >= 2 ? Math.round(n * .3 / SHIPS.battleship.power) : 0, small = Math.round(n * .15 / SHIPS.torpedo.power), rest = Math.max(1, Math.round(n - heavy * SHIPS.battleship.power - small * SHIPS.torpedo.power));
     f.kind = 'cruiser'; f.ships = rest; dock(w, f, home);
+    // The navy a state inherits was built somewhere: its home port has the yard that built it, the larger for a navy with a battle line.
+    w.yards = true; home.yard = Math.max(home.yard || 0, heavy >= 1 && home.port >= 3 ? 2 : 1);
     for (const [kind, k] of [['battleship', heavy], ['torpedo', small]]) if (k >= 1) { const x = makeFleet(w, f.country, f.sea, k, kind); x.quality = f.quality; x.morale = f.morale; dock(w, x, home); }
   }
 }
@@ -147,7 +149,7 @@ export function navalStep(w) {
   for (const f of fleets()) {
     // Ships brought in this quarter are surveyed and docked; the mending starts with the next.
     const p = w.provinces[f.port]; if (!p || !(f.damaged > 0) || f.hurt === w.turn) continue;
-    const k = SHIPS[kindOf(f)], c = w.countries[f.country], can = Math.min(f.damaged, p.port * 3 / k.power), steel = Math.min(can * k.steel * .15, Math.max(c.stock.steel || 0, 0)), done = can * (.5 + .5 * (can > 0 ? steel / (can * k.steel * .15) : 1));
+    const k = SHIPS[kindOf(f)], c = w.countries[f.country], can = Math.min(f.damaged, p.port * 3 * (1 + (p.yard || 0) * .5) / k.power), steel = Math.min(can * k.steel * .15, Math.max(c.stock.steel || 0, 0)), done = can * (.5 + .5 * (can > 0 ? steel / (can * k.steel * .15) : 1));
     c.stock.steel = Math.max(0, (c.stock.steel || 0) - steel); f.damaged -= done; f.ships += done; if (f.damaged < .05) f.damaged = 0;
   }
   // A squadron told to stay in harbour, or one that is beyond the reach of any base, makes for the nearest one.

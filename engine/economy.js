@@ -135,9 +135,13 @@ function weatherStep(w) {
   for (const p of Object.values(w.provinces)) if (p.dam) { let q = p.downstream ? w.provinces[p.downstream] : null, f = .3, n = 0; while (q && n++ < 12) { q.waterPenalty += f; f *= .8; q = q.downstream ? w.provinces[q.downstream] : null; } }
 }
 
+// What part of its places a mill keeps filled: all of them while it sells what it makes; on short time, that part (the same reckoning the
+// mills themselves are run on, factories); an arms works, what the state asks of it; never less than the few who keep the fires in.
+const KEPT = .1;
+const busy = (c, pl) => clamp(glutFactor(c, pl) * (pl === 'arms' ? clamp(c.armShare * 4, .2, 1) : 1) * (pl === 'fuel' && !hasTech(c, 'oil_prospecting') && !c.stock.oil ? 0 : 1), KEPT, 1);
 function extract(w, c) {
   const raw = Object.fromEntries(RAW.map(g => [g, 0])); let gold = 0, services = 0, dev = 0, popAll = 0;
-  c._cap = Object.fromEntries(Object.keys(PLANTS).map(k => [k, 0]));
+  c._cap = Object.fromEntries(Object.keys(PLANTS).map(k => [k, 0])); c._cap0 = {};
   const engine = hasTech(c, 'combustion_engine') ? 1 + clamp(c.stock.fuel / Math.max(c._lastFuelNeed || 1, 1), 0, 1) * .25 * (c.motor ?? 0) : 1;
   // The harvest answers to the fertilizer that was actually put on the fields last quarter (c.fed, of the full dressing), not to what lies in store.
   const spread = inUse(w, c, 'chemical_fertilizer'), fert = spread > 0 ? 1 + (c.fed ?? clamp(c.stock.fertilizer / Math.max(c._pop * .002 * spread, 1), 0, 1)) * .4 * spread : 1;
@@ -166,12 +170,21 @@ function extract(w, c) {
     // town, at the building, the carting and the docks, and make no steel and no cloth. People who come to the towns find places in the mills
     // only as the mills are extended. (When every hand was shared out among whatever works stood there, a country that lost its pits made more steel.)
     p.base ??= Math.max(p.pops.workers.n, 1);
-    const mineLoad = sum(deposits, ([, d]) => d.mine), level = sum(Object.values(p.plants)), places = (mineLoad + level) * p.base, per = places > 0 ? Math.min(p.base, p.pops.workers.n * p.base / places) : 0;
+    // And a works keeps the hands it has work for. A pit whose coal lies unsold, a mill on short time because its yards are full, an arms
+    // shop the state has asked for a third of what it can make, a refinery in a country that has not learned to refine: each holds that part
+    // of its places and a few men to keep the fires in (KEPT), and the rest of its hands are in the other works of the town or in its small
+    // trades. (World 18: a phosphate pit nobody bought from held 134 thousand hands for four years and raised nothing; an arms shop held 18
+    // thousand and made a tenth of a unit; and a new coal pit in a country with coal to spare lowered what the country turned out, because
+    // it took its share of the town's hands away from the mills.)
+    const use = Object.fromEntries(Object.keys(PLANTS).map(pl => [pl, busy(c, pl)])), work = k => k === 'gold' ? 1 : clamp(pace[k] ?? 1, KEPT, 1);
+    const mineLoad = sum(deposits, ([k, d]) => d.mine * work(k)), level = sum(Object.keys(PLANTS), pl => (p.plants[pl] || 0) * use[pl]), places = (mineLoad + level) * p.base, per = places > 0 ? Math.min(p.base, p.pops.workers.n * p.base / places) : 0;
+    // (What stands idle is reckoned as before, on the hands a works would have if every works in the town were full: per0.)
+    const all = (sum(deposits, ([, d]) => d.mine) + sum(Object.values(p.plants))) * p.base, per0 = all > 0 ? Math.min(p.base, p.pops.workers.n * p.base / all) : 0, slack = per > 0 ? per0 / per : 1;
     const loose = Math.max(0, p.pops.workers.n - places); c._loose += loose; c._hands += p.pops.workers.n; p.loose = loose;
     for (const [k, d] of deposits) {
       const full = per * d.mine * d.rich * ({ coal: .3, iron: .22, oil: .12 }[k] ?? .06) * c.tech.ind * eff * strikes * (1 - (p.halt?.[k] ?? 0)) * (k === 'gold' ? 1 : tended), f = k === 'gold' ? 1 : pace[k] ?? 1, q = full * f;
       if (k !== 'gold') c._rawFull[k] += full;
-      if (f < 1) c._idleV += (full - q) * BASE_PRICE[k];
+      if (f < 1) c._idleV += (full - q) * slack * BASE_PRICE[k];
       d.amount = Math.max(0, d.amount - q * .08);
       const con = p.concessions?.[k];
       if (k === 'gold') { gold += q; continue; }
@@ -181,11 +194,14 @@ function extract(w, c) {
       raw[k] += kept; p.dug[k] = kept; c._rent += kept * BASE_PRICE[k] * (k === 'oil' ? 1.4 : 1);
       if (d.amount <= 0) news(w, `${c.name}: the ${p.name} ${GOOD_LABEL[k]} deposit is exhausted.`, { kind: 'economy', countries: [c.id] });
     }
-    if (level > 0) for (const pl of Object.keys(PLANTS)) if (p.plants[pl] > 0) { const here = per * p.plants[pl] * clamp(.7 + p.plants[pl] * .35, .7, 3) * .05 * 25 / BASE_PRICE[pl] * c.tech.ind * eff * strikes * bank * (1 - c.ownership * .15) * (1 - (p.halt?.[pl] ?? 0)) * tended; c._cap[pl] += here; p.cap[pl] = here; }
+    if (level > 0) for (const pl of Object.keys(PLANTS)) if (p.plants[pl] > 0) { const here = per * p.plants[pl] * clamp(.7 + p.plants[pl] * .35, .7, 3) * .05 * 25 / BASE_PRICE[pl] * c.tech.ind * eff * strikes * bank * (1 - c.ownership * .15) * (1 - (p.halt?.[pl] ?? 0)) * tended; c._cap[pl] += here; c._cap0[pl] = (c._cap0[pl] || 0) + here * slack; p.cap[pl] = here; }
     // A town has only so much carting, building and mending to be done: hands beyond those its small trades had when the world was handed over
     // add less and less, as on the land.
     p.trades ??= Math.max(loose, p.base * .1);
     services += (p.pops.middle.n + p.pops.elite.n * 1.5 + p.trades * Math.pow(loose / p.trades, .7) * SMALL) * eff;
+    // What the province turned out this quarter, at ordinary prices, for whoever is asked what a work there would add (projects.js quote).
+    p.grewV = grain * pace.grain * BASE_PRICE.grain; p.cutV = timber * pace.timber * BASE_PRICE.timber;
+    p.out = p.grewV + p.cutV + sum(Object.entries(p.dug), ([k, q]) => q * BASE_PRICE[k]) + sum(Object.entries(p.cap), ([pl, q]) => q * use[pl] * BASE_PRICE[pl] * .45) + (p.pops.middle.n + p.pops.elite.n * 1.5 + p.trades * Math.pow(loose / p.trades, .7) * SMALL) * eff;
     const pop = provincePop(p); popAll += pop; dev += p.devastation * pop;
   }
   c._pop = popAll; c._dev = popAll ? dev / popAll : 0; c._raw = raw; c._services = services; c._capAll = { ...c._cap };
@@ -368,7 +384,7 @@ function factories(w, c) {
   c._still = {}; let could = 0;
   for (const pl of ORDER) {
     const pace = glutFactor(c, pl), asked = pl === 'arms' ? armsPriority : 1, cap = c._cap[pl] * asked * pace, rec = RECIPE[pl], full = c._cap[pl];
-    c._cap[pl] *= pace; if (pace < 1) c._idleV += cap / pace * (1 - pace) * BASE_PRICE[pl] * .45;
+    c._cap[pl] *= pace; if (pace < 1) c._idleV += (c._cap0?.[pl] ?? full) * asked * (1 - pace) * BASE_PRICE[pl] * .45;
     if (pl === 'fuel' && !hasTech(c, 'oil_prospecting') && !c.stock.oil) { made[pl] = 0; continue; }
     let r = cap, lack = null;
     for (const [g, q] of Object.entries(rec)) if ((c.stock[g] || 0) / q < r) { r = (c.stock[g] || 0) / q; lack = g; }

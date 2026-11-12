@@ -48,13 +48,36 @@ export function supplyLines(w, c) {
     todo.sort((a, b) => depth[a] - depth[b]); const x = todo.shift();
     for (const n of w.provinces[x].neighbors) { if (!net.has(n)) continue; const d = depth[x] + haul(c, w.provinces[n]); if (!(n in depth) || d < depth[n] - 1e-9) { depth[n] = d; head[n] = head[x]; todo.push(n); } }
   }
+  // A depot is a head of supply pushed forward: stores piled at a place the wagons can reach, from which the last marches are counted
+  // afresh. It serves while it holds stores (it fills, a quarter's worth at a time, while a road joins it to the country; military step).
+  const reach = { ...depth }, fed = [...net].filter(id => { const p = w.provinces[id]; return p.depot > 0 && p.controller === c.id && (p.depotStore || 0) >= 1 && depth[id] > 0; });
+  for (const id of fed) { depth[id] = 0; head[id] = id; todo.push(id); }
+  while (todo.length) {
+    todo.sort((a, b) => depth[a] - depth[b]); const x = todo.shift();
+    for (const n of w.provinces[x].neighbors) { if (!net.has(n)) continue; const d = depth[x] + haul(c, w.provinces[n]); if (!(n in depth) || d < depth[n] - 1e-9) { depth[n] = d; head[n] = head[x]; todo.push(n); } }
+  }
   // What lies beyond the sea from the capital is fed through its harbours, and a harbour lands only so much in a quarter.
   const home = new Set(c.capital && net.has(c.capital) ? [c.capital] : []), hq = [...home];
   for (let i = 0; i < hq.length; i++) for (const n of w.provinces[hq[i]].neighbors) if (net.has(n) && !home.has(n)) { home.add(n); hq.push(n); }
   const over = {}, lands = {}, quay = {}; let k = 0;
   for (const id of net) if (!home.has(id) && !(id in over)) { const label = 'O' + k++, grp = [id]; over[id] = label; lands[label] = 0;
     for (let i = 0; i < grp.length; i++) { const p = w.provinces[grp[i]]; if (open(p)) { lands[label] += p.port * PORT_FEEDS; if (!quay[label] || p.port > w.provinces[quay[label]].port) quay[label] = p.id; } for (const n of p.neighbors) if (net.has(n) && !home.has(n) && !(n in over)) { over[n] = label; grp.push(n); } } }
-  return { net, depth, head, over, lands, quay };
+  return { net, depth, head, over, lands, quay, reach };
+}
+// How many quarters of stores one size of depot holds, and how many thousand men a cut-off force can feed from one.
+export const DEPOT_HOLDS = 2, DEPOT_FEEDS = 60;
+// The magazines fill while a road joins them to the country and empty while troops cut off from it live on them.
+export function depotStep(w) {
+  for (const p of Object.values(w.provinces)) { if (!(p.depot > 0)) continue; const c = w.countries[p.controller]; if (!c?.alive) continue;
+    const l = linesOf(w, c.id), joined = l && l.reach[p.id] != null;
+    if (joined) p.depotStore = Math.min(p.depot * DEPOT_HOLDS, (p.depotStore || 0) + 1);
+    else if (p.depotDrawn === w.turn) { p.depotStore = Math.max(0, (p.depotStore || 0) - 1); if (p.depotStore <= 0) for (const ch of [w.characters[c.leader], w.characters[c.general]]) if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'Quartermaster General', text: `The depot at ${p.name} is empty. The troops that lived on it are cut off from the country and have nothing more behind them.` }); } }
+}
+// The nearest stocked depot of ours within two marches of a place, through ground we hold: what a force cut off from the country lives on.
+function magazine(w, u) {
+  const seen = new Set([u.province]), q = [[u.province, 0]];
+  for (let i = 0; i < q.length; i++) { const [id, d] = q[i], p = w.provinces[id]; if (p.depot > 0 && p.controller === u.country && (p.depotStore || 0) >= 1) return p; if (d >= 2) continue; for (const n of p.neighbors) if (!seen.has(n) && w.provinces[n].controller === u.country) { seen.add(n); q.push([n, d + 1]); } }
+  return null;
 }
 // Thousands of men one level of harbour can keep fed and shot across the sea.
 export const PORT_FEEDS = 60;
@@ -67,7 +90,8 @@ export function supplyOf(w, u) {
   if (!l || !p || !c) return { linked: true, depth: 0, head: null, factor: 1 };
   let d = l.depth[p.id], h = l.head[p.id];
   if (d == null) for (const n of p.neighbors) if (l.depth[n] != null) { const x = l.depth[n] + haul(c, p); if (d == null || x < d) { d = x; h = l.head[n]; } }
-  if (d == null) return { linked: false, depth: null, head: null, factor: .55 };
+  // Cut off from the country, a force lives on the stores of a depot of its own if one stands within two marches, for as long as they last.
+  if (d == null) { const m = magazine(w, u); if (m) { m.depotDrawn = w.turn; const load = sum(Object.values(w.units).filter(x => x.country === u.country && linesOf(w, x.country)?.depth[x.province] == null && magazine(w, x) === m), x => x.men); return { linked: false, depth: null, head: m.id, factor: clamp(m.depot * DEPOT_FEEDS / Math.max(load, 1e-9), .55, .95), depot: m.id, left: m.depotStore }; } return { linked: false, depth: null, head: null, factor: .55 }; }
   // An army on soil beyond the sea that is not its country's own lives on what its harbours can land, and shares them with every other man of
   // its country landed there. (On the country's own soil across the water the depots and the farms are its own.)
   const shore = id => l.over[id] ?? (l.net.has(id) ? undefined : w.provinces[id]?.neighbors.map(n => l.over[n]).find(x => x != null)), abroad = id => w.provinces[id]?.owner !== u.country, label = l.over[h] ?? shore(p.id);
@@ -75,7 +99,7 @@ export function supplyOf(w, u) {
   const load = sum(Object.values(w.units).filter(x => x.country === u.country && abroad(x.province) && shore(x.province) === label), x => x.men), neck = clamp(l.lands[label] / Math.max(load, 1e-9), .5, 1);
   return { linked: true, depth: d, head: h, factor: clamp(1 - (d - 1) * .12, .6, 1) * neck, ...(neck < 1 ? { quay: l.quay[label], lands: l.lands[label], load } : {}) };
 }
-export const supplyWords = (w, u) => { const s = supplyOf(w, u), h = w.provinces[s.head]?.name; if (s.quay) return `fed across the sea: the harbour of ${w.provinces[s.quay].name} can land for about ${Math.round(s.lands)} thousand men and ${Math.round(s.load)} thousand draw on it, so about ${Math.round(s.factor * 100)} in the hundred of what it needs reaches it (a larger harbour, or fewer men, would mend that)`; return !s.linked ? 'cut off from the country: no supply reaches it' : s.depth <= 1 ? `fully supplied from ${h}` : `${Math.round(s.depth * 10) / 10} marches of wagon road from its supply head at ${h}: about ${Math.round(s.factor * 100)} in the hundred of what it needs reaches it`; };
+export const supplyWords = (w, u) => { const s = supplyOf(w, u), h = w.provinces[s.head]?.name; if (s.depot) return `cut off from the country and living on the depot at ${h}: about ${Math.round(s.factor * 100)} in the hundred of what it needs, for ${s.left} quarter${s.left > 1 ? 's' : ''} more`; if (s.quay) return `fed across the sea: the harbour of ${w.provinces[s.quay].name} can land for about ${Math.round(s.lands)} thousand men and ${Math.round(s.load)} thousand draw on it, so about ${Math.round(s.factor * 100)} in the hundred of what it needs reaches it (a larger harbour, or fewer men, would mend that)`; return !s.linked ? 'cut off from the country: no supply reaches it' : s.depth <= 1 ? `fully supplied from ${h}` : `${Math.round(s.depth * 10) / 10} marches of wagon road from its supply head at ${h}: about ${Math.round(s.factor * 100)} in the hundred of what it needs reaches it`; };
 const fit = ch => ch?.alive && ch.status === 'free' && !incapacitated(ch) ? ch : null;
 export const commanderOf = (w, u) => fit(w.characters[u.commander]) ?? fit(w.characters[w.countries[u.country]?.general]);
 // Command is dangerous for those who lead from the front; a chief of staff at headquarters is rarely hit.

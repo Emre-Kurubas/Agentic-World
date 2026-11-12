@@ -1,5 +1,5 @@
 import { economyStep } from './economy.js';
-import { militaryStep } from './military.js';
+import { militaryStep, depotStep } from './military.js';
 import { satisfactionStep, plotStep, uprisingStep, electionStep, collapseStep, relationDrift, lifeStep, pruneStep, partyStep, debtStep } from './politics.js';
 import { treatyStep, institutionStep, billStep } from './polity.js';
 import { firmStep } from './firms.js';
@@ -40,7 +40,7 @@ export function stepWorld(w) {
   firmStep(w);
   contractStep(w);
   bondStep(w);
-  militaryStep(w, carryAwaited, carryTaken);
+  militaryStep(w, carryAwaited, carryTaken); depotStep(w);
   frontierStep(w);
   institutionStep(w);
   cultureStep(w);

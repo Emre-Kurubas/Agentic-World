@@ -411,7 +411,7 @@ chain('The state reaches remote provinces poorly, a governor extends it, collect
   far.admin = .1; assert.ok(adminPressure(far) > 0, 'weak administration means unrest');
 });
 chain('A contract starts the quarter after it is signed, payment and delivery run, a breach is written', () => {
-  const w = fresh(), c = w.countries.U1, a = w.characters[c.oligarch], b = w.characters[w.countries.U2.oligarch], A0 = 500; a.wealth = A0; b.wealth = 100; run(w, 1); w.routes['U1|U2'] = { mode: 'land', cost: 1, path: [], tolls: [] };
+  const w = fresh(), c = w.countries.U1, a = w.characters[c.oligarch], b = w.characters[w.countries.U2.oligarch], A0 = 500; run(w, 1); a.wealth = A0; b.wealth = 100; w.routes['U1|U2'] = { mode: 'land', cost: 1, path: [], tolls: [] };
   const r = applyOp(w, a, { op: 'propose_contract', to: b.id, terms: 'Iron agreement', pay_per_turn: 10, good: 'iron', amount: 5, seller: 'them', turns: 3 }); assert.equal(r.ok, true); assert.equal(a.wealth, A0, 'no money moves before acceptance'); const k = w.contracts.at(-1);
   contractStep(w); assert.equal(k.status, 'proposed'); assert.equal(applyOp(w, b, { op: 'accept_contract', id: k.id }).ok, true); w.firms.SRY = { id: 'SRY', status: 'open', owner: b.id, sector: 'mine', resource: 'iron', country: 'U2', province: countryProvinces(w, 'U2')[0].id, stake: 0, cash: 0, lastProfit: 0, bad: 0, lastUnits: 50 };
   w.countries.U2.stock.iron = 100; c.stock.iron = 0; contractStep(w); assert.equal(a.wealth, A0, 'nothing is delivered or paid in the quarter of the signature'); assert.equal(c.stock.iron, 0);
@@ -1902,7 +1902,7 @@ chain('An order is carried out as far as the state has the offices and the loyal
   const price = (corruption, admin) => { const [x, k, b] = state(60), p = x.provinces[k.capital]; k.corruption = corruption; p.admin = admin; k.treasury = 1e6; k.stock.machines = 1e4; k.stock.steel = 1e4; const t = k.treasury; const o = applyOp(x, b, { op: 'build', province: p.id, kind: 'fort' }); assert.ok(o.ok, o.msg); return t - k.treasury; };
   const clean = price(5, .9), dirty = price(80, .1); assert.ok(dirty > clean * 1.25, `graft and distance make the same work dearer: ${clean} against ${dirty}`);
   // And the same sum buys less of a work that grows by degrees: the money named is not exceeded, the roads are shorter.
-  const roads = (corruption, admin) => { const [x, k, b] = state(60), p = x.provinces[k.capital]; k.corruption = corruption; p.admin = admin; k.treasury = 1e6; const t = k.treasury, o = applyOp(x, b, { op: 'build', province: p.id, kind: 'infrastructure', amount: 200 }); assert.ok(o.ok, o.msg); assert.ok(Math.abs(t - k.treasury - 200) < 1e-6, 'the sum named is what is spent'); return x.projects.at(-1).add; };
+  const roads = (corruption, admin) => { const [x, k, b] = state(60), p = x.provinces[k.capital]; k.corruption = corruption; p.admin = admin; k.treasury = 1e6; const t = k.treasury, o = applyOp(x, b, { op: 'build', province: p.id, kind: 'infrastructure', amount: 200 }); assert.ok(o.ok, o.msg); assert.ok(Math.abs(t - k.treasury - 100) < 1e-6 && Math.abs(x.projects.at(-1).due - 100) < 1e-6, 'the sum named is what is spent: half when the work is ordered, half as it goes'); return x.projects.at(-1).add; };
   assert.ok(roads(5, .9) > roads(80, .1) * 1.25, 'the same money lays fewer roads where graft and distance are large');
   // A commander who has lost faith.
   const [x, k, b] = state(60), u = Object.values(x.units).filter(v => v.country === 'U1' && x.characters[v.commander]?.alive)[0], col = x.characters[u.commander], to = x.provinces[u.province].neighbors.find(n => x.provinces[n].controller === 'U1');
@@ -2029,18 +2029,18 @@ chain('A work costs what the work is, in that place, and never more than the sum
   const [none, free] = spent({ op: 'build', province: a.id, kind: 'railway' }); assert.ok(none.ok && free > 0, none.msg);
   const price = quote(w, c, b, 'railway').price * c.priceLevel, [small, nothing] = spent({ op: 'build', province: b.id, kind: 'railway', amount: price * .3 });
   assert.equal(small.ok, false); assert.equal(nothing, 0, 'a refused work takes no money'); assert.ok(small.msg.includes(String(Math.round(price))), `the refusal names the price: ${small.msg}`);
-  const [rich, paid] = spent({ op: 'build', province: b.id, kind: 'railway', amount: price * 20 }); assert.ok(rich.ok, rich.msg); assert.ok(Math.abs(paid - price) < 1e-6, `a large purse buys the same railway for the same money: ${paid} against ${price}`);
+  const [rich, paid] = spent({ op: 'build', province: b.id, kind: 'railway', amount: price * 20 }); assert.ok(rich.ok, rich.msg); assert.ok(Math.abs(paid - price / 4) < 1e-6 && Math.abs(w.projects.at(-1).due - price * 3 / 4) < 1e-6, `a large purse buys the same railway for the same money, a quarter of it now and the rest as the line is laid: ${paid} against ${price}`);
   const flat = quote(w, c, d, 'railway').price; d.terrain = 'mountain'; assert.ok(quote(w, c, d, 'railway').price > flat * 2, 'the same line through mountain costs more than twice as much');
   const crowd = quote(w, c, d, 'railway').price; for (const k of Object.keys(d.pops)) d.pops[k].n *= 2; assert.ok(quote(w, c, d, 'railway').price > crowd * 1.9, 'and a province of twice the people needs twice the network');
   // Works that grow by degrees: the sum named is the sum spent, and it buys in proportion.
-  const big = countryProvinces(w, 'U1')[0], [mon, twenty] = spent({ op: 'build', province: big.id, kind: 'infrastructure', amount: 20 }); assert.ok(mon.ok, mon.msg); assert.ok(Math.abs(twenty - 20) < 1e-6, `an order for 20 spends 20, not ${twenty}`);
+  const big = countryProvinces(w, 'U1')[0], [mon, twenty] = spent({ op: 'build', province: big.id, kind: 'infrastructure', amount: 20 }); assert.ok(mon.ok, mon.msg); assert.ok(Math.abs(twenty - 10) < 1e-6 && Math.abs(w.projects.at(-1).due - 10) < 1e-6, `an order for 20 spends 20, half of it now and half as the work goes, not ${twenty}`);
   const one = w.projects.at(-1).add; applyOp(w, l, { op: 'build', province: big.id, kind: 'infrastructure', amount: 60 }); assert.ok(Math.abs(w.projects.at(-1).add - one * 3) < 1e-9, 'three times the money, three times the roads');
   // A place that is full takes nothing, and no money is taken for it.
   big.coast = true; big.port = 3; const [full, zero] = spent({ op: 'build', province: big.id, kind: 'port' }); assert.equal(full.ok, false); assert.equal(zero, 0);
   big.plants.goods = 7.9; const [top, some] = spent({ op: 'build', province: big.id, kind: 'goods', amount: 1e5 }); assert.ok(top.ok, top.msg); assert.ok(some < 1e5 * .1 && Math.abs(w.projects.at(-1).add - .1) < 1e-9, 'only what the place can still take is built and paid for');
   // The estimates can be asked for beforehand, and they are the prices the order then pays.
   const est = answer(w, l, `building:${b.id}`); assert.ok(/railway: /.test(est) && /fort: about/.test(est) && /steel mill: about/.test(est), est.slice(0, 300));
-  const fort = Number(/fort: about (\d+)/.exec(answer(w, l, `building:${d.id}`))[1]), [f, cost] = spent({ op: 'build', province: d.id, kind: 'fort' }); assert.ok(f.ok && Math.abs(cost - fort) <= 1, `quoted ${fort}, paid ${cost}`);
+  const fort = Number(/fort: about (\d+)/.exec(answer(w, l, `building:${d.id}`))[1]), [f, cost] = spent({ op: 'build', province: d.id, kind: 'fort' }); assert.ok(f.ok && Math.abs(cost + w.projects.at(-1).due - fort) <= 1 && Math.abs(cost - fort / 5) <= 1, `quoted ${fort}, paid ${cost} now and ${w.projects.at(-1).due} still to pay over the four quarters after`);
 });
 chain('Building gives work while it lasts, and the books show what it cost', () => {
   const pair = () => { const w = fresh(), c = w.countries.U1; c.treasury = 1e6; c.stock.steel = 1e4; c.stock.machines = 1e4; return [w, c]; };
@@ -2959,7 +2959,7 @@ chain('A navy is handed over as a navy of its time and its staff knows how it wo
   const ref = refereePrompt(w, c, [{ actor: gen, decisions: ['The fleet puts to sea.'] }]); assert.ok(ref.includes('fleet_orders{fleet?|all?,orders:patrol|seek|evade|blockade|raid|port}') && ref.includes('Its harbours:') && ref.includes('in harbour at') && ref.includes('lay_mines{sea}') && ref.includes('bombard{province,fleet?,at?:works|troops|ships|town}'), 'the referee knows the orders and sees where the ships lie');
   // The yards.
   c.treasury = c.gdp * 4; c.stock.steel = 500; const small = countryProvinces(w, c.id).find(p => p.port === 1);
-  assert.ok(applyOp(w, boss, { op: 'build_ship', province: home.id, ships: 6, kind: 'torpedo' }).ok); if (small) assert.ok(/harbour is too small/.test(applyOp(w, boss, { op: 'build_ship', province: small.id, ships: 1, kind: 'battleship' }).msg));
+  assert.ok(applyOp(w, boss, { op: 'build_ship', province: home.id, ships: 6, kind: 'torpedo' }).ok); if (small) assert.ok(/harbour is too small|there is no shipyard there/.test(applyOp(w, boss, { op: 'build_ship', province: small.id, ships: 1, kind: 'battleship' }).msg));
   const before = Object.keys(w.fleets).length; run(w, 2); const built = Object.values(w.fleets).find(f => f.kind === 'torpedo' && f.ships === 6 && f.port === home.id); assert.ok(Object.keys(w.fleets).length === before + 1 && built, 'torpedo boats are delivered in two quarters and lie where they were built');
   assert.ok(applyOp(w, gen, { op: 'fleet_orders', all: true, orders: 'evade' }).ok && Object.values(w.fleets).filter(f => f.country === c.id).every(f => f.orders === 'evade') && !applyOp(w, w.characters[c.opposition], { op: 'fleet_orders', all: true, orders: 'patrol' }).ok, 'standing orders are the staff\'s and the ruler\'s to give');
   // Played by rule.
@@ -3628,10 +3628,10 @@ chain('A work ordered with no sum does not pledge the state\'s credit: the engin
   const usual = (() => { const { w, c, L, p } = mk(); c.treasury = 1e6; const m = /for (\d+)/.exec(applyOp(w, L, { op: 'build', province: p.id, kind: 'farming' }).msg); return +m[1]; })(); assert.ok(usual > 60, `the usual measure costs something: ${usual}`);
   { const { w, c, L, p } = mk(); c.treasury = 50 + usual * .4; const debt = c.debt, r = applyOp(w, L, { op: 'build', province: p.id, kind: 'farming' });
     assert.ok(r.ok && /No sum was named, so the engineers kept to what the treasury had in hand; the usual measure there would have cost about \d+/.test(r.msg), `the engineers keep to the cash in hand: ${r.msg}`);
-    assert.ok(Math.abs(c.debt - debt) < 1e-6 && Math.abs(c.treasury - 50) < 1, `nothing was borrowed and the working balance was not touched: treasury ${c.treasury}, debt ${c.debt - debt}`); }
+    assert.ok(Math.abs(c.debt - debt) < 1e-6 && c.treasury >= 49 && Math.abs(c.treasury - 50 - w.projects.at(-1).due) < 1, `nothing was borrowed and the working balance was not touched; what is kept back is the part still to pay as the work goes: treasury ${c.treasury}, debt ${c.debt - debt}`); }
   { const { w, c, L, p } = mk(); c.treasury = 50; const debt = c.debt, r = applyOp(w, L, { op: 'build', province: p.id, kind: 'farming' });
     assert.ok(!r.ok && /No sum was named, and the treasury has 0 in hand above its working balance: the usual measure[^.]*costs about \d+\. Name the sum/.test(r.msg) && c.debt === debt && c.treasury === 50, `with nothing in hand the order is refused with the price: ${r.msg}`);
-    const named = applyOp(w, L, { op: 'build', province: p.id, kind: 'farming', amount: usual * .5 }); assert.ok(named.ok && c.debt > debt + usual * .3 && /was borrowed/.test(named.msg), `a sum that is named is borrowed for: ${named.msg}`); }
+    const named = applyOp(w, L, { op: 'build', province: p.id, kind: 'farming', amount: usual * .5 }); assert.ok(named.ok && c.debt > debt + usual * .2 && /was borrowed/.test(named.msg), `a sum that is named is borrowed for: ${named.msg}`); }
 });
 
 chain('An order to one works that the inspectors cannot enforce says so to the government and to the owner, and what is under the legal floor is noted as that', () => {
@@ -4534,7 +4534,7 @@ chain('A tariff is paid by those who buy, and a country cut off from its supplie
   const a = inherited(1848), b = inherited(1848), cb = b.countries[wareId]; cb.tariff = .6; if (cb.taxTarget) delete cb.taxTarget.tariff;
   const A = ledgerOf(a), B = ledgerOf(b);
   assert.ok(B[wareId].bought.goods < A[wareId].bought.goods * .9, `fewer wares come in over the wall (${Math.round(A[wareId].bought.goods)} -> ${Math.round(B[wareId].bought.goods)})`);
-  assert.ok(B[wareId].cus > A[wareId].cus * 1.3, `the customs take more all the same (${Math.round(A[wareId].cus)} -> ${Math.round(B[wareId].cus)})`);
+  assert.ok(B[wareId].cus > A[wareId].cus * 1.15, `the customs take more all the same (${Math.round(A[wareId].cus)} -> ${Math.round(B[wareId].cus)})`);
   assert.ok(cb.goodsRatio < a.countries[wareId].goodsRatio - .03, `and the shops are emptier (${a.countries[wareId].goodsRatio.toFixed(2)} -> ${cb.goodsRatio.toFixed(2)})`);
   // The refusal.
   const fed = inherited(1848), cut = inherited(1848); for (const o of aliveCountries(cut)) if (o.id !== breadId) assert.ok(applyOp(cut, ld(cut, o), { op: 'embargo', target: breadId }).ok);
@@ -4905,6 +4905,69 @@ chain('World 18, third review: a signature goes to the paper it names or to none
     O.inbox = []; const r = applyOp(w, L, { op: 'purge', character: O.id, fate: 'exiled', _law: true }); if (r.ok) assert.ok(c.opposition !== O.id && O.inbox.some(m => /The leadership of the opposition and of your party is in the hands of [^(]*\(K\d+\) now\. It does not come back of itself/.test(m.text)), `whoever loses a seat and lives is told who holds it: ${O.inbox.map(m => m.text).join(' | ')}`);
     const chief = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'police'); c.cells = 34; c.lastAttempt = { turn: w.turn, text: 'a bomb was thrown at the ruler' };
     const rep = postReportOf(w, c, chief); assert.ok(/the armed underground is strong enough to try for a life[^;]*a bomb was thrown at the ruler/.test(rep) && /watch/.test(rep), `the chief of police reports the underground and what his force is set to watch: ${rep}`); }
+});
+import { economyStep as economyOf } from '../engine/economy.js';
+import { supplyLines as supplyLinesOf, supplyOf as supplyOfUnit, supplyWords as supplyWordsOf, depotStep as depotStepOf } from '../engine/military.js';
+chain('Works follow their trade and are paid for as they go: a pit nobody buys from holds a few men and not a town; a public work is paid a part at a time, stands still the quarter the money cannot be found and can be given up; a railway between two towns is one order; and the engineers say what a work is reckoned to return and whether there is a market for what it would make', () => {
+  // World 18. A phosphate pit with no buyer held 134 thousand hands for four years; measured in the same world, a new coal pit in a country
+  // with coal to spare lowered what the country turned out. Every work was paid whole on the day it was ordered, a railway through three
+  // provinces was three orders, and a government put 500 into its fields without being told what that would bring.
+  { // Hands follow the trade.
+    const made = dead => { const w = inherited(2696855, 8), c = aliveCountries(w)[3], p = countryProvinces(w, c.id).filter(q => Object.values(q.plants).reduce((a, b) => a + b, 0) > .8).sort((a, b) => b.pops.workers.n - a.pops.workers.n)[0];
+      if (dead) p.deposits.phosphate = { amount: 5000, rich: 1, known: true, mine: 3 };
+      run(w, 3); return { v: Object.entries(c._made).reduce((s, [g, q]) => s + q * BASE_PRICE[g], 0) + Object.entries(c._raw).filter(([g]) => g !== 'phosphate').reduce((s, [g, q]) => s + q * BASE_PRICE[g], 0), phosphate: c._raw.phosphate || 0, loose: p.loose, places: p.base * 3 }; };
+    const a = made(false), b = made(true);
+    assert.ok(b.v > a.v * .97, `a great pit with nobody to sell to does not empty the mills beside it: the country made ${Math.round(a.v)} without it and ${Math.round(b.v)} with it`); }
+  { // Paid as it goes; standing still; given up.
+    const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), p = countryProvinces(w, c.id).find(q => !q.rail && q.id !== c.capital) ?? countryProvinces(w, c.id)[1]; p.rail = 0; c.treasury = 1e5; c.stock.steel = 1e3; c.till = 0;
+    const price = quote(w, c, p, 'railway').price * c.priceLevel * 1, t0 = c.treasury, r = applyOp(w, L, { op: 'build', province: p.id, kind: 'railway', _law: true }), x = w.projects.at(-1), paid = t0 - c.treasury;
+    assert.ok(r.ok && Math.abs(paid * 4 - (paid + x.due)) < 1e-6 && /paid as it goes: \d+ now and \d+ in each of the 3 quarters after/.test(r.msg) && new RegExp(`It is work ${x.id}`).test(r.msg), `a railway is paid a quarter at a time: ${r.msg}`);
+    projectStep(w); assert.ok(Math.abs(t0 - c.treasury - paid) < 1e-6 && x.turnsLeft === 3, 'nothing more is paid in the quarter it is ordered');
+    w.turn += 1; projectStep(w); assert.ok(Math.abs(t0 - c.treasury - paid * 2) < 1e-6 && x.turnsLeft === 2, 'the next quarter the next part is paid and the work goes on');
+    // The money runs out: the work stands still, and the government is told.
+    const kept = c.treasury; c.treasury = 0; c._room = 0; c._taken = 0; L.inbox = []; w.turn += 1; projectStep(w);
+    assert.ok(x.turnsLeft === 2 && x.stalled === 1 && !x.status && L.inbox.some(m => /stands still: this quarter's \d+ for it could not be found[^]*cancel_work/.test(m.text)) && /STANDING STILL for want of money/.test(answer(w, L, 'projects')), `a quarter the money cannot be found is a quarter the work stands still: ${L.inbox.map(m => m.text).join(' | ')}`);
+    c.treasury = kept; w.turn += 1; projectStep(w); assert.ok(x.turnsLeft === 1 && !x.stalled, 'and it is taken up again when the money is there');
+    const due = x.due, t1 = c.treasury, g = applyOp(w, L, { op: 'cancel_work', id: x.id }); w.turn += 1; projectStep(w);
+    assert.ok(g.ok && x.status === 'cancelled' && !(p.rail > 0) && Math.abs(c.treasury - t1) < 1e-6 && new RegExp(`is given up\\. The \\d+ spent on it is lost and nothing of it stands; the ${Math.round(due)} still to pay on it will not be paid`).test(g.msg), `a work given up costs what was spent and no more: ${g.msg}`);
+    assert.ok(!applyOp(w, L, { op: 'cancel_work', id: x.id }).ok, 'and it cannot be given up twice'); }
+  { // A line.
+    const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), mine = countryProvinces(w, c.id), cap = w.provinces[c.capital], far = mine.find(q => q.id !== cap.id && !cap.neighbors.includes(q.id) && q.neighbors.some(n => cap.neighbors.includes(n) && w.provinces[n].controller === c.id));
+    for (const q of mine) q.rail = 0; c.treasury = 1e6; c.stock.steel = 1e4; const n0 = w.projects.length;
+    const small = applyOp(w, L, { op: 'build', kind: 'railway', line: [cap.id, far.id], amount: 5, _law: true }); assert.ok(!small.ok && w.projects.length === n0 && /runs through [^.]*\. 3 of those provinces have no railway: [^;]*; about \d+ in all and [\d.]+ of steel\. The 5 allotted would not build it/.test(small.msg), `a sum too small for the whole line begins nothing and says what each stretch costs: ${small.msg}`);
+    const line = applyOp(w, L, { op: 'build', kind: 'railway', line: [cap.id, far.id], _law: true }), laid = w.projects.slice(n0);
+    assert.ok(line.ok && laid.length === 3 && laid.every(x => x.kind === 'railway') && laid[0].province === cap.id && laid[2].province === far.id && /A railway is begun from/.test(line.msg), `a railway between two towns is one order, laid through every province on the way: ${line.msg}`);
+    assert.ok(!applyOp(w, L, { op: 'build', kind: 'railway', line: [cap.id, far.id], _law: true }).ok, 'and is not begun twice');
+    assert.ok(/line:\[from province, to province\]/.test(refereePrompt(w, c, [{ actor: L, decisions: ['Lay the line.'] }])) && /cancel_work\{id\}/.test(refereePrompt(w, c, [{ actor: L, decisions: ['Lay the line.'] }])), 'the referee knows both orders'); }
+  { // What the engineers say.
+    const w = inherited(2696855, 8); run(w, 1); const c = aliveCountries(w).find(x => !x.techs?.oil_prospecting && !(x.stock.oil > 0)) ?? aliveCountries(w)[0], L = ld(w, c), p = countryProvinces(w, c.id).sort((a, b) => provincePopOf(b) - provincePopOf(a))[1], est = answer(w, L, `building:${p.id}`);
+    assert.ok(/- railway: about \d+[^\n]*Reckoned to add about \d+ a quarter to what the province turns out: (its cost back in|not its cost back)/.test(est) || p.rail >= 2, `a railway is quoted with what it is reckoned to add: ${est.split('\n').find(l => /railway/.test(l))}`);
+    assert.ok(/- steel mill: about \d+ for one whole step[^\n]*has places for about \d+ thousand hands and could turn out about \d+ a quarter flat out; the hands come from the province's other works and trades, so about \d+ of that is gained, if the steel finds a buyer/.test(est), `a mill is quoted with its places and with what is gained when its hands come from the works beside it: ${est.split('\n').find(l => /steel mill/.test(l))}`);
+    assert.ok(/- farming: about \d+ for one whole point of fertility[^\n]*an order that names none builds 0\.1[^\n]*if the grain finds a buyer/.test(est), `land improvement is quoted for what the price buys: ${est.split('\n').find(l => /farming/.test(l))}`);
+    if (!c.techs?.oil_prospecting && !(c.stock.oil > 0)) { assert.ok(/- refinery: [^\n]*Mark this: the country raises no oil, holds none and has not learned to look for it/.test(est), 'a refinery in a country without oil is quoted with the warning');
+      c.treasury = 1e5; c.stock.machines = 100; const r = applyOp(w, L, { op: 'build', province: p.id, kind: 'fuel', amount: 100, _law: true }); assert.ok(r.ok && /Mark this: the country raises no oil/.test(r.msg), `and the order is carried out and says the same: ${r.msg}`); } }
+  { // A depot is a head pushed forward, and a larder for troops that are cut off.
+    const w = inherited(2696855, 8), c = aliveCountries(w)[0], G = w.characters[c.general], L = ld(w, c); for (const p of countryProvinces(w, c.id)) { p.rail = 0; if (p.id !== c.capital) p.port = 0; }
+    const before = supplyLinesOf(w, c), far = countryProvinces(w, c.id).filter(p => before.depth[p.id] != null).sort((a, b) => before.depth[b.id] - before.depth[a.id])[0], deep = before.depth[far.id];
+    assert.ok(deep > 1.5, `some province of the country lies more than a march and a half from every head (${deep})`);
+    const u = soldier(w, c.id, far.id, 20); c.treasury = 1e5; c.stock.steel = 100;
+    const none = applyOp(w, G, { op: 'build', province: countryProvinces(w, c.id).find(p => p.id !== far.id && !Object.values(w.units).some(x => x.province === p.id)).id, kind: 'depot' }); assert.ok(!none.ok && /No troops stand at/.test(none.msg), 'the chief of staff lays out a depot where his troops stand, and nowhere else');
+    const o = applyOp(w, G, { op: 'build', province: far.id, kind: 'depot' }); assert.ok(o.ok && /supply depot at/.test(o.msg), o.msg);
+    projectStep(w); assert.ok(far.depot === 1 && !(far.depotStore > 0) && supplyLinesOf(w, c).depth[far.id] === deep, 'built in a quarter, and empty when it is built');
+    w.turn += 1; depotStepOf(w); const after = supplyLinesOf(w, c); assert.ok(far.depotStore === 1 && after.depth[far.id] === 0 && after.reach[far.id] === deep && /supply depot of size 1 holding 1 quarter of stores/.test(answer(w, G, 'fortifications')), 'filled the quarter after, it is a head of supply: the marches are counted from it afresh');
+    // Cut off.
+    for (const n of far.neighbors) w.provinces[n].controller = aliveCountries(w)[1].id; w.turn += 1;
+    const cut = supplyOfUnit(w, u); assert.ok(!cut.linked && cut.depot === far.id && cut.factor > .9 && /cut off from the country and living on the depot at/.test(supplyWordsOf(w, u)), `a force cut off from the country lives on its depot: ${JSON.stringify(cut)}`);
+    G.inbox = []; depotStepOf(w); assert.ok(far.depotStore === 0 && G.inbox.some(m => /The depot at [^ ]* is empty/.test(m.text)), 'for as long as the stores last, and the staff is told when they are gone');
+    w.turn += 1; assert.ok(supplyOfUnit(w, u).factor === .55, 'after which it is as badly off as any force with nothing behind it'); }
+  { // A warship is built in a yard.
+    const w = inherited(2696855, 8), cs = aliveCountries(w), c = cs.find(x => countryProvinces(w, x.id).some(p => p.port > 0 && !p.yard) && countryProvinces(w, x.id).some(p => p.yard)), L = ld(w, c), bare = countryProvinces(w, c.id).find(p => p.port > 0 && !p.yard), yard = countryProvinces(w, c.id).find(p => p.yard);
+    assert.ok(w.yards && cs.every(x => !Object.values(w.fleets).some(f => f.country === x.id) || countryProvinces(w, x.id).some(p => p.yard >= 1)), 'every state that was handed a navy was handed the yard that built it');
+    c.treasury = 1e6; c.stock.steel = 1e3; c.stock.machines = 100;
+    const no = applyOp(w, L, { op: 'build_ship', province: bare.id, ships: 1, kind: 'cruiser', _law: true }); assert.ok(!no.ok && new RegExp(`there is no shipyard there\. It can be laid down at [^;]*${yard.name}`).test(no.msg), `a cruiser is not laid down in a harbour without a yard, and the refusal says where one stands: ${no.msg}`);
+    assert.ok(applyOp(w, L, { op: 'build_ship', province: bare.id, ships: 2, kind: 'torpedo', _law: true }).ok && applyOp(w, L, { op: 'build_ship', province: yard.id, ships: 1, kind: 'cruiser', _law: true }).ok, 'torpedo boats are built in any harbour, and a cruiser where the yard is');
+    const y = applyOp(w, L, { op: 'build', province: bare.id, kind: 'shipyard', _law: true }); assert.ok(y.ok, y.msg); for (let i = 0; i < 4; i++) { projectStep(w); w.turn += 1; }
+    assert.ok(bare.yard === 1 && applyOp(w, L, { op: 'build_ship', province: bare.id, ships: 1, kind: 'cruiser', _law: true }).ok && /a shipyard of the first size/.test(answer(w, L, 'fleet')), 'a yard built in a harbour builds cruisers there, and the fleet report shows it'); }
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

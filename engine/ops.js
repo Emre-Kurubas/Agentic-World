@@ -6,7 +6,7 @@ import { makeFleet, TECHS, PLANTS, DEPOSITS, GOOD_LABEL, ROLES, spawnCharacter, 
 import { hasTech, sealOf, importOrder, SPREAD } from './economy.js';
 import { FX_REGIMES, foreignRate, externalDebt, creditLeft, declareDefault, treasuryPays } from './money.js';
 import { firmOp, seizeFirm, STATE } from './firms.js';
-import { queueProject, durationOf, WORKS, quote, ground, projectYield, wasteOf } from './projects.js';
+import { queueProject, durationOf, WORKS, quote, ground, projectYield, wasteOf, projectLabel } from './projects.js';
 import { LANGUAGE_POLICY, FAITH_POLICY, groupsOf, removePeople, settlePeople, PEOPLE_OPS, peopleOp, hits, armedOf, privilege } from './culture.js';
 import { incapacitated } from './health.js';
 import { isMinor, recruitInformant, takeOffer, refuseOffer, standing, inService, askingOf } from './court.js';
@@ -76,7 +76,7 @@ PERMISSIONS.private = new Set(PRIVATE);
 for (const seat of ['general', 'opposition', 'oligarch']) for (const op of [...OWN, ...OPEN_STANDING]) PERMISSIONS[seat].add(op);
 // The chief of staff also says who is paid first when the vote is short and how much of the arsenal an attack may not touch.
 for (const op of ['set_pay_priority', 'set_arsenal_reserve']) { PERMISSIONS.general.add(op); QUIET.add(op); }
-PERMISSIONS.general.add('post_person'); PERMISSIONS.general.add('tender'); PERMISSIONS.general.add('equip'); QUIET.add('equip');
+PERMISSIONS.general.add('post_person'); PERMISSIONS.general.add('cancel_work'); PERMISSIONS.general.add('tender'); PERMISSIONS.general.add('equip'); QUIET.add('equip');
 // The chief of staff directs where the army's units and squadrons stand and who commands them. Raising and disbanding troops, war and peace stay with the ruler.
 for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'appoint_commander', 'spy', 'build', 'set_posture', 'amphibious', 'offensive', 'fleet_orders', 'bombard', 'lay_mines', 'prepare_plan', 'leak_plan']) PERMISSIONS.general.add(op);
 for (const seat of ['general', 'opposition', 'oligarch']) for (const op of ['capital_flight', 'repatriate', 'draw_institution', 'buy_bonds', 'sell_bonds', 'back_claim', 'renounce_claim', 'fund_party', 'found_paper', 'fund_paper', 'close_paper', 'forge_dossier', 'no_confidence', 'coalition', 'fund_underground', 'set_wages', 'set_safety', 'lockout', 'agitate', 'recruit_informant', 'accept_offer', 'decline_offer', 'noop', 'pay_state', 'give', 'draw_company', 'fund_institution', 'dissolve_institution']) PERMISSIONS[seat].add(op);
@@ -651,6 +651,12 @@ function applyOne(w, actor, op) {
     case 'default_debt': return declareDefault(w, c, 'repudiated its debts') ? (shame(w, c, -12, 'it repudiated its debts'), { ok: true, msg: `The debt was written down to ${Math.round(c.debt)}. Lenders will keep away for years.` }) : fail('The state is already in default.');
     case 'embargo': if (!target) return fail('No such target.'); if (Array.isArray(op.goods) && op.goods.length) return banGoods(w, c, target, op); if (op.on === false) c.embargo = c.embargo.filter(x => x !== target.id); else if (!c.embargo.includes(target.id)) { c.embargo.push(target.id); target.relations[c.id] = clampRel((target.relations[c.id] ?? 0) - 15); news(w, `${c.name} cut off trade with ${target.name}.`, { kind: 'diplomacy', countries: [c.id, target.id] }); } return ok();
     case 'build': return build(w, c, op, actor);
+    // A work in hand can be given up: nothing more is paid for it, what was spent is lost, and nothing of it stands.
+    case 'cancel_work': { const mine = (w.projects || []).filter(x => !x.status && x.country === c.id && !x.firm && x.kind !== 'unit' && x.kind !== 'ship'), x = mine.find(y => y.id === op.id) ?? (op.province ? mine.filter(y => y.province === op.province && (!op.kind || y.kind === op.kind)) : []).at?.(-1) ?? null;
+      if (!x) return fail(`No such work of the state's is in hand.${mine.length ? ` In hand: ${mine.map(y => `${y.id} ${projectLabel(y)} at ${w.provinces[y.province]?.name}`).join(', ')}.` : ' Nothing is being built.'}`);
+      if (!governs(w, c, actor) && !(x.kind === 'trench' && c.general === actor.id)) return fail('Public works are the government\'s to give up.');
+      x.status = 'cancelled'; x.closedAt = w.turn; const spent = Math.max(0, (x.cost || 0) * Math.max(c.priceLevel, .01) - (x.due || 0));
+      return { ok: true, msg: `Work ${x.id}, the ${projectLabel(x)} at ${w.provinces[x.province]?.name}, is given up. The ${Math.round(spent)} spent on it is lost and nothing of it stands; the ${Math.round(x.due || 0)} still to pay on it will not be paid.` }; }
     case 'survey': { const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('That province is not under your control.'); if (pay(c, gdp * .01, 'building') === null) return fail(NO_FUNDS); const found = Object.entries(p.deposits).filter(([k, d]) => !d.known && (k !== 'oil' || hasTech(c, 'oil_prospecting')) && (k !== 'rare' || hasTech(c, 'electricity')) && rand(w) < .65); found.forEach(([, d]) => d.known = true); if (found.length) news(w, `${c.name}: ${found.map(([k]) => GOOD_LABEL[k]).join(', ')} found in ${p.name}.`, { kind: 'economy', countries: [c.id] }); return { ok: true, msg: found.length ? `Found: ${found.map(([k]) => GOOD_LABEL[k]).join(', ')}` : 'No new deposit was found in this survey.' }; }
     case 'set_research': if (!has(TECHS, op.tech) || c.techs[op.tech] || !TECHS[op.tech].req.every(r => c.techs[r])) return fail('This technology cannot be researched.'); c.research = { target: op.tech, progress: c.research.target === op.tech ? c.research.progress : 0 }; return ok();
     case 'steal_tech': { if (!target) return fail('No such target.'); const cand = Object.keys(target.techs).filter(t => !c.techs[t] && TECHS[t]?.req.every(r => c.techs[r])); if (!cand.length) return fail('They have nothing this country could yet make use of.'); if (allowance(w, c, `steal:${target.id}`, 1, 1) <= 0) return fail('The network there has been used once this quarter already; a second attempt so soon would only expose it.'); if (rand(w) > clamp(.2 + (c.intelligence - target.intelligence) / 150, .05, .75)) { target.relations[c.id] = clampRel((target.relations[c.id] ?? 0) - 15); return fail('The spy network was exposed.'); } const t = pick(w, cand); c.techs[t] = Math.max(1, w.turn); if (SPREAD[t]) (c.adopting ||= {})[t] = 0; news(w, `${target.name} technology secretly passed to ${c.name}.`, { kind: 'plot', countries: [c.id, target.id], secret: true }); return ok(); }
@@ -1014,6 +1020,10 @@ function applyOne(w, actor, op) {
         return { ok: true, msg: `${n} merchant ship${n > 1 ? 's' : ''} laid down at ${p.name}, ready in ${durationOf('ship', 'merchant')} quarters. They add ${n * MERCHANT} to the country's merchant tonnage (now ${Math.round(c.shipping ?? 0)}), which carries its coasting and foreign trade, earns freight where it is hired out, and puts troops across the sea: about ${n * MERCHANT * LIFT} thousand men more in a quarter.${note}` }; }
       const ships = Math.round(num(op.ships, 1, 30)), shipKind = has(SHIPS, op.kind) ? op.kind : 'cruiser', k = SHIPS[shipKind];
       if (k.tech && !hasTech(c, k.tech)) return fail(shipKind === 'submarine' ? 'Submarines need the internal combustion engine.' : `${k.name[0].toUpperCase()}${k.name.slice(1)} cannot be built yet: the yards lack the technology (${TECHS[k.tech]?.name ?? k.tech}).`);
+      // A warship of any size is built in a yard: slips, cranes, plate shops. Torpedo boats are built in any harbour. (Only in worlds that
+      // were handed over with yards: w.yards.)
+      { const need = shipKind === 'torpedo' ? 0 : shipKind === 'dreadnought' ? 2 : 1; if (w.yards && (p.yard || 0) < need) { const yards = countryProvinces(w, c.id).filter(x => x.port > 0 && (x.yard || 0) >= need).map(x => `${x.name} (${x.id})`);
+        return fail(`A ${k.one} cannot be laid down at ${p.name}: ${p.yard ? 'its yard is too small for such a ship' : 'there is no shipyard there'}. ${yards.length ? `It can be laid down at ${yards.join(' or ')}` : `The country has no ${need > 1 ? 'yard large enough' : 'shipyard'}`}; a yard is built in a harbour (build shipyard), and until one stands such ships are bought abroad or not had.`); } }
       if (p.port < k.port) return fail(`A ${k.one} cannot be laid down at ${p.name}: its harbour is too small. It needs a harbour of the ${['first', 'second', 'third'][k.port - 1]} size (build a larger one, or use another port).`);
       if (c.stock.steel < ships * k.steel) return fail(`Not enough steel: ${count(ships, shipKind)} need ${Math.round(ships * k.steel * 10) / 10}, and ${Math.round(c.stock.steel)} is in store.`);
       const note = pay(c, ships * k.price * c.priceLevel, 'forces'); if (note === null) return fail(NO_FUNDS); c.stock.steel -= ships * k.steel;
@@ -1882,12 +1892,29 @@ function persecute(w, c, actor, op) {
 // Whoever orders a work may name a sum or leave the size to the engineers. A sum named is never exceeded: it buys what it buys in that place,
 // and where the work comes only whole (a railway, a harbour, a dam, a fortress) too small a sum is refused, with the price.
 const r1 = v => Math.round(v * 10) / 10;
+// A railway between two towns is one order: the line is laid through every province of ours on the shortest way between them that has no
+// line yet, each at its own price. A sum named for the whole has to cover the whole, or nothing is begun and the prices are told.
+// (World 18: "a railway from the capital to the frontier, 160" came as three builds of 53 each for works of 457, 371 and 604.)
+function buildLine(w, c, op, actor) {
+  const [a, b] = op.line.map(String), own = id => w.provinces[id]?.controller === c.id; if (!own(a) || !own(b)) return fail('A line is laid between two provinces of ours: name both ends (line: [from, to]).');
+  const prev = { [a]: null }, queue = [a]; while (queue.length && !(b in prev)) { const cur = queue.shift(); for (const n of w.provinces[cur].neighbors) if (own(n) && !(n in prev)) { prev[n] = cur; queue.push(n); } }
+  if (!(b in prev)) return fail(`No way leads from ${w.provinces[a].name} to ${w.provinces[b].name} through our own provinces.`);
+  const path = []; for (let x = b; x != null; x = prev[x]) path.unshift(x);
+  const waste = pid => wasteOf(w, c, w.provinces[pid]), level = Math.max(c.priceLevel, .01), todo = path.map(pid => ({ pid, q: quote(w, c, w.provinces[pid], 'railway') })).filter(x => !x.q.no && x.q.room > .005 && !(w.provinces[x.pid].rail >= 1) && !(w.projects || []).some(y => !y.status && y.country === c.id && y.province === x.pid && y.kind === 'railway')).map(x => ({ ...x, cost: x.q.price * level * waste(x.pid) }));
+  const names = path.map(pid => w.provinces[pid].name).join(', '); if (!todo.length) return fail(`The way from ${w.provinces[a].name} to ${w.provinces[b].name} (${names}) has a railway, or one in hand, in every province already.`);
+  const total = todo.reduce((s, x) => s + x.cost, 0), steel = todo.reduce((s, x) => s + (x.q.steel || 0), 0), list = todo.map(x => `${w.provinces[x.pid].name} (${x.pid}) ${Math.round(x.cost)}`).join(', ');
+  const named = op.amount != null ? num(op.amount, 0, 1e9, 0) : 0; if (named > 0 && named < total * .97) return fail(`A line from ${w.provinces[a].name} to ${w.provinces[b].name} runs through ${names}. ${todo.length} of those provinces have no railway: ${list}; about ${Math.round(total)} in all and ${Math.round(steel * 10) / 10} of steel. The ${Math.round(named)} allotted would not build it. A shorter stretch can be ordered by naming nearer ends, or one province at a time.`);
+  if (c.stock.steel < steel) return fail(`Not enough steel for the whole line: it needs about ${Math.round(steel * 10) / 10} and ${Math.round(c.stock.steel * 10) / 10} is in store (${list}).`);
+  const done = []; for (const x of todo) { const r = build(w, c, { op: 'build', province: x.pid, kind: 'railway' }, actor); if (!r.ok) return done.length ? { ok: true, msg: `Begun: ${done.join(', ')}. Then the work stopped: ${r.msg}` } : r; done.push(`${w.provinces[x.pid].name} ${Math.round(x.cost)}`); }
+  return { ok: true, msg: `A railway is begun from ${w.provinces[a].name} to ${w.provinces[b].name} through ${names}: ${done.join(', ')}; about ${Math.round(total)} in all, each stretch paid as it goes over its ${durationOf('railway')} quarters and ready then. Provinces on the way that had a line already were left as they are.` };
+}
 function build(w, c, op, actor) {
+  if (op.kind === 'railway' && Array.isArray(op.line) && op.line.length === 2) return buildLine(w, c, op, actor);
   const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('That province is not under your control.');
   const kind = op.kind; if (!has(PLANTS, kind) && !WORKS.includes(kind)) return fail('Unknown building type.');
   // The chief of staff may have his own troops dig in where they stand; everything else that is built is the government's to order.
   if (actor && !governs(w, c, actor) && !delegated(c, actor, 'build')) {
-    if (kind !== 'trench') return fail('Public works are for the government to order; the chief of staff may only have troops dig field works where they stand.');
+    if (!['trench', 'depot'].includes(kind)) return fail('Public works are for the government to order; the chief of staff may only have troops dig field works and lay out a supply depot where they stand.');
     if (!Object.values(w.units).some(u => u.country === c.id && (u.province === p.id || (u.target === p.id && u.marchSince === w.turn)))) return fail(`No troops stand at ${p.name} to dig, and none have been ordered there this quarter.`);
   }
   const q = quote(w, c, p, kind, op.resource); if (q.no) return fail(q.no);
@@ -1896,7 +1923,7 @@ function build(w, c, op, actor) {
   // for on credit and the town could hold one.)
   const under = (w.projects || []).filter(x => !x.status && x.country === c.id && x.province === p.id && x.kind === kind && (kind !== 'mine' || x.resource === op.resource)), going = under.reduce((a, x) => a + (q.piece ? 1 : x.add ?? 0), 0);
   if (going > 0) { q.room -= going; if (!(q.room > .005)) return fail(`${q.piece ? `A ${q.what}` : `Work on the ${q.what}`} at ${p.name} is in hand already (${under.map(x => x.id).join(', ')}, ordered ${under.map(x => quarterLabel(x.started)).join(', ')}) and takes up all the place can still hold: nothing more was ordered and nothing more is paid.`); }
-  if (!(q.room > .005)) return fail(q.piece ? `${p.name} already has ${kind === 'dam' ? 'a dam' : `as much ${{ railway: 'railway', port: 'harbour', fort: 'fortress', battery: 'coastal battery', trench: 'field works' }[kind]} as it can hold`}.` : `The ${q.what} at ${p.name} cannot be carried further.`);
+  if (!(q.room > .005)) return fail(q.piece ? `${p.name} already has ${kind === 'dam' ? 'a dam' : `as much ${{ railway: 'railway', port: 'harbour', fort: 'fortress', battery: 'coastal battery', trench: 'field works', depot: 'supply depot', shipyard: 'shipyard' }[kind]} as it can hold`}.` : `The ${q.what} at ${p.name} cannot be carried further.`);
   const waste = wasteOf(w, c, p), level = Math.max(c.priceLevel, .01), each = q.price * level * waste;
   // A sum of nothing is no sum: the order then leaves the size of the work to the engineers.
   const named = op.amount != null ? num(op.amount, 0, 1e9, 0) : op.pct_gdp != null ? Math.max(c.gdp, 1) * num(op.pct_gdp, 0, .5, 0) : 0, purse = named > 0 ? named : null;
@@ -1916,11 +1943,12 @@ function build(w, c, op, actor) {
   const machines = (q.machines || 0) * add, steel = (q.steel || 0) * add;
   if (c.stock.machines < machines) return fail(`Not enough machinery: this needs about ${r1(machines)} and ${r1(c.stock.machines)} is in store; import or produce it.`);
   if (c.stock.steel < steel) return fail(`Not enough steel: this needs about ${r1(steel)} and ${r1(c.stock.steel)} is in store.`);
-  const note = pay(c, cost, 'building'); if (note === null) return fail(NO_FUNDS);
+  // Paid as it goes: one part now, the rest quarter by quarter while the work is in hand (projects.js). A work of a single quarter is paid whole.
+  const turns = Math.max(1, durationOf(kind)), first = cost / turns, note = pay(c, first, 'building'); if (note === null) return fail(NO_FUNDS);
   c.stock.machines -= machines; c.stock.steel -= steel;
-  const x = queueProject(w, c, { kind, province: p.id, resource: op.resource, add, cost: cost / level }), gain = projectYield(x);
+  const x = queueProject(w, c, { kind, province: p.id, resource: op.resource, add, cost: cost / level, ...(turns > 1 ? { due: cost - first, part: first } : {}) }), gain = projectYield(x);
   const spare = purse != null && cost < purse * .97 ? ` of the ${Math.round(purse)} allotted${q.piece ? '' : ', all the place can take'}` : '';
-  return { ok: true, msg: `Started: ${q.what} at ${p.name} for ${Math.round(cost)}${spare}${!q.piece && gain ? `, which ${gain}` : ''}; ready in ${durationOf(kind)} quarters.${sized ? ` No sum was named, so the engineers kept to what the treasury had in hand; the usual measure there would have cost about ${Math.round(sized * each)}. Name a sum to build more.` : ''}${waste > 1.08 ? ` It costs about ${Math.round((waste - 1) * 100)}% more than the work is worth: graft, and the distance of ${p.name} from the capital's eye.` : ''}${note}` };
+  return { ok: true, msg: `Started: ${q.what} at ${p.name} for ${Math.round(cost)}${spare}${!q.piece && gain ? `, which ${gain}` : ''}; ready in ${durationOf(kind)} quarters${turns > 1 ? `, paid as it goes: ${Math.round(first)} now and ${Math.round(first)} in each of the ${turns - 1} quarters after (a quarter the money cannot be found is a quarter the work stands still)` : ''}. It is work ${x.id}.${q.gain > .5 || q.gross > .5 ? ` The engineers reckon ${q.places ? `it has places for about ${Math.round(q.places * add)} thousand hands and could turn out about ${Math.round(q.gross * add * level)} a quarter flat out; the hands come from the province's other works and trades, so about ${Math.round(q.gain * add * level)} of that is gained` : `it will add about ${Math.round(q.gain * (q.piece ? 1 : add) * level)} a quarter to what the province turns out`}${q.sells ? `, if the ${q.sells} finds a buyer` : ''}.` : ''}${q.warn ? ` Mark this: ${q.warn}.` : ''}${sized ? ` No sum was named, so the engineers kept to what the treasury had in hand; the usual measure there would have cost about ${Math.round(sized * each)}. Name a sum to build more.` : ''}${waste > 1.08 ? ` It costs about ${Math.round((waste - 1) * 100)}% more than the work is worth: graft, and the distance of ${p.name} from the capital's eye.` : ''}${note}` };
 }
 const ok = () => ({ ok: true, msg: 'Applied.' });
 const HOME_TOO = new Set(['buy_bonds', 'sell_bonds', 'fund_party', 'fund_paper', 'recruit_informant', 'found_company']);
