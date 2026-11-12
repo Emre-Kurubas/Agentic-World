@@ -3,7 +3,7 @@ import { hungerOf } from './politics.js';
 import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_LABEL, PLANTS, TECHS, countryProvinces, provincePop, aliveCountries, atWar, hasTreaty } from './world.js';
 import { dealsWith, tieOf } from './diplomacy.js';
 import { migrate, levyShare } from './culture.js';
-import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding, USUAL_COVER, treasuryPays } from './money.js';
+import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding, USUAL_COVER, treasuryPays, VAULT_SHARE } from './money.js';
 import { blockadeOf, merchantStep, iced } from './navy.js';
 import { upkeepCost, railWorks, roadFactor } from './military.js';
 import { warFooting, kitOf, marketStep, warEnds, WAR_RISK, lendersWords } from './warcost.js';
@@ -614,6 +614,8 @@ function fiscal(w, c) {
   const agencies = sum((c.institutions || []).filter(i => i.id), i => i.sponsor ? i.grant || 0 : i.budget || 0) * c.gdp;
   // Lenders price in the inflation they have come to expect, not one quarter's jump.
   c.inflTrend = (c.inflTrend ?? Math.max(0, c.inflation)) * .8 + Math.max(0, c.inflation) * .2;
+  // Gold that has left the country has left the vault too, once the banks have none.
+  if (c.vault != null) c.vault = Math.min(c.vault, Math.max(c.reserves, 0));
   c.interestRate = sovereignRate(c);
   // A state in default has stopped paying its bondholders: for a year nothing at all. After that what is left of the debt is served again, at what a defaulter
   // is charged, but creditors come last: they get only what remains once the state's own bills are met. Paying them short keeps the state shut out of the
@@ -678,7 +680,7 @@ function fiscal(w, c) {
 export function settleBases(w) {
   for (const c of aliveCountries(w)) {
     c.graftBase ??= c.corruption + c.pressFreedom * .3 + c.courts * .35; c.intelBase ??= c.intelligence - c.police * .5; c.roadShare ??= c.budget.infrastructure; c.litBase = c.literacy; c.schoolShare = c.budget.education;
-    c.profitBase = 1 - (c.taxTarget?.business ?? c.tax.business); c.upkeep = 1; c.builtBase = clamp(c.built ?? 1, .3, 1); c.goldBase = Math.max(0, c.reserves); c.goldFloor = c.goldBase * .6;
+    c.profitBase = 1 - (c.taxTarget?.business ?? c.tax.business); c.upkeep = 1; c.builtBase = clamp(c.built ?? 1, .3, 1); c.goldBase = Math.max(0, c.reserves); c.goldFloor = c.goldBase * .6; c.vault = c.goldBase * VAULT_SHARE; c.vaultBase = c.vault;
     { const ps = countryProvinces(w, c.id), n = sum(ps, p => p.pops.workers.n); if (n > 0) c.workBase ??= sum(ps, p => p.pops.workers.sat * p.pops.workers.n) / n; }
     for (const p of countryProvinces(w, c.id)) p.infraBase ??= p.infra;
   }

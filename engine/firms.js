@@ -8,6 +8,10 @@ import { governs } from './polity.js';
 const SCALE = .05, MAX_PER_COUNTRY = 20, BANKRUPT_TURNS = 6;
 export const STATE = 'state';
 export const isOpen = f => f.status === 'open';
+// The law of a works: the general floor under pay and safety and, where a law names a trade ("every mine and pit"), that trade's own,
+// whichever asks more. (World 19: three governments decreed a floor for the mines alone after three pit disasters; the law could only
+// bind every works in the country, so the decrees stayed words or went out pit by pit.)
+export const lawFor = (c, f) => { const g = c?.labourLaw, s = g?.sectors?.[f?.sector], safety = Math.max(g?.safety || 0, s?.safety || 0), wage = Math.max(g?.wage || 0, s?.wage || 0); return safety > 0 || wage > 0 ? { safety, wage } : null; };
 const sectorName = f => f.sector === 'mine' ? `${GOOD_LABEL[f.resource]} mine` : PLANTS[f.sector];
 export const ownerName = (w, f) => f.owner === STATE ? 'state' : w.characters[f.owner]?.name ?? 'publicly held';
 
@@ -191,7 +195,10 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
       if (refused) { delete w.firms[f.id]; return refused; }
       if (state) c.treasury -= amount; else actor.wealth -= amount;
       news(w, `${host.name}: ${f.name} was founded.`, { kind: 'economy', countries: [host.id] });
-      return { ok: true, msg: `Company founded: ${f.id}. Its works will stand in ${durationOf(f.sector)} quarters.`, firm: f.id };
+      // Less capital than was named: the works is as large as the money that was there, and its founder is told. (World 19: a works ordered
+      // with 150 and another with 100 were founded with the 35 and the 30 their owner had, and the answer was the same as for the whole.)
+      const named = num(op.amount, 0, 1e9, 0), r1 = v => Math.round(v * 10) / 10;
+      return { ok: true, msg: `Company founded: ${f.id}, with ${r1(amount)}${amount < named - .5 ? ` of the ${r1(named)} named (${state ? 'the treasury' : 'your purse'} held no more), and its works is so much the smaller` : ''}. Its works will stand in ${durationOf(f.sector)} quarters.`, firm: f.id };
     }
     case 'invest_company': {
       if (!firm || !isOpen(firm)) return fail('No such company.');

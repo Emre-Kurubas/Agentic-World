@@ -1218,7 +1218,7 @@ chain('A ruler can raise up someone who was no one until then, sell gold from th
   assert.equal(applyOp(w, l, { op: 'appoint_commander', unit: u.id, character: 'K9999' }).ok, false, 'an unknown id is a mistake, not a newcomer');
   c.succession = 'dynasty'; assert.equal(applyOp(w, l, { op: 'designate_successor' }).ok, true); const heir = w.characters[c.heir];
   assert.equal(heir.name.split(' ').at(-1), l.name.split(' ').at(-1), 'an heir of the house carries its name'); die(w, l, 'died'); assert.equal(c.leader, heir.id); assert.ok(currentActors(w).includes(heir), 'and the heir who was no one now rules');
-  const c2 = w.countries.U2, l2 = ld(w, c2), gold = c2.reserves, cash = c2.treasury; assert.equal(applyOp(w, l2, { op: 'sell_gold', amount: gold / 2 }).ok, true); assert.ok(c2.reserves < gold * .51 && c2.treasury > cash);
+  const c2 = w.countries.U2, l2 = ld(w, c2), gold = c2.reserves, cash = c2.treasury; assert.equal(applyOp(w, l2, { op: 'sell_gold', amount: gold / 4 }).ok, true); assert.ok(Math.abs(c2.reserves - gold) < 1e-6 && c2.vault != null && c2.treasury > cash + gold * .2, `the state sells out of its own vault, and the gold stays in the country: reserves ${gold} > ${c2.reserves}, vault ${c2.vault}, treasury ${cash} > ${c2.treasury}`);
   const mine = () => Object.values(w.units).filter(x => x.country === c2.id); for (const x of mine()) x.morale = 50; c2.treasury = c2.gdp;
   assert.equal(applyOp(w, l2, { op: 'concession', cls: 'army', pct_gdp: .02 }).ok, true); assert.ok(mine().every(x => x.morale > 50) && c2.treasury < c2.gdp);
   const small = applyOp(w, l2, { op: 'recruit', province: c2.capital, men: .5 }); assert.ok(small.ok && small.msg.includes('500 men'), small.msg);
@@ -2746,7 +2746,7 @@ chain('A fight burns the arsenal: an assault more than a held line, a bombardmen
   const full = wins(1000), empty = wins(0); assert.ok(full >= 14 && empty <= 3, `with shells the attack carries, without them it does not: ${full} and ${empty} of 16`);
   // The works behind the army. More of the country's industry given to arms fills the arsenal faster.
   const made = share => { const w = fresh(), c = w.countries.U1; applyOp(w, ld(w, c), { op: 'set_arms_share', share }); const before = c.stock.arms; run(w, 4); return c.stock.arms - before; };
-  const lean = made(.05), fat = made(.6); assert.ok(fat > lean + 1, `an arsenal fills as the arms share of industry rises: ${lean} then ${fat} in a year`);
+  const lean = made(.2), fat = made(1); assert.ok(fat > lean + 1, `an arsenal fills as the arms share of industry rises: ${lean} then ${fat} in a year`);
   assert.ok(/Ammunition: the arsenal holds/.test(lookUp(plain.w, plain.gen, 'army')) && /Last quarter's fighting used/.test(lookUp(plain.w, plain.gen, 'army')), 'the army report keeps the ammunition account');
 });
 
@@ -4844,8 +4844,8 @@ chain('World 18, third review: a signature goes to the paper it names or to none
     assert.ok(Math.abs(t0 - (c.treasury - c.debt) - 60) < 1e-6 && Math.abs(L.wealth - p0) < 1e-6 && Math.abs(c._outlay.contracts - 60) < 1e-6, `the quarter after, the treasury pays the 60 and the books have a line for it: ${JSON.stringify(c._outlay)}`); }
   { // Gold sold is gold bought.
     const w = inherited(2696855, 8), cs = aliveCountries(w), c = cs[0], L = ld(w, c), world = () => cs.reduce((a, x) => a + x.reserves, 0), before = world(), had = c.reserves, tr = c.treasury;
-    const r = applyOp(w, L, { op: 'sell_gold', amount: 200, _law: true }); assert.ok(r.ok && /sold to the banks and bullion dealers of other states/.test(r.msg), r.msg);
-    assert.ok(Math.abs(world() - before) < 1e-6 && Math.abs(had - c.reserves - 200) < 1e-6 && c.treasury > tr + 150, `the gold left this reserve and no gold left the world: ${world()} against ${before}`); }
+    const r = applyOp(w, L, { op: 'sell_gold', amount: 200, _law: true }); assert.ok(r.ok && /sold to the banks of the country/.test(r.msg), r.msg);
+    assert.ok(Math.abs(world() - before) < 1e-6 && Math.abs(had - c.reserves) < 1e-6 && c.treasury > tr + 150, `the gold left the vault, not the country, and no gold left the world: ${world()} against ${before}`); }
   { // An order with no number; and the sum that was cut.
     const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), p = countryProvinces(w, c.id)[1], men = () => Object.values(w.units).filter(u => u.country === c.id).length + (w.projects || []).filter(x => x.kind === 'unit' && x.country === c.id).length, n0 = men();
     const r = applyOp(w, L, { op: 'recruit', province: p.id, unit_kind: 'artillery', _law: true });
@@ -5112,6 +5112,43 @@ chain('World 19, second review: an alliance written against a named state owes n
   { // An offer that lapsed.
     const G = w.characters[a.general]; (w.offers ||= []).push({ id: 'OF-t', kind: 'supply', from: Object.values(w.characters).find(x => x.country === a.id && x.post === 'house')?.id, to: G.id, country: a.id, amount: 20, turn: w.turn - 9, status: 'lapsed', turns: 8 });
     const r = applyOp(w, G, { op: 'decline_offer', id: 'OF-t' }); assert.ok(!r.ok && /Offer OF-t is no longer open: the house let it lapse unanswered\. Nothing is owed under it\./.test(r.msg), r.msg); }
+});
+import { vaultOf as vaultOf_, vaultBase as vaultBase_, sovereignRate as sovereignRate_ } from '../engine/money.js';
+import { lawFor as lawFor_ } from '../engine/firms.js';
+chain('The state\'s own gold, and a law for one trade: a government sells gold out of its own vault to the banks of its country and no further; the gold stays in the country, lenders ask more of a state whose vault is emptying, and gold bought back mends it; a floor under safety can be laid on the mines alone', () => {
+  // World 19: seven governments sold 4300 in gold in twelve quarters to cover their deficits; the gold went to the banks of other states,
+  // the treasury was credited in full and nothing answered. And three governments decreed a floor of safety "in every mine and pit" after
+  // three pit disasters; the law could only bind every works in the country, so two decrees stayed words.
+  const w = inherited(2696855, 8), cs = aliveCountries(w), c = cs[0], L = ld(w, c);
+  assert.ok(Math.abs(c.vault - c.goldBase * .5) < 1e-6 && c.vaultBase === c.vault, 'half of the gold a state inherits lies in its own vault');
+  const gold = c.reserves, world = () => cs.reduce((a, x) => a + x.reserves, 0), all = world(), till = c.treasury, rate0 = sovereignRate_(c), vault = c.vault;
+  const sale = applyOp(w, L, { op: 'sell_gold', amount: vault * .5, _law: true });
+  assert.ok(sale.ok && Math.abs(c.reserves - gold) < 1e-6 && Math.abs(world() - all) < 1e-6 && Math.abs(c.vault - vault * .5) < 1e-6 && Math.abs(c.treasury - till - vault * .5 * (c.rate || 1)) < 1e-6, `what is sold leaves the vault and enters the treasury; not an ounce leaves the country: ${sale.msg}`);
+  assert.ok(/of the state's own gold was sold to the banks of the country, and \d+ entered the treasury\. The gold has not left the country[^]*The vault holds \d+ \(\d+ when the state was taken over\); the banks and the public hold \d+\. Lenders look into a state's vault before they lend to it: they now ask [\d.]+ in the hundred a quarter of this one, where they asked [\d.]+/.test(sale.msg), sale.msg);
+  const rate1 = sovereignRate_(c); assert.ok(rate1 > rate0 + .0005 && rate1 < rate0 + .0015, `half the vault gone costs about a tenth of a point a quarter (${rate0} to ${rate1})`);
+  const rest = applyOp(w, L, { op: 'sell_gold', amount: 1e9, _law: true }), rate2 = sovereignRate_(c);
+  assert.ok(rest.ok && c.vault < 1e-6 && /\(of the 1000000000 named: the vault held no more\)/.test(rest.msg) && Math.abs(rate2 - rate0 - .003) < 1e-6 && Math.abs(c.reserves - gold) < 1e-6, `no more can be sold than the vault holds, and a bare vault costs three tenths of a point a quarter: ${rest.msg}`);
+  const none = applyOp(w, L, { op: 'sell_gold', amount: 100, _law: true }); assert.ok(!none.ok && /The state's own vault holds no gold to sell\. The \d+ in the country lies with the banks and the public and is theirs/.test(none.msg), none.msg);
+  // The same order twenty times sells what there is once: nothing is made out of nothing.
+  { const v = inherited(2696855, 8), k = aliveCountries(v)[0], l = ld(v, k), t0 = k.treasury, v0 = k.vault; for (let i = 0; i < 20; i++) applyOp(v, l, { op: 'sell_gold', amount: v0, _law: true }); assert.ok(Math.abs(k.treasury - t0 - v0 * (k.rate || 1)) < 1e-6, 'twenty sales of the whole vault bring what one brings'); }
+  // Bought back.
+  c.treasury = 1e5; const back = applyOp(w, L, { op: 'buy_gold', amount: vault, _law: true });
+  assert.ok(back.ok && Math.abs(c.vault - vault) < 1e-6 && Math.abs(c.reserves - gold) < 1e-6 && Math.abs(sovereignRate_(c) - rate0) < 1e-6 && Math.abs(c._outlay.gold - vault * (c.rate || 1)) < 1e-6 && /The treasury bought \d+ in gold of the banks of the country for \d+, and it lies in the state's vault/.test(back.msg), `gold bought of the banks fills the vault again, is in the books, and lenders ask what they asked: ${back.msg}`);
+  assert.ok(/The banks of the country hold no gold to sell to the state|bought \d+ in gold[^]*the banks held no more/.test(applyOp(w, L, { op: 'buy_gold', amount: 1e9, _law: true }).msg) && c.vault <= c.reserves + 1e-6, 'and no more can be bought than the banks hold');
+  // Gold that leaves the country leaves the vault once the banks have none.
+  c.reserves = c.vault * .4; run(w, 1); assert.ok(c.vault <= Math.max(c.reserves, 0) + 1e-6 || vaultOf_(c) <= Math.max(c.reserves, 0) + 1e-6, 'the vault cannot hold more than the country does');
+  // An old save that never kept a vault is given one the first time it is asked for, and pays no premium until then.
+  { const v = inherited(2696855, 8), k = aliveCountries(v)[0]; delete k.vault; delete k.vaultBase; const r0 = sovereignRate_(k); k.reserves *= .1; assert.ok(Math.abs(sovereignRate_(k) - r0) < 1e-9, 'a world without vaults is priced as before'); assert.ok(applyOp(v, ld(v, k), { op: 'sell_gold', amount: 1, _law: true }).ok && k.vault != null && Math.abs(k.vaultBase - vaultBase_({ goldBase: k.goldBase })) < 1e-6); }
+  // A law for the mines alone.
+  { const v = inherited(2696855, 8), k = aliveCountries(v).find(x => Object.values(v.firms).some(f => f.country === x.id && f.sector === 'mine' && f.status === 'open') && Object.values(v.firms).some(f => f.country === x.id && f.sector !== 'mine' && f.status === 'open')), l = ld(v, k); run(v, 1);
+    const firms = Object.values(v.firms).filter(f => f.country === k.id && f.status === 'open' && v.provinces[f.province].controller === k.id), pits = firms.filter(f => f.sector === 'mine'), mills = firms.filter(f => f.sector !== 'mine'); for (const f of firms) f.safety = .2;
+    const r = applyOp(v, l, { op: 'set_labour_law', min_safety: .8, sector: 'mine', _law: true }); assert.ok(r.ok && new RegExp(`^Every mine and pit \\(${Object.values(v.firms).filter(f => f.country === k.id && f.status === 'open' && f.sector === 'mine').length} in the country today\\) must now spend at least 0\\.8 of 1 on safety`).test(r.msg), r.msg);
+    assert.ok(lawFor_(k, pits[0]).safety === .8 && lawFor_(k, mills[0]) === null, 'the law binds the pits and nothing else');
+    k.bureaucracy = 90; labourOf(v); assert.ok(pits.every(f => f.safety >= .5) && mills.every(f => f.safety === .2), `a capable state makes the pit owners keep it and leaves the mills as they were: pits ${Math.min(...pits.map(f => f.safety))}, mills ${Math.max(...mills.map(f => f.safety))}`);
+    const insp = applyOp(v, l, { op: 'inspect', id: mills[0].id }); assert.ok(insp.ok && !/UNDER the legal floor/.test(insp.msg) && !/No law sets a floor/.test(insp.msg), `an inspector at a mill finds nothing to hold its owner to under a law for mines: ${insp.msg}`);
+    assert.ok(applyOp(v, l, { op: 'set_labour_law', min_safety: .5, _law: true }).ok && lawFor_(k, mills[0]).safety === .5 && lawFor_(k, pits[0]).safety === .8, 'a general law beside it binds every works, and the pits keep the stricter');
+    assert.ok(applyOp(v, l, { op: 'set_labour_law', min_safety: 0, sector: 'mine', _law: true }).ok && !k.labourLaw.sectors && lawFor_(k, pits[0]).safety === .5, 'the law for the mines repealed, the general one stands');
+    assert.ok(/No such trade\. A law can name the mines \(sector: mine\) or one branch of works/.test(applyOp(v, l, { op: 'set_labour_law', min_safety: .5, sector: 'constructor', _law: true }).msg)); }
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

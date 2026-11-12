@@ -2,7 +2,7 @@
 // its own. Bad pay and dead comrades make men walk out; a walkout stops the works until someone gives way, is starved back, or is shot back.
 // What a careless owner saves on timbering and pumps he may pay for in one morning.
 import { clamp, rand, news, sum, pick } from './util.js';
-import { STATE, isOpen, firmBy } from './firms.js';
+import { STATE, isOpen, firmBy, lawFor } from './firms.js';
 import { him, himself } from './names.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
@@ -25,7 +25,7 @@ function disaster(w, c, p, f) {
   c.mods.push({ key: 'sat.workers', delta: -3, turns: 3, label: `The dead of ${f.name}` });
   news(w, `${c.name}: ${what.toLowerCase()} at ${f.name} in ${p.name} killed about ${dead}.`, { kind: 'disaster', countries: [c.id], province: p.id });
   // Below what the law requires is noted as that, even where nothing was found let go.
-  const floor = c.labourLaw?.safety ?? 0, careless = f.safety < .3, below = floor > 0 && f.safety < floor - .001, note = careless ? 'pumps, timbering and ventilation had been let go' : below ? `nothing was found let go, but the law requires ${r2(floor)}` : 'the works were kept in fair order and the cause lay elsewhere';
+  const floor = lawFor(c, f)?.safety ?? 0, careless = f.safety < .3, below = floor > 0 && f.safety < floor - .001, note = careless ? 'pumps, timbering and ventilation had been let go' : below ? `nothing was found let go, but the law requires ${r2(floor)}` : 'the works were kept in fair order and the cause lay elsewhere';
   say(w, boss, 'Works manager', `${what} at ${f.name} (${f.id}) killed about ${dead} of your people, and the works stand still this quarter. The inspector's note: safety spending stood at ${r2(f.safety)} of 1 (${note}). The families and the men who are left look to you.`);
   if (ruler?.alive && ruler.id !== boss?.id) say(w, ruler, 'Police', `${what} at ${f.name} (${f.id}) in ${p.name} killed about ${dead}. The works belong to ${f.owner === STATE ? 'the state' : boss?.name ?? 'no one in particular'}; safety spending there stood at ${r2(f.safety)} of 1${below ? `, under the ${r2(floor)} the law requires` : careless ? ', and the works had been let go' : ''}. The district is angry.`);
   if ((careless || below) && boss && f.owner !== STATE) trace(w, boss, careless ? `Let safety at ${f.name} run down before the disaster that killed ${dead}.` : `Kept safety at ${f.name} under the legal floor before the disaster that killed ${dead}.`);
@@ -64,7 +64,7 @@ export function labourStep(w) {
     const c = w.countries[f.country], p = w.provinces[f.province]; if (!c?.alive || !p || p.controller !== c.id) continue;
     f.wage ??= 1; f.safety ??= .3; f.temper ??= 30;
     // A factory law sets a floor under pay and safety at every works. It is kept as far as there are officials and inspectors to make owners keep it.
-    if (c.labourLaw) { const kept = clamp(.3 + c.bureaucracy / 200 + inspectors(c) * .4, .2, 1); f.safety = Math.max(f.safety, r2(c.labourLaw.safety * kept)); f.wage = Math.max(f.wage, r2(Math.min(c.labourLaw.wage, 1) * (kept * .5 + .5))); }
+    { const law = lawFor(c, f); if (law) { const kept = clamp(.3 + c.bureaucracy / 200 + inspectors(c) * .4, .2, 1); f.safety = Math.max(f.safety, r2(law.safety * kept)); f.wage = Math.max(f.wage, r2(Math.min(law.wage, 1) * (kept * .5 + .5))); } }
     const watchdog = inspectors(c), real = c.wageIndex / Math.max(c.priceLevel, .01), others = firms.filter(o => o !== f && o.province === f.province);
     if (rand(w) < .009 * (DANGER[f.sector] ?? .2) * (1.7 - f.safety * 1.5) * (1 - watchdog * .35)) disaster(w, c, p, f);
     // Where the temper of the men settles: pay against the going rate, what wages buy, how the workers of the province feel in general, a fresh grave, how easily other work is found, and whether anyone listens.

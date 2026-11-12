@@ -8,7 +8,7 @@
 import { clamp, rand, news, nextId, quarterLabel } from './util.js';
 import { governs } from './polity.js';
 import { keptQuiet } from './press.js';
-import { isOpen, STATE, firmValue } from './firms.js';
+import { isOpen, STATE, firmValue, lawFor } from './firms.js';
 
 export const INQUIRY_OPS = new Set(['inquire', 'inspect']);
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
@@ -25,7 +25,7 @@ const benchWords = (w, c) => { const k = c.courts ?? 40, tr = (c.trials || []).s
 function matterOf(w, c, into) {
   const said = String(into ?? '').trim(), key = /^(the\s+)?(courts?|bench|judges|judiciary)$/i.test(said) ? 'courts' : said, own = (o, k) => !!o && Object.hasOwn(o, k), people = ids => [...new Set(ids)].map(id => w.characters[id]).filter(x => x?.alive);
   const posts = post => Object.values(w.characters).filter(x => x.alive && x.country === c.id && (x.post === post || x.clerkOf === post)).map(x => x.id);
-  if (own(w.firms, key) && w.firms[key].country === c.id) { const f = w.firms[key], law = c.labourLaw, owner = w.characters[f.owner];
+  if (own(w.firms, key) && w.firms[key].country === c.id) { const f = w.firms[key], law = lawFor(c, f), owner = w.characters[f.owner];
     return { kind: 'works', key, name: f.name, persons: people([f.owner]), re: new RegExp(`${f.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|safety|wage|strike|disaster|works|mine`, 'i'),
       plain: [`${f.name} belongs to ${f.owner === STATE ? 'the state' : owner?.name ?? 'no one in particular'}; it pays ${r2(f.wage ?? 1)} of the going wage and spends ${r2(f.safety ?? .3)} of 1 on safety${law ? ` (the law requires ${law.wage ? `${r2(law.wage)} and ` : ''}${r2(law.safety)}${(f.safety ?? .3) < law.safety - .001 ? ': it is under the legal floor' : ''})` : ' (no law sets a floor)'}; last quarter it made ${r2(f.lastProfit ?? 0)} after tax and paid ${r2(f.lastTax ?? 0)} in tax; a buyer would give about ${n(firmValue(w, f))} for it${f.disasterAt != null ? `; its last disaster was in ${quarterLabel(f.disasterAt)}${f.lastDisaster ? ` (${f.lastDisaster.what.toLowerCase()}, about ${f.lastDisaster.dead} dead), when it spent ${r2(f.lastDisaster.safety ?? .3)} of 1 on safety` : ''}` : ''}.`] }; }
   const inst = (c.institutions || []).find(i => i.id === key || String(i.name).toLowerCase() === key.toLowerCase());
@@ -57,13 +57,13 @@ export function inquiryOp(w, actor, c, op, h) {
     if (!state) return fail('The inspectors of works answer to whoever governs. An owner knows his own works (my_companies); anybody else can have a works looked into (inquire).');
     const one = op.id && w.firms && Object.hasOwn(w.firms, op.id) ? w.firms[op.id] : null, all = Object.values(w.firms || {}).filter(f => f.country === c.id && isOpen(f) && (one ? f.id === one.id : op.sector === 'mines' ? f.sector === 'mine' : op.sector === 'works' ? f.sector !== 'mine' : true));
     if (op.id && !one) return fail('No such works.'); if (!all.length) return fail('There is no works of that kind in the country.');
-    const sweep = !one && h.allowance(`inspection`, 1, 1) <= 0, law = c.labourLaw, kept = clamp(.3 + c.bureaucracy / 200 + labourInspectors(c) * .4, .2, 1), visit = clamp(kept + .25, .2, 1), lines = [], under = [];
-    for (const f of all) { const boss = w.characters[f.owner], was = f.safety ?? .3, short = law && f.owner !== STATE && was < law.safety - .001;
+    const sweep = !one && h.allowance(`inspection`, 1, 1) <= 0, anyLaw = !!c.labourLaw, kept = clamp(.3 + c.bureaucracy / 200 + labourInspectors(c) * .4, .2, 1), visit = clamp(kept + .25, .2, 1), lines = [], under = [];
+    for (const f of all) { const law = lawFor(c, f), boss = w.characters[f.owner], was = f.safety ?? .3, short = law && f.owner !== STATE && was < law.safety - .001;
       // An inspector standing in the works enforces more than the law does from the capital, once in a quarter.
       if (short && !sweep) { const to = Math.max(was, r2(law.safety * visit)); if (to > was + .001) f.safety = to; under.push(f); if (boss) { (boss.secrets ||= []).push({ turn: w.turn, text: `Was found by the inspectors keeping safety at ${f.name} at ${was}, under the ${law.safety} the law requires.` }); boss.secrets = boss.secrets.slice(-12); const file = actor.dossiers[boss.id] ||= { turn: w.turn, about: boss.name, facts: [] }; file.turn = w.turn; file.facts = [...new Set([...file.facts, boss.secrets.at(-1).text])].slice(-12); say(w, boss, c.name, `The inspectors were at ${f.name}: safety spending stood at ${was}, under the ${law.safety} the law requires${to > was + .001 ? `; they have brought it to ${to}` : ', and they had not the means to move it'}. It is on the government's file.`); } }
       lines.push(`${f.id} ${f.name} (${f.owner === STATE ? 'the state' : boss?.name ?? 'no owner'}): safety ${was}${f.safety !== was ? ` -> ${f.safety}` : ''}, wage ${r2(f.wage ?? 1)}${short ? ', UNDER the legal floor' : ''}${f.strike ? ', the men are out' : ''}`); }
     if (op.public && under.length) { news(w, `${c.name}: the inspectors of works report ${under.length} works under the legal floor on safety: ${under.map(f => `${f.name} (${w.characters[f.owner]?.name ?? 'no owner'})`).join(', ')}.`, { kind: 'economy', countries: [c.id] }); c.mods.push({ key: 'sat.workers', delta: 1, turns: 3, label: 'The inspectors\' report' }); }
-    return { ok: true, msg: `The inspectors report on ${all.length} works. ${lines.join('; ')}.${!law ? ' No law sets a floor under wages or safety (set_labour_law), so there was nothing to hold an owner to.' : under.length ? ` ${under.length} stood under the legal floor; an inspector on the spot holds an owner to about ${n(visit * 100)} in the hundred of what the law requires, and what was found is on your file on each owner (prosecute, fine).` : ' None stood under the legal floor.'}${sweep ? ' The works had been gone through once this quarter already: this time the inspectors only counted.' : ''}` };
+    return { ok: true, msg: `The inspectors report on ${all.length} works. ${lines.join('; ')}.${!anyLaw ? ' No law sets a floor under wages or safety (set_labour_law), so there was nothing to hold an owner to.' : under.length ? ` ${under.length} stood under the legal floor; an inspector on the spot holds an owner to about ${n(visit * 100)} in the hundred of what the law requires, and what was found is on your file on each owner (prosecute, fine).` : ' None stood under the legal floor.'}${sweep ? ' The works had been gone through once this quarter already: this time the inspectors only counted.' : ''}` };
   }
   const m = matterOf(w, c, op.into ?? op.id ?? op.matter); if (!m) return fail(`Say what is to be looked into (into): ${INTO}. One person is looked into with gather_dossier.`);
   const list = (w.inquiries ||= []); if (list.some(x => x.by === actor.id && x.key === m.key)) return fail(`An inquiry of yours into ${m.name} is sitting already; it reports when the quarter is out.`);

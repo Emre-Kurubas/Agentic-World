@@ -66,12 +66,23 @@ export function foreignRate(c, external) {
 export const externalDebt = c => sum(Object.values(c.creditors), x => x);
 
 // What lenders ask of a state: little from a sound one, more as the debt burden grows, with inflation, after a default and while the banks are sick.
+// The state's own gold. A country's gold (c.reserves) lies partly in the state's vault and partly with its banks and its public. What a
+// government sells is its own: the gold goes to the banks of the country and stays in it, the treasury takes their money, and lenders,
+// who look into the vault of a state before they lend to it, ask more as it empties. (Until world 19 a sale of gold sent the gold to the
+// banks of other states and credited the treasury at no cost at all; in twelve quarters of world 19 seven governments sold 4300 in gold
+// to cover their deficits, and nothing answered them. The user asked for the split and chose the share: half of what is inherited.)
+export const VAULT_SHARE = .5, VAULT_PREMIUM = .003;
+export const vaultBase = c => c.vaultBase ?? Math.max(c.goldBase ?? c.reserves ?? 0, 0) * VAULT_SHARE;
+export const vaultOf = c => Math.max(0, Math.min(c.vault ?? vaultBase(c), Math.max(c.reserves, 0)));
+// What lenders add for an emptied vault, a quarter: nothing while it stands where it was inherited, about three tenths of a point (rather
+// more than a point a year) when it is bare. Only in worlds that keep a vault.
+export const vaultPremium = c => c.vault == null || !(vaultBase(c) > 1) ? 0 : VAULT_PREMIUM * clamp(1 - vaultOf(c) / vaultBase(c), 0, 1) ** 1.5;
 export function sovereignRate(c) {
   const burden = c.debt / Math.max(c.gdp * 4, 1);
   // Lenders also price a state's word: one that breaks treaties, falls on its neighbours and threatens emptily pays more for money (about a point and
   // a half a year for every ten its standing has lost). And they price a war: a state at war pays a premium that grows with the war's length, more
   // if it began it and more again while it is losing ground, and that outlasts the peace by a few quarters (warcost.js warFooting).
-  return clamp(.0075 + .02 * Math.max(0, burden - .6) ** 1.5 + Math.max(0, c.inflTrend ?? c.inflation) * .6 + (c.defaulted ? .02 : 0) + (c.bankHealth < 30 ? .01 : 0) + Math.max(0, 60 - (c.honour ?? 60)) * .0004 + (c.war?.premium || 0), .005, .35);
+  return clamp(.0075 + .02 * Math.max(0, burden - .6) ** 1.5 + Math.max(0, c.inflTrend ?? c.inflation) * .6 + (c.defaulted ? .02 : 0) + (c.bankHealth < 30 ? .01 : 0) + Math.max(0, 60 - (c.honour ?? 60)) * .0004 + (c.war?.premium || 0) + vaultPremium(c), .005, .35);
 }
 // Lenders shut out a defaulter, but not forever: some years of paying in full and the market deals with the state again.
 // A state already in default cannot default again; it simply goes on not paying.
