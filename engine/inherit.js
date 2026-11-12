@@ -381,6 +381,8 @@ function lastQuarter(w, cs) {
     // quarter read as growth of an eighth to a fifth in every state.)
     // (Only the figure that is read: the money figure the first quarter's votes are reckoned on stays as it was handed over.)
     if (Number.isFinite(t.realGdp) && t.realGdp > 0) c.realGdp = t.realGdp;
+    // What the state was already borrowing when it was handed over is what lenders have priced for years (money.js lendersStep).
+    c.borrowAvg = Math.max(0, t.lastBorrowed || 0) / Math.max(t.gdp, 1); c.borrowBase = c.borrowAvg * 1.25 + .004; c.rateLog = [t.interestRate ?? c.interestRate].filter(v => v != null);
     // How each class stood on the day of handing over: "angry" is angrier than that (queries.js seatMemoranda).
     { const home = countryProvinces(w, c.id); c.moodBase = Object.fromEntries(['peasants', 'workers', 'middle'].map(k => { const n = home.reduce((a, p) => a + p.pops[k].n, 0) || 1; return [k, home.reduce((a, p) => a + p.pops[k].sat * p.pops[k].n, 0) / n]; })); } }
   w.seaCargo = trial.seaCargo ?? 0;

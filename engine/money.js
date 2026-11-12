@@ -77,12 +77,35 @@ export const vaultOf = c => Math.max(0, Math.min(c.vault ?? vaultBase(c), Math.m
 // What lenders add for an emptied vault, a quarter: nothing while it stands where it was inherited, about three tenths of a point (rather
 // more than a point a year) when it is bare. Only in worlds that keep a vault.
 export const vaultPremium = c => c.vault == null || !(vaultBase(c) > 1) ? 0 : VAULT_PREMIUM * clamp(1 - vaultOf(c) / vaultBase(c), 0, 1) ** 1.5;
+// Borrowing that goes on. Lenders price not only what a state owes but what it goes on asking for: the average of the last year's
+// borrowing, as a share of a quarter's output, beyond what any state borrows in the ordinary run of things. A state that takes two in the
+// hundred of its output every quarter pays about a point and a half a year for it. (World 19: eight governments ran deficits for three
+// years; the rate moved for none of them, because it looked only at a debt that had to pass six tenths of a year's output first.)
+// What a state was borrowing when it was handed over is its habit, long priced and long found by its own savers: what is priced anew and
+// found against new money is what it borrows beyond that (c.borrowBase). A state left alone is therefore where it always was.
+export const BORROW_FREE = .005, BORROW_COSTS = .25, PRESS = .5, PRESS_CAP = .02;
+export const borrowHabit = c => Math.max(BORROW_FREE, c.borrowBase ?? 0);
+export const borrowBeyond = c => c.borrowBase == null ? 0 : Math.max(0, (c.borrowAvg || 0) - borrowHabit(c));
+export const borrowPremium = c => clamp(borrowBeyond(c) * BORROW_COSTS, 0, .01);
+// What a state's borrowing does beyond its own books, each quarter it borrows (called from the quarter's accounts, economy.js fiscal): what the
+// country's own savers cannot take up is found by the banks against new money, and new money beyond what output asks for is what moves prices.
+// (Tried and taken out again, 2026-11-13: the banks of states with gold to spare taking up part of a dearer neighbour's loan in gold. In a
+// world nobody governed it emptied the richest state's reserve in three quarters; it wants its own measure before it comes back.)
+export function lendersStep(w, c) {
+  const g = Math.max(c.gdp, 1), took = Math.max(0, c.lastBorrowed || 0); c.borrowAvg = (c.borrowAvg ?? took / g) * .75 + took / g * .25; c._monetised = 0;
+  // Only in worlds handed over with the habit on record: an older world is priced as it always was.
+  if (c.borrowBase == null || c.defaulted) return;
+  const extra = Math.max(0, took - borrowHabit(c) * g); if (!(extra > 0)) return;
+  // Half of what is beyond the habit is found by savers drawn from other uses and half against new money; no more in a quarter than a
+  // fiftieth of all the money there is, so that a government must go on for years to wreck a currency.
+  const press = Math.min(extra * PRESS, (c.money || 0) * PRESS_CAP); if (press > 0) { c.money += press; c._monetised = press; }
+}
 export function sovereignRate(c) {
   const burden = c.debt / Math.max(c.gdp * 4, 1);
   // Lenders also price a state's word: one that breaks treaties, falls on its neighbours and threatens emptily pays more for money (about a point and
   // a half a year for every ten its standing has lost). And they price a war: a state at war pays a premium that grows with the war's length, more
   // if it began it and more again while it is losing ground, and that outlasts the peace by a few quarters (warcost.js warFooting).
-  return clamp(.0075 + .02 * Math.max(0, burden - .6) ** 1.5 + Math.max(0, c.inflTrend ?? c.inflation) * .6 + (c.defaulted ? .02 : 0) + (c.bankHealth < 30 ? .01 : 0) + Math.max(0, 60 - (c.honour ?? 60)) * .0004 + (c.war?.premium || 0) + vaultPremium(c) + (c.extArrears || 0) * .0004, .005, .35);
+  return clamp(.0075 + .02 * Math.max(0, burden - .6) ** 1.5 + Math.max(0, c.inflTrend ?? c.inflation) * .6 + (c.defaulted ? .02 : 0) + (c.bankHealth < 30 ? .01 : 0) + Math.max(0, 60 - (c.honour ?? 60)) * .0004 + (c.war?.premium || 0) + vaultPremium(c) + (c.extArrears || 0) * .0004 + borrowPremium(c), .005, .35);
 }
 // Lenders shut out a defaulter, but not forever: some years of paying in full and the market deals with the state again.
 // A state already in default cannot default again; it simply goes on not paying.

@@ -3,7 +3,7 @@ import { hungerOf } from './politics.js';
 import { CLASSES, GOODS, RAW, BASE_PRICE, GOOD_LABEL, PLANTS, TECHS, countryProvinces, provincePop, aliveCountries, atWar, hasTreaty } from './world.js';
 import { dealsWith, tieOf } from './diplomacy.js';
 import { migrate, levyShare } from './culture.js';
-import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding, USUAL_COVER, treasuryPays, VAULT_SHARE } from './money.js';
+import { updateRer, glutFactor, localPrices, displacedDemand, exportEdge, foreignRate, declareDefault, currencyStep, sovereignRate, creditLeft, creditStanding, USUAL_COVER, treasuryPays, VAULT_SHARE, lendersStep, borrowBeyond } from './money.js';
 import { blockadeOf, merchantStep, iced } from './navy.js';
 import { upkeepCost, railWorks, roadFactor } from './military.js';
 import { warFooting, kitOf, marketStep, warEnds, WAR_RISK, lendersWords } from './warcost.js';
@@ -311,7 +311,8 @@ function needs(w, c) {
   // with sick banks and when the materials are dear; it is what kept the mills of the age busy. Nobody decrees it: it is what owners and
   // townspeople do. (Without it nothing in the world wanted steel but arms and wares, and half of every mill stood still.)
   // War loans crowd the builder out: what lenders add to the state's interest for the war they add to everybody's, and wagons and navvies are with the army.
-  const crowd = clamp(1 - (c.war?.premium || 0) * 30, .6, 1) * (1 - clamp((c._requisition || 0) * 1.6, 0, .25));
+  // So does a treasury that borrows quarter after quarter in peace: the savings it takes are savings no builder gets.
+  const crowd = clamp(1 - (c.war?.premium || 0) * 30, .6, 1) * (1 - clamp((c._requisition || 0) * 1.6, 0, .25)) * (1 - clamp(borrowBeyond(c) * 8, 0, .3));
   const pulse = clamp(1 + ((c.trend ?? USUAL_GROWTH) - USUAL_GROWTH) * BOOM, .5, 1.35) * (c.bankHealth < 30 ? .6 : 1) * (1 - clamp(c._dev || 0, 0, .5)) * crowd;
   c._build = Object.fromEntries(Object.entries(BUILDING).map(([g, q]) => [g, q * Math.max(c.realGdp || 0, 0) * pulse * dear(g)]));
   for (const [g, q] of Object.entries(c._build)) need[g] += q;
@@ -657,6 +658,8 @@ function fiscal(w, c) {
   c._stateProfit = 0; c._outlay = {};
   c.lastRevenue = revenue; c.lastSpending = need * paid; c.paidRatio = paid;
   c.lastBalance = revenue - need; c.lastInterest = interest; c.lastAgencies = agencies; c.lastBorrowed = borrowed + (c._loans || 0); c._loans = 0;
+  // What that borrowing does beyond the books: lenders at home and abroad, and money (money.js).
+  lendersStep(w, c); (c.rateLog ||= []).push(sovereignRate(c)); if (c.rateLog.length > 5) c.rateLog.shift();
   // State capacity has a running cost that grows with its level: what is spent decides where it settles, so a poor state stays small instead of decaying forever.
   c.bureaucracy = clamp(c.bureaucracy + (capacityFor(b.administration * paid) - c.bureaucracy) * (paid < .8 ? .1 : .06), 10, 95);
   c.police = clamp(c.police + (policeFor(b.police * paid) - c.police) * .08, 5, 95);

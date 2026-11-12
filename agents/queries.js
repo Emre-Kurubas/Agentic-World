@@ -8,7 +8,7 @@ import { countryProvinces, aliveCountries, atWar, hasTreaty, GOODS, GOOD_LABEL, 
 import { clauseText, leadsParties, rivalParty, governmentSeats, GATED, whipCount, observes, mustPassParliament } from '../engine/polity.js';
 import { isOpen, ownerName } from '../engine/firms.js';
 import { holdOf, handsOf, firmValue } from '../engine/firms.js';
-import { creditLeft, creditHeadroom, vaultOf, vaultBase } from '../engine/money.js';
+import { creditLeft, creditHeadroom, vaultOf, vaultBase, borrowPremium } from '../engine/money.js';
 import { fearWord, flattery, streetsWould } from '../engine/fear.js';
 import { massWords } from '../engine/masses.js';
 import { whyPrice, lendersWords, WAR_RISK } from '../engine/warcost.js';
@@ -686,6 +686,9 @@ export function memoranda(w, c, ch) {
   // ten thousand in gold in the reserve, and first heard of the reserve in its tenth quarter, from a clerk's letter.)
   { const lent = c.lastBorrowed || 0, floor = c.goldFloor ?? (c.goldBase ?? c.reserves) * .6, above = c.reserves - floor;
     if (lent > c.gdp * .01 && above > Math.max(lent * 3, floor * .15)) t.push(`Last quarter the state borrowed ${n(lent)} at ${Math.round((c.interestRate || 0) * 1000) / 10} in the hundred a quarter, while ${n(c.reserves)} in gold lies in the country, ${n(above)} of it above the floor the banks are told to keep, and ${n(vaultOf(c))} of it in the state's own vault. What can be done: lower the floor so that merchants bring in more of what the shops lack (set_gold_floor); pay debt down out of revenue (repay_state_debt); sell gold out of the state's own vault to the banks of the country (sell_gold: it brings money once, the gold stays in the country, and lenders, who look into a state's vault before they lend, ask more as it empties); or nothing: a full vault is what a state's credit and a war are carried on.`); }
+  // Money grown dearer because the state goes on borrowing. (The wording was put to the user and approved, 2026-11-12.)
+  { const log = c.rateLog || [], now = log.at(-1), then = log[0]; if (now != null && log.length >= 4 && borrowPremium(c) >= .001 && now > then + .0008) { const pa = v => Math.round(v * 4000) / 10, heavier = c.debt / Math.max(c.gdp * 4, 1) > (c.debtShareWas ?? 0) + .03;
+      t.push(`Lenders ask ${pa(now)} in the hundred a year of the state where they asked ${pa(then)} a year ago. ${heavier ? 'What' : 'The debt is no heavier than it was; what'} they price is that the state has borrowed about ${n((c.borrowAvg || 0) * c.gdp)} a quarter for a year, and they expect it to go on.`); } }
   if (t.length) out.push([`${by('treasury')} lays before you:`, t]);
   // A good that is far dearer at home than abroad because gold, not the customs, keeps it out. (World 18: in five states cloth stood at two
   // to two and a half times the world's price for years; rulers cut duties to no effect and nobody touched the floor on the reserve.)

@@ -2274,8 +2274,10 @@ chain('Small revenue → small credit: lenders stop when interest would eat the 
   assert.ok(rich >= 0);
   // And in a run: welfare on credit buys a poor state a few good years and then costs it more than it bought.
   const x = inherited(), y = inherited(); for (const z of [x, y]) { z.status = 'playing'; run(z, 1); } const p = x.countries.U5, twin = y.countries.U5; applyOp(x, ld(x, p), { op: 'set_budget', category: 'welfare', share: .12, _law: true });
-  run(x, 8); run(y, 8); assert.ok(p.legitimacy > twin.legitimacy + 3, 'two years in, the borrowed relief has bought standing: ' + p.legitimacy.toFixed(0) + ' against ' + twin.legitimacy.toFixed(0));
-  run(x, 32); run(y, 32); assert.ok(p.legitimacy < twin.legitimacy - 5 && (p.paidRatio < 1 || p.defaulted), 'ten years in, the lenders have stopped and the state stands lower than its twin: ' + p.legitimacy.toFixed(0) + ' against ' + twin.legitimacy.toFixed(0));
+  // (Since lenders price borrowing that goes on, 2026-11-13: a state that takes a tenth of its output a quarter is asked twice the rate in two
+  // quarters and refused in four, so the good time is a year and not two. A fourth of that rise still buys three good years.)
+  run(x, 4); run(y, 4); assert.ok(p.legitimacy > twin.legitimacy + 1, 'a year in, the borrowed relief has bought standing: ' + p.legitimacy.toFixed(1) + ' against ' + twin.legitimacy.toFixed(1));
+  run(x, 36); run(y, 36); assert.ok(p.legitimacy < twin.legitimacy - 5 && (p.paidRatio < 1 || p.defaulted), 'ten years in, the lenders have stopped and the state stands lower than its twin: ' + p.legitimacy.toFixed(0) + ' against ' + twin.legitimacy.toFixed(0));
 });
 chain('State sells grain → out of the stores → paid for what arrived, and nothing for what did not', () => {
   const w = inherited(); w.status = 'playing'; run(w, 2); const a = w.countries.U2, b = w.countries.U4, A = ld(w, a), B = ld(w, b);
@@ -5288,6 +5290,21 @@ chain('Lives, memoranda and numbers: every seat-holder has a past everybody know
     const f0 = c.fear || 0, sh = shut_(c); assert.ok(applyOp(v, L, { op: 'forbid_meetings' }).ok && (c.fear || 0) > f0 && shut_(c) > sh, 'forbidding meetings frightens and shuts a door'); v.turn += 1; const broken = applyOp(v, O, { op: 'rally' }); assert.ok(broken.ok && /was broken up by the police, meetings being forbidden/.test(broken.msg), broken.msg);
     const ban = applyOp(v, L, { op: 'ban_society', id: union.id }); assert.ok(ban.ok && union.banned === v.turn && !societiesOf_(c, party.id).length && /is forbidden and its chest/.test(ban.msg), ban.msg);
     assert.ok(/Societies, petitions and meetings:[^]*Public meetings are forbidden/.test(lookUp(v, O, 'parties')) && /A party can do more than print and vote/.test(lookUp(v, O, 'parties')), 'and the party return says what there is and what can be done'); }
+});
+import { borrowPremium as borrowPremium_, sovereignRate as rateNow_ } from '../engine/money.js';
+chain('Borrowing that goes on has a price: lenders ask more of a state that borrows quarter after quarter, whatever it owes; what the country\'s own savers cannot take up becomes new money; the builder is crowded out; and the keeper of the treasury says why money has grown dear', () => {
+  // World 19: eight governments ran deficits for three years and nothing answered them. The rate looked only at a debt that had to pass six
+  // tenths of a year's output before it stirred, the money came from lenders with no name, and no price moved for it.
+  const quiet = inherited(2696855, 8), loose = structuredClone(quiet), id = aliveCountries(quiet).find(c => c.archetype === 'republic').id, a = quiet.countries[id], b = loose.countries[id];
+  assert.ok(a.borrowAvg != null && a.rateLog?.length === 1, 'a state is handed over with the borrowing lenders have long priced');
+  b.budget.welfare += .04; let said = '', never = true, printed = 0; const L = ld(loose, b); 
+  for (let t = 0; t < 10; t++) { run(quiet, 1); run(loose, 1); printed = Math.max(printed, b._monetised || 0);
+    const m = memorandaOf(loose, b, L).flatMap(([, l]) => l).find(l => /^Lenders ask/.test(l)); if (m) said = m; if (memorandaOf(quiet, a, ld(quiet, a)).flatMap(([, l]) => l).some(l => /^Lenders ask/.test(l))) never = false; }
+  assert.ok(b.borrowAvg > a.borrowAvg + .015 && borrowPremium_(b) > .002 && borrowPremium_(a) < .0005, `the year's borrowing is what is priced (${a.borrowAvg} against ${b.borrowAvg})`);
+  assert.ok(rateNow_(b) > rateNow_(a) + .002 && b.debt / (b.gdp * 4) < .6, `lenders ask more of the state that goes on borrowing, long before its debt is heavy (${(rateNow_(a) * 400).toFixed(1)} against ${(rateNow_(b) * 400).toFixed(1)} a year, debt ${Math.round(b.debt / (b.gdp * 4) * 100)} in the hundred of a year's output)`);
+  assert.ok(printed > 0, 'what savers at home could not take up was found against new money');
+  assert.ok(b.realGdp < a.realGdp, `and the builder was crowded out: output after ten quarters ${Math.round(a.realGdp)} against ${Math.round(b.realGdp)}`);
+  assert.ok(never && /^Lenders ask [\d.]+ in the hundred a year of the state where they asked [\d.]+ a year ago\. (The debt is no heavier than it was; what|What) they price is that the state has borrowed about \d+ a quarter for a year, and they expect it to go on\.$/.test(said), `the keeper of the treasury says why money has grown dear, and says nothing where it has not: ${said}`);
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');
