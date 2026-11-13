@@ -9,6 +9,7 @@ import { culturePenalty, leaderForeignness, minorityShare, votersOf } from './cu
 import { adminPressure } from './admin.js';
 import { afflict, healthStep, incapacitated } from './health.js';
 import { shut } from './underground.js';
+import { creedMood } from './doctrine.js';
 import { moved as goldMoved } from './gold.js';
 import { he, He, his } from './names.js';
 
@@ -113,12 +114,12 @@ const classSat = (w, c, k) => { let s = 0, n = 0; for (const p of homeProvinces(
 function updateBlocs(w, c, inWar) {
   const b = c.blocs, funding = c.militaryFunding ?? 1;
   const set = (x, t) => { x.sat = clamp(x.sat + (clamp(t, 0, 100) - x.sat) * .3, 0, 100); };
-  set(b.army, 56 + (funding - .9) * 45 - c.arrears * 9 - c.warExhaustion * .25 + (c.axes.auth * .08) + modValue(c, 'sat.army'));
-  set(b.capital, 62 - (c.tax.business - .18) * 110 - c.ownership * 50 - Math.max(0, c.inflation - .03) * 110 + c.axes.econ * .16 + (c.growth || 0) * 150 + modValue(c, 'sat.capital'));
+  set(b.army, 56 + (funding - .9) * 45 - c.arrears * 9 - c.warExhaustion * .25 + (c.axes.auth * .08) + modValue(c, 'sat.army') + creedMood(c, 'army'));
+  set(b.capital, 62 - (c.tax.business - .18) * 110 - c.ownership * 50 - Math.max(0, c.inflation - .03) * 110 + c.axes.econ * .16 + (c.growth || 0) * 150 + modValue(c, 'sat.capital') + creedMood(c, 'capital'));
   set(b.workers, classSat(w, c, 'workers'));
   set(b.peasants, classSat(w, c, 'peasants'));
-  set(b.clergy, 55 + c.axes.faith * .28 + modValue(c, 'sat.clergy'));
-  set(b.bureaucracy, 58 + ((c.paidRatio ?? 1) - .95) * 90 - c.corruption * .1 + modValue(c, 'sat.bureaucracy'));
+  set(b.clergy, 55 + c.axes.faith * .28 + modValue(c, 'sat.clergy') + creedMood(c, 'clergy'));
+  set(b.bureaucracy, 58 + ((c.paidRatio ?? 1) - .95) * 90 - c.corruption * .1 + modValue(c, 'sat.bureaucracy') + creedMood(c, 'bureaucracy'));
   b.army.power = clamp(22 + c.budget.military * 340 + c.axes.auth * .08 + (inWar ? 8 : 0), 10, 60);
 }
 

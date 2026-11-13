@@ -1,4 +1,6 @@
 import { economyStep } from './economy.js';
+import { creedStep } from './doctrine.js';
+import { leagueStep } from './leagues.js';
 import { openGold, closeGold } from './gold.js';
 import { militaryStep, depotStep } from './military.js';
 import { satisfactionStep, plotStep, uprisingStep, electionStep, collapseStep, relationDrift, lifeStep, pruneStep, partyStep, debtStep } from './politics.js';
@@ -48,7 +50,9 @@ export function stepWorld(w) {
   treatyStep(w, 'late');
   frontierStep(w);
   institutionStep(w);
+  leagueStep(w);
   cultureStep(w);
+  creedStep(w);
   satisfactionStep(w);
   pressStep(w);
   partyStep(w);

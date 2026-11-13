@@ -5872,5 +5872,89 @@ chain('What a country\'s houses lend abroad is its government\'s to say: left al
   assert.ok(!w.loanAsks.length && Lb.inbox.some(m => /was never answered and has lapsed/.test(m.text)), 'a request nobody answered lapses after two quarters, and the asker is told');
   const clear = applyOp(w, Ll, { op: 'set_lending', target: b.id, clear: true }); assert.ok(clear.ok && applyOp(w, Lb, { op: 'borrow_foreign', target: l.id, pct_gdp: .005 }).ok && !w.loanAsks.length, `withdrawn, the houses are free again: ${clear.msg}`);
 });
+import { creedCount as creedCount_, creedGap as creedGap_, creedMemorandum as creedMemorandum_, CREEDS as CREEDS_ } from '../engine/doctrine.js';
+chain('A state has a creed and keepers of it: handed over, the count is the accustomed one and nobody is angry; a government that lets it slide loses its own people and is told so by them; one that carries it further is the stronger among them; and a new course kept to becomes the accustomed one', () => {
+  // Five games in which no ruler held a creed worth a crime, and moderation cost nothing at home.
+  const make = kind => { const w = inherited(2696855, 8), c = aliveCountries(w).find(x => x.archetype === kind); return { w, c, L: ld(w, c), go: (n = 1) => { for (let i = 0; i < n; i++) { beginTurn(w); stepWorld(w); } } }; };
+  // Handed over: every state has its count, and three years with nobody governing move nothing.
+  { const w = inherited(2696855, 8); assert.ok(w.creeds && aliveCountries(w).every(c => c.creed && creedCount_(w, c).kept === c.creed.base), 'every state is handed over with its creed, and the count it is used to');
+    for (let i = 0; i < 8; i++) { beginTurn(w); stepWorld(w); } assert.ok(aliveCountries(w).every(c => Math.abs(creedGap_(c)) < 1 && !creedMemorandum_(w, c)), `left alone, nothing slides and nobody speaks: ${aliveCountries(w).map(c => creedGap_(c).toFixed(1)).join(' ')}`);
+    const first = actorPrompt(w, ld(w, aliveCountries(w).find(c => c.archetype === 'junta')), [], false, { intro: true }); assert.ok(first.includes(CREEDS_.junta.text), 'whoever takes a seat in a state reads what it holds to and who holds it to that'); }
+  // A junta that gives the other peoples their tongues and lets the army go short.
+  { const soft = make('junta'), calm = make('junta'), k0 = creedCount_(soft.w, soft.c).kept;
+    assert.ok(applyOp(soft.w, soft.L, { op: 'set_culture_policy', language: 'autonomy' }).ok && applyOp(soft.w, soft.L, { op: 'set_budget', category: 'military', share: soft.c.budget.military * .6, _law: true }).ok, 'a new course');
+    soft.go(2); calm.go(2); const n = creedCount_(soft.w, soft.c), memo = creedMemorandum_(soft.w, soft.c);
+    assert.ok(n.kept < k0 - 15 && creedGap_(soft.c) < -10 && soft.c.blocs.army.sat < calm.c.blocs.army.sat - 3 && soft.c.legitimacy < calm.c.legitimacy, `the officers' count falls and they sour, and the government's standing wears (${k0.toFixed(0)} -> ${n.kept.toFixed(0)}; army ${soft.c.blocs.army.sat.toFixed(0)} against ${calm.c.blocs.army.sat.toFixed(0)}; standing ${soft.c.legitimacy.toFixed(1)} against ${calm.c.legitimacy.toFixed(1)})`);
+    assert.ok(memo && /^The senior officers lay before you:$/.test(memo[0]) && /The National Order stood at \d+ in the hundred kept when you took the chair and stands at \d+\. What they name: [^.]*other peoples are given their tongues[^.]*\. They say it in the messes already[^]*What would answer them: [^]*Or stand on the new course, and find other friends for it\./.test(memo[1]), `and they lay it before the ruler: ${memo?.[1]}`);
+    assert.ok(memorandaOf(soft.w, soft.c, soft.L).some(([t]) => t === 'The senior officers lay before you:'), 'on his desk, with the other memoranda');
+    assert.ok(/The creed of the state: the National Order, kept by the senior officers\. It stands at \d+ in the hundred kept \(what they are used to is \d+\), and its keepers are (losing patience|close to turning on the government)/.test(answer(soft.w, soft.L, 'blocs')), `and whoever looks the blocs up reads the count and the rule: ${answer(soft.w, soft.L, 'blocs').slice(-420)}`);
+    soft.go(30); assert.ok(Math.abs(creedGap_(soft.c)) < 3 && !creedMemorandum_(soft.w, soft.c), `kept to for some years, the new course is the accustomed one (${creedGap_(soft.c).toFixed(1)})`); }
+  // A revolution carried further.
+  { const hard = make('revolutionary'), calm = make('revolutionary'), k0 = creedCount_(hard.w, hard.c).kept;
+    for (const p of hard.c.parties) if (p.id !== hard.c.rulingParty) p.banned = true; hard.c.ownership = Math.min(1, hard.c.ownership + .25);
+    hard.go(2); calm.go(2);
+    assert.ok(creedCount_(hard.w, hard.c).kept > k0 + 10 && creedGap_(hard.c) > 6 && hard.c.blocs.bureaucracy.sat > calm.c.blocs.bureaucracy.sat + 1 && !creedMemorandum_(hard.w, hard.c), `the Programme carried further, the cadres are the government's own (${k0.toFixed(0)} -> ${creedCount_(hard.w, hard.c).kept.toFixed(0)}; cadres ${hard.c.blocs.bureaucracy.sat.toFixed(0)} against ${calm.c.blocs.bureaucracy.sat.toFixed(0)})`);
+    assert.ok(/and its keepers count the government their own/.test(answer(hard.w, hard.L, 'blocs')), 'and the count says so'); }
+  // A republic that muzzles its papers answers to the country.
+  { const r = make('republic'), calm = make('republic'); r.c.pressFreedom = 25; r.c.courts = 25; r.go(2); calm.go(2); const memo = creedMemorandum_(r.w, r.c);
+    assert.ok(memo && /^The chamber and the papers lay before you:$/.test(memo[0]) && /the papers are not free to print/.test(memo[1]) && r.c.legitimacy < calm.c.legitimacy, `a constitution broken is everybody's grievance: ${memo?.[1].slice(0, 200)}`); }
+});
+import { leagueOf as leagueOf_, membersOf as membersOf_, leagueMemorandum as leagueMemo_ } from '../engine/leagues.js';
+chain('A league is born of a grievance and belongs to whoever takes it up: none in a calm country; one where land was lost; it sends word to the seats; money makes it larger; whoever has taken it up or paid it turns it on a party or a people; forbidden, its hard men go underground; and ignored by a weak government it marches on the capital, where the garrison decides', () => {
+  // Five games with no movement between a government and its opposition, and nobody who could shed blood without the police.
+  const go = (w, n = 1) => { for (let i = 0; i < n; i++) { beginTurn(w); stepWorld(w); } };
+  // A calm world breeds none.
+  { const w = inherited(2696855, 8); go(w, 6); assert.ok(w.leagues && aliveCountries(w).every(c => !c.league && (c.stir ?? 0) < 20), `left alone, no country breeds a league: ${aliveCountries(w).map(c => (c.stir ?? 0).toFixed(0)).join(' ')}`); }
+  // A junta that has lost two provinces to a neighbour whose people live among its own.
+  const w = inherited(2696855, 8), c = aliveCountries(w).find(x => x.archetype === 'junta'), R = ld(w, c), home = countryProvinces(w, c.id);
+  const among = o => home.reduce((a, p) => a + (p.groups || []).filter(g => g.eth === o.majorityEth).reduce((s, g) => s + g.share, 0), 0), o = aliveCountries(w).filter(x => x.id !== c.id).sort((a, b) => among(b) - among(a))[0];
+  const gone = home.filter(p => p.id !== c.capital && !(p.groups || []).some(g => g.eth === o.majorityEth)).slice(0, 2);
+  for (const p of gone) { for (const u of Object.values(w.units)) if (u.province === p.id) u.province = c.capital; p.owner = p.controller = o.id; p.lostBy = c.id; p.lostIn = 1900; }
+  go(w, 3); const L = leagueOf_(c), chief = w.characters[L?.chief];
+  assert.ok(L && L.kind === 'national' && chief?.alive && chief.league === L.id && L.planks.some(k => k.k === 'back' && gone.some(p => p.id === k.province)), `land lost, a nationalist league forms within the year: ${L?.name} (${L?.planks.map(k => k.k)})`);
+  assert.ok(L.goat === o.majorityEth, `and it blames the people of whoever took the land, who live among its own (${L.goat})`);
+  const birth = new RegExp(`^A league has formed in the country: the ${L.name}, under ${chief.name} \\(${chief.id}\\), [^.]+\\. It says the province of (${gone.map(p => p.name).join('|')}) was sold, that the ${L.goat} among us are the enemy's people and that the government is too weak to say so\\. The police put it at (some hundreds|some thousands|about \\d+ thousand), in [^,]+ and [^,]+, and growing with [^.]+\\. It marches in the open and has asked nobody's leave\\.$`);
+  assert.ok([R, w.characters[c.general], w.characters[c.opposition], w.characters[c.oligarch]].every(x => x.inbox.some(m => birth.test(m.text))), `the four seats are told what it is and what it says: ${R.inbox.find(m => /league has formed/.test(m.text))?.text}`);
+  go(w, 4); assert.ok(L.strength >= 30 && membersOf_(w, c) > 4, `it grows with the grievance (${L.strength.toFixed(0)} of a hundred, ${membersOf_(w, c).toFixed(0)} thousand)`);
+  const word = /sends word\. (He|She) asks nothing for (himself|herself)\. Take up the (two|three) things the \w+ stands for \([^)]*back[^)]*\) and the \w+ is yours in the street: at elections, against [^,]+ meetings, wherever the police cannot be seen to go\. Refuse, and (he|she) will say in every square who refused\.$/;
+  assert.ok(R.inbox.some(m => m.from === chief.name && word.test(m.text)) && w.characters[c.opposition].inbox.some(m => word.test(m.text)), `its chief sends word to the seats: ${R.inbox.find(m => /sends word/.test(m.text))?.text}`);
+  const memo = memorandaOf(w, c, R).flatMap(([, x]) => x).join('\n');
+  assert.ok(new RegExp(`The ${L.name} counts about \\d+ thousand and could put (some thousands|about \\d+ thousand) into the capital in a day\\. What can be done: leave it \\(it grows with the grievance, not with our leave\\), buy its chief \\(bribe\\), take up its programme and have its men for our own \\(adopt_league\\), turn it on somebody \\(unleash\\), or forbid it \\(ban_league: its hard men go underground\\)\\. Or nothing\\.`).test(memo), `the police lay it before whoever governs: ${leagueMemo_(w, c)}`);
+  assert.ok(/A league marches in the country: the /.test(answer(w, w.characters[c.opposition], 'parties')) && /Whoever governs can forbid it\./.test(answer(w, w.characters[c.opposition], 'parties')) && /The government can forbid it \(ban_league/.test(answer(w, R, 'unrest')), 'and whoever looks up the parties or the unrest reads what it is and what can be done with it');
+  // Money, and what money buys.
+  { const v = structuredClone(w), cv = v.countries[c.id], Lv = leagueOf_(cv), O = v.characters[cv.oligarch], party = cv.parties.filter(p => !p.banned && p.id !== cv.rulingParty && !(v.characters[p.leader]?.id === O.id)).sort((a, b) => (b.organization || 0) - (a.organization || 0))[0]; O.wealth = 200; party.organization = Math.max(party.organization || 0, 30);
+    const cold = applyOp(v, O, { op: 'unleash', on: party.id }); assert.ok(!cold.ok && /moves for whoever has taken up its programme \(adopt_league\), or for a paymaster who has given it about \d+ in a year/.test(cold.msg), `it moves for nobody who has given it nothing: ${cold.msg}`);
+    const paid = applyOp(v, O, { op: 'back_league', amount: 40 }); assert.ok(paid.ok && O.wealth === 160 && Lv.funds > 40 && O.secrets.some(s => /Paid 40 to the/.test(s.text)) && /will move (his|her) men where you point/.test(paid.msg), `money reaches it, in secret: ${paid.msg}`);
+    const org = party.organization, hit = applyOp(v, O, { op: 'unleash', on: party.id }); assert.ok(hit.ok && party.organization < org - 4 && O.secrets.some(s => /Turned the .* on the /.test(s.text)) && v.characters[Lv.chief].secrets.some(s => /at the word of/.test(s.text)), `and its paymaster turns it on a party: ${hit.msg}`);
+    assert.ok(!applyOp(v, O, { op: 'unleash', on: party.id }).ok, 'once a quarter');
+    const s0 = Lv.strength; go(v, 1); assert.ok(Lv.strength > s0, 'and it is the larger for the money');
+    // Its chief has a price.
+    const Rv = v.characters[cv.leader]; Rv.wealth = 300; const home = applyOp(v, Rv, { op: 'bribe', character: Lv.chief, amount: 120, for: 'stand_down' });
+    assert.ok(home.ok && v.characters[Lv.chief].quiet && /keeps (his|her) men at home/.test(home.msg) && !applyOp(v, O, { op: 'unleash', on: party.id }).ok, `its chief can be bought to keep his men at home: ${home.msg}`); }
+  // Taken up by whoever governs.
+  { const v = structuredClone(w), cv = v.countries[c.id], Lv = leagueOf_(cv), Rv = v.characters[cv.leader], opp = cv.parties.filter(p => !p.banned && p.id !== cv.rulingParty); for (const p of opp) p.organization = Math.max(p.organization || 0, 25);
+    const took = applyOp(v, Rv, { op: 'adopt_league' }); assert.ok(took.ok && Lv.adopted === Rv.id && /are yours in the street\. While that lasts the other parties' meetings are broken up[^]*if in six quarters nothing more of it is done, it breaks with you/.test(took.msg), `the government takes up its programme and has its men: ${took.msg}`);
+    assert.ok(!leagueMemo_(v, cv) && !applyOp(v, v.characters[cv.opposition], { op: 'adopt_league' }).ok, 'it does not serve two');
+    // Turned on the people it blames: the mob that follows is the one the engine knows, and it is the chief's before the country.
+    const n0 = (cv.atrocities || []).length, loose = applyOp(v, Rv, { op: 'unleash', on: Lv.goat }); assert.ok(loose.ok && /goes into the .* quarters of /.test(loose.msg), `it is turned on the people it blames: ${loose.msg}`);
+    const org = opp.map(p => p.organization), fear0 = cv.fear || 0; go(v, 1); const done = (cv.atrocities || []).slice(n0).filter(a => a.method === 'pogrom');
+    assert.ok(done.length && done.every(a => a.by === Lv.chief && a.group === Lv.goat && a.dead > 0) && Rv.secrets.some(s => new RegExp(`Turned the ${Lv.name} on the ${Lv.goat} of `).test(s.text)), `and when the quarter is played the dead are counted, laid at the chief's door, and a secret of whoever gave the word (${done.map(a => a.text).join(' ')})`);
+    assert.ok(opp.every((p, i) => p.organization < org[i]) && (cv.fear || 0) > fear0, 'while it is the government\'s street the other parties wear away and people grow afraid');
+    go(v, 6); assert.ok(!Lv.adopted && Rv.inbox.some(m => /has broken with you, in every square: six quarters, and of the (two|three) things/.test(m.text)), 'and a government that took its men and did nothing it asked is broken with, aloud'); }
+  // Forbidden.
+  { const v = structuredClone(w), cv = v.countries[c.id], Lv = leagueOf_(cv), Rv = v.characters[cv.leader], s0 = Lv.strength, funds0 = cv.cellFunds || 0, fear0 = cv.fear || 0;
+    assert.ok(!applyOp(v, v.characters[cv.opposition], { op: 'ban_league' }).ok, 'only whoever governs forbids it');
+    const ban = applyOp(v, Rv, { op: 'ban_league' }); assert.ok(ban.ok && Lv.banned === v.turn && Lv.strength < s0 * .9 && cv.cellFunds > funds0 && cv.fear > fear0 && /its hard men have gone to the armed underground/.test(ban.msg), `forbidden, what the police reach is broken up and the rest goes underground: ${ban.msg}`);
+    assert.ok(applyOp(v, Rv, { op: 'ban_league', lift: true }).ok && !Lv.banned, 'and the ban can be lifted'); }
+  // The capital: a weak government, and a garrison that will not fire, or will.
+  const day = loyal => { const v = structuredClone(w), cv = v.countries[c.id], Lv = leagueOf_(cv), Rv = v.characters[cv.leader]; Lv.strength = 75; cv.legitimacy = 33;
+    go(v, 1); const called = Rv.inbox.some(m => /has called its men to .* for Q\d \d+: (some thousands|about \d+ thousand) are expected[^]*Troops that will fire break a crowd four times their number[^]*What can still be done before the day: forbid it \(ban_league\), take up its programme \(adopt_league\), buy its chief \(bribe, for: stand_down\), or bring troops that can be trusted into the capital \(move\)\./.test(m.text));
+    cv.legitimacy = Math.min(cv.legitimacy, 33); for (const u of Object.values(v.units)) if (u.country === cv.id && u.province === cv.capital) u.loyalty = loyal ? 95 : 8; go(v, 1); return { v, cv, Lv, Rv, called }; };
+  { const { v, cv, Lv, Rv, called } = day(false); assert.ok(called, 'it calls its men to the capital a quarter ahead, and the seats are told what can still be done');
+    assert.ok(cv.leader === Lv.chief && cv.regime === 'National dictatorship' && !cv.elections && Rv.status === 'exiled' && Lv.adopted === Lv.chief && v.characters[Lv.chief].inbox.some(m => /The .* expects its programme of you/.test(m.text)), `the garrison stands aside and the league's chief governs (${cv.regime}, ${v.characters[cv.leader].name})`); }
+  { const { cv, Lv, Rv } = day(true); assert.ok(cv.leader === Rv.id && Lv.strength < 45 && Lv.marched && (cv.fear || 0) > 5 && Rv.inbox.some(m => /the garrison fired: about \d+ dead in the streets/.test(m.text)), `a garrison that fires breaks it, and the dead are remembered (${Lv.strength.toFixed(0)})`); }
+  // A party once forbidden can be let back.
+  { const v = structuredClone(w), cv = v.countries[c.id], Rv = v.characters[cv.leader], p = cv.parties.find(x => x.id !== cv.rulingParty); p.banned = true; const back = applyOp(v, Rv, { op: 'ban_party', party: p.id, lift: true }); assert.ok(back.ok && !p.banned, `a ban on a party can be lifted: ${back.msg}`); }
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

@@ -26,6 +26,7 @@ import { INQUIRY_OPS, inquiryOp } from './inquiry.js';
 import { MEANS_OPS, meansOp } from './means.js';
 import { moved as goldMoved } from './gold.js';
 import { MASS_OPS, massOp } from './masses.js';
+import { LEAGUE_OPS, leagueOp } from './leagues.js';
 import { TENDER_OPS, tenderOp, tenderStep } from './tender.js';
 import { foundPaper, papersOf, carry, MAX_PAPERS, setPaper, censor, paperWords, keptQuiet, findPaper } from './press.js';
 import { buyBonds, sellBonds } from './bonds.js';
@@ -45,7 +46,7 @@ const PERMISSIONS = {
 // under the table, plots, private bargains, and anything done under a treaty that is itself secret. In world 12 the papers of the world carried 889
 // of 2459 rulings, among them one attack order in three and a third of all standing orders; in world 13 they carried a secret alliance, and two
 // governments hunted for a traitor who was the printing press. A ruling is printed only if nothing in it is of this kind (printable).
-export const QUIET = new Set(['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'offensive', 'set_posture', 'fleet_orders', 'amphibious', 'lay_mines', 'prepare_plan', 'leak_plan',
+export const QUIET = new Set(['back_league', 'unleash', 'move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'offensive', 'set_posture', 'fleet_orders', 'amphibious', 'lay_mines', 'prepare_plan', 'leak_plan',
   'spy', 'steal_tech', 'gather_dossier', 'forge_dossier', 'recruit_informant', 'bribe', 'blackmail', 'embezzle', 'capital_flight', 'repatriate', 'fund_underground', 'fund_plot', 'rig_election', 'lobby_bill',
   'start_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'accept_offer', 'decline_offer', 'propose_contract', 'accept_contract', 'cancel_contract', 'give', 'lend_private', 'accept_loan', 'decline_loan', 'repay_debt', 'forgive_debt',
   'buy_bonds', 'sell_bonds', 'designate_successor', 'back_claim', 'draw_company', 'draw_institution', 'noop',
@@ -69,7 +70,8 @@ QUIET.add('destroy_evidence');
 QUIET.add('inquire').add('inspect');
 PRIVATE.push('denounce'); PERMISSIONS.general.add('stage_incident'); for (const seat of ['general', 'opposition', 'oligarch']) PERMISSIONS[seat].add('denounce');
 QUIET.add('denounce').add('stage_incident').add('turn_informant');
-const OWN = ['set_paper', 'incite', 'accept_loan', 'decline_loan', 'petition', 'found_society', 'rally', 'call_strike', ...NOTE_OPS, ...SEAT_OPS];
+// (A league is backed, taken up and turned on somebody by anyone at liberty; what each may do with it the league itself decides: leagues.js.)
+const OWN = ['set_paper', 'incite', 'accept_loan', 'decline_loan', 'petition', 'found_society', 'rally', 'call_strike', 'back_league', 'adopt_league', 'unleash', ...NOTE_OPS, ...SEAT_OPS];
 QUIET.add('lead_rising').add('name_deputy');
 for (const op of NOTE_OPS) QUIET.add(op);
 PRIVATE.push(...OWN, ...OPEN_STANDING);
@@ -697,6 +699,7 @@ function applyOne(w, actor, op) {
   if (INQUIRY_OPS.has(op.op)) return inquiryOp(w, actor, c, op, { fail, num, allowance: (key, cap, want) => allowance(w, c, key, cap, want), pays: m => treasuryPays(c, m, 'secret'), leads: leadsParties(w, c, actor).some(p => (c.parliament?.seats?.[p.id] ?? 0) > 0) });
   if (TENDER_OPS.has(op.op)) return tenderOp(w, actor, c, op, { fail, num });
   if (MASS_OPS.has(op.op)) return massOp(w, actor, c, op, { fail, num });
+  if (LEAGUE_OPS.has(op.op)) return leagueOp(w, actor, c, op, { fail, num });
   if (MEANS_OPS.has(op.op)) return meansOp(w, actor, c, op, { fail, num, target, pay: (cost, what) => pay(c, cost, what), allowance: (who, key, cap, want) => allowance(w, who, key, cap, want), personFor, noPerson });
   if (SEAT_OPS.has(op.op)) return seatOp(w, actor, c, op, { fail, num, governs: governs(w, c, actor), personFor });
   switch (op.op) {
@@ -1391,7 +1394,10 @@ function applyOne(w, actor, op) {
       return { ok: true, msg: `${Math.round(u.men)} thousand men were put ashore at ${p.name}.` };
     }
     case 'found_party': { if (c.parties.length >= 8) return fail('There is no room for another party; the country has eight.'); const name = String(op.name || 'New Party').slice(0, 60); const axes = { econ: num(op.axes?.econ, -100, 100, 0), auth: num(op.axes?.auth, -100, 100, 0), nation: num(op.axes?.nation, -100, 100, 0), faith: num(op.axes?.faith, -100, 100, 0) }; c.parties.push({ id: nextId(w, 'F'), name, axes, base: CLASSES.includes(op.base) ? op.base : 'middle', support: 3, founder: actor.id, banned: false, organization: 10 }); news(w, `${c.name}: ${name} was founded.`, { kind: 'politics', countries: [c.id] }); return ok(); }
-    case 'ban_party': { const p = c.parties.find(x => x.id === op.party); if (!p) return fail('No such party.'); if (p.banned) return fail(`${p.name} is banned already.`); { const no = courtBlocks(w, c, `ban:${p.id}`, c.courts < 35 ? 0 : c.courts / 160); if (no === 'now') news(w, `${c.name} court overturned the ban on ${p.name}.`, { kind: 'politics', countries: [c.id] }); if (no) return fail(no === 'again' ? 'The court has ruled on this ban this quarter and will not rule otherwise before the next.' : `The court struck down the ban on ${p.name}: a bench that is ${c.courts >= 65 ? 'its own master' : 'open to pressure and not yet in the hand of the government'} will not always let a party be forbidden by decree.`); } p.banned = true; if (c.parliament) c.parliament.seats = allocateSeats(c); c.pressFreedom = clamp(c.pressFreedom - 6, 0, 100); c.legitimacy = clamp(c.legitimacy - 4, 0, 100); news(w, `${c.name}: ${p.name} was banned.`, { kind: 'politics', countries: [c.id] }); return ok(); }
+    case 'ban_party': { const p = c.parties.find(x => x.id === op.party) ?? partyFrom(w, c, op.party); if (!p) return fail('No such party.');
+      // A ban can be lifted by whoever laid it. (Until world 24 a party once forbidden stayed forbidden for ever.)
+      if (op.lift) { if (!p.banned) return fail(`${p.name} is not banned.`); p.banned = false; if (c.parliament) c.parliament.seats = allocateSeats(c); c.pressFreedom = clamp(c.pressFreedom + 3, 0, 100); news(w, `${c.name}: the ban on ${p.name} was lifted.`, { kind: 'politics', countries: [c.id] }); return { ok: true, msg: `The ban on ${p.name} is lifted: it may meet, print and stand again${c.parliament ? ', and takes its seats at the next count of the chamber' : ''}.` }; }
+      if (p.banned) return fail(`${p.name} is banned already.`); { const no = courtBlocks(w, c, `ban:${p.id}`, c.courts < 35 ? 0 : c.courts / 160); if (no === 'now') news(w, `${c.name} court overturned the ban on ${p.name}.`, { kind: 'politics', countries: [c.id] }); if (no) return fail(no === 'again' ? 'The court has ruled on this ban this quarter and will not rule otherwise before the next.' : `The court struck down the ban on ${p.name}: a bench that is ${c.courts >= 65 ? 'its own master' : 'open to pressure and not yet in the hand of the government'} will not always let a party be forbidden by decree.`); } p.banned = true; if (c.parliament) c.parliament.seats = allocateSeats(c); c.pressFreedom = clamp(c.pressFreedom - 6, 0, 100); c.legitimacy = clamp(c.legitimacy - 4, 0, 100); news(w, `${c.name}: ${p.name} was banned.`, { kind: 'politics', countries: [c.id] }); return ok(); }
     case 'set_institutions': { const notes = []; if (op.courts !== undefined) c.courts = eased(c.courts, num(op.courts, 0, 100), 'Court independence', notes); if (op.press_freedom !== undefined) { const was = c.pressFreedom; c.pressFreedom = eased(was, num(op.press_freedom, 0, 100), 'Press freedom', notes); if (Math.abs(c.pressFreedom - was) >= 5) news(w, `${c.name} ${c.pressFreedom > was ? 'loosened' : 'tightened'} its hold on the press.`, { kind: 'politics', countries: [c.id] }); } if (typeof op.unions === 'boolean') c.unions = op.unions; if (typeof op.postal_secrecy === 'boolean' && op.postal_secrecy !== !!c.postalSecrecy) { c.postalSecrecy = op.postal_secrecy; notes.push(op.postal_secrecy ? 'The post office no longer opens letters for the government.' : 'The post office opens letters for the government again.'); news(w, `${c.name}: ${op.postal_secrecy ? 'the secrecy of the mails was made law; the black cabinet is closed' : 'the secrecy of the mails was lifted'}.`, { kind: 'politics', countries: [c.id] }); } if (op.ruling_party && c.parties.some(p => p.id === op.ruling_party)) c.rulingParty = op.ruling_party; return { ok: true, msg: notes.length ? `Applied. ${notes.join('; ')}.` : 'Applied.' }; }
     // Looking into someone's past. Whoever governs has the state's secret service for it, and so has an office that was given the task; the chief
     // of staff has the army's own, which is smaller; anyone else has friends, a name and what they will spend on people who ask questions.
