@@ -341,6 +341,8 @@ const SHY = { grain: .5, goods: 1.2, coal: .2, iron: .2, copper: .2, oil: .2, ph
 // What a trade that must buy its material abroad keeps lying beyond the quarter's need, in quarters of that need: a works that lives on
 // foreign coal has some months of it in the yard, where a town buys its bread and its cloth from week to week.
 const KEEP = { coal: 1.5, iron: 1.5, copper: 1.5, oil: 1, phosphate: 1, timber: 1, steel: .7, machines: 1 };
+// The store of a good that merchants keep of their own accord, in quarters of what the country needs (what they bring in aims at this much left over).
+export const keptOf = g => KEEP[g] ?? .2;
 export const wallOf = (c, g) => 1 - clamp((usualDuty(c, g) || 0) * (SHY[g] ?? .8), 0, .8);
 const dutyOn = (c, g, from) => c.tariffDeals?.[from] ?? c.aimed?.[from] ?? usualDuty(c, g);
 // A duty aimed at one seller sends merchants to the others and, the dearer it is, keeps the goods out: of what would have come from there, this much still does.

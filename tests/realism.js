@@ -5338,7 +5338,7 @@ chain('World 20, first review: a petition that lies before the government no lon
   const c = aliveCountries(w).find(x => x.unions) ?? aliveCountries(w)[0], O = w.characters[c.opposition], L = ld(w, c), G = w.characters[c.general], party = c.parties.find(p => leadsOf(w, c, O).includes(p));
   { // Petitions and societies.
     O.wealth = 40; party.funds = 20; assert.ok(applyOp(w, O, { op: 'petition', demand: 'A point off the land tax.', class: 'peasants' }).ok);
-    assert.ok(/from door to door: one at a time[^]*the next can be opened then/.test(applyOp(w, O, { op: 'petition', demand: 'Another.' }).msg), 'while it is being carried, one at a time');
+    assert.ok(/from door to door: one at a time[^]*can carry the next the quarter after/.test(applyOp(w, O, { op: 'petition', demand: 'Another.' }).msg), 'while it is being carried, one at a time');
     massStep_(w); assert.equal(c.petitions[0].status, 'presented'); w.turn += 2; const second = applyOp(w, O, { op: 'petition', demand: 'Relief for the men out of work.', class: 'workers' }); assert.ok(second.ok, `once the first lies before the government the committees can carry the next: ${second.msg}`); w.turn -= 2;
     assert.ok(applyOp(w, O, { op: 'found_society', kind: 'mutual', name: 'First Reading Room', amount: 4 }).ok); const s = societiesOf_(c, party.id)[0], f0 = s.funds, st0 = s.strength;
     assert.ok(/opens a branch of it instead/.test(applyOp(w, O, { op: 'found_society', kind: 'mutual', name: 'Second Reading Room' }).msg), 'a second with nothing behind it is still refused, and told how');
@@ -5447,6 +5447,27 @@ chain('World 20, second review: an order can wait on our own ultimatum and is gi
   // The post.
   const o = cs.find(x => !x.postalSecrecy && x.intelligence > 30) ?? cs[0], R = ld(w, o), r = applyOp(w, R, { op: 'inquire', into: 'the post office' }); assert.ok(r.ok, r.msg); run(w, 1);
   assert.ok(R.inbox.some(m => /letters in a hundred are opened in the post, copied and sent on[^]*It is done by the government's order: a copy goes to /.test(m.text) || /Next to nothing is opened in the ordinary run of the post/.test(m.text)), `the inquiry into the post says how much is opened and for whom: ${R.inbox.map(m => m.text).filter(t => /post/i.test(t)).join(' | ').slice(0, 500)}`);
+});
+import { quarterLabel as quarterLabelOf } from '../engine/util.js';
+chain('World 20, third review: a thin store of bread is called thin only when it is thinner than merchants keep it, and the stores return says how a country that buys its bread is fed; a party is found as a person would name it; a society by the first words of its name; and the committees say when they can carry the next petition', () => {
+  // World 20: two governments that bought part of their bread abroad spent up to seven tenths of their revenue buying grain on the treasury's
+  // account every quarter, because the store at the quarter's end looked like an emergency. Nobody had gone hungry: it was what the trade carries over.
+  const w = inherited(2696855, 8); run(w, 2); const cs = aliveCountries(w), c = cs.find(x => x.archetype === 'merchant') ?? cs[0], L = ld(w, c), need = c._need.grain;
+  const said = () => memorandaOf(w, c, L).flatMap(([, l]) => l).find(l => /^Of the grain we use/.test(l)) ?? '';
+  c.stock.grain = need * .3; assert.ok(!/our stores hold/.test(said()), `three tenths of a quarter's bread in store is the ordinary state of a country that buys bread, and nobody raises the alarm: ${said().slice(0, 160)}`);
+  assert.ok(/Of bread: the grain in store at a quarter's end is what the trade carries over, and merchants of their own accord keep about a fifth of a quarter's need[^]*paying for it out of the country's gold and not out of the treasury[^]*A larger one is the state's to buy and to pay for \(buy_goods\)\./.test(lookUp(w, L, 'stocks')), 'the stores return says how the country is fed');
+  c.stock.grain = need * .05; assert.ok(/our stores hold \d+ in the hundred of a quarter's need/.test(said()), `a store well under what merchants keep is still laid before whoever governs: ${said().slice(0, 200)}`);
+  c.stock.grain = need * 3; assert.ok(!/Of bread:/.test(lookUp(w, L, 'stocks')), 'and where the granaries are full nothing is said of it');
+  // A party as a person would name it.
+  const d = cs.find(x => x.parties.some(p => p.id === x.rulingParty && !p.banned) && x.parliament) ?? cs[0], M = w.characters[d.oligarch], R = ld(w, d), gov = d.parties.find(p => p.id === d.rulingParty), f0 = gov.funds || 0; M.wealth = 50;
+  const a = applyOp(w, M, { op: 'fund_party', party: 'the government party', amount: 5 }); assert.ok(a.ok && Math.abs((gov.funds || 0) - f0 - 5) < 1e-6, `"the government party": ${a.msg}`);
+  const b = applyOp(w, M, { op: 'fund_party', party: `${R.name}'s party`, amount: 3 }); assert.ok(b.ok && Math.abs((gov.funds || 0) - f0 - 8) < 1e-6, `"${R.name}'s party": ${b.msg}`);
+  assert.ok(/No such party\. Those that stand here: F\d+ /.test(applyOp(w, M, { op: 'fund_party', party: 'the Moon Party', amount: 3 }).msg), 'a party nobody knows is refused with the list');
+  // A society by the first words of its name, and the committees' calendar.
+  const O = w.characters[d.opposition], party = d.parties.find(p => leadsOf(w, d, O).includes(p)); O.wealth = 30; assert.ok(applyOp(w, O, { op: 'found_society', kind: 'mutual', name: 'Brotherhood of Labour and Mutual Aid', amount: 2 }).ok); const soc = societiesOf_(d, party.id)[0], s0 = soc.funds;
+  const g = applyOp(w, O, { op: 'give', to: 'Brotherhood of Labour', amount: 2 }); assert.ok(g.ok && soc.funds === s0 + 2, `a gift finds the society by the first words of its name: ${g.msg}`);
+  assert.ok(applyOp(w, O, { op: 'petition', demand: 'A floor under safety in every pit.', class: 'workers' }).ok); massStep_(w); w.turn += 1; const early = applyOp(w, O, { op: 'petition', demand: 'A widows\' fund.' });
+  assert.ok(!early.ok && new RegExp(`they can carry the next from ${quarterLabelOf(w.turn + 1).replace(/[.*+?^${}()|[\]\\]/g, '\\// [economy, map] checks of the economy, the resources and the map are added above this line.')}`).test(early.msg), `the committees say when: ${early.msg}`); w.turn += 1; assert.ok(applyOp(w, O, { op: 'petition', demand: 'A widows\' fund.' }).ok, 'and then they can');
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');
