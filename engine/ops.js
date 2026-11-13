@@ -17,7 +17,7 @@ import { noteOp } from './notes.js';
 import { seatOp } from './seats.js';
 import { cameOut, stageIncident, denounce } from './intrigue.js';
 import { amnesty } from './justice.js';
-import { fundUnderground } from './underground.js';
+import { fundUnderground, raidCells } from './underground.js';
 import { mobilize, demobilize, serviceOf, reserveAt, drillOf } from './frontier.js';
 import { prosecute, forge, forgeryFound } from './justice.js';
 import { shame, honourOf, aimsMet, aimsText, kindWord, dealsWith, maySign, tieOf, tieWord, stanceOf, seesTreaty, reveal, faithCost, bondSigned, deed, alarm } from './diplomacy.js';
@@ -1080,7 +1080,10 @@ function applyOne(w, actor, op) {
     // An order on the foreign markets for this quarter. It moves nothing by itself: the quarter's trade fills it as far as sellers, routes and gold allow, and reports back.
     case 'buy_goods': case 'sell_goods': {
       if (!GOODS.includes(op.good)) return fail('No such good.');
-      const buy = op.op === 'buy_goods', q = num(op.amount, 0, 1e6, 0), book = buy ? (c.orders ||= {}) : (c.sales ||= {}), name = GOOD_LABEL[op.good], now = Math.round((w.globalPrice?.[op.good] ?? 0) * 10) / 10;
+      // "Sell whatever stands in the stores above twenty": the amount is reckoned from the stores (keep). (World 21: such an order could not be
+      // entered because the office writing it did not know what the stores held.)
+      const buy = op.op === 'buy_goods', kept = !buy && op.keep != null && op.amount == null ? num(op.keep, 0, 1e6, 0) : null; if (kept != null && !((c.stock[op.good] || 0) - kept >= .5)) return fail(`The stores hold ${Math.round((c.stock[op.good] || 0) * 10) / 10} of ${GOOD_LABEL[op.good]}: nothing stands above the ${Math.round(kept * 10) / 10} that is to be kept.`);
+      const q = kept != null ? (c.stock[op.good] || 0) - kept : num(op.amount, 0, 1e6, 0), book = buy ? (c.orders ||= {}) : (c.sales ||= {}), name = GOOD_LABEL[op.good], now = Math.round((w.globalPrice?.[op.good] ?? 0) * 10) / 10;
       if (!(q > 0)) { delete book[op.good]; return { ok: true, msg: `No ${buy ? 'order for' : 'offer of'} ${name} stands on the foreign markets.` }; }
       if (!Object.keys(w.routes || {}).some(k => k.split('|').includes(c.id))) return fail('No trade route to any country is open.');
       if (buy && !(c.reserves - (c._debtService || 0) > 0)) return fail('There is no gold in the reserve to pay foreign sellers with.');
@@ -1730,6 +1733,7 @@ function applyOne(w, actor, op) {
       return { ok: true, msg: `Placards, pamphlets and speakers went out for ${Math.round(cost * part * 10) / 10}${ruler ? ' from the treasury' : ' from your purse'}.${told.length ? ` They carried about ${Math.round(cred * 100)} in the hundred as far as they might have: ${told.join('; ')}.` : ''}${part < 1 ? ' Your purse did not stretch to all that was meant.' : ''}${note}` };
     }
     // Harsh measures are carried out by policemen: a state that has few of them can order what it likes and little of it happens. The order is seen all the same.
+    case 'raid_cells': return raidCells(w, c, actor, op, { fail, governs: governs(w, c, actor) });
     case 'repress': { const s = num(op.strength, 0, 1, .5), arm = clamp(c.police / 50, .25, 1.4); c.repress = clamp(c.repress + s * 55 * arm, 0, 100); frighten(c, s * DREAD.streets * arm); c.pressFreedom = clamp(c.pressFreedom - s * 8, 0, 100); c.legitimacy = clamp(c.legitimacy - s * 3, 0, 100); for (const p of countryProvinces(w, c.id)) p.pops.middle.sat = clamp(p.pops.middle.sat - s * 9, 0, 100); news(w, `${c.name} security forces took harsh measures against dissidents.`, { kind: 'politics', countries: [c.id] });
       return { ok: true, msg: `The police carried it out as far as their numbers reach (the police stand at ${Math.round(c.police)} of 100). It holds the streets for about a year, and for a year or two people think twice before they strike, plot or print${fearWord(c) ? ` (${fearWord(c)})` : ''}; it shuts doors that people will resent having shut, the comfortable classes take note of it, and those who take up arms in secret gain by it.` }; }
     case 'concession': { const k = op.cls;
@@ -1946,7 +1950,9 @@ function applyOne(w, actor, op) {
       if (sides.length < 2) return fail('Name the states to be brought to terms (between: two or more), not your own.');
       if (sides.some(id => atWar(w, c.id, id))) return fail('A state at war with one of them cannot stand between them.');
       const deaf = sides.filter(id => tieOf(w, c.id, id) === 'broken'); if (deaf.length) return fail(`This state has no relations with ${deaf.map(id => cname(w, id)).join(', ')}: a mediator must be able to speak to every side.`);
-      if (allowance(w, c, `mediate:${[...sides].sort().join('|')}`, 1, 1) <= 0) return fail('Terms from you are before them already this quarter.');
+      // One paper of each kind a quarter: an armistice to stop the firing and the peace that is to follow it are two papers, and a mediator
+      // lays both. (World 21: a mediator's peace, the terms both sides had accepted, was refused because her armistice had gone first.)
+      if (allowance(w, c, `mediate:${op.kind === 'armistice' ? 'armistice' : 'peace'}:${[...sides].sort().join('|')}`, 1, 1) <= 0) return fail(`Terms of ${op.kind === 'armistice' ? 'an armistice' : 'peace'} from you are before them already this quarter.`);
       return proposeMany(w, c, { ...op, kind: op.kind === 'armistice' ? 'armistice' : 'peace', secret: false, conference: op.conference }, sides, true);
     }
     // Bringing another state into a treaty among several that one is party to.

@@ -5,6 +5,7 @@ import { clamp, rand, news, sum, pick } from './util.js';
 import { aliveCountries, countryProvinces } from './world.js';
 import { die } from './politics.js';
 import { afflict } from './health.js';
+import { frighten } from './fear.js';
 
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 export const cellsWord = v => v >= 60 ? 'strong, armed and striking at will' : v >= 35 ? 'organised and armed' : v >= 15 ? 'small and scattered' : 'no more than talk';
@@ -58,6 +59,20 @@ export function undergroundStep(w) {
   }
 }
 
+// The police go after the cells themselves: presses, arms, the men who can be found. It breaks what it finds, and what it finds is as much as
+// the police and the secret service can see; the men who are left go deeper, and while the bitterness that bred them stands and the lawful
+// doors stay shut the cells grow back over the following quarters (cellsRest). Sometimes there is shooting. Once a quarter.
+// (Four games running a ruler ordered "arrest the known men of the underground" and the office could arrest only people with names.)
+export function raidCells(w, c, actor, op, h) {
+  if (!h.governs) return h.fail('The police answer to whoever governs: a raid on the underground is the government\'s to order.');
+  if (c.raided === w.turn) return h.fail('The police have made their raid this quarter; the men who were not taken have gone to ground, and a second sweep so soon finds empty rooms.');
+  const cells = c.cells ?? 0; if (cells < 8) return h.fail(`The police know of no armed underground worth a raid: what there is is ${cellsWord(cells)}.`);
+  const p = op.province ? w.provinces[op.province] : null; if (op.province && (!p || p.controller !== c.id)) return h.fail('No such province of ours.');
+  const eye = clamp((c.police + c.intelligence) / 200, 0, 1), found = cells * clamp(.1 + eye * .35, .08, .45) * (p ? .5 : 1), men = Math.max(3, Math.round(found * 9)), shots = rand(w) < clamp(.15 + cells / 220, .15, .5), dead = shots ? Math.round(1 + rand(w) * 7) : 0;
+  c.raided = w.turn; c.cells = clamp(cells - found, 0, 100); frighten(c, 1.5 + found / 5 + dead * .4); if (dead) { c.blood = (c.blood || 0) + dead * .1; if (p) p.unrest = clamp(p.unrest + 2, 0, 100); }
+  news(w, `${c.name}: the police raided the armed underground${p ? ` in ${p.name}` : ''}: about ${men} men taken, presses and arms seized${dead ? `, and ${dead} killed where they resisted` : ''}.`, { kind: 'politics', countries: [c.id], ...(p ? { province: p.id } : {}) });
+  return { ok: true, msg: `The police went through ${p ? p.name : 'the towns'} for the armed underground: about ${men} men were taken, with presses and arms${dead ? `; ${dead} were killed where they resisted, and that is remembered` : ''}. They found what a police of ${Math.round(c.police)} and a service of ${Math.round(c.intelligence)} of 100 can find: the underground is ${cellsWord(c.cells)} now, where it was ${cellsWord(cells)}. Those who were not taken go deeper. It grows back over the following quarters for as long as what bred it stands: the bitterness of the working people and every lawful door that is shut. People are a little more afraid.` };
+}
 // Money for the underground of one's own country or another's. It makes the cells stronger for a few quarters and is a secret of the gravest kind.
 export function fundUnderground(w, actor, target, amount, trace) {
   target.cellFunds = (target.cellFunds || 0) + amount * 1.2;

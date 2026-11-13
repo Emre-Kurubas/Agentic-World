@@ -5487,5 +5487,21 @@ chain('World 21, first review: a bill is found by its title, somebody is pressed
   const mine = applyOp(w, L, { op: 'build', province: p.id, kind: 'mine', amount: 60, _law: true }); assert.ok(!mine.ok && new RegExp(`Say which deposit is to be worked \\(resource\\): known at ${p.name} (is|are) ${known.join(', ')}\\.`).test(mine.msg), mine.msg);
   const wrong = applyOp(w, L, { op: 'build', province: p.id, kind: 'mine', resource: known.includes('oil') ? 'rare' : 'oil', amount: 60, _law: true }); assert.ok(!wrong.ok && new RegExp(`is known at ${p.name}\\. Known there: `).test(wrong.msg), wrong.msg);
 });
+import { cellsRest as cellsRest_ } from '../engine/underground.js';
+chain('World 21, second review: the police can be sent after the armed underground itself, which is broken as far as they can see and grows back while what bred it stands; and a sale abroad can be ordered as whatever lies in the stores above what is to be kept', () => {
+  // Four games running a ruler ordered "arrest the known men of the underground", and the office could arrest only people with names.
+  const w = inherited(2696855, 8); run(w, 1); const cs = aliveCountries(w), c = [...cs].sort((a, b) => (b.cells || 0) - (a.cells || 0))[0], L = ld(w, c), G = w.characters[c.general]; c.cells = 50; c.police = 60; c.intelligence = 50;
+  assert.ok(/a raid on the underground is the government's to order/.test(applyOp(w, G, { op: 'raid_cells' }).msg) || !applyOp(structuredClone(w), G, { op: 'raid_cells' }).ok, 'it is the government\'s to order');
+  const fear0 = c.fear || 0, r = applyOp(w, L, { op: 'raid_cells' }); assert.ok(r.ok && c.cells < 50 && c.cells > 20 && (c.fear || 0) > fear0 && /about \d+ men were taken, with presses and arms[^]*the underground is [a-z ,]+ now, where it was organised and armed[^]*It grows back over the following quarters/.test(r.msg), `the police break what they can find: ${r.msg}`);
+  assert.ok(/have made their raid this quarter/.test(applyOp(w, L, { op: 'raid_cells' }).msg), 'once a quarter');
+  const blind = structuredClone(w), bc = blind.countries[c.id]; bc.cells = 50; bc.police = 15; bc.intelligence = 10; delete bc.raided; const after = c.cells; applyOp(blind, ld(blind, bc), { op: 'raid_cells' }); assert.ok(50 - bc.cells < 50 - after, `a weak police finds less (${(50 - bc.cells).toFixed(1)} against ${(50 - after).toFixed(1)})`);
+  const one = structuredClone(w), oc = one.countries[c.id]; oc.cells = 50; delete oc.raided; const prov = Object.values(one.provinces).find(p => p.controller === c.id); applyOp(one, ld(one, oc), { op: 'raid_cells', province: prov.id }); assert.ok(50 - oc.cells < (50 - after) * .7, 'and a raid in one province half as much');
+  const quiet = structuredClone(w), qc = quiet.countries[c.id]; qc.cells = 3; delete qc.raided; assert.ok(/no armed underground worth a raid/.test(applyOp(quiet, ld(quiet, qc), { op: 'raid_cells' }).msg), 'where there is nothing to raid the police say so');
+  // It grows back while what bred it stands.
+  { const v = structuredClone(w), vc = v.countries[c.id], rest = cellsRest_(v, vc), low = Math.max(0, rest - 15); vc.cells = low; run(v, 6); if (rest > low + 3) assert.ok(vc.cells > low + 1, `broken cells grow back toward what the country breeds (${low.toFixed(1)} to ${vc.cells.toFixed(1)}, where it settles at about ${rest.toFixed(1)})`); }
+  // Sell what stands above the store to be kept.
+  const have = Math.max(c.stock.arms || 0, 30); c.stock.arms = have; const s = applyOp(w, L, { op: 'sell_goods', good: 'arms', keep: 20, _law: true }); assert.ok(s.ok && Math.abs(c.sales.arms.amount - (have - 20)) < 1e-6, `"whatever stands above twenty": ${s.msg}`);
+  assert.ok(/nothing stands above the [\d.]+ that is to be kept/.test(applyOp(w, L, { op: 'sell_goods', good: 'arms', keep: have + 5, _law: true }).msg), 'and nothing is offered where nothing stands above it');
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');
