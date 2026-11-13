@@ -5639,5 +5639,41 @@ chain('World 22, fourth review: the counting house speaks of a thing that is dug
   assert.ok(new RegExp(`Phosphate sells here at \\d+ against \\d+ on the world's exchanges\\. A pit on the deposit at ${p.name} would sell every load \\(found_company; the engineers' price is in the survey\\), and so would a cargo bought abroad under contract\\. Or leave it to others\\.`).test(idle), `a deposit that lies unworked is named: ${idle.slice(0, 500)}`);
   p.deposits.phosphate.mine = .5; assert.ok(/Phosphate sells here[^]*A works that made it here would sell every load/.test(lines()), 'where every known deposit is worked the old sentence stands');
 });
+chain('World 22, fifth review: an order can wait for the day a war is over, and an order to troops that have gone home says they have gone home', () => {
+  // World 22, Q4 1903: "On the signing of peace, demobilise the reservists" and "bring the squadrons home once peace is signed" could not be
+  // entered on the morning the peace was signed; and a commander was named for a brigade the President had sent home that morning.
+  const w = inherited(2696855, 8), cs = aliveCountries(w), c = cs[0], L = ld(w, c), G = w.characters[c.general], foe = cs.find(o => o.id !== c.id);
+  const calm = applyOp(w, L, { op: 'standing_order', when: { peace: foe.id }, then: [{ op: 'demobilize' }] });
+  assert.ok(!calm.ok && /We are not at war with/.test(calm.msg), `with no war there is no peace to wait for: ${calm.msg}`);
+  w.wars.push({ id: 'S-t31', a: [c.id], b: [foe.id], civil: false, active: true, start: w.turn, name: 't31' });
+  const call = applyOp(w, L, { op: 'mobilize', men: 10 }); assert.ok(call.ok, call.msg); const called = () => Object.values(w.units).filter(u => u.country === c.id && u.called);
+  assert.ok(called().length >= 1, 'reservists under arms'); const brigade = called()[0].id;
+  const so = applyOp(w, L, { op: 'standing_order', when: { peace: foe.id }, then: [{ op: 'demobilize' }], label: 'Home at the peace' });
+  assert.ok(so.ok && /the day our war with .* is over/.test(so.msg), `the order is entered and waits: ${so.msg}`);
+  beginTurn(w); stepWorld(w); assert.ok(called().length >= 1 && (w.standingOrders || []).some(x => x.by === L.id), 'while the war lasts it waits');
+  w.wars.find(x => x.id === 'S-t31').active = false; beginTurn(w); stepWorld(w);
+  assert.ok(!called().length && !(w.standingOrders || []).some(x => x.by === L.id && x.when?.peace), `the war over, the reservists are sent home in the ruler's name: ${called().map(u => u.id)}`);
+  const late = applyOp(w, G, { op: 'appoint_commander', unit: brigade, character: G.id });
+  assert.ok(!late.ok && new RegExp(`${brigade} is no longer under arms: its reservists were sent home in Q\\d \\d{4}`).test(late.msg), `an order to a body that has gone home says so: ${late.msg}`);
+});
+chain('War credits are voted the day war comes: in the quarter a war begins the army in the field is paid from the war loan above its vote, both sides are told what it costs, and from the next quarter the vote has to carry it', () => {
+  const w_told = (w, c) => w.characters[c.leader].inbox.some(m => m.from === 'Treasury' && /In the field the forces cost about \d+ a quarter against a vote of \d+\. For this first quarter the difference is met from the war loan/.test(m.text));
+  // World 22, Q3 1903: the quarter Terona declared war both armies fell from full pay to half (0.97 to 0.48, 1.02 to 0.51) and paid 1.3 the
+  // quarter after; one quarter of corps walking home unpaid sent both rulers to the table before a shot was fired.
+  const run = credits => { const w = inherited(2696855, 8), cs = aliveCountries(w), a = cs.find(c => !c.parliament || !c.elections) ?? cs[0], L = ld(w, a);
+    const b = cs.find(o => o.id !== a.id && Object.values(w.provinces).some(p => p.controller === a.id && p.neighbors.some(n => w.provinces[n].controller === o.id))) ?? cs.find(o => o.id !== a.id);
+    beginTurn(w); const debt0 = a.debt, said = applyOp(w, L, { op: 'declare_war', target: b.id, _law: true });
+    assert.ok(said.ok && w.wars.some(x => x.active && x.a.includes(a.id) && x.b.includes(b.id)), `war is declared: ${said.msg.slice(0, 200)}`);
+    if (!credits) { a.war = { on: true, since: w.turn - 1, quarters: 1, premium: .001, squeeze: 1.25, foes: [b.id] }; }
+    stepWorld(w); return { w, a, b, L, said, debt0 }; };
+  const x = run(true);
+  assert.ok(/In the field the forces cost about \d+ a quarter against a vote of \d+\. For this first quarter the difference is met from the war loan; from next quarter the vote has to carry it \(set_budget\), or the army goes short\./.test(x.said.msg), `the declaration says what the war costs from today: ${x.said.msg.slice(-260)}`);
+  assert.ok(x.a.warCredits?.lent > 1 && x.a.militaryFunding > .9, `the attacker's army is paid in the first quarter (${x.a.militaryFunding.toFixed(2)}; ${Math.round(x.a.warCredits?.lent ?? 0)} from the war loan against a vote of ${Math.round(x.a.warCredits?.vote ?? 0)})`);
+  assert.ok(x.b.warCredits?.lent > 1 && x.b.militaryFunding > .9 && w_told(x.w, x.b), `and so is the army of the state attacked, whose ruler is told by the treasury (${x.b.militaryFunding.toFixed(2)})`);
+  assert.ok(!w_told(x.w, x.a), 'the ruler who declared it read the figure with the declaration and is not told twice');
+  // The second quarter: no credits; the vote carries the army or it goes short.
+  beginTurn(x.w); const lent1 = x.a.warCredits.lent; stepWorld(x.w);
+  assert.ok(x.a.warCredits.lent === lent1 && x.a.warCredits.t < x.w.turn - 1 + 1 && x.a.militaryFunding < .8, `from the second quarter an army left on its peace vote goes short (${x.a.militaryFunding.toFixed(2)})`);
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

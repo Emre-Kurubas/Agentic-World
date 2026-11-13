@@ -7,7 +7,7 @@
 // staff may call up the reserve without waiting for me" and "once their columns have left the pass, send the reservists home" about thirty-five
 // times, and nothing in the engine could hold an order for its day or put a ruler's power in another's hands.
 import { clamp, rand, news, nextId, quarterLabel } from './util.js';
-import { aliveCountries, ROLES } from './world.js';
+import { aliveCountries, ROLES, atWar } from './world.js';
 import { governs } from './polity.js';
 import { he, him, his } from './names.js';
 
@@ -124,7 +124,7 @@ export function standingOp(w, actor, c, op, h) {
 }
 
 // The days an order can wait for, each of them something the engine itself knows to have happened.
-const FORMS = 'attacked (somebody goes to war with us; by: a state, if only that one counts), mobilised (a named state, or with true any state on our frontier, calls up its reserve), war_on (somebody goes to war with a named state), troops (the men of a state in a named province rise above or fall below a number), treaty (a paper comes into force, or ends), ultimatum (a named state refuses our ultimatum or lets it run out), bill (a bill passes, or is rejected), lost (a province of ours falls into other hands), after (so many quarters)';
+const FORMS = 'attacked (somebody goes to war with us; by: a state, if only that one counts), mobilised (a named state, or with true any state on our frontier, calls up its reserve), war_on (somebody goes to war with a named state), troops (the men of a state in a named province rise above or fall below a number), treaty (a paper comes into force, or ends), peace (our war with a named state ends), ultimatum (a named state refuses our ultimatum or lets it run out), bill (a bill passes, or is rejected), lost (a province of ours falls into other hands), after (so many quarters)';
 function normWhen(w, c, raw) {
   const k = raw && typeof raw === 'object' ? raw : {}, st = id => w.countries[id]?.alive ? id : null;
   if (k.attacked) { const by = st(k.by); return { when: { attacked: true, ...(by ? { by } : {}) }, words: `the day ${by ? nameOf(w, by) : 'any state'} goes to war with us` }; }
@@ -141,6 +141,10 @@ function normWhen(w, c, raw) {
     const other = t.parties.find(id => id !== c.id); return { when: { treaty: t.id, state: 'ended' }, words: `the day ${nameOf(w, other)} refuses our ultimatum (${t.id}) or lets it run out` }; }
   if (k.treaty) { const id = String(k.treaty.id ?? k.treaty), t = w.treaties.find(x => x.id === id), ended = (k.treaty.state ?? k.state) === 'ended'; if (!t) return { no: `No such paper: ${id}.` }; return { when: { treaty: id, state: ended ? 'ended' : 'signed' }, words: `the day ${id} ${ended ? 'is no longer in force' : 'comes into force'}` }; }
   if (k.bill) { const id = String(k.bill.id ?? k.bill), b = aliveCountries(w).flatMap(o => o.bills || []).find(x => x.id === id), state = ['rejected', 'withdrawn'].includes(k.bill.state ?? k.state) ? (k.bill.state ?? k.state) : 'passed'; if (!b) return { no: `No such bill: ${id}.` }; return { when: { bill: id, state }, words: `the day bill ${id} is ${state}` }; }
+  // "Once peace is signed, the reservists go home and the squadrons come in": the day our war with a state is over, whatever paper ends it.
+  // (World 22: a ruler who signed a peace that morning ordered both for the day of the signature; the paper had no number yet that the order
+  // could wait on, nothing was entered, and she gave the orders again a quarter later.)
+  if (k.peace) { const foe = st(typeof k.peace === 'object' ? k.peace.with ?? k.peace.target : k.peace); if (!foe || foe === c.id) return { no: 'Say with which state the peace is waited for (peace: its id).' }; if (!atWar(w, c.id, foe)) return { no: `We are not at war with ${nameOf(w, foe)}: there is no peace to wait for, and what was to follow it can be ordered today.` }; return { when: { peace: foe }, words: `the day our war with ${nameOf(w, foe)} is over` }; }
   if (k.lost && w.provinces[k.lost]?.controller === c.id) return { when: { lost: k.lost }, words: `the day ${w.provinces[k.lost].name} falls into other hands` };
   if (Number(k.after) >= 1) { const n = Math.min(40, Math.round(Number(k.after))); return { when: { turn: w.turn + n }, words: `in ${quarterLabel(w.turn + n)}` }; }
   return { no: `Say the day the order waits for (when), as one of: ${FORMS}.` };
@@ -153,6 +157,7 @@ const holds = (w, so) => { const c = w.countries[so.country], k = so.when, fresh
   if (k.troops) { const men = sum(Object.values(w.units).filter(u => u.country === k.troops.country && u.province === k.troops.province), u => u.men); return k.troops.above != null ? men >= k.troops.above : men <= k.troops.below; }
   if (k.treaty) { const t = w.treaties.find(x => x.id === k.treaty); return k.state === 'ended' ? !!t && !t.active && !t.pending && t.withdrawn == null : !!t?.active; }
   if (k.bill) { const b = aliveCountries(w).flatMap(o => [...(o.bills || []), ...(o.laws || [])]).find(x => x.id === k.bill); return !!b && b.status === k.state; }
+  if (k.peace) return !atWar(w, c.id, k.peace);
   if (k.lost) return w.provinces[k.lost]?.controller !== c.id;
   if (k.turn != null) return w.turn >= k.turn;
   return false; };

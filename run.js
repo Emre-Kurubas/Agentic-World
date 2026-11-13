@@ -75,7 +75,8 @@ function handle(req, res) {
   if (url.pathname === '/api/control' && req.method === 'POST') {
     if (req.headers['x-panel'] !== '1') return json('{"error":"Unauthorized request."}', 403);
     const action = url.searchParams.get('action');
-    if (action === 'pause') { game.paused = true; game.setStatus('pausing', 'Will pause when this turn ends.'); }
+    // (A second request that comes when the game already stands paused changes nothing: the panel went on saying "pausing" over a game that had stopped.)
+    if (action === 'pause') { const stood = game.paused && game.status === 'paused'; game.paused = true; if (!stood) game.setStatus('pausing', 'Will pause when this turn ends.'); }
     if (action === 'resume') game.paused = false;
     return json('{"ok":true}');
   }

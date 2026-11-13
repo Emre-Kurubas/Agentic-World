@@ -3,6 +3,7 @@ import { CLASSES, atWar, hasTreaty, countryProvinces, aliveCountries, provincePo
 import { hasTech } from './economy.js';
 import { drillOf } from './frontier.js';
 import { moved as goldMoved } from './gold.js';
+import { treasuryPays } from './money.js';
 import { originPull } from './culture.js';
 import { die, garrisonHold } from './politics.js';
 import { afflict, incapacitated } from './health.js';
@@ -357,7 +358,15 @@ function upkeep(w, c) {
   c.warExhaustion = clamp(c.warExhaustion + (!inWar ? -2 : out ? .6 + Math.min(2.4, Math.max(0, c.afield - 4) * .25) + lost * 6 : lost * 3 - .5), 0, 100);
   if (!men) { c.militaryFunding = 1; return; }
   const required = upkeepCost(w, c);
-  const money = c.budget.military * c.gdp * c.paidRatio, funded = clamp(money / Math.max(required, 1), 0, 1.3), paid = payOf(w, c, money, required, funded), chosen = !!c.payFirst?.length && funded < 1;
+  // War credits are voted the day war comes: in the quarter a war begins, what the army in the field costs above its vote is met from the war
+  // loan, as far as lenders will carry it. From the next quarter the vote is the ruler's to set, and an army on a peace vote goes short.
+  // (World 22: the quarter war was declared both armies fell from full pay to half, because every man counted as in the field from that day
+  // and no ruler could raise the vote before the next morning; then both paid 1.3 on credit without trouble. One quarter of unpaid corps
+  // walking home frightened both rulers into a peace before a shot was fired. The user approved the rule and the sentence, 2026-11-13.)
+  let money = c.budget.military * c.gdp * c.paidRatio;
+  if (c.war?.on && c.war.quarters === 0 && money < required - .5) { const vote = money, cost = required, lent = treasuryPays(c, cost - vote, 'war'); money += lent; c.warCredits = { t: w.turn, lent, vote, cost };
+    if (c._warCostTold !== w.turn) { const ch = w.characters[c.leader]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'Treasury', text: `In the field the forces cost about ${Math.round(cost)} a quarter against a vote of ${Math.round(vote)}. For this first quarter the difference is met from the war loan; from next quarter the vote has to carry it (set_budget), or the army goes short.${lent < cost - vote - .5 ? ` Lenders would carry only ${Math.round(lent)} of it this quarter.` : ''}` }); } }
+  const funded = clamp(money / Math.max(required, 1), 0, 1.3), paid = payOf(w, c, money, required, funded), chosen = !!c.payFirst?.length && funded < 1;
   c.militaryFunding = funded;
   for (const f of Object.values(w.fleets)) if (f.country === c.id) { if (chosen) f.paid = paid(f); else delete f.paid; }
   // An army in the field wears out rifles, boots and cartridges faster than one in barracks; what a battle fires off is drawn when it is fought (resolve).

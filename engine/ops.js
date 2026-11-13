@@ -639,6 +639,9 @@ export function applyOp(w, actor, op) {
   if (key && r?.ok && !r.waits) (quarterBook(w, c).given ||= {})[key] = actor.id;
   // An order to a body of troops that has since joined another says so. (World 20: two brigades raised in autumn joined the corps at their
   // station on arrival; the chief of staff's orders to them that winter came back "No such unit.")
+  // And one that has gone home says that. (World 22: a chief of staff named a commander for a brigade of reservists the President had sent
+  // home that morning: "No such unit.")
+  if (r && !r.ok && /^No such unit/.test(r.msg || '')) { const id = [op.unit, op.of, ...(Array.isArray(op.units) ? op.units : [])].map(x => String(x ?? '')).find(x => w.gone?.[x] && !w.units[x]); if (id) r.msg = `${id} is no longer under arms: ${w.gone[id].how} in ${quarterLabel(w.gone[id].t)}, and there is nobody left in it to order.`; }
   if (r && !r.ok && /^No such unit/.test(r.msg || '')) { const id = [op.unit, op.of, ...(Array.isArray(op.units) ? op.units : [])].map(x => String(x ?? '')).find(x => w.joined?.[x] && !w.units[x]); if (id) { let j = w.joined[id], n = 0; while (w.joined[j.into] && !w.units[j.into] && n++ < 8) j = w.joined[j.into]; const b = w.units[j.into];
       r.msg = `${id} is no longer a body of its own: it came up and joined ${j.into}${b ? ` (${Math.round(b.men)} thousand men at ${w.provinces[b.province]?.name ?? b.province})` : ''} in ${quarterLabel(j.t)}. An order for those men is given to ${j.into}; to have them as a separate body again, detach them (move with men).`; } }
   return r;
@@ -1424,7 +1427,7 @@ function applyOne(w, actor, op) {
       const count = menText(men);
       // The discharged are trained men: they go on the reserve roll, and their rifles go back to the arsenal.
       if (home) goHome([home], men); c.reserve = (c.reserve || 0) + men; c.stock.arms = (c.stock.arms || 0) + men * (u.kind === 'artillery' ? .12 : .05) * clamp(u.equip ?? .8, 0, 1);
-      if (!part) { delete w.units[u.id]; return { ok: true, msg: `${count} went home and ${u.id} is dissolved.` }; }
+      if (!part) { (w.gone ||= {})[u.id] = { t: w.turn, how: 'it was disbanded' }; delete w.units[u.id]; return { ok: true, msg: `${count} went home and ${u.id} is dissolved.` }; }
       u.men -= men;
       return { ok: true, msg: `${count} went home. ${u.id} keeps ${menText(u.men)} under arms.` };
     }
@@ -1542,7 +1545,9 @@ function applyOne(w, actor, op) {
       { const g = c.grudges?.[target.id]; if (g) c.legitimacy = clamp(c.legitimacy + Math.min(6, g.incident * .1 + g.kin * .15), 0, 100); }
       const said = stateAims(w, c, target, op);
       for (const a of aliveCountries(w)) if (a.id !== c.id && a.id !== target.id && hasTreaty(w, a.id, target.id, 'alliance')) tell(w, w.characters[a.leader], 'Foreign Ministry', `Your ally ${target.name} was attacked by ${c.name}. Help is expected under the alliance.`);
-      return { ok: true, msg: `${said}${abroad}` };
+      // What the war will cost from today, said with the declaration. (Approved sentence; military.js pays the first quarter's difference.)
+      let purse = ''; if (!c.war?.on) { const cost = upkeepCost(w, c), vote = c.budget.military * c.gdp * (c.paidRatio ?? 1); if (cost > vote + .5) { purse = ` In the field the forces cost about ${Math.round(cost)} a quarter against a vote of ${Math.round(vote)}. For this first quarter the difference is met from the war loan; from next quarter the vote has to carry it (set_budget), or the army goes short.`; c._warCostTold = w.turn; } }
+      return { ok: true, msg: `${said}${abroad}${purse}` };
     }
     case 'join_war': {
       const war = w.wars.find(x => x.active && x.id === op.war); if (!war || !['a', 'b'].includes(op.side)) return fail('War not found.'); if (war.a.includes(c.id) || war.b.includes(c.id)) return fail('Already in this war.');

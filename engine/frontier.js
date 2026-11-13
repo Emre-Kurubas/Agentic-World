@@ -108,7 +108,7 @@ export function demobilize(w, c, how = null, unit = null) {
   const all = Object.values(w.units).filter(u => u.country === c.id && calledIn(u) > .05), us = unit ? all.filter(u => u.id === unit) : all; if (!us.length) return null;
   const under = sum(us, calledIn), want = how == null ? under : how < 0 ? under * -how : Math.min(how, under), provs = countryProvinces(w, c.id).filter(p => p.owner === c.id), pop = sum(provs, provincePop) || 1;
   let left = want, men = 0;
-  for (const u of us) { if (left <= 1e-9) break; const go = Math.min(calledIn(u), left); if (!u.called) u.calledMen = Math.max(0, (u.calledMen || 0) - go); c.stock.arms = (c.stock.arms || 0) + go * .05 * clamp(u.equip ?? .8, 0, 1); u.men -= go; left -= go; men += go; if (u.men < .05) delete w.units[u.id]; }
+  for (const u of us) { if (left <= 1e-9) break; const go = Math.min(calledIn(u), left); if (!u.called) u.calledMen = Math.max(0, (u.calledMen || 0) - go); c.stock.arms = (c.stock.arms || 0) + go * .05 * clamp(u.equip ?? .8, 0, 1); u.men -= go; left -= go; men += go; if (u.men < .05) { (w.gone ||= {})[u.id] = { t: w.turn, how: 'its reservists were sent home' }; delete w.units[u.id]; } }
   goHome(provs, men); c.reserve = (c.reserve || 0) + men;
   news(w, `${c.name} has stood its reservists down: about ${Math.round(men)} thousand men are going home.`, { kind: 'war', countries: [c.id] });
   return { ok: true, msg: `About ${Math.round(men * 10) / 10} thousand reservists went home and their rifles are back in the arsenal${under - men > .05 ? `; ${Math.round((under - men) * 10) / 10} thousand called-up men stay under arms` : ''}.` };
