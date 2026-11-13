@@ -636,7 +636,12 @@ export function debtStep(w) {
     if (d.status === 'offered' && w.turn - (d.offered ?? w.turn) >= 2) { d.status = 'lapsed'; d.closedAt = w.turn; const l = w.characters[d.creditor]; if (l?.alive) l.inbox.push({ turn: w.turn, from: 'Notary', text: `The loan you offered ${w.characters[d.debtor]?.name ?? 'them'} (${d.id}) was not taken and has lapsed. Nothing was lent.` }); }
     if (!['open', 'overdue'].includes(d.status)) continue;
     const debtor = w.characters[d.debtor], creditor = w.characters[d.creditor];
-    if (!debtor?.alive || !creditor?.alive) { d.status = 'void'; d.closedAt = w.turn; continue; }
+    // A banking house outlives its head: what was owed to the house is owed to whoever keeps it now. (World 22: the head of a house died and
+    // every note she held was struck out, among them 254 owed by the richest man in the country, who was never told why nobody asked for it.)
+    if (debtor?.alive && creditor && !creditor.alive && creditor.post === 'house') { const heir = Object.values(w.characters).find(x => x.alive && x.country === creditor.country && x.post === 'house' && x.id !== creditor.id);
+      if (heir) { d.creditor = heir.id; if (d.due - w.turn < 2) d.due = w.turn + 2; debtor.inbox.push({ turn: w.turn, from: 'Notary', text: `${creditor.name} is dead, and ${heir.name} keeps the house now. Your note ${d.id}, on which ${Math.round(d.owed * 10) / 10} is owed, is in ${heir.name}'s hands with the rest of the house's paper, and falls due in ${quarterLabel(d.due)}.` }); heir.inbox.push({ turn: w.turn, from: 'Notary', text: `With the house you hold note ${d.id}: ${debtor.name} owes ${Math.round(d.owed * 10) / 10}, due ${quarterLabel(d.due)}.` }); }
+      else if (w.turn - (creditor.death?.turn ?? w.turn) < 8) continue; }
+    { const cr = w.characters[d.creditor]; if (!debtor?.alive || !cr?.alive) { d.status = 'void'; d.closedAt = w.turn; const left = debtor?.alive ? debtor : cr?.alive ? cr : null; if (left) left.inbox.push({ turn: w.turn, from: 'Notary', text: left === debtor ? `${creditor?.name ?? 'Your creditor'} is dead and nobody has presented note ${d.id}: nothing stands on it any more.` : `${debtor?.name ?? 'Your debtor'} is dead: note ${d.id} is worth nothing now.` }); continue; } }
     if (d.status === 'open' && w.turn >= d.due) {
       d.status = 'overdue';
       debtor.inbox.push({ turn: w.turn, from: 'Notary', text: `Debt ${d.id}: your payment of ${Math.round(d.owed)} to ${creditor.name} has fallen due.` });

@@ -385,13 +385,18 @@ function breach(w, t, cl, party, text) {
 
 const routeOpen = (w, a, b) => !!w.routes[a < b ? `${a}|${b}` : `${b}|${a}`];
 
-export function treatyStep(w) {
-  for (const c of aliveCountries(w)) c.tariffDeals = {};
+// Troops are counted where they stand when the quarter's marching is done (late), everything else before the quarter is played. (World 22: a
+// corps ordered out of a limited province was counted there before it marched, and the breach was recorded the quarter it was cured.)
+// (phase: 'early' is everything but the count of troops, 'late' is that count alone; called with neither, both are done at once.)
+export function treatyStep(w, phase = null) {
+  const late = phase === 'late';
+  if (!late) for (const c of aliveCountries(w)) c.tariffDeals = {};
   for (const t of w.treaties) {
     if (!t.active) continue;
-    if (t.expires != null && w.turn >= t.expires) { t.active = false; w.guarantees = (w.guarantees || []).filter(x => x.treaty !== t.id); news(w, `The ${t.kind.replace('_', ' ')} treaty between ${t.parties.map(x => w.countries[x]?.name).join(' and ')} has expired.`, { kind: 'diplomacy', countries: t.parties, secret: !!t.secret }); continue; }
+    if (!late && t.expires != null && w.turn >= t.expires) { t.active = false; w.guarantees = (w.guarantees || []).filter(x => x.treaty !== t.id); news(w, `The ${t.kind.replace('_', ' ')} treaty between ${t.parties.map(x => w.countries[x]?.name).join(' and ')} has expired.`, { kind: 'diplomacy', countries: t.parties, secret: !!t.secret }); continue; }
     for (const cl of t.clauses || []) {
       if (cl.until != null && w.turn >= cl.until) continue;
+      if (phase && (cl.type === 'demilitarized_zone' || cl.type === 'troop_limit') !== late) continue;
       if (cl.type === 'tribute') {
         const payer = w.countries[cl.payer], other = w.countries[cl.to ?? t.parties.find(x => x !== cl.payer)];
         if (!payer?.alive || !other?.alive || !t.parties.includes(payer.id) || !t.parties.includes(other.id)) continue;

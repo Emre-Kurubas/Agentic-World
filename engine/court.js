@@ -291,7 +291,9 @@ export function recruitInformant(w, actor, ch, amount) {
   // The figure a man named, when it is met, buys him: he is not asked twice to say what he would take. (World 19: a clerk on a foreign staff
   // was sounded, "something near 14 would be heard", was offered 14 the next quarter, and "would not be bought this time".) The word holds
   // four quarters, and only while he still stands toward his government as he did.
-  const quoted = actor.quotes?.[ch.id], kept = !!quoted && w.turn - quoted.turn <= 4 && amount >= quoted.sum - .5 && askingOf(ch).open;
+  // (The figure named to the ruler holds for the chief of staff and the other way: it is one state that asks. World 22.)
+  const desk = w.countries[actor.country], mate = desk && [desk.leader, desk.general].includes(actor.id) ? [desk.leader, desk.general].map(id => w.characters[id]).find(x => x && x.id !== actor.id && x.quotes?.[ch.id]) : null;
+  const quoted = actor.quotes?.[ch.id] ?? mate?.quotes?.[ch.id], kept = !!quoted && w.turn - quoted.turn <= 4 && amount >= quoted.sum - .5 && askingOf(ch).open;
   const p = kept ? 1 : clamp(.12 + ch.greed / 170 + amount / 45 - (own ? 0 : ch.loyalty / 190) + duty, .04, .92);
   if (rand(w) >= p) {
     const host = w.countries[ch.country], ruler = w.characters[host?.leader];

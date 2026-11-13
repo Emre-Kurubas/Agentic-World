@@ -5675,5 +5675,71 @@ chain('War credits are voted the day war comes: in the quarter a war begins the 
   beginTurn(x.w); const lent1 = x.a.warCredits.lent; stepWorld(x.w);
   assert.ok(x.a.warCredits.lent === lent1 && x.a.warCredits.t < x.w.turn - 1 + 1 && x.a.militaryFunding < .8, `from the second quarter an army left on its peace vote goes short (${x.a.militaryFunding.toFixed(2)})`);
 });
+chain('World 22, the whole game read through: answers that said only "Applied." say what was done, and a second paper of the same kind between the same two states is pointed out to whoever signs it', () => {
+  // Eighteen quarters: an embargo, a devaluation, a published file, a seat in an institution and a works offered for sale were each answered
+  // "Applied."; and six pairs of states held two or three papers of one kind, each having written the renewal and signed the other's.
+  const w = inherited(2696855, 8), cs = aliveCountries(w), a = cs[0], b = cs[1], L = ld(w, a), Lb = ld(w, b);
+  const on = applyOp(w, L, { op: 'embargo', target: b.id, on: true }), again = applyOp(w, L, { op: 'embargo', target: b.id, on: true }), off = applyOp(w, L, { op: 'embargo', target: b.id, on: false }), none = applyOp(w, L, { op: 'embargo', target: b.id, on: false });
+  assert.ok(on.ok && /Trade with .* is cut off, both ways and in every good/.test(on.msg) && /in force already and stands/.test(again.msg) && /is lifted: trade with them is open again/.test(off.msg) && /No embargo of ours .* was in force/.test(none.msg) && !a.embargo.includes(b.id), `an embargo says what it does, and what it did not: ${on.msg.slice(0, 120)} | ${again.msg} | ${off.msg} | ${none.msg}`);
+  if (a.fxRegime !== 'floating') { const dv = applyOp(w, L, { op: 'devalue', pct: .1, _law: true }); assert.ok(dv.ok && /is cut by 10 in the hundred against gold/.test(dv.msg) && /debts owed abroad in gold weigh that much more/.test(dv.msg), `a devaluation says what follows: ${dv.msg}`); }
+  // Each writes the renewal and signs the other's.
+  w.wars = []; const p1 = applyOp(w, L, { op: 'propose_treaty', target: b.id, kind: 'commission', turns: 8, terms: 'A joint commission of officers on the common frontier.', _law: true }), p2 = applyOp(w, Lb, { op: 'propose_treaty', target: a.id, kind: 'commission', turns: 8, terms: 'A joint commission of officers on the common frontier, for two years.', _law: true });
+  assert.ok(p1.ok && p2.ok, `${p1.msg} | ${p2.msg}`); const mine = w.treaties.filter(t => t.kind === 'commission' && t.parties.includes(a.id) && t.parties.includes(b.id));
+  const s1 = applyOp(w, Lb, { op: 'accept_treaty', id: mine.find(t => t.proposer === a.id).id, _law: true }), s2 = applyOp(w, L, { op: 'accept_treaty', id: mine.find(t => t.proposer === b.id).id, _law: true });
+  assert.ok(s1.ok && !/of the same kind between us/.test(s1.msg), `the first signature finds no other paper: ${s1.msg.slice(0, 160)}`);
+  assert.ok(s2.ok && new RegExp(`Mark that ${mine.find(t => t.proposer === a.id).id}[^]*a paper of the same kind between us and ${b.name}, is in force as well: both stand side by side[^]*end_treaty`).test(s2.msg), `the second is told that two papers now stand: ${s2.msg.slice(-300)}`);
+  // A works offered to a person.
+  const O = w.characters[a.oligarch], firm = Object.values(w.firms).find(f => f.owner === O.id && f.status === 'open'), buyer = w.characters[a.opposition];
+  if (firm) { const sell = applyOp(w, O, { op: 'sell_company', id: firm.id, buyer: buyer.id, price: 50 }); assert.ok(sell.ok && new RegExp(`is offered to ${buyer.name} for 50; by its books it is worth about \\d+\\. It stays yours until`).test(sell.msg), `a works offered for sale says where it stands: ${sell.msg}`); }
+});
+chain('World 22, the whole game read through, the faults: a gift to a class pays the sum named; a factory law names its floor; a banking house outlives its head; troops are counted where the quarter leaves them; an order two desks wrote waits once; and a paper nothing can be delivered under says so', () => {
+  const w = inherited(2696855, 8), cs = aliveCountries(w), c = cs[0], L = ld(w, c), G = w.characters[c.general], O = w.characters[c.oligarch], Op = w.characters[c.opposition];
+  // The sum named is the sum paid.
+  c.treasury = 5000; const sat0 = countryProvinces(w, c.id)[0].pops.peasants.sat, gift = applyOp(w, L, { op: 'concession', cls: 'peasants', amount: 30 });
+  assert.ok(gift.ok && /^30 was handed out to the country people/.test(gift.msg) && countryProvinces(w, c.id)[0].pops.peasants.sat > sat0, `thirty named, thirty paid: ${gift.msg}`);
+  const none = applyOp(w, L, { op: 'concession', cls: 'peasants' }); assert.ok(!none.ok && /Name the sum/.test(none.msg), `no sum, no gift, and it says so: ${none.msg}`);
+  // A law that names no floor is no law.
+  const empty = applyOp(w, L, { op: 'set_labour_law', sector: 'mine', _law: true }), law0 = JSON.stringify(c.labourLaw ?? null);
+  assert.ok(!empty.ok && /Name the floor: min_safety/.test(empty.msg) && JSON.stringify(c.labourLaw ?? null) === law0, `an empty factory law is refused and repeals nothing: ${empty.msg}`);
+  const full = applyOp(w, L, { op: 'set_labour_law', sector: 'mine', min_safety: .6, _law: true }); assert.ok(full.ok && c.labourLaw?.sectors?.mine?.safety === .6, full.msg);
+  // The vote that covers the cost.
+  const vote = applyOp(w, L, { op: 'set_budget', category: 'military', covers: 1, _law: true }); beginTurn(w); stepWorld(w);
+  assert.ok(vote.ok && c.militaryFunding > .9 && c.militaryFunding < 1.12, `a vote ordered to cover the forces covers them (${c.militaryFunding.toFixed(2)}): ${vote.msg.slice(0, 160)}`);
+  // The house outlives its head.
+  const banker = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'house'); assert.ok(banker, 'a banking house');
+  (w.debts ||= []).push({ id: 'B-t34', creditor: banker.id, debtor: Op.id, amount: 50, owed: 60, due: w.turn + 6, terms: 'A note of hand.', status: 'open', turn: w.turn });
+  die(w, banker, 'died'); for (let i = 0; i < 4; i++) { beginTurn(w); stepWorld(w); }
+  const note = w.debts.find(d => d.id === 'B-t34'), heir = w.characters[note.creditor];
+  assert.ok(note.status !== 'void' && heir?.alive && heir.post === 'house' && heir.id !== banker.id && Op.inbox.some(m => new RegExp(`${banker.name} is dead, and ${heir.name} keeps the house now\\. Your note B-t34`).test(m.text)), `what was owed to the house is owed to whoever keeps it now (${note.status}, ${heir?.name})`);
+  // An order two desks wrote.
+  const so = { op: 'standing_order', when: { after: 3 }, then: [{ op: 'report', topic: 'army' }] }, a = applyOp(w, L, { ...so, label: 'The count' }), b = applyOp(w, G, { ...so, label: 'Count of the army' });
+  assert.ok(a.ok && b.ok && b.twice && (w.standingOrders || []).filter(x => x.when?.turn === w.turn + 3 && [L.id, G.id].includes(x.by)).length === 1, `one order waits though two desks wrote it: ${b.msg}`);
+  // A paper nothing can be delivered under.
+  for (const f of Object.values(w.firms)) if (f.owner === O.id && (f.sector === 'arms' || f.resource === 'arms')) f.status = 'closed';
+  const offer = applyOp(w, L, { op: 'propose_contract', to: O.id, terms: 'Thirty field guns.', good: 'arms', amount: .4, pay_per_turn: 14, payer: 'me', seller: 'them', turns: 4, state: true });
+  assert.ok(offer.ok && new RegExp(`Mark that ${O.name} owns no works that make arms`).test(offer.msg), `the offer says the seller has no such works: ${offer.msg.slice(-260)}`);
+  const sign = applyOp(w, O, { op: 'accept_contract', id: offer.contract }); assert.ok(sign.ok && /owns no works that make arms/.test(sign.msg), `and so does the signature: ${sign.msg.slice(-240)}`);
+});
+chain('World 22, the whole game read through: troops under a treaty limit are counted where the quarter leaves them, not where it found them', () => {
+  const w = inherited(2696855, 8), cs = aliveCountries(w), a = cs[0], b = cs.find(o => o.id !== a.id), mine = countryProvinces(w, a.id).filter(p => p.owner === a.id), from = mine.find(p => p.neighbors.some(n => w.provinces[n].controller === a.id && n !== a.capital)) ?? mine[0], to = w.provinces[from.neighbors.find(n => w.provinces[n].controller === a.id)];
+  for (const u of Object.values(w.units)) if (u.country === a.id && [from.id, to.id].includes(u.province)) delete w.units[u.id]; w.wars = [];
+  const corps = soldier(w, a.id, from.id, 40); w.treaties.push({ id: 'A-t34', kind: 'commission', parties: [a.id, b.id], active: true, pending: false, proposer: b.id, clauses: [{ type: 'troop_limit', country: a.id, provinces: [from.id], men: 10, text: 'limit' }], breaches: [], expires: null, turn: w.turn - 4, since: w.turn - 4 });
+  const L = ld(w, a), move = applyOp(w, L, { op: 'move', unit: corps.id, to: to.id }); assert.ok(move.ok, move.msg);
+  beginTurn(w); stepWorld(w); const t = w.treaties.find(x => x.id === 'A-t34');
+  assert.ok(corps.province === to.id && !(t.breaches || []).length, `a corps ordered out of the limited province and gone by the quarter's end is no breach (${corps.province}, ${JSON.stringify(t.breaches)})`);
+  applyOp(w, L, { op: 'move', unit: corps.id, to: from.id }); beginTurn(w); stepWorld(w);
+  assert.ok(corps.province === from.id && (t.breaches || []).length === 1, `one marched in is counted the quarter it arrives (${corps.province}, ${JSON.stringify(t.breaches).slice(0, 160)})`);
+});
+chain('World 22, the whole game read through: a squadron sent to a harbour "to lie in port there" goes to that harbour, not home', () => {
+  // World 22, Andona: torpedo boats and cruisers ordered to Ordona, and later to Palaria, each with "and lie in harbour", sailed back to Monona.
+  const n = twoNavies(), w = n.w, c = w.countries.U1, G = n.gen, home = n.ha; w.wars = [];
+  const other = countryProvinces(w, 'U1').find(p => p.id !== home.id && p.coast && p.seas.length && p.seas.some(s => !home.seas.includes(s))); if (!other) return; other.port = Math.max(other.port || 0, 1);
+  const f = n.ship('U1', home.seas[0], 5, 'cruiser', home); f.port = null;
+  const go = applyOp(w, G, { op: 'move_fleet', fleet: f.id, to: other.id }); if (!go.ok) return; // no open water between the two on this map: nothing to try
+  const lie = applyOp(w, G, { op: 'fleet_orders', fleet: f.id, orders: 'port' });
+  assert.ok(lie.ok && f.target === other.id && new RegExp(`The harbour is ${other.name}\\.`).test(lie.msg), `ordered to lie in harbour, the squadron keeps the harbour it was sent to: ${f.target} | ${lie.msg.slice(-80)}`);
+  const g = n.ship('U1', home.seas[0], 3, 'cruiser', home); g.port = null; const back = applyOp(w, G, { op: 'fleet_orders', fleet: g.id, orders: 'port' });
+  assert.ok(back.ok && g.target === home.id, `with no harbour named it makes for its own: ${g.target}`);
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

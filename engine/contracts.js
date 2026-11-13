@@ -13,6 +13,10 @@ export const stateOf = (w, k, ch) => { const c = w.countries[k.purse?.[ch?.id]];
 const signsForState = (w, actor, flag) => { const c = w.countries[actor.country]; return flag === true && c?.alive && governs(w, c, actor) ? c : null; };
 const works = (w, k) => { const sc = stateOf(w, k, w.characters[k.seller]); return Object.values(w.firms || {}).filter(f => f.status === 'open' && (sc ? f.owner === STATE && f.country === sc.id : f.owner === k.seller) && (f.sector === k.good || f.resource === k.good)); };
 const sellerFirm = (w, k) => works(w, k)[0];
+// Said with the offer and with the signature: a private seller delivers what his own works turn out. (World 22: a government signed three arms
+// contracts with a man who owned machinery works, and a grain contract with a merchant who meant to buy the grain abroad; advances were paid
+// for two years before the first delivery day said "owns no works producing arms; nothing was delivered".)
+export const cannotDeliver = (w, k) => { if (!(k.good && k.amount > 0)) return ''; const seller = w.characters[k.seller]; if (!seller || stateOf(w, k, seller) || (k.seller === k.b && k.toState) || sellerFirm(w, k)) return ''; return ` Mark that ${seller.name} owns no works that make ${GOOD_LABEL[k.good] ?? k.good}: a private seller delivers what his own works turn out and no more, so as things stand nothing would be delivered under this paper. He would have to found or buy such a works first; goods bought elsewhere are not delivered under it.`; };
 // Small quantities are written as they are: a tenth of a unit is not 'none'.
 // A bargain struck "at the price of the day": the buyer pays each quarter what the goods delivered cost that day, on the world's exchanges
 // or on the buyer's own market. (World 19: "army boots at the home market price" and "iron at the world price" could only be written as

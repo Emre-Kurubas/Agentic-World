@@ -36,7 +36,7 @@ export function stepWorld(w) {
   carryStanding(w);
   projectStep(w);
   adminStep(w);
-  treatyStep(w);
+  treatyStep(w, 'early');
   diplomacyStep(w);
   labourStep(w);
   economyStep(w);
@@ -45,6 +45,7 @@ export function stepWorld(w) {
   contractStep(w);
   bondStep(w);
   militaryStep(w, carryAwaited, carryTaken); depotStep(w);
+  treatyStep(w, 'late');
   frontierStep(w);
   institutionStep(w);
   cultureStep(w);

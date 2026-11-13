@@ -58,7 +58,7 @@ const bare = s => String(s ?? '').trim().toLowerCase().replace(/^the\s+/, '').re
 // "The National Loom" and a line for "my paper" both came back "No such newspaper".)
 const mastheads = x => { const m = /^(.*?)\s*\((.*)\)\s*$/.exec(x.name); return [x.name, ...(m ? [m[1], m[2]] : [])].map(bare); };
 const MINE = /^(my|our|his|her|the)?\s*(own\s+|party'?s?\s+)?(news)?(paper|sheet|press|weekly|daily|organ)$/i;
-export const findPaper = (c, key, by) => { const all = papersOf(c), k = bare(key), own = by ? all.filter(x => x.owner === by) : []; return all.find(x => x.id === key) ?? (k ? all.find(x => mastheads(x).includes(k)) : undefined) ?? (own.length === 1 && MINE.test(String(key ?? '').trim()) ? own[0] : undefined); };
+export const findPaper = (c, key, by) => { const all = papersOf(c), k = bare(key), own = by ? all.filter(x => x.owner === by) : []; return all.find(x => x.id === key) ?? (k ? all.find(x => mastheads(x).includes(k)) : undefined) ?? (k && k.length >= 4 ? (l => l.length === 1 ? l[0] : undefined)(all.filter(x => mastheads(x).some(m => m.split(' ').includes(k) || m.endsWith(' ' + k)))) : undefined) ?? (own.length === 1 && MINE.test(String(key ?? '').trim()) ? own[0] : undefined); };
 const findPerson = (w, c, key) => { const k = String(key ?? '').trim(), x = Object.hasOwn(w.characters, k) ? w.characters[k] : Object.values(w.characters).find(y => y.alive && y.country === c.id && y.name.toLowerCase() === k.toLowerCase()); return x?.alive ? x : null; };
 const listed = c => papersOf(c).length ? ` Those that appear here: ${papersOf(c).map(x => `${x.name} (${x.id})`).join(', ')}.` : '';
 

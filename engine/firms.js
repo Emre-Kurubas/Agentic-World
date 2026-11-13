@@ -265,7 +265,7 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
       const buyer = w.characters[op.buyer]; if (!buyer?.alive) return fail('No such buyer: name a person (id), the state (buyer: "state"), or nobody, to put it up for whoever will take it.');
       firm.offer = { buyer: buyer.id, price };
       tell(w, buyer, actor.name, `offers to sell you ${firm.name} (${firm.id}) for ${Math.round(firm.offer.price)}.`);
-      return ok();
+      return { ok: true, msg: `${firm.name} is offered to ${buyer.name} for ${Math.round(price)}; by its books it is worth about ${worth}. It stays yours until ${buyer.name} takes it (buy_company), and the offer stands until you withdraw it (sell_company with withdraw:true).` };
     }
     case 'buy_company': {
       if (!firm || !isOpen(firm)) return fail('No such company.');
