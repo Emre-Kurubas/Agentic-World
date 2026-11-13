@@ -5503,5 +5503,17 @@ chain('World 21, second review: the police can be sent after the armed undergrou
   const have = Math.max(c.stock.arms || 0, 30); c.stock.arms = have; const s = applyOp(w, L, { op: 'sell_goods', good: 'arms', keep: 20, _law: true }); assert.ok(s.ok && Math.abs(c.sales.arms.amount - (have - 20)) < 1e-6, `"whatever stands above twenty": ${s.msg}`);
   assert.ok(/nothing stands above the [\d.]+ that is to be kept/.test(applyOp(w, L, { op: 'sell_goods', good: 'arms', keep: have + 5, _law: true }).msg), 'and nothing is offered where nothing stands above it');
 });
+chain('World 21, third review: a fortress is not carried with the field before it, and both staffs say so; the beaten side that orders it stormed back is told that it is still its own and how it is relieved', () => {
+  // World 21: the staff called a fortress "lost" the quarter its field was lost. Its ruler ordered it shelled and stormed back and was told
+  // it was in his own hands; the besieger ordered a depot there and was told the place was not his.
+  const f = twoRoads(), { w, over } = f; while (seasonOf(w) !== 'summer') w.turn++; over.fort = 1; delete over.siege;
+  const first = soldier(w, 'U1', f.e1.id, 160), def = soldier(w, 'U2', over.id, 20); const r = applyOp(w, f.gen, { op: 'offensive', to: over.id, units: [first.id] }); assert.ok(r.ok, r.msg);
+  let fought = []; for (let i = 0; i < 3 && !fought.length; i++) fought = quarter(w);
+  assert.ok(fought.length === 1 && fought[0].attackerWon && over.controller === 'U2' && over.siege?.by === 'U1', `the field is won and the fortress holds: ${JSON.stringify(fought)} ${over.controller} ${JSON.stringify(over.siege)}`);
+  assert.ok(/Our attack on [^.]* won the field, and the fortress is invested: it has not fallen, and falls in about \d quarters? if we stay before it and are not driven off\./.test(f.said()), `the besieger's staff says the place has not fallen: ${f.said().slice(0, 300)}`);
+  const lost = w.characters[f.d.general].inbox.map(m => m.text).join('\n'); assert.ok(/The field at [^.]* is lost and our troops are driven off; the fortress still holds and is invested: it falls in about \d quarters? unless troops sent there \(move\) break the investment\./.test(lost), `and the beaten staff says the fortress still holds: ${lost.slice(-500)}`);
+  const back = applyOp(w, w.characters[f.d.general], { op: 'offensive', to: over.id, units: [def.id] }); assert.ok(!back.ok && /is in our own hands: the enemy stands before its fortress, which has not fallen\. Troops sent there \(move\) fight their way in to relieve it\./.test(back.msg), back.msg);
+  for (let i = 0; i < 3 && over.controller !== 'U1'; i++) quarter(w); assert.equal(over.controller, 'U1', 'left alone, the fortress falls');
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

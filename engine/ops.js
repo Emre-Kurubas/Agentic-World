@@ -1246,7 +1246,7 @@ function applyOne(w, actor, op) {
     }
     case 'bombard': {
       const p = has(w.provinces, op.province) ? w.provinces[op.province] : null; if (!p?.coast) return fail('Name a province on a coast.');
-      if (p.controller === c.id) return fail(`${p.name} is in our own hands.`);
+      if (p.controller === c.id) return fail(`${p.name} is in our own hands${p.siege && p.siege.by !== c.id ? ': the enemy stands before its fortress, which has not fallen, and ships do not shell their own town' : ''}.`);
       if (!atWar(w, c.id, p.controller)) return fail(`${p.name} is held by ${w.countries[p.controller]?.name}, with whom there is no war. Shelling it would be one, and war is declared by whoever governs (declare_war).`);
       if (hasTreaty(w, c.id, p.controller, 'armistice')) return fail('An armistice with them is in force: no ship fires while it lasts.');
       const off = Object.values(w.fleets).filter(f => f.country === c.id && !f.port && kindOf(f) !== 'submarine' && p.seas.includes(f.sea)), f = op.fleet ? off.find(x => x.id === op.fleet) : off.sort((a, b) => b.ships * SHIPS[kindOf(b)].power - a.ships * SHIPS[kindOf(a)].power)[0];
@@ -2163,7 +2163,7 @@ function offensive(w, c, op) {
   const to = w.provinces[op.to]; if (!to) return fail('Name the province to be attacked (to).');
   const mine = Object.values(w.units).filter(u => u.country === c.id), on = mine.filter(u => u.attack?.to === to.id);
   if (op.cancel === true) { if (!on.length) return fail(`No offensive against ${to.name} is in hand.`); for (const u of on) { delete u.attack; if (u.province !== to.id) u.target = null; } return { ok: true, msg: `The offensive against ${to.name} is called off: ${on.map(u => u.id).join(', ')} stand where they are.` }; }
-  if (to.controller === c.id) return fail(`${to.name} is in our own hands: troops are sent there with move.`);
+  if (to.controller === c.id) return fail(`${to.name} is in our own hands${to.siege && to.siege.by !== c.id ? ': the enemy stands before its fortress, which has not fallen. Troops sent there (move) fight their way in to relieve it' : ': troops are sent there with move'}.`);
   const foe = w.countries[to.controller];
   if (!atWar(w, c.id, to.controller)) return fail(`${to.name} is held by ${foe?.name ?? 'another state'}, with whom there is no war. An attack on it would be one, and war is declared by whoever governs (declare_war).`);
   if (hasTreaty(w, c.id, to.controller, 'armistice')) return fail('An armistice with them is in force: no attack while it lasts. It would have to be broken first (break_treaty).');
