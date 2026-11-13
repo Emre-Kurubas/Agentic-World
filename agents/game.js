@@ -94,10 +94,12 @@ export class Game {
       try { return await fn(); }
       catch (e) {
         if (!(e instanceof LimitError)) throw e;
-        const until = new Date(Date.now() + this.cfg.limitRetryMinutes * 60000);
+        // A refusal by the service or a dead line is asked again sooner than a usage limit; either way the game stands still until it answers.
+        const minutes = e.service ? Math.min(this.cfg.limitRetryMinutes, 2) : this.cfg.limitRetryMinutes, until = new Date(Date.now() + minutes * 60000);
         this.store.savePending(this.pending);
-        this.setStatus('waiting for limit', `Usage limit reached. Will retry around ${until.toLocaleTimeString('en-US')}. The game will continue from where it left off.`);
-        await new Promise(r => setTimeout(r, this.cfg.limitRetryMinutes * 60000));
+        this.setStatus(e.service ? 'waiting for the service' : 'waiting for limit', e.service ? `The service refused the call or could not be reached (${String(e.message).slice(0, 120)}). Will ask again around ${until.toLocaleTimeString('en-US')}. Nobody is played by rules meanwhile; the game will continue from where it left off.` : `Usage limit reached. Will retry around ${until.toLocaleTimeString('en-US')}. The game will continue from where it left off.`);
+        if (e.service) console.log(`[service] ${String(e.message).slice(0, 160)}; asking again in ${minutes} minute(s)`);
+        await new Promise(r => setTimeout(r, minutes * 60000));
         if (this.stop) throw e;
       }
     }

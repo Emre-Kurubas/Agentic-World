@@ -5565,5 +5565,14 @@ chain('World 22, second review: two papers about different things lie side by si
   const sid = open().find(k => k.good === 'arms' && k.amount === .2).id; w.turn += 1; assert.ok(applyOp(w, L, { op: 'propose_contract', to: M.id, terms: 'Twelve siege pieces, cheaper.', good: 'arms', amount: .2, pay_per_turn: 5, payer: 'me', seller: 'them', turns: 3, state: true }).ok);
   const no = applyOp(w, M, { op: 'accept_contract', id: sid }); assert.ok(!no.ok && /does not wait for your signature/.test(no.msg) && open().some(k => k.good === 'arms' && k.pay === 5), `a paper offered again with other terms is not signed under the old number: ${no.msg}`);
 });
+import { ServiceError as ServiceError_, LimitError as LimitError_, SERVICE_RE as SERVICE_RE_ } from '../agents/backend.js';
+chain('World 22, third review: a call the service refuses is not a character\'s silence: the game waits and asks again, as at a usage limit, and plays nobody by rules', () => {
+  // World 22: for some minutes every call came back "Failed to authenticate. API Error: 403 Attention Required! | Cloudflare". Three quarters
+  // were played with every character on the rule-based fallback and no referee.
+  const e = new ServiceError_('Failed to authenticate. API Error: 403 Attention Required! | Cloudflare');
+  assert.ok(e instanceof LimitError_ && e.service === true, 'a refusal by the service is handled wherever a usage limit is: it is thrown up to the wait, not swallowed into a fallback');
+  for (const s of ['Failed to authenticate. API Error: 403 Attention Required! | Cloudflare', 'API Error: 503 Service Unavailable', 'API Error 529', 'fetch failed', 'read ECONNRESET', 'getaddrinfo ENOTFOUND api', 'Connection error.', '502 Bad Gateway']) assert.ok(SERVICE_RE_.test(s), `known for what it is: ${s}`);
+  for (const s of ['The Prince orders the land tax lowered by a point.', 'I will not sign his paper while his reservists are still marching.', 'claude exit code 1']) assert.ok(!SERVICE_RE_.test(s), `not mistaken for it: ${s}`);
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

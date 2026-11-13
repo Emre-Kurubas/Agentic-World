@@ -4,6 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 
 export class LimitError extends Error {}
+// The service refused the call or could not be reached: not an answer, and not the character's silence. The game waits and asks again, as it
+// does at a usage limit; nobody is played by rules in the meantime. (World 22: for about seven minutes every call came back "Failed to
+// authenticate. API Error: 403 Attention Required! | Cloudflare". Three quarters were played with all thirty-three characters on the
+// rule-based fallback and no referee before anybody looked.)
+export class ServiceError extends LimitError { constructor(m) { super(m); this.service = true; } }
+export const SERVICE_RE = /(Failed to authenticate|API Error:? ?(401|403|408|5\d\d)|Attention Required|Cloudflare|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|fetch failed|socket hang up|network error|Service Unavailable|Bad Gateway|Gateway Time-?out|Internal server error|Connection error)/i;
 export class SessionLostError extends Error {}
 
 // Agents run in a folder that can read project settings; to avoid loading foreign settings from a shared temp folder, the folder is empty and private to the app.
@@ -62,6 +68,7 @@ function callClaude(prompt, model, { timeoutMs = 900000, session = null, cwd = n
       const text = parsed?.result ?? out;
       if (/No conversation found with session ID/i.test(err)) return reject(new SessionLostError(err.trim()));
       if (LIMIT_RE.test(`${text}\n${err}`) && (code !== 0 || parsed?.is_error)) return reject(new LimitError(String(text || err).slice(0, 240)));
+      if (SERVICE_RE.test(`${text}\n${err}`) && (code !== 0 || parsed?.is_error)) return reject(new ServiceError(String(text || err).slice(0, 240)));
       if (code !== 0 || parsed?.is_error) return reject(new Error(String(text || err || `claude exit code ${code}`).slice(0, 400)));
       resolve({ text: String(text), usage: parsed?.usage ?? null });
     });
