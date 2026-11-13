@@ -1,6 +1,6 @@
 // Country chronicles and character lives. Only events are recorded; who feels what is never written.
 // Uses local randomness; does not affect world generation or the engine.
-import { countryProvinces, aliveCountries, GOOD_LABEL } from './world.js';
+import { countryProvinces, aliveCountries, GOOD_LABEL, familyFor } from './world.js';
 import { givenNames, familyNames, personName, sexOf, freeFamily } from './names.js';
 
 function seeded(key) {
@@ -91,7 +91,7 @@ export function writeLife(w, ch) {
   }
   // Somebody whose home is another people's province bears a name of that people; and no more than anybody else a name that somebody of note in
   // the country bears already.
-  if (home.eth !== c.majorityEth) { const [given, drawn] = personName(home.eth, home.rel, ch.id).split(' '), taken = new Set(Object.values(w.characters).filter(o => o.id !== ch.id && o.alive && o.country === c.id).map(o => o.name.split(' ').at(-1))); ch.name = `${given} ${freeFamily(home.eth, drawn, taken)}`; ch.sex = sexOf(ch.name); }
+  if (home.eth !== c.majorityEth) { const [given, drawn] = personName(home.eth, home.rel, ch.id).split(' '); ch.name = `${given} ${familyFor(w, c.id, home.eth, drawn, ch.id)}`; ch.sex = sexOf(ch.name); }
   ch.origin = { birthplace: home.name, born, eth: home.eth, rel: home.rel, family: pickOf(r, FAMILY) };
   ch.life = life.sort((a, b) => a.year - b.year);
 }

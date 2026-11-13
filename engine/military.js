@@ -367,7 +367,8 @@ function upkeep(w, c) {
     const got = paid(u); if (chosen) u.paid = got; else delete u.paid;
     u.morale = clamp(u.morale + (spiritAt(got) - u.morale) * .2, 0, 100);
     // Drill brings raw men up to the army's standard in a couple of years, and the edge of veterans wears off as they go home.
-    u.quality += (drillOf(c) - u.quality) * .08;
+    // A body ordered to its exercises this quarter learns nearly three times as fast and comes a little past that standard (ops.js drill).
+    { const hard = u.drill === w.turn, to = drillOf(c) + (hard ? .06 : 0); if (hard && u.quality < to) u.quality += (to - u.quality) * .22; else u.quality += (drillOf(c) - u.quality) * .08; }
     // An army in the field loses men to sickness every quarter it stays there: most in marsh and in summer heat, in siege lines and on foreign
     // soil; a medical service that knows what it is doing loses half as many.
     if (field) { const p = w.provinces[u.province], sick = u.men * (.004 + (p.terrain === 'marsh' ? .012 : 0) + (season(w) === 'summer' && ['marsh', 'desert'].includes(p.terrain) ? .006 : 0) + (p.siege ? .008 : 0) + (p.controller !== u.country ? .004 : 0)) * (hasTech(c, 'antibiotics') ? .5 : 1); u.men -= sick; c._sick += sick; }
@@ -462,6 +463,8 @@ export function joinUnits(w, a, b) {
   for (const k of ['quality', 'morale', 'equip', 'loyalty', 'bond']) if (a[k] != null || b[k] != null) b[k] = ((a[k] ?? b[k]) * a.men + (b[k] ?? a[k]) * b.men) / n;
   b.men = n; b.dug = Math.min(a.dug || 0, b.dug || 0);
   if (res >= n - .05) { b.called = true; delete b.calledMen; } else { delete b.called; if (res > .05) b.calledMen = res; else delete b.calledMen; }
+  // Where it went is kept for a while, so that an order still addressed to it can say what became of it (ops.js applyOp).
+  (w.joined ||= {})[a.id] = { into: b.id, at: b.province, t: w.turn }; { const ks = Object.keys(w.joined); if (ks.length > 120) for (const k of ks.slice(0, ks.length - 120)) delete w.joined[k]; }
   delete w.units[a.id]; return n;
 }
 const mark = (w, c, text) => { for (const ch of [w.characters[c.leader], w.characters[c.general]]) if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'General Staff', text }); };

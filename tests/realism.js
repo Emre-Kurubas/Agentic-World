@@ -5328,5 +5328,44 @@ chain('Gold is accounted for: every place that moves gold between countries says
   c.goldLog = [last]; assert.ok(!/Against a year ago/.test(goldAccount_(c).text) && /is gone in about 3 quarters\. Last quarter 412/.test(memorandaOf(w, c, L).flatMap(([, l]) => l).join('\n')), 'nor where there is no year to look back on');
   c.goldLog = [{ t: 0, out: { goods: 50 }, in: { grain: 120 } }]; assert.ok(!memorandaOf(w, c, L).flatMap(([, l]) => l).some(l => /gold reserve \(/.test(l)), 'and where gold comes in he says nothing at all');
 });
+import { joinUnits as joinUnits_ } from '../engine/military.js';
+chain('World 20, first review: a petition that lies before the government no longer holds up the next, a second society with money behind it is a branch of the first, a party people follow draws more than a thin crowd, a failed spy says why, a bonus can be paid to one body of troops, a season of drill teaches, and no two of a country\'s remembered dead and its living share a name by chance', () => {
+  const w = inherited(2696855, 8); run(w, 1);
+  { // Names.
+    for (const c of aliveCountries(w)) { const before = ROLES.map(r => w.characters[c[r]].before.name.split(' ').at(-1)), living = ROLES.map(r => w.characters[c[r]].name.split(' ').at(-1));
+      assert.ok(new Set(before).size === 4 && !before.some((f, i) => living.some((l, j) => l === f && i !== j)), `${c.name}: the last holders of the four seats bear four names, and none bears the name of another seat's holder (a house handed down keeps its own) (${before.join(', ')})`);
+      const fresh = Array.from({ length: 12 }, () => spawnCharacter(w, c.id, 'private', c.axes).name.split(' ').at(-1)); assert.ok(!fresh.some(f => before.includes(f)), `${c.name}: nobody who arrives later is given a dead predecessor's name by chance (${fresh.filter(f => before.includes(f)).join(', ')})`); } }
+  const c = aliveCountries(w).find(x => x.unions) ?? aliveCountries(w)[0], O = w.characters[c.opposition], L = ld(w, c), G = w.characters[c.general], party = c.parties.find(p => leadsOf(w, c, O).includes(p));
+  { // Petitions and societies.
+    O.wealth = 40; party.funds = 20; assert.ok(applyOp(w, O, { op: 'petition', demand: 'A point off the land tax.', class: 'peasants' }).ok);
+    assert.ok(/from door to door: one at a time[^]*the next can be opened then/.test(applyOp(w, O, { op: 'petition', demand: 'Another.' }).msg), 'while it is being carried, one at a time');
+    massStep_(w); assert.equal(c.petitions[0].status, 'presented'); w.turn += 2; const second = applyOp(w, O, { op: 'petition', demand: 'Relief for the men out of work.', class: 'workers' }); assert.ok(second.ok, `once the first lies before the government the committees can carry the next: ${second.msg}`); w.turn -= 2;
+    assert.ok(applyOp(w, O, { op: 'found_society', kind: 'mutual', name: 'First Reading Room', amount: 4 }).ok); const s = societiesOf_(c, party.id)[0], f0 = s.funds, st0 = s.strength;
+    assert.ok(/opens a branch of it instead/.test(applyOp(w, O, { op: 'found_society', kind: 'mutual', name: 'Second Reading Room' }).msg), 'a second with nothing behind it is still refused, and told how');
+    const branch = applyOp(w, O, { op: 'found_society', kind: 'mutual', name: 'Second Reading Room', amount: 6, from: 'party' }); assert.ok(branch.ok && /is a branch of it: First Reading Room[^]*has 6 more in its chest from the party's chest/.test(branch.msg) && s.funds === f0 + 6 && s.strength > st0 && party.funds === 14 && societiesOf_(c, party.id).length === 1, `with money behind it, it is a branch: ${branch.msg}`); }
+  { // A meeting.
+    const v = structuredClone(w), vc = v.countries[c.id], vp = vc.parties.find(p => p.id === party.id), thin = structuredClone(v); vp.organization = 25; vp.support = 40; v.turn += 1; const r = applyOp(v, v.characters[O.id], { op: 'rally' });
+    const tp = thin.countries[c.id].parties.find(p => p.id === party.id); tp.organization = 0; tp.support = 5; tp.funds = 0; thin.turn += 1; const t = applyOp(thin, thin.characters[O.id], { op: 'rally' });
+    assert.ok(/drew a (fair|great) crowd/.test(r.msg) && /follows already/.test(r.msg) && /drew a thin crowd/.test(t.msg), `a party four in ten follow draws more than a party nobody knows: ${r.msg.slice(0, 80)} | ${t.msg.slice(0, 80)}`); }
+  { // A spy who fails says why.
+    const foe = aliveCountries(w).find(x => x.id !== c.id); let weak = '', even = '';
+    for (let i = 0; i < 60 && !(weak && even); i++) { const v = structuredClone(w), vc = v.countries[c.id], vf = v.countries[foe.id]; for (let j = 0; j < i; j++) rollOf(v); vc.intelligence = i % 2 ? 20 : 60; vf.intelligence = 60; const r = applyOp(v, ld(v, vc), { op: 'spy', target: foe.id, kind: 'intel' }); if (!r.ok && /failed/.test(r.msg)) { if (i % 2) weak ||= r.msg; else even ||= r.msg; } }
+    assert.ok(/Their police and their counter-espionage are better than our service \(ours stands at 20 of 100/.test(weak) && /it was the day's luck/.test(even), `${weak} | ${even}`); }
+  { // A bonus to one body.
+    const us = Object.values(w.units).filter(u => u.country === c.id).sort((a, b) => b.men - a.men), guard = us[1], rest = us[0], l0 = guard.loyalty, m0 = guard.morale, r0 = rest.loyalty; c.treasury = 500; const t0 = c.treasury;
+    assert.ok(/Name the sum/.test(applyOp(w, L, { op: 'concession', cls: 'army', unit: guard.id }).msg), 'no sum, no bonus');
+    assert.ok(/No such body of troops: B0\./.test(applyOp(w, L, { op: 'concession', cls: 'army', unit: 'B0', amount: 10 }).msg));
+    const b = applyOp(w, L, { op: 'concession', cls: 'army', unit: guard.id, amount: 12 }); assert.ok(b.ok && guard.loyalty > l0 && guard.morale > m0 && rest.loyalty < r0 && rest.loyalty > r0 - 2.01 && c.treasury < t0 && new RegExp(`^${guard.id} was paid a bonus of 12:[^]*the rest of the army has heard who was paid and who was not`).test(b.msg), `the body that is paid is the better for it and the rest hear of it: ${b.msg}`);
+    const all = applyOp(w, L, { op: 'concession', cls: 'army', amount: 12 }); assert.ok(all.ok && /^The troops were paid a bonus of 12\./.test(all.msg), 'and the whole army can still be paid'); }
+  { // Drill.
+    const v = structuredClone(w), twin = structuredClone(w), vc = v.countries[c.id], u = Object.values(v.units).filter(x => x.country === c.id)[0], tu = twin.units[u.id]; u.quality = tu.quality = .8; vc.treasury = 500; const arms = vc.stock.arms;
+    const d = applyOp(v, v.characters[G.id], { op: 'drill', unit: u.id }); assert.ok(d.ok && vc.stock.arms < arms && new RegExp(`^${u.id} \\(\\d+ thousand men\\) spend the quarter at field exercises and musketry: \\d+ from the treasury and [\\d.]+ of arms from the arsenal\\.`).test(d.msg), `the chief of staff can order it, and it costs cartridges: ${d.msg}`);
+    assert.ok(/at their exercises this quarter already/.test(applyOp(v, v.characters[G.id], { op: 'drill', unit: u.id }).msg), 'ordered twice it is one season');
+    assert.ok(/Say which bodies are to drill/.test(applyOp(v, v.characters[G.id], { op: 'drill' }).msg));
+    { const g = structuredClone(w), gc = g.countries[c.id], go = g.characters[O.id], soc = societiesOf_(gc, party.id)[0], f1 = soc.funds; go.wealth = 10; const gift = applyOp(g, go, { op: 'give', to: soc.id, amount: 4 }); assert.ok(gift.ok && soc.funds === f1 + 4 && go.wealth === 6 && /was put into the chest of First Reading Room/.test(gift.msg), `a society's chest takes a gift: ${gift.msg}`);
+      const us2 = Object.values(g.units).filter(x => x.country === c.id), a2 = us2[0], b2 = us2[1], gone = a2.id; joinUnits_(g, a2, b2); const lost = applyOp(g, g.characters[G.id], { op: 'set_posture', posture: 'defensive', unit: gone }); assert.ok(!lost.ok && new RegExp(`^${gone} is no longer a body of its own: it came up and joined ${b2.id} \\(\\d+ thousand men at `).test(lost.msg), `an order to a body that has joined another says what became of it: ${lost.msg}`); }
+    run(v, 1); run(twin, 1); assert.ok(u.quality > tu.quality + .02 && tu.quality > .8, `men who drill learn faster than barracks routine teaches (${u.quality.toFixed(3)} against ${tu.quality.toFixed(3)})`);
+    run(v, 1); run(twin, 1); assert.ok(u.quality - tu.quality < .08, 'the order is for one quarter'); }
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

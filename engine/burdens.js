@@ -1,7 +1,7 @@
 // What a person brings with them to a seat: something done that few know of, an old debt, someone of their blood who can be reached.
 // These are events and facts, not a character. What they made of the person, and what the person does about them, is the person's own affair.
 // Drawn from the person's own name and number, so the world's dice are not touched.
-import { ROLES, spawnCharacter, aliveCountries, countryProvinces } from './world.js';
+import { ROLES, spawnCharacter, aliveCountries, countryProvinces, familiesTaken } from './world.js';
 import { nextId } from './util.js';
 import { givenNames, sexOf, personName } from './names.js';
 
@@ -55,8 +55,10 @@ export function career(w, ch) {
   const forts = mine.filter(p => p.fort >= 1), fortress = (forts.length ? forts[(h >>> 7) % forts.length] : w.provinces[c.capital])?.name ?? 'the capital';
   const others = aliveCountries(w).filter(o => o.id !== c.id), abroad = others.length ? others[(h >>> 9) % others.length].name : 'another country';
   // Somebody who bears no name of the living great of the country (a namesake would read as kin), and, where the sentence says "his", a man.
-  const taken = new Set(Object.values(w.characters).filter(x => x.alive && x.country === c.id).map(x => x.name.split(' ').at(-1))), man = ch.role === 'leader' && c.archetype === 'monarchy';
-  let prev = personName(eth, rel, `${ch.id}|before`); for (let i = 2; i < 40 && (taken.has(prev.split(' ').at(-1)) || (man && sexOf(prev) !== 'm')); i++) prev = personName(eth, rel, `${ch.id}|before|${i}`);
+  const taken = familiesTaken(w, c.id), man = ch.role === 'leader' && c.archetype === 'monarchy';
+  // Where the people's names have all been given out, the name is shared with somebody small rather than with a seat-holder or another seat's predecessor.
+  const seats = new Set(ROLES.map(r => w.characters[c[r]]).filter(Boolean).flatMap(x => [x.name, x.before?.name]).filter(Boolean).map(n => n.split(' ').at(-1))), fits = (p, set) => !set.has(p.split(' ').at(-1)) && !(man && sexOf(p) !== 'm');
+  let prev = null; for (const set of [taken, seats]) { for (let i = 1; i < 60 && !prev; i++) { const p = personName(eth, rel, `${ch.id}|before${i > 1 ? `|${i}` : ''}`); if (fits(p, set)) prev = p; } if (prev) break; } prev ??= personName(eth, rel, `${ch.id}|before`);
   const known = [], record = (y, text) => { (c.chronicle ||= []).push({ year: y, text }); c.chronicle.sort((a, b) => a.year - b.year); };
   let fate;
   if (ch.role === 'leader') {

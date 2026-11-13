@@ -153,13 +153,24 @@ function lifeOf(w, id, name, role) {
   return pool[h % pool.length];
 }
 
+// The family names that mean somebody in a country: those of the living of note, and those of the last holders of its seats, who are on
+// record (burdens.js). (World 20: the last chief of staff, who was shot, the last leader of the opposition and a clerk posted to the staff
+// that winter all bore one name, and two seat-holders read the clerk as the dead man's kin.)
+export const familiesTaken = (w, cid, except) => new Set(Object.values(w.characters).filter(x => x.country === cid && x.id !== except).flatMap(x => [x.alive ? x.name : null, x.before?.name]).filter(Boolean).map(n => n.split(' ').at(-1)));
+// A family name of that people for a newcomer to the country: one nobody of the country bears; where the people's names have all been given
+// out, one shared with somebody small rather than with a seat-holder or a remembered predecessor.
+export function familyFor(w, cid, eth, drawn, except) {
+  const all = familiesTaken(w, cid, except), f = freeFamily(eth, drawn, all); if (!all.has(f)) return f;
+  const c = w.countries[cid], seats = ROLES.map(r => w.characters[c?.[r]]).filter(x => x && x.id !== except); return freeFamily(eth, drawn, new Set(seats.flatMap(x => [x.name, x.before?.name]).filter(Boolean).map(n => n.split(' ').at(-1))));
+}
 // patch: family (a surname to carry on), age ([youngest, oldest]) and power, for heirs and others who are not drawn at random.
 function spawnCharacter(w, cid, role, axes, patch = {}) {
   const id = nextId(w, 'K');
   const t = () => Math.round(between(w, 15, 90));
   const given = pick(w, givenNames(w.countries[cid]?.majorityEth, w.countries[cid]?.majorityRel)), drawn = pick(w, familyNames(w.countries[cid]?.majorityEth)), [young, old] = patch.age ?? [34, 68];
   // Nobody is given by chance the family name of somebody of note already living in the country: a name shared is a name given on purpose (kin, an heir).
-  const family = freeFamily(w.countries[cid]?.majorityEth, drawn, new Set(Object.values(w.characters).filter(x => x.alive && x.country === cid).map(x => x.name.split(' ').at(-1))));
+  // Where a people's names have all been given out, a name is shared with somebody small rather than with a seat-holder or a remembered predecessor.
+  const family = familyFor(w, cid, w.countries[cid]?.majorityEth, drawn);
   // Kin are given the family's name on purpose; they are not given their kinsman's whole name.
   const fam = patch.family ?? family, pool = givenNames(w.countries[cid]?.majorityEth, w.countries[cid]?.majorityRel), borne = new Set(Object.values(w.characters).filter(x => x.alive && x.country === cid).map(x => x.name));
   let first = given; for (let i = 1; i <= pool.length && borne.has(`${first} ${fam}`); i++) first = pool[(pool.indexOf(given) + i) % pool.length];

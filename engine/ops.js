@@ -78,7 +78,7 @@ for (const op of ['watch', 'delegate', 'standing_order', 'cancel_order']) QUIET.
 PERMISSIONS.private = new Set(PRIVATE);
 for (const seat of ['general', 'opposition', 'oligarch']) for (const op of [...OWN, ...OPEN_STANDING]) PERMISSIONS[seat].add(op);
 // The chief of staff also says who is paid first when the vote is short and how much of the arsenal an attack may not touch.
-for (const op of ['set_pay_priority', 'set_arsenal_reserve']) { PERMISSIONS.general.add(op); QUIET.add(op); }
+for (const op of ['set_pay_priority', 'set_arsenal_reserve', 'drill']) { PERMISSIONS.general.add(op); QUIET.add(op); }
 PERMISSIONS.general.add('post_person'); PERMISSIONS.general.add('cancel_work'); PERMISSIONS.general.add('tender'); PERMISSIONS.general.add('equip'); QUIET.add('equip');
 // The chief of staff directs where the army's units and squadrons stand and who commands them. Raising and disbanding troops, war and peace stay with the ruler.
 for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'appoint_commander', 'spy', 'build', 'set_posture', 'amphibious', 'offensive', 'fleet_orders', 'bombard', 'lay_mines', 'prepare_plan', 'leak_plan']) PERMISSIONS.general.add(op);
@@ -604,6 +604,10 @@ export function applyOp(w, actor, op) {
   if (key && mine) { const by = quarterBook(w, c).given?.[key], first = by && by !== actor.id ? w.characters[by] : null; if (first) return { ok: true, twice: true, msg: `${first.name} gave this same order this morning and it has been carried out. It is one order: it is not carried out a second time, and nothing more is paid for it.` }; }
   const r = applyOne(w, actor, op);
   if (key && r?.ok && !r.waits) (quarterBook(w, c).given ||= {})[key] = actor.id;
+  // An order to a body of troops that has since joined another says so. (World 20: two brigades raised in autumn joined the corps at their
+  // station on arrival; the chief of staff's orders to them that winter came back "No such unit.")
+  if (r && !r.ok && /^No such unit/.test(r.msg || '')) { const id = [op.unit, op.of, ...(Array.isArray(op.units) ? op.units : [])].map(x => String(x ?? '')).find(x => w.joined?.[x] && !w.units[x]); if (id) { let j = w.joined[id], n = 0; while (w.joined[j.into] && !w.units[j.into] && n++ < 8) j = w.joined[j.into]; const b = w.units[j.into];
+      r.msg = `${id} is no longer a body of its own: it came up and joined ${j.into}${b ? ` (${Math.round(b.men)} thousand men at ${w.provinces[b.province]?.name ?? b.province})` : ''} in ${quarterLabel(j.t)}. An order for those men is given to ${j.into}; to have them as a separate body again, detach them (move with men).`; } }
   return r;
 }
 function applyOne(w, actor, op) {
@@ -1020,6 +1024,8 @@ function applyOne(w, actor, op) {
       const to = String(op.to ?? op.character ?? op.institution ?? '').trim(), low = to.toLowerCase(), why = op.reason ? `: ${String(op.reason).slice(0, 160)}` : '', amt = Math.round(m * 10) / 10;
       const ch = has(w.characters, to) ? w.characters[to] : Object.values(w.characters).find(x => x.alive && x.name.toLowerCase() === low);
       if (ch?.alive && ch.id !== actor.id) { actor.wealth -= m; ch.wealth += m; tell(w, ch, actor.name, `${actor.name} gave you ${amt}${why}.`); return { ok: true, msg: `${amt} was given to ${ch.name}.` }; }
+      // A society's chest takes a gift from anybody (masses.js). (World 20: four gifts to the giver's own society were refused.)
+      { const soc = aliveCountries(w).flatMap(o => o.societies || []).find(s => !s.banned && (s.id === to || s.name.toLowerCase() === low || s.name.toLowerCase().replace(/^the /, '') === low.replace(/^the /, ''))); if (soc) { actor.wealth -= m; soc.funds = (soc.funds || 0) + m; soc.strength = clamp(soc.strength + m * .5, 0, 85); const f = w.characters[soc.by]; if (f?.alive && f.id !== actor.id) tell(w, f, actor.name, `${actor.name} gave ${amt} to ${soc.name}${why}.`); return { ok: true, msg: `${amt} was put into the chest of ${soc.name}, which is the larger for it.` }; } }
       for (const o of aliveCountries(w)) { const inst = (o.institutions || []).find(i => i.id && (i.id === to || i.name.toLowerCase() === low)); if (!inst) continue;
         actor.wealth -= m; inst.endowment = (inst.endowment || 0) + m; const keeper = w.characters[inst.head] ?? w.characters[inst.sponsor]; if (keeper && keeper.id !== actor.id) tell(w, keeper, actor.name, `${actor.name} gave ${amt} to ${inst.name}${why}.`);
         return { ok: true, msg: `${amt} was given to ${inst.name}; it will spend the gift over the coming quarters.` }; }
@@ -1158,6 +1164,19 @@ function applyOne(w, actor, op) {
       return { ok: true, msg: `${words} prisoners went home to ${target.name}${held - n > .05 ? `; about ${Math.round((held - n) * 10) / 10} thousand are still held` : ''}. Their country reads the gesture, and holds a little less against us; the men are on its reserve roll again and can be called up${atWar(w, c.id, target.id) ? ' against us' : ''}.` };
     }
     // Who is paid and supplied first when the vote for the forces falls short. Default: nobody; all are short alike.
+    // A season of exercises: field days, musketry, staff rides. It costs money and cartridges, and men who drill come up to the army's standard
+    // in a few quarters where barracks routine takes years, and a little past it. (Worlds 17 and 20: chiefs of staff ordered a winter of
+    // training for raw brigades they meant to use in spring, three times, and the office could only write it down.)
+    case 'drill': {
+      const mine = Object.values(w.units).filter(u => u.country === c.id), named = [...new Set([op.unit, ...(Array.isArray(op.units) ? op.units : op.units ? [op.units] : [])].filter(Boolean).map(x => String(x).trim()))];
+      const picked = op.all === true ? mine : mine.filter(u => named.includes(u.id) || (op.province && u.province === op.province));
+      if (!picked.length) return fail(`Say which bodies are to drill (unit or units; province; or all: true). The army's bodies: ${mine.slice(0, 16).map(u => u.id).join(', ')}.`);
+      const fresh = picked.filter(u => u.drill !== w.turn); if (!fresh.length) return fail('They are at their exercises this quarter already; ordering it twice fires off no more cartridges and teaches nothing more.');
+      const men = sum(fresh, u => u.men), all = Math.max(sum(mine, u => u.men), 1e-9), shells = men * .004, cost = upkeepCost(w, c) * men / all * .15, free = Math.max(0, (c.stock.arms || 0) - (c.arsenalReserve || 0));
+      if (free < shells) return fail(`A season of exercises for ${Math.round(men)} thousand men fires off about ${Math.round(shells * 10) / 10} of arms; the arsenal has ${Math.round(free * 10) / 10} to spare${c.arsenalReserve ? ` above the reserve of ${Math.round(c.arsenalReserve)}` : ''}.`);
+      const note = pay(c, cost); if (note === null) return fail(NO_FUNDS);
+      c.stock.arms -= shells; for (const u of fresh) u.drill = w.turn;
+      return { ok: true, msg: `${fresh.map(u => u.id).join(', ')} (${Math.round(men)} thousand men) spend the quarter at field exercises and musketry: ${Math.round(cost)} from the treasury and ${Math.round(shells * 10) / 10} of arms from the arsenal. Men who drill come up to the army's standard in a few quarters where barracks routine takes years, and a little past it; the edge wears off again when the drilling stops. The order is for this quarter; it is given again for the next.${note}` }; }
     case 'set_pay_priority': {
       const list = [...new Set((Array.isArray(op.first) ? op.first : op.first ? [op.first] : []).map(x => String(x).trim()).filter(Boolean))].slice(0, 24);
       // A body that is not on the rolls (formed only this quarter, or misnamed) is left out and named; the rest of the order stands. (World 16: a
@@ -1669,7 +1688,7 @@ function applyOne(w, actor, op) {
       if (used(w, c, key) > 0) return fail('The network there has had this task once this quarter already; a second attempt so soon would only expose it.');
       const cost = gdp * (kind === 'intel' ? .0008 : kind === 'sabotage' ? .002 : .003), note = pay(c, cost); if (note === null) return fail(NO_FUNDS);
       allowance(w, c, key, 1, 1);
-      const p = clamp(.25 + (c.intelligence - target.intelligence) / 160 + rand(w) * .3, .08, .9); if (rand(w) > p) { if (rand(w) < .5) { target.relations[c.id] = clampRel((target.relations[c.id] ?? 0) - 18); news(w, `${target.name} caught spies from ${c.name}.`, { kind: 'diplomacy', countries: [c.id, target.id] }); } return fail(`The operation failed; the ${Math.round(cost)} it cost is spent.${note}`); } c.intel[target.id] = clamp((c.intel[target.id] ?? 0) + 25, 0, 100); if (kind === 'sabotage') { const v = pick(w, countryProvinces(w, target.id)); if (v) { for (const k of Object.keys(v.plants)) v.plants[k] *= .9; v.devastation = clamp(v.devastation + .08, 0, 1); news(w, `Mysterious explosions at industrial plants in ${v.name}.`, { kind: 'plot', countries: [target.id] }); } }
+      const p = clamp(.25 + (c.intelligence - target.intelligence) / 160 + rand(w) * .3, .08, .9); if (rand(w) > p) { if (rand(w) < .5) { target.relations[c.id] = clampRel((target.relations[c.id] ?? 0) - 18); news(w, `${target.name} caught spies from ${c.name}.`, { kind: 'diplomacy', countries: [c.id, target.id] }); } return fail(`The operation failed; the ${Math.round(cost)} it cost is spent. ${c.intelligence < target.intelligence - 8 ? `Their police and their counter-espionage are better than our service (ours stands at ${Math.round(c.intelligence)} of 100, and it lives on the vote for the police and on years of work): against them it fails more often than it succeeds.` : 'Our service is no worse than theirs: it was the day\'s luck, and the network can be tried again next quarter.'}${note}`); } c.intel[target.id] = clamp((c.intel[target.id] ?? 0) + 25, 0, 100); if (kind === 'sabotage') { const v = pick(w, countryProvinces(w, target.id)); if (v) { for (const k of Object.keys(v.plants)) v.plants[k] *= .9; v.devastation = clamp(v.devastation + .08, 0, 1); news(w, `Mysterious explosions at industrial plants in ${v.name}.`, { kind: 'plot', countries: [target.id] }); } }
       // Money for agitators keeps one fire burning; it does not light a second on top of the first.
       if (kind === 'fund_uprising') { const lit = target.mods.find(m => m.label === 'Foreign-backed unrest'); if (lit) lit.turns = 3; else target.mods.push({ key: 'unrest', delta: 9, turns: 3, label: 'Foreign-backed unrest' }); }
       return { ok: true, msg: `${kind === 'intel' ? `The network in ${target.name} is reporting` : kind === 'sabotage' ? `Works in ${target.name} were damaged` : `Agitators in ${target.name} are paid and at work for some quarters`}; it cost ${Math.round(cost)}.${note}` }; }
@@ -1698,10 +1717,18 @@ function applyOne(w, actor, op) {
     case 'concession': { const k = op.cls;
       if (k === 'army') {
         // A bonus paid to the troops buys their spirit for a while; it does not replace regular pay.
-        const cost = gdp * num(op.pct_gdp, 0, .15), us = Object.values(w.units).filter(u => u.country === c.id); if (!us.length) return fail('There is no army to pay.');
+        // It can be paid to named bodies of troops alone (unit, units): the guard in the capital, the corps on one frontier. They are the
+        // better for it; the rest of the army hears who was paid and who was not. (World 20: a ruler's bonus to the capital garrison was
+        // refused because the purse could only be opened to the whole army.)
+        const every = Object.values(w.units).filter(u => u.country === c.id); if (!every.length) return fail('There is no army to pay.');
+        const named = [...new Set([op.unit, ...(Array.isArray(op.units) ? op.units : op.units ? [op.units] : [])].filter(Boolean).map(x => String(x).trim()))], us = named.length ? every.filter(u => named.includes(u.id)) : every;
+        if (named.length && !us.length) return fail(`No such body of troops: ${named.join(', ')}. The army's bodies: ${every.slice(0, 16).map(u => u.id).join(', ')}.`);
+        const cost = op.amount != null ? num(op.amount, 0, gdp * .15, 0) : gdp * num(op.pct_gdp, 0, .15); if (!(cost > 0)) return fail('Name the sum (amount, or pct_gdp as a share of a quarter\'s output).');
         const note = pay(c, cost); if (note === null) return fail(NO_FUNDS);
-        const lift = clamp(cost / Math.max(upkeepCost(w, c), 1) * 20, 0, 15);
+        const share = sum(us, u => u.men) / Math.max(sum(every, u => u.men), 1e-9), lift = clamp(cost / Math.max(upkeepCost(w, c) * share, 1) * 20, 0, 15);
         for (const u of us) { u.morale = clamp(u.morale + lift, 0, 100); u.loyalty = clamp(u.loyalty + lift / 2, 0, 100); }
+        if (named.length) { const sour = Math.min(2, lift / 6); for (const u of every) if (!us.includes(u)) u.loyalty = clamp(u.loyalty - sour, 0, 100);
+          return { ok: true, msg: `${us.map(u => u.id).join(', ')} ${us.length > 1 ? 'were' : 'was'} paid a bonus of ${Math.round(cost)}: their spirit and their faith in the government are the better for it for a while. It does not replace regular pay, and the rest of the army has heard who was paid and who was not.${note}` }; }
         c.mods.push({ key: 'sat.army', delta: lift / 2, turns: 3, label: 'Bonus paid to the troops' });
         return { ok: true, msg: `The troops were paid a bonus of ${Math.round(cost)}.${note}` };
       }
