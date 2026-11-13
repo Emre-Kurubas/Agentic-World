@@ -5956,5 +5956,41 @@ chain('A league is born of a grievance and belongs to whoever takes it up: none 
   // A party once forbidden can be let back.
   { const v = structuredClone(w), cv = v.countries[c.id], Rv = v.characters[cv.leader], p = cv.parties.find(x => x.id !== cv.rulingParty); p.banned = true; const back = applyOp(v, Rv, { op: 'ban_party', party: p.id, lift: true }); assert.ok(back.ok && !p.banned, `a ban on a party can be lifted: ${back.msg}`); }
 });
+import { reckon as reckon_, rankStep as rankStep_, tableLine as tableLine_, placeOf as placeOf_ } from '../engine/rank.js';
+import { grievances as grievances_ } from '../engine/leagues.js';
+chain('The states are ranked and everybody sees the table: it is printed when a year closes and nothing moves in a quiet one; a state that passes another is proud of its government and one that is passed holds it against its own; whoever governs and the chief of staff are told of the age that it is so, and nobody else is', () => {
+  // The user asked for an aim ("the strongest, most dominant state") and took the fact of the age in its place.
+  const w = inherited(2696855, 8), cs = aliveCountries(w), year = () => { for (let i = 0; i < 4; i++) { beginTurn(w); stepWorld(w); } };
+  assert.ok(w.table && w.table.order.length === 8 && Math.abs(Object.values(w.table.score).reduce((a, v) => a + v, 0) - 100) < .01, 'a world is handed over with its table: the shares of the world\'s strength come to a hundred');
+  const first = [...w.table.order]; year();
+  assert.ok(first.every((id, i) => w.table.order[i] === id) && w.newsLog.some(n => /^The table of the powers for 1901: 1\. \w+, .*8\. \w+\. No state has changed its place\.$/.test(n.text)), `a quiet year changes nobody's place, and the table is in the papers: ${w.newsLog.find(n => /table of the powers/.test(n.text))?.text}`);
+  // Every seat reads it in the morning; the fact of the age is said once, to two seats.
+  const c = cs.find(x => w.table.order.indexOf(x.id) === 4), up = w.countries[w.table.order[3]], R = ld(w, c), G = w.characters[c.general], O = w.characters[c.opposition];
+  assert.ok(/The table of the powers \(1901; reckoned when each year closes[^)]*\): 1\. \w+ \d+, .*8\. \w+ \d+\. We stand 5th\./.test(desk(w, O)) && tableLine_(w, c).includes('We stand 5th.'), `the table stands in every seat's morning: ${tableLine_(w, c)}`);
+  const fact = 'One more fact of the age. The states of this world are ranked, by everybody, all the time';
+  assert.ok(actorPrompt(w, R, [], false, { intro: true }).includes(fact) && actorPrompt(w, G, [], false, { intro: true }).includes(fact) && !actorPrompt(w, O, [], false, { intro: true }).includes(fact) && !actorPrompt(w, w.characters[c.oligarch], [], false, { intro: true }).includes(fact) && /Whether you do, and what you would pay or make others pay for it, is yours to say\./.test(actorPrompt(w, R, [], false, { intro: true })), 'whoever governs and the chief of staff are told that states are ranked; the other two seats are told nothing of the kind');
+  // A state that arms passes the one above it.
+  const big = Object.values(w.units).filter(u => u.country === c.id).sort((a, b) => b.men - a.men)[0], l0 = c.legitimacy, lu = up.legitimacy, g0 = grievances_(w, up).national; big.men += 260; c.reserves *= 2.2;
+  const calm = structuredClone(w); const cc = calm.countries[c.id]; Object.values(calm.units).find(u => u.id === big.id).men -= 260; cc.reserves /= 2.2;
+  w.turn = calm.turn = 7; rankStep_(w); rankStep_(calm);
+  assert.ok(placeOf_(w, c) <= 4 && placeOf_(w, up) > 4 && placeOf_(calm, cc) === 5, `it passes its neighbour in the table (${placeOf_(w, c)} from 5)`);
+  assert.ok(c.legitimacy > l0 + 1 && up.legitimacy < lu - 1 && Math.abs(cc.legitimacy - l0) < .01, `the state that rose gives its government the credit, and the one that was passed holds it against its own (${l0.toFixed(1)} -> ${c.legitimacy.toFixed(1)}; ${lu.toFixed(1)} -> ${up.legitimacy.toFixed(1)})`);
+  assert.ok(new RegExp(`We stand ${placeOf_(w, c)}(st|nd|rd|th) of 8, where we stood 5th a year ago: we have passed [^.]*${up.rootName}[^.]*\\. Our share of the world's strength is up by about \\d+ in the hundred against a year ago, chiefly in our (army|gold)\\. At home it is felt: a country that sees itself rise gives its government the credit\\.`).test(R.inbox.at(-1).text) && G.inbox.some(m => m.from === 'The chancellery' && /we have passed/.test(m.text)), `the ruler and the chief of staff are told where they stand and why: ${R.inbox.at(-1).text}`);
+  assert.ok(new RegExp(`${c.rootName} has passed us\\.[^]*At home it is felt: a country that sees itself fall holds it against the government under which it fell\\.`).test(ld(w, up).inbox.at(-1).text) && up.rankFell?.places >= 1 && grievances_(w, up).national > g0 + 4, `and in the state that fell, those who say the nation is let down are believed the more (${g0.toFixed(1)} -> ${grievances_(w, up).national.toFixed(1)})`);
+  assert.ok(w.newsThisTurn.some(n => new RegExp(`The table of the powers for 1902: .*${c.rootName} has passed [^.]*${up.rootName}`).test(n.text)), 'and every paper prints who passed whom');
+  // Two things from the first review of world 24.
+  // The office entered a watch on somebody the order never named.
+  { const v = inherited(2696855, 8), cv = aliveCountries(v)[2], Rv = ld(v, cv), opp = v.characters[cv.opposition], other = v.characters[cv.general], g = new Game({ ...base, backend: 'mock' }, null); g.w = v;
+    const r = g.applyRuling(Rv, { narrative: 'She is watched.', prob: 1, public: false, ops: [{ op: 'watch', character: other.id }], source: 'referee', decisionText: `Put ${opp.name} (${opp.id}) under police watch: her associates and her funds. No arrests.` });
+    assert.ok((v.watches || []).some(x => x.by === Rv.id && x.key === opp.id) && !(v.watches || []).some(x => x.key === other.id), `an order that names one person by number is entered for that person, whatever number the office wrote: ${JSON.stringify((v.watches || []).map(x => x.key))} ${r?.text ?? ''}`);
+    g.applyRuling(Rv, { narrative: 'He is watched.', prob: 1, public: false, ops: [{ op: 'watch', character: other.id }], source: 'referee', decisionText: `Have ${other.name} watched, and ${opp.name} (${opp.id}) left alone for now.` });
+    assert.ok((v.watches || []).some(x => x.key === other.id), 'and where the order names the person the office wrote, nothing is changed'); }
+  // A works with no place named: the engineers choose.
+  { const v = inherited(2696855, 8), cv = aliveCountries(v).find(x => x.archetype === 'republic'), O2 = v.characters[cv.oligarch]; O2.wealth = 80;
+    const r = applyOp(v, O2, { op: 'found_company', sector: 'goods', amount: 20, name: 'New Mill' }), f = v.firms[r.firm], p = v.provinces[f?.province];
+    assert.ok(r.ok && p?.controller === cv.id && new RegExp(`^No place was named, so the engineers chose ${p.name} \\(${p.id}\\): hands to be had[^.]*\\. Company founded: `).test(r.msg), `a works founded without a place is put where the engineers would put it, and the founder is told where: ${r.msg}`);
+    const two = countryProvinces(v, cv.id).filter(q => q.id !== p.id).slice(0, 2), r2 = applyOp(v, O2, { op: 'found_company', sector: 'goods', amount: 10, provinces: two.map(q => q.id) });
+    assert.ok(r2.ok && two.some(q => q.id === v.firms[r2.firm].province), 'and among the places the founder names, one of those'); }
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

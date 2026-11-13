@@ -6,6 +6,7 @@ import { countryRoot, hashOf } from './names.js';
 import { initGroups } from './culture.js';
 import { initCreeds } from './doctrine.js';
 import { initLeagues } from './leagues.js';
+import { initTable } from './rank.js';
 import { initAdmin } from './admin.js';
 import { partyStep, satisfactionStep } from './politics.js';
 import { leaderForeignness } from './culture.js';
@@ -376,6 +377,8 @@ export function inheritStates(w) {
   w.creeds = true; initCreeds(w, cs);
   // What each country is used to grieving over: a league is born only of what comes after.
   w.leagues = true; initLeagues(w, cs);
+  // The table of the powers as the world is handed over.
+  initTable(w);
 }
 // The books of the quarter before anyone governs lie on the desks the first morning. One quarter is run on a copy, as the state stands on the day
 // of handing over, and what that quarter's accounts would read (the treasury's books, the prices and the labour market, what each works turned out

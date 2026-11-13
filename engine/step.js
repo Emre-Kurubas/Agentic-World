@@ -1,6 +1,7 @@
 import { economyStep } from './economy.js';
 import { creedStep } from './doctrine.js';
 import { leagueStep } from './leagues.js';
+import { rankStep } from './rank.js';
 import { openGold, closeGold } from './gold.js';
 import { militaryStep, depotStep } from './military.js';
 import { satisfactionStep, plotStep, uprisingStep, electionStep, collapseStep, relationDrift, lifeStep, pruneStep, partyStep, debtStep } from './politics.js';
@@ -90,6 +91,8 @@ export function stepWorld(w) {
     });
     if (c.history.length > 240) c.history.shift();
   }
+  // When a year closes the table of the powers is reckoned and printed (rank.js).
+  rankStep(w);
   w.newsLog.push(...w.newsThisTurn);
   if (w.newsLog.length > 800) w.newsLog.splice(0, w.newsLog.length - 800);
   w.turn += 1;

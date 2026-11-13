@@ -21,6 +21,7 @@ import { isMinor, postOf, watch, leaseDrain } from '../engine/court.js';
 import { temperWord } from '../engine/labour.js';
 import { cellsWord, shut } from '../engine/underground.js';
 import { leagueWords, leagueMemorandum } from '../engine/leagues.js';
+import { tableLine } from '../engine/rank.js';
 import { grudgeWord, serviceOf, reserveAt, drillOf } from '../engine/frontier.js';
 import { honourOf, honourWord, guaranteesOf, seesTreaty, tieOf, tieWord, stanceOf, recognises, answered, aimsText, kindWord, kinWords, faithCost, bondMood, pledgesOf, recordWords, kinOf } from '../engine/diplomacy.js';
 import { papersOf } from '../engine/press.js';
@@ -752,6 +753,8 @@ export const addStanding = f => { STANDING.push(f); };
 // exchanges have done to prices in a year. Everything in it is public: secret papers, garrisons and plans are not here.
 export function worldToday(w, c, ch) {
   const nm = id => w.countries[id]?.name ?? id, since = ch.lastWake ?? w.turn - 1, live = aliveCountries(w), out = [];
+  // The table everybody keeps: who stands where among the powers.
+  if (w.table && c?.alive) out.push(tableLine(w, c));
   const wars = (w.wars || []).filter(x => x.active);
   for (const x of wars) {
     if (x.civil) { out.push(`Civil war in ${nm(x.a[0])} since ${quarterLabel(x.start)}.`); continue; }

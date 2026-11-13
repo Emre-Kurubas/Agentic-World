@@ -19,6 +19,16 @@ export const ownerName = (w, f) => f.owner === STATE ? 'state' : w.characters[f.
 
 function capacity(w, f) { const p = w.provinces[f.province]; return f.sector === 'mine' ? p.deposits[f.resource]?.mine ?? 0 : p.plants[f.sector] ?? 0; }
 // A step of capacity costs what it takes to equip the working people of its province. Second-hand, works fetch a fifth of that (a pit a tenth).
+// Where the engineers would put a works nobody has given a place: a pit on the richest known deposit of that thing nobody works yet; a
+// mill where the most hands are and the fewest works of its kind stand already, a harbour or a railway counting for a fifth more each.
+function siteFor(w, c, op, among) {
+  const pool = (among.length ? among : countryProvinces(w, c.id)).filter(p => p.controller === c.id && p.owner === c.id);
+  if (op.sector === 'mine') { const worked = new Set(Object.values(w.firms || {}).filter(f => f.status === 'open' && f.sector === 'mine' && f.resource === op.resource).map(f => f.province)); const best = pool.filter(p => p.deposits?.[op.resource]?.known && p.deposits[op.resource].amount > 0 && !worked.has(p.id) && (p.deposits[op.resource].mine ?? 0) < MAX_MINE).sort((a, b) => b.deposits[op.resource].amount - a.deposits[op.resource].amount)[0]; return best ? { id: best.id, why: 'the richest known deposit of it that nobody works' } : null; }
+  if (!(typeof op.sector === 'string' && Object.hasOwn(PLANTS, op.sector))) return null;
+  const score = p => (p.pops?.workers?.n ?? 0) / (1 + (p.plants?.[op.sector] ?? 0) * 2) * (1 + (p.port ? .2 : 0) + (p.rail ? .2 : 0));
+  const best = pool.filter(p => (p.plants?.[op.sector] ?? 0) < MAX_PLANT).sort((a, b) => score(b) - score(a))[0];
+  return best ? { id: best.id, why: `hands to be had${best.port ? ', a harbour' : ''}${best.rail ? ', the railway' : ''}, and ${(best.plants?.[op.sector] ?? 0) > .05 ? 'few works of the kind there yet' : 'no works of the kind there yet'}` } : null;
+}
 const stepPrice = (w, f) => { const p = w.provinces[f.province]; return f.sector === 'mine' ? minePrice(p) : plantPrice(p); };
 const secondHand = (w, f) => f.stake * capacity(w, f) * stepPrice(w, f) * (f.sector === 'mine' ? .1 : .2);
 // A company is worth the cash in its till and what its works bring in: about three years of what it has lately earned (f.earn, smoothed over the
@@ -205,6 +215,10 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
   const firm = op.op === 'found_company' ? null : firmBy(w, actor, op.id ?? op.company), isHead = governs(w, c, actor);
   switch (op.op) {
     case 'found_company': {
+      // No place named, or several to choose among: the engineers choose (siteFor), and the founder is told where and why.
+      // (Four games running an owner wrote "wherever hands and a harbour are close" and the office answered that it waited on a province.)
+      let chosen = null;
+      if (!w.provinces[op.province]) { const among = (Array.isArray(op.provinces) ? op.provinces : Array.isArray(op.province) ? op.province : []).map(id => w.provinces[id]).filter(Boolean); chosen = siteFor(w, c, op, among); if (!chosen) return fail(op.sector === 'mine' ? `No place was named, and the mining returns show no ${GOOD_LABEL[op.resource] ?? op.resource ?? 'deposit'} in ${c.name} that is not worked already: a pit is founded on a known deposit (province, resource).` : 'No place was named, and the engineers found none in the country with room for such a works: name a province.'); op = { ...op, province: chosen.id }; }
       const p = w.provinces[op.province]; if (!p) return fail('No such province.');
       const host = w.countries[p.controller], sector = op.sector, mine = sector === 'mine';
       if (!host?.alive) return fail('A company cannot be founded here.');
@@ -225,7 +239,7 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
       // Less capital than was named: the works is as large as the money that was there, and its founder is told. (World 19: a works ordered
       // with 150 and another with 100 were founded with the 35 and the 30 their owner had, and the answer was the same as for the whole.)
       const named = num(op.amount, 0, 1e9, 0), r1 = v => Math.round(v * 10) / 10;
-      return { ok: true, msg: `Company founded: ${f.id}, with ${r1(amount)}${amount < named - .5 ? ` of the ${r1(named)} named (${state ? 'the treasury' : 'your purse'} held no more), and its works is so much the smaller` : ''}. Its works will stand in ${durationOf(f.sector)} quarters.`, firm: f.id };
+      return { ok: true, msg: `${chosen ? `No place was named, so the engineers chose ${p.name} (${p.id}): ${chosen.why}. ` : ''}Company founded: ${f.id}, with ${r1(amount)}${amount < named - .5 ? ` of the ${r1(named)} named (${state ? 'the treasury' : 'your purse'} held no more), and its works is so much the smaller` : ''}. Its works will stand in ${durationOf(f.sector)} quarters.`, firm: f.id };
     }
     case 'invest_company': {
       if (!firm || !isOpen(firm)) return fail('No such company.');

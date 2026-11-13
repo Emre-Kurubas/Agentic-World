@@ -85,6 +85,15 @@ async function pool(items, n, fn) {
   return results;
 }
 
+// See applyRuling: the one person an order names by number, where the operation written for it names somebody the order does not mention.
+function namedPerson(w, op, text) {
+  const x = typeof op?.character === 'string' ? w.characters[op.character] : null; if (!x) return op;
+  const said = String(text), has = s => s && said.toLowerCase().includes(String(s).toLowerCase());
+  if (new RegExp(`\\b${x.id}\\b`).test(said) || has(x.name) || has(x.name.split(' ').pop())) return op;
+  const ids = [...new Set(said.match(/\bK\d+\b/g) || [])].filter(id => w.characters[id]?.alive);
+  return ids.length === 1 ? { ...op, character: ids[0] } : op;
+}
+
 export class Game {
   constructor({ world, cfg, backend, store, onUpdate }) { Object.assign(this, { w: world, cfg, backend, store, onUpdate }); this.status = 'ready'; this.progress = ''; this.stop = false; this.sessions = store?.loadSessions?.() ?? {}; }
   setStatus(status, progress = '') { this.status = status; this.progress = progress; this.onUpdate?.({ type: 'status', status, progress, turn: this.w.turn }); }
@@ -394,6 +403,11 @@ export class Game {
   // attack on it to fail (ops.js hangOn, carryTaken); and an operation may name the place it waits for itself (once_taken).
   applyRuling(ch, { narrative, note, prob, public: pub, ops, source, decision, decisionText }) {
     const w = this.w, c = w.countries[ch.country];
+    // The order's own word says whom it means. Where the order names exactly one person by number and the office entered somebody the
+    // order never mentions, the person the order names is the one meant.
+    // (World 24: "Put Maria Ur-Nanna (K31) ... under police watch" was entered as a watch on K294, the commander of the sovereign's guard,
+    // who was watched for a quarter while the woman the empress meant was not.)
+    if (source === 'referee' && decisionText) ops = ops.map(op => namedPerson(w, op, decisionText));
     const chancy = op => op?.op === 'custom', diced = prob > 0 && prob < 1 && (!ops.length || ops.some(chancy)), luck = prob >= 1 || (prob > 0 && (!diced || rand(w) < prob));
     const results = prob > 0 ? carryList(w, ch, ops, (plain, op) => chancy(op) && !luck ? { ok: false, chance: true, msg: 'It did not come off.' } : plain.op === 'report' ? orderReport(w, ch, plain) : safeApply(w, ch, plain)) : [];
     // The ruling as a whole failed if the dice went against it and nothing else in it was done.

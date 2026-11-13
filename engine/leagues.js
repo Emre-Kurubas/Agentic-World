@@ -45,10 +45,11 @@ function hard(w, c) {
 }
 const lostOf = (w, c) => Object.values(w.provinces).filter(p => p.lostBy === c.id && p.owner !== c.id);
 const othersShare = (w, c, test) => { const home = countryProvinces(w, c.id); let all = 0, n = 0; for (const p of home) { const pop = provincePop(p); all += pop; for (const g of groupsOf(p)) if (test(g)) n += pop * g.share; } return all ? n / all : 0; };
+// (A state that has fallen in the table of the powers within two years is a nation let down: rank.js.)
 // What each kind of grievance comes to today (before what the country is used to is taken off).
 export function grievances(w, c) {
   const h = hard(w, c), out = {}, year = yearOf(w), lost = lostOf(w, c);
-  { const fresh = sum(lost.filter(p => (p.lostIn ?? 0) >= 1900), p => 24 * clamp(1 - (year - p.lostIn) / 8, .3, 1)), old = Math.min(9, lost.filter(p => (p.lostIn ?? 0) < 1900).length * 3), wrongs = (c.grief ?? 0) * 2.5, losing = c.war?.losing ? 10 : 0;
+  { const fresh = sum(lost.filter(p => (p.lostIn ?? 0) >= 1900), p => 24 * clamp(1 - (year - p.lostIn) / 8, .3, 1)), old = Math.min(9, lost.filter(p => (p.lostIn ?? 0) < 1900).length * 3), wrongs = (c.grief ?? 0) * 2.5, losing = (c.war?.losing ? 10 : 0) + (c.rankFell && w.turn - c.rankFell.turn < 8 ? Math.min(20, c.rankFell.places * 8) : 0);
     const pointed = Math.min(60, fresh) + old + wrongs + losing; out.national = (pointed + (pointed > 6 ? h.v * .5 : 0)) * (.7 + (clamp(c.axes?.nation ?? 0, -100, 100) + 100) / 200 * .6); }
   if (c.archetype !== 'revolutionary') out.red = (h.v * 1.4 + Math.max(0, 40 - h.wk) * .8) * (c.unions ? 1 : 1.15);
   else { const m = meanSat(w, c, 'middle'); out.white = Math.max(0, (c.ownership ?? 0) - .4) * 40 + Math.max(0, (c.moodBase?.middle ?? m) - m) * 1.5 + c.parties.filter(p => p.banned).length * 3 + h.v * .5; }
