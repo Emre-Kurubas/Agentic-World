@@ -5845,5 +5845,32 @@ chain('World 23, fourth review: whoever commands troops can give them orders, an
   if (foe) { w.wars.push({ id: 'S-t40', a: [c.id], b: [foe.id], civil: false, active: true, start: w.turn, name: 't40' }); mine.target = null; delete mine.posture; const to = Object.values(w.provinces).find(p => p.controller === foe.id && p.neighbors.includes(mine.province));
     const go = applyOp(w, old, { op: 'offensive', to: to.id, manner: 'probe' }); assert.ok(go.ok && mine.attack?.to === to.id && !other.attack, `he attacks with what he commands: ${go.msg.slice(0, 140)}`); }
 });
+chain('What a country\'s houses lend abroad is its government\'s to say: left alone they lend as they see fit and the treasury reports who borrowed; made to wait for leave, a request lies before the government, which grants it on its own terms or refuses; closed, they lend nothing; and a request nobody answers lapses', () => {
+  // World 23: one belligerent carried its war on 870 borrowed of the houses of the state that was mediating that war, whose government was
+  // never asked; and that government, the richest in the world, had no way to make its gold a lever.
+  const w = inherited(2696855, 8), cs = aliveCountries(w), l = [...cs].sort((a, b) => b.reserves - a.reserves)[0], b = cs.find(o => o.id !== l.id), Ll = ld(w, l), Lb = ld(w, b), lines = () => memorandaOf(w, l, Ll).flatMap(([, x]) => x).join('\n'); w.wars = [];
+  for (const o of cs) o.reserves = Math.max(o.reserves, o.realGdp * .5); l.reserves = l.realGdp * 3;
+  // Left alone: as before, and the lender's treasury says who borrowed.
+  const free = applyOp(w, Lb, { op: 'borrow_foreign', target: l.id, pct_gdp: .02 }); assert.ok(free.ok && !free.waits && b.creditors[l.id] > 1, `left alone the houses lend as they see fit: ${free.msg}`); const first = b.creditors[l.id];
+  w.turn += 1; const told = lines();
+  assert.ok(new RegExp(`Foreign governments borrowed \\d+ of our houses last quarter: ${b.name.split(' ').pop()} \\d+\\. They owe our houses \\d+ in all\\. The houses lend where they see a return and ask nobody's leave\\. The government can leave them free, make every such loan wait for its own leave and its own terms, lay a premium on it, or forbid it to a state by name \\(set_lending\\)\\. Or nothing\\.`).test(told), `the lender's treasury reports who borrowed and what can be done: ${told.slice(0, 500)}`);
+  // By leave.
+  const O = w.characters[l.oligarch]; assert.ok(!applyOp(w, O, { op: 'set_lending', target: b.id, mode: 'leave' }).ok, 'it is not a private person\'s to order');
+  const set = applyOp(w, Ll, { op: 'set_lending', target: b.id, mode: 'leave' }); assert.ok(set.ok && /only with the government's leave/.test(set.msg) && Lb.inbox.some(m => /every loan to us waits for that government's leave/.test(m.text)), `the government makes loans to one state wait for its leave, and that state is told: ${set.msg}`);
+  const ask = applyOp(w, Lb, { op: 'borrow_foreign', target: l.id, amount: 180 });
+  assert.ok(ask.ok && ask.waits && new RegExp(`The houses of ${l.name} lend to a foreign state only with their government's leave\\. The request for 180 lies before it; nothing is lent until it answers, and it may name its own terms\\.`).test(ask.msg) && b.creditors[l.id] === first && w.loanAsks.length === 1, `the request waits and no gold moves: ${ask.msg}`);
+  assert.ok(new RegExp(`${b.name} asks leave to borrow 180 in gold of our houses`).test(lines()) && Ll.inbox.some(m => /asks leave to borrow 180 in gold of our houses/.test(m.text)), 'and it lies before the lender\'s government');
+  const gold0 = b.reserves, grant = applyOp(w, Ll, { op: 'answer_loan', id: w.loanAsks[0].id, answer: 'grant', amount: 100, premium: .005, words: 'On the understanding that no army crosses the river this year.' });
+  assert.ok(grant.ok && Math.abs(b.creditors[l.id] - first - 100) < .5 && Math.abs(b.reserves - gold0 - 100) < .5 && !w.loanAsks.length && b.creditTerms?.[l.id]?.rate > .005 && Lb.inbox.some(m => /has given leave: 100 in gold is lent us[^]*Its terms, as it wrote them: "On the understanding that no army crosses the river this year\."/.test(m.text)), `granted for less, at a premium, on terms written down: ${grant.msg}`);
+  // Refused, closed, lapsed.
+  applyOp(w, Lb, { op: 'borrow_foreign', target: l.id, amount: 50 }); const no = applyOp(w, Ll, { op: 'answer_loan', target: b.id, answer: 'refuse', words: 'Not while the war lasts.' }), owed = b.creditors[l.id];
+  assert.ok(no.ok && b.creditors[l.id] === owed && Lb.inbox.some(m => /has refused us leave to borrow of its houses[^]*Not while the war lasts/.test(m.text)), `refused, nothing is lent and the asker is told: ${no.msg}`);
+  applyOp(w, Ll, { op: 'set_lending', target: b.id, mode: 'closed' }); const shut = applyOp(w, Lb, { op: 'borrow_foreign', target: l.id, amount: 50 });
+  assert.ok(!shut.ok && /forbidden its houses to lend to us/.test(shut.msg), `closed, they lend nothing and say why: ${shut.msg}`);
+  const other = applyOp(w, Lb, { op: 'borrow_foreign', pct_gdp: .01 }); assert.ok(other.ok && !other.waits && b.creditors[l.id] === owed, `with no lender named the gold is found in a house that is free to lend: ${other.msg}`);
+  applyOp(w, Ll, { op: 'set_lending', target: b.id, mode: 'leave' }); applyOp(w, Lb, { op: 'borrow_foreign', target: l.id, amount: 40 }); w.turn += 2; carrySigned(w);
+  assert.ok(!w.loanAsks.length && Lb.inbox.some(m => /was never answered and has lapsed/.test(m.text)), 'a request nobody answered lapses after two quarters, and the asker is told');
+  const clear = applyOp(w, Ll, { op: 'set_lending', target: b.id, clear: true }); assert.ok(clear.ok && applyOp(w, Lb, { op: 'borrow_foreign', target: l.id, pct_gdp: .005 }).ok && !w.loanAsks.length, `withdrawn, the houses are free again: ${clear.msg}`);
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');
