@@ -1755,8 +1755,10 @@ function applyOne(w, actor, op) {
         // better for it; the rest of the army hears who was paid and who was not. (World 20: a ruler's bonus to the capital garrison was
         // refused because the purse could only be opened to the whole army.)
         const every = Object.values(w.units).filter(u => u.country === c.id); if (!every.length) return fail('There is no army to pay.');
-        const named = [...new Set([op.unit, ...(Array.isArray(op.units) ? op.units : op.units ? [op.units] : [])].filter(Boolean).map(x => String(x).trim()))], us = named.length ? every.filter(u => named.includes(u.id)) : every;
-        if (named.length && !us.length) return fail(`No such body of troops: ${named.join(', ')}. The army's bodies: ${every.slice(0, 16).map(u => u.id).join(', ')}.`);
+        const named = [...new Set([op.unit, ...(Array.isArray(op.units) ? op.units : op.units ? [op.units] : [])].filter(Boolean).map(x => String(x).trim()))], // "The capital" is the troops that stand in the capital, as for the order of pay (set_pay_priority). (World 22: a bonus "to the capital
+        // garrison" came back as no such body of troops.)
+        us = named.length ? every.filter(u => named.includes(u.id) || (named.some(x => /^(the )?capital( garrison)?$/i.test(x)) && u.province === c.capital)) : every;
+        if (named.length && !us.length) return fail(`No such body of troops: ${named.join(', ')}. The army's bodies: ${every.slice(0, 16).map(u => u.id).join(', ')}; "capital" is whatever stands in the capital${every.some(u => u.province === c.capital) ? '' : ', where no troops stand now'}.`);
         const cost = op.amount != null ? num(op.amount, 0, gdp * .15, 0) : gdp * num(op.pct_gdp, 0, .15); if (!(cost > 0)) return fail('Name the sum (amount, or pct_gdp as a share of a quarter\'s output).');
         const note = pay(c, cost); if (note === null) return fail(NO_FUNDS);
         const share = sum(us, u => u.men) / Math.max(sum(every, u => u.men), 1e-9), lift = clamp(cost / Math.max(upkeepCost(w, c) * share, 1) * 20, 0, 15);
