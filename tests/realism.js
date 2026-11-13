@@ -5757,5 +5757,44 @@ chain('World 23, first review: one body of troops and a newspaper can be looked 
   assert.ok(new RegExp(`The Evening Lamp \\(N\\d+\\) is held by ${O.name}\\. It has about \\d+ in its till`).test(told), `the report says who holds the paper and what is in its till: ${told.slice(-400)}`);
   assert.ok(new RegExp(`${u.id}: [\\d.]+ thousand \\w+ at [^.]+\\. It is paid and supplied to \\d+ in the hundred`).test(staff), `and the staff's report says how the corps is paid and how it stands: ${staff.slice(-400)}`);
 });
+chain('A fortress can be laid under siege without being stormed: enough men shut it in and nobody assaults; the garrison weakens and heavy guns wear the works down until the place falls and its men are prisoners; too few draw off; a relieving army makes it a battle in the open; a garrison ordered out breaks through with loss; and a place that is weakened can be stormed', () => {
+  // World 23, Q1 1902: "invest Terento, shell the works, do not storm until I order it" could not be entered: every attack was a storm.
+  const stage = (besiegers, garrison, guns = 0) => { const w = inherited(2696855, 8), cs = aliveCountries(w), a = cs[0], prov = countryProvinces(w, a.id).filter(p => p.owner === a.id);
+    const from = prov.find(p => p.neighbors.some(n => w.provinces[n].controller !== a.id && w.countries[w.provinces[n].controller]?.alive)), place = w.provinces[from.neighbors.find(n => w.provinces[n].controller !== a.id && w.countries[w.provinces[n].controller]?.alive)], b = w.countries[place.controller];
+    for (const u of Object.values(w.units)) if ([from.id, place.id, ...place.neighbors].includes(u.province)) delete w.units[u.id];
+    place.fort = 1; place.trench = 0; w.wars = [{ id: 'S-t37', a: [a.id], b: [b.id], civil: false, active: true, start: w.turn, name: 't37' }]; a.stock.arms = 400; b.stock.arms = 400; a.treasury = 9000; b.treasury = 9000; a.budget.military = .2; b.budget.military = .2;
+    const foot = soldier(w, a.id, from.id, besiegers), art = guns ? makeUnit(w, a.id, from.id, guns, 1, 70, 'artillery') : null, inside = soldier(w, b.id, place.id, garrison); inside.posture = 'defensive'; inside.dug = 3;
+    return { w, a, b, from, place, foot, art, inside, L: ld(w, a), Lb: ld(w, b), go: () => { beginTurn(w); stepWorld(w); }, told: c => w.characters[c.leader].inbox.map(m => m.text).join('\n') }; };
+  // Enough men, heavy guns: shut in, worn down, fallen, and nobody stormed it.
+  const x = stage(70, 20, 12), order = applyOp(x.w, x.L, { op: 'offensive', to: x.place.id, units: [x.foot.id, x.art.id], manner: 'siege', shelling: true });
+  assert.ok(order.ok && /It is a siege, not a storm: the troops shut the fortress in and take no ground by assault/.test(order.msg) && /about 30 thousand, and 82 thousand are sent/.test(order.msg) && /The guns are turned on the works/.test(order.msg), `the order says what a siege is and what it takes: ${order.msg.slice(0, 520)}`);
+  x.go(); const g0 = x.inside.men;
+  assert.ok(x.place.siege?.shut && x.place.siege.by === x.a.id && x.place.controller === x.b.id && x.foot.province === x.place.id && x.inside.shutIn === x.place.id && !x.w.battles.some(b => b.manner !== 'siege') && x.place.fort < 1, `the place is shut in, not stormed, and the guns have begun on the works (fort ${x.place.fort.toFixed(2)}, ${JSON.stringify(x.place.siege)})`);
+  assert.ok(new RegExp(`The siege of ${x.place.name}, 1 quarter in: about \\d+ thousand are shut in by our \\d+ thousand\\. The siege guns are wearing the works down`).test(x.told(x.a)) && new RegExp(`${x.place.name} is shut in by about \\d+ thousand of the enemy, 1 quarter now\\. The garrison, [\\d.]+ thousand, lives on what is in the place`).test(x.told(x.b)), `both staffs are told how the siege stands: ${x.told(x.a).slice(-300)}`);
+  let q = 1; const m0 = x.inside.morale; while (x.place.controller === x.b.id && q < 8) { x.go(); q++; }
+  assert.ok(x.place.controller === x.a.id && q >= 2 && q <= 5 && !x.w.units[x.inside.id] && (x.a.captives?.[x.b.id] || 0) > g0 * .7, `with heavy guns a fortress of the first grade falls in two to four quarters and its garrison is taken (${q} quarters, prisoners ${Math.round(x.a.captives?.[x.b.id] || 0)})`);
+  assert.ok(new RegExp(`${x.place.name} has fallen after a siege of ${q} quarters`).test(x.told(x.a)) && new RegExp(`${x.place.name} has fallen: [^.]* after ${q} quarters shut in`).test(x.told(x.b)) && !x.foot.attack, 'and both are told it has fallen');
+  // Without guns it is only starved, and takes longer.
+  const y = stage(70, 20); applyOp(y.w, y.L, { op: 'offensive', to: y.place.id, units: [y.foot.id], manner: 'siege' }); let qy = 0; while (y.place.controller === y.b.id && qy < 12) { y.go(); qy++; }
+  assert.ok(y.place.controller === y.a.id && qy > q && y.place.fort >= .99, `starved and not shelled, it holds longer and its works stand (${qy} quarters against ${q}; fort ${y.place.fort})`);
+  // Too few draw off again.
+  const z = stage(24, 20), few = applyOp(z.w, z.L, { op: 'offensive', to: z.place.id, units: [z.foot.id], manner: 'siege' }); z.go();
+  assert.ok(few.ok && /which is too few/.test(few.msg) && !z.place.siege && z.foot.province === z.from.id && !z.foot.attack && /could not shut it in: about \d+ thousand hold it, and it takes about \d+ thousand to close every road/.test(z.told(z.a)), `too few come before it and draw off, and are told what it takes: ok ${few.ok} few ${/which is too few/.test(few.msg)} siege ${JSON.stringify(z.place.siege)} at ${z.foot.province} from ${z.from.id} place ${z.place.id} attack ${JSON.stringify(z.foot.attack)} men ${z.foot.men} | ${few.msg.slice(150, 420)} | ${z.w.characters[z.a.leader].inbox.slice(-3).map(m => m.text.slice(0, 200)).join(' || ')}`);
+  // No fortress, no siege.
+  const n = stage(70, 20); n.place.fort = 0; const no = applyOp(n.w, n.L, { op: 'offensive', to: n.place.id, units: [n.foot.id], manner: 'siege' }); assert.ok(!no.ok && /There is no fortress at/.test(no.msg), `an open place is not besieged: ${no.msg}`);
+  // Relief: troops that come in from outside make it a battle in the open.
+  const r = stage(70, 20); applyOp(r.w, r.L, { op: 'offensive', to: r.place.id, units: [r.foot.id], manner: 'siege' }); r.go(); assert.ok(r.place.siege?.shut, 'shut in');
+  const home = r.place.neighbors.map(id => r.w.provinces[id]).find(p => p.controller === r.b.id), relief = soldier(r.w, r.b.id, home.id, 150); applyOp(r.w, r.Lb, { op: 'move', unit: relief.id, to: r.place.id }); r.go();
+  assert.ok(r.w.battles.some(b => b.province === r.place.id && b.manner !== 'siege') && /A relieving force of about \d+ thousand has come up/.test(r.told(r.a)), `a relieving army fights the besiegers: ${JSON.stringify(r.w.battles).slice(0, 200)}`);
+  assert.ok(r.foot.province !== r.place.id && r.place.controller === r.b.id, `beaten in the open by twice their number, the besiegers are driven off and the place is relieved (${r.foot.province})`); r.go(); assert.ok(!r.place.siege && !r.inside.shutIn, 'and the siege is over');
+  // Break-out: a garrison ordered out goes through the lines with loss.
+  const o = stage(70, 20); applyOp(o.w, o.L, { op: 'offensive', to: o.place.id, units: [o.foot.id], manner: 'siege' }); o.go(); const before = o.inside.men, out = o.place.neighbors.map(id => o.w.provinces[id]).find(p => p.controller === o.b.id);
+  applyOp(o.w, o.Lb, { op: 'move', unit: o.inside.id, to: out.id }); o.go();
+  assert.ok(o.inside.province !== o.place.id && o.inside.men < before * .92 && o.inside.men > before * .5 && !o.inside.shutIn && /broke out of .* through the siege lines/.test(o.told(o.b)), `the garrison breaks out with loss (${before.toFixed(1)} -> ${o.inside.men.toFixed(1)} at ${o.inside.province})`);
+  // A place that has been weakened is stormed by the same troops on a new order.
+  const s = stage(90, 20, 12); applyOp(s.w, s.L, { op: 'offensive', to: s.place.id, units: [s.foot.id, s.art.id], manner: 'siege', shelling: true }); s.go(); assert.ok(s.place.siege?.shut && s.place.controller === s.b.id, 'shut in');
+  const storm = applyOp(s.w, s.L, { op: 'offensive', to: s.place.id, units: [s.foot.id, s.art.id], manner: 'assault', shelling: true }); s.go();
+  assert.ok(storm.ok && s.w.battles.some(b => b.province === s.place.id && b.manner === 'assault'), `ordered to storm, the besiegers storm: ${JSON.stringify(s.w.battles).slice(0, 160)}`);
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

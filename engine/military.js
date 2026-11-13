@@ -218,6 +218,13 @@ export function militaryStep(w, onStation = null, afterFight = null) {
     // Troops just put ashore do not march the same quarter. A unit with the enemy in its own province is engaged and cannot walk away:
     // that is also what stops two armies ordered at each other from passing on the road.
     if (u.shipped === w.turn) { went.held = 'it was put ashore this quarter'; continue; }
+    // A garrison shut in and ordered out breaks through the siege lines, and pays for it by how many stand round it.
+    if (u.shutIn === u.province && w.provinces[u.province]?.siege?.shut) { const here = Object.values(w.units).filter(x => x.province === u.province), foes = here.filter(x => fighting(w, x.country, u.country)), ours = here.filter(x => x.shutIn === u.province), back = wayBack(w, u, u.province), p = w.provinces[u.province];
+      if (!back) { went.held = 'it is shut in and there is no way out'; continue; }
+      const odds = sum(foes, x => x.men) / Math.max(sum(ours, x => x.men), .1), loss = clamp(.08 + .08 * (odds - 1), .1, .45), caught = u.men * loss, k = w.countries[u.country], foe = w.countries[p.siege.by];
+      u.men -= caught; if (foe?.alive) { const held = foe.captives ||= {}; held[u.country] = (held[u.country] || 0) + caught * .6; } u.morale = clamp(u.morale - 8, 0, 100); u.from = u.province; u.province = back; u.dug = 0; delete u.shutIn; went.provinces = 1; went.reached = back; went.held = u.target === back ? '' : 'it broke out through the siege lines and could go no further this quarter'; if (u.target === back) u.target = null;
+      mark(w, k, `${u.id} broke out of ${p.name} through the siege lines and reached ${w.provinces[back].name} with ${Math.round(u.men * 10) / 10} thousand men; about ${Math.round(caught * 10) / 10} thousand were lost or taken on the way.`); if (foe?.alive) mark(w, foe, `Part of the garrison of ${p.name}, about ${about(u.men + caught)} thousand, broke out through our lines toward ${w.provinces[back].name}; about ${about(caught)} thousand of them were cut down or taken.`);
+      continue; }
     if (Object.values(w.units).some(x => x.province === u.province && fighting(w, x.country, u.country))) { went.held = 'the enemy stands in its province and it cannot break away'; continue; }
     u.dug = 0;
     // A quarter is a long time on roads one holds: an army crosses about three provinces of open, friendly country in it, fewer over hills,
@@ -262,6 +269,7 @@ export function militaryStep(w, onStation = null, afterFight = null) {
   for (const u of Object.values(w.units)) (remaining[u.province] ||= []).push(u);
   // A siege lasts only while the besieger stands there at war.
   for (const p of Object.values(w.provinces)) if (p.siege && !(remaining[p.id] || []).some(u => u.country === p.siege.by && atWar(w, u.country, p.controller))) delete p.siege;
+  for (const u of Object.values(w.units)) if (u.shutIn && !(w.provinces[u.shutIn]?.siege?.shut && u.province === u.shutIn)) delete u.shutIn;
   for (const [pid, us] of Object.entries(remaining)) {
     const p = w.provinces[pid];
     const occ = us.filter(u => fighting(w, u.country, p.controller));
@@ -407,7 +415,7 @@ function upkeep(w, c) {
 // strongest has to keep a timetable drawn up far away, and how well it keeps it is its commander's doing (and the wireless's, where there is
 // one). A column that is late goes in the quarter after, alone.
 const READY = 2, PATIENCE = 3;
-export const MANNERS = ['assault', 'probe', 'all_out'];
+export const MANNERS = ['assault', 'probe', 'all_out', 'siege'];
 function launch(w) {
   const groups = {}, engaged = u => Object.values(w.units).some(x => x.province === u.province && fighting(w, x.country, u.country));
   for (const u of Object.values(w.units)) {
@@ -464,7 +472,7 @@ export function planEdge(w, id, foe) {
 // What a quarter's fighting burns, in the arsenal's own measure, for every thousand men who come into action: a reconnaissance little, an
 // assault a great deal, an attack pressed regardless of loss more still; men who hold a line fire less than men who must carry one; guns fire
 // three times what rifles do, and a bombardment ordered before the attack is paid for on top of all of it.
-const RATE = { probe: .012, assault: .05, all_out: .065 }, RATE_DEF = .03, SHELLING = .6, FIELD_GUNS = .012;
+const RATE = { probe: .012, assault: .05, all_out: .065, siege: .006 }, RATE_DEF = .03, SHELLING = .6, FIELD_GUNS = .012;
 // What an attack by these troops would ask of the arsenal, for the staff that plans it.
 export const shellsFor = (us, manner = 'assault', shelling = false) => sum(us, u => u.men * (RATE[manner] ?? RATE.assault) * (u.kind === 'artillery' ? 3 : 1) + (shelling ? u.men * (u.kind === 'artillery' ? 1 : FIELD_GUNS) * SHELLING : 0));
 export const abilityWord = ch => (ch?.skill ?? 1) >= 1.15 ? 'able' : (ch?.skill ?? 1) >= .95 ? 'competent' : 'a poor hand';
@@ -485,6 +493,55 @@ export function joinUnits(w, a, b) {
 }
 const mark = (w, c, text) => { for (const ch of [w.characters[c.leader], w.characters[c.general]]) if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'General Staff', text }); };
 
+// A fortress laid under siege and not stormed (offensive with manner siege). The besiegers shut the place in if they are half again as many as
+// the men inside and eight thousand for each grade of the works; nobody assaults. Shut in, the garrison lives on what is in the place: it is fed
+// less each quarter and its spirit sinks; heavy guns wear the works down and their shells come out of the arsenal; the besiegers sicken in
+// their lines (upkeep). The place falls when its works are down or the garrison's spirit is gone, and its men are prisoners; or it is stormed
+// (an assault ordered on it), relieved (troops of the defender coming in from outside fight the besiegers in the open) or left by a garrison
+// that breaks out (militaryStep, the march). (World 23: a ruler and her chief of staff both ordered "invest Terento, shell the works, do not
+// storm until I say"; the engine knew no attack that was not a storm, and 146 thousand men stood idle beside a fortress held by 52. The user
+// approved the rule and its sentence, 2026-11-13.)
+export const SIEGE = { odds: 1.5, perGrade: 8, down: .25, broken: 20 };
+export const worksWord = f => f >= .85 ? 'whole' : f >= .6 ? 'battered' : f > SIEGE.down ? 'breached in places' : 'in ruins';
+const lasts = (p, D, wear) => { let f = p.fort || 0, m = sum(D, u => u.morale * u.men) / Math.max(sum(D, u => u.men), 1e-9), t = p.siege?.turns ?? 0, n = 0; while (n < 24 && f > SIEGE.down && m >= SIEGE.broken) { t++; n++; f -= wear; m -= 4 + 3 * t; } return n; };
+function besiege(w, p, A, D, by, defCountry) {
+  const men = xs => sum(xs, u => u.men), c = w.countries[by], d = w.countries[defCountry], grade = Math.max(1, Math.ceil(p.fort || 0)), on = !!p.siege?.shut && p.siege.by === by;
+  const menA = men(A), menD = men(D), need = Math.max(menD * SIEGE.odds, SIEGE.perGrade * grade);
+  if (menA < need - .05) {
+    // Too few to close every road: they draw off to where they came from, and the place stays open.
+    const went = new Set(); for (const u of A) { u.men *= .99; const back = u.from && w.provinces[u.from] && u.from !== p.id && mayStand(w, u.country, u.from) ? u.from : wayBack(w, u, p.id); if (back) { u.province = back; went.add(w.provinces[back].name); } u.target = null; delete u.attack; }
+    for (const u of D) { u.men *= .995; delete u.shutIn; } if (p.siege?.by === by) delete p.siege;
+    mark(w, c, `${on ? `The siege of ${p.name} is raised` : `The troops sent to lay siege to ${p.name} could not shut it in`}: about ${about(menD)} thousand hold it, and it takes about ${about(need)} thousand to close every road (half again as many as the men inside, and no fewer than ${SIEGE.perGrade} thousand for each grade of its works); we have ${about(menA)} thousand there. They have drawn off${went.size ? ` to ${[...went].join(', ')}` : ''}.`);
+    mark(w, d, `${on ? `The siege of ${p.name} is raised: the enemy has no longer men enough before it to shut it in, and has drawn off` : `The enemy came before ${p.name} with about ${about(menA)} thousand men to lay siege to it, too few to shut it in, and drew off`}.`);
+    news(w, `${on ? `The siege of ${p.name} was raised.` : `${c.name} came before the fortress at ${p.name} and could not shut it in.`}`, { kind: 'war', countries: [by, defCountry], province: p.id });
+    return;
+  }
+  p.siege = { by, turns: (on ? p.siege.turns : 0) + 1, shut: true, since: on ? p.siege.since : w.turn }; const t = p.siege.turns; for (const u of D) u.shutIn = p.id; for (const u of A) { u.target = null; u.attack = { ...(u.attack || {}), to: p.id, manner: 'siege', shelling: A.some(x => x.attack?.shelling), go: u.attack?.go ?? w.turn }; }
+  if (!on) { for (const u of A) u.men *= .985; for (const u of D) u.men *= .99; markFought(w, by, defCountry); news(w, `${c.name} laid siege to the fortress at ${p.name}: about ${about(menA)} thousand men have shut it in.`, { kind: 'war', countries: [by, defCountry], province: p.id }); }
+  // The guns: heavy pieces tell against masonry, the field guns barely; what they fire comes out of the arsenal, under the reserve and the ceiling
+  // the staff has set, as for any bombardment.
+  const shelling = A.some(u => u.attack?.shelling), heavy = men(A.filter(u => u.kind === 'artillery')), light = (menA - heavy) * FIELD_GUNS; let fire = 0, shot = 0;
+  { const want = menA * RATE.siege + (shelling ? (heavy + light) * SHELLING : 0), have = Math.max(c.stock.arms || 0, 0), kept = Math.min(have, c.arsenalReserve || 0), cap = Math.min(Infinity, ...A.filter(u => u.attack?.shells > 0).map(u => u.attack.shells)); shot = Math.max(0, Math.min(want, have - kept, cap)); fire = want > 0 ? shot / want : 1; c.stock.arms = have - shot; c._shot = (c._shot || 0) + shot; }
+  const wear = shelling ? (Math.min(.35, heavy / 40) + Math.min(.03, light / 40)) * fire : 0, was = p.fort || 0; p.fort = Math.max(0, was - wear);
+  // The garrison: short commons, then hunger; and what the guns do to men who cannot get away from them.
+  const under = shelling ? clamp((heavy + light) / Math.max(menD, 1e-9) * .12 * fire, 0, .04) : 0; let lost = 0;
+  for (const u of D) { const gone = u.men * (.006 * t + under); u.men -= gone; lost += gone; u.morale = clamp(u.morale - (4 + 3 * t) - (under > 0 ? 3 : 0), 0, 100); u.equip = clamp((u.equip ?? 1) - .02, .2, 1.4); if (shelling && heavy > 0 && fire > .3) u.dug = Math.max(0, (u.dug || 0) - 1); }
+  for (const k of CLASSES) p.pops[k].n *= .996;
+  const left = D.filter(u => u.men >= .2), heart = left.length ? sum(left, u => u.morale * u.men) / men(left) : 0, fallen = !left.length || p.fort <= SIEGE.down || heart < SIEGE.broken;
+  if (fallen) {
+    const taken = men(left), held = c.captives ||= {}; held[defCountry] = (held[defCountry] || 0) + taken; d.warExhaustion = clamp(d.warExhaustion + taken / Math.max(d._pop || 10000, 1) * 2500, 0, 100);
+    for (const u of D) delete w.units[u.id]; for (const u of A) delete u.attack; delete p.siege; const why = p.fort <= SIEGE.down ? 'its works were in ruins' : 'its garrison could hold out no longer';
+    capture(w, p, by);
+    news(w, `The fortress at ${p.name} has fallen to ${c.name} after a siege of ${t} quarter${t > 1 ? 's' : ''}: ${why}, and about ${about(taken)} thousand men laid down their arms.`, { kind: 'war', countries: [by, defCountry], province: p.id });
+    mark(w, c, `${p.name} has fallen after a siege of ${t} quarter${t > 1 ? 's' : ''}: ${why}. About ${about(taken)} thousand of the garrison are our prisoners, and the place is in our hands.${shot > .05 ? ` The siege fired ${Math.round(shot * 10) / 10} of ammunition this quarter; the arsenal holds ${Math.round(c.stock.arms)}.` : ''}`);
+    mark(w, d, `${p.name} has fallen: ${why} after ${t} quarter${t > 1 ? 's' : ''} shut in, and the garrison, about ${about(taken)} thousand men, has laid down its arms. They are prisoners until a peace sends them home.`);
+    w.battles.push({ province: p.id, attacker: by, defender: defCountry, attackerWon: true, lossA: 0, lossD: Math.round(lost), prisoners: Math.round(taken), manner: 'siege', why: [] });
+    return;
+  }
+  const more = lasts(p, left, wear), gunsText = shelling ? (heavy > 0 ? `The siege guns are wearing the works down: they are ${worksWord(p.fort)}${fire < .95 ? `; the arsenal sent only ${Math.round(fire * 100)} in the hundred of the shells the guns called for` : ''}` : 'The field guns that march with the infantry barely scratch the works: heavy pieces (artillery units) are wanted for that') : 'No bombardment is ordered: the works stand as they were, and the place is only being starved';
+  mark(w, c, `The siege of ${p.name}, ${t} quarter${t > 1 ? 's' : ''} in: about ${about(men(left))} thousand are shut in by our ${about(men(A))} thousand. ${gunsText}. It took ${Math.round(shot * 10) / 10} of ammunition this quarter (the arsenal holds ${Math.round(c.stock.arms)}). By the staff's reckoning the place holds about ${more} quarter${more === 1 ? '' : 's'} more as things go; it falls sooner if it is stormed once weakened (offensive with manner assault), and the siege is raised if we are driven off or thin out below what shuts it in.`);
+  mark(w, d, `${p.name} is shut in by about ${about(men(A))} thousand of the enemy, ${t} quarter${t > 1 ? 's' : ''} now. The garrison, ${Math.round(men(left) * 10) / 10} thousand, lives on what is in the place: its spirit stands at ${Math.round(heart)} of 100 and sinks each quarter, and it lost about ${Math.round(lost * 10) / 10} thousand this quarter to hunger, sickness${under > 0 ? ' and their guns' : ''}. The works are ${worksWord(p.fort)}. By the staff's reckoning it holds about ${more} quarter${more === 1 ? '' : 's'} more. It is relieved if troops sent there from outside (move) beat the besiegers in the open; a garrison ordered out (move) breaks through their lines with loss and leaves the place to them.`);
+}
 function resolve(w, pid, us) {
   const owners = [...new Set(us.map(u => u.country))];
   if (owners.length < 2) return;
@@ -498,6 +555,16 @@ function resolve(w, pid, us) {
   if (!atkSide.length || !defSide.length) return;
   const defCountry = defSide.includes(p.controller) ? p.controller : defSide[0];
   const D = us.filter(u => defSide.includes(u.country)), A = us.filter(u => atkSide.includes(u.country));
+  // A siege is not a battle: the place is shut in and nobody storms it. If troops of the defender have come in from outside since it was shut,
+  // it is a battle after all, in the open before the works, and the walls help nobody.
+  { const sieging = A.filter(u => u.attack?.to === pid && u.attack.manner === 'siege');
+    if (sieging.length && sum(sieging, u => u.men) >= sum(A, u => u.men) * .5 && holds && defSide.includes(p.controller)) {
+      // (Only troops that came in this quarter by road or by sea are a relieving force; whatever else stands inside is garrison.)
+      const relief = p.siege?.shut && p.siege.by === atkSide[0] ? D.filter(u => u.shutIn !== pid && ((u.march?.turn === w.turn && u.march.reached === pid && u.march.from !== pid) || u.shipped === w.turn)) : [];
+      if (!relief.length) { besiege(w, p, A, D, atkSide[0], defCountry); return; }
+      holds = false; for (const u of sieging) u.attack.manner = 'assault'; const n = sum(relief, u => u.men);
+      mark(w, w.countries[atkSide[0]], `A relieving force of about ${about(n)} thousand has come up to ${p.name} against our siege lines: the siege has become a battle in the open before the place, which the staff reports below as the fight for ${p.name}.`);
+      mark(w, w.countries[defCountry], `Our relieving force, about ${Math.round(n * 10) / 10} thousand, has come up to ${p.name} and fights the besiegers in the open before the place, together with the garrison; the works help neither side in such a fight.`); } }
   const pass = w.strategic.find(s => s.ref === pid && s.type === 'pass'), bridge = !pass && w.strategic.find(s => s.ref === pid && s.type === 'bridge'), point = 1;
   // A river is a line to hold: whoever must cross it under fire pays for it, except when it is frozen.
   // (A named pass or crossing used to be worth half as much again to its defender, whatever the ground: its worth is now the hills, the

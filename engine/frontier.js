@@ -90,7 +90,8 @@ export function mobilize(w, c, op, pay, fail) {
   c.stock.arms -= called * .05; c.reserve -= called;
   for (const p of provs) for (const k of ['peasants', 'workers']) p.pops[k].n = Math.max(1, p.pops[k].n - called * p.pops[k].n / Math.max(hands, 1e-9));
   // They form where the order says, and at the capital and the largest towns where it says nothing.
-  const depots = named.length ? named.slice(0, 8) : [w.provinces[c.capital], ...provs.filter(p => p.id !== c.capital).sort((x, y) => provincePop(y) - provincePop(x))].filter(Boolean).slice(0, 3), each = called / depots.length;
+  // (No reservists come in through siege lines: a place that is shut in is passed over.)
+  const depots = named.filter(p => !p.siege?.shut).length ? named.filter(p => !p.siege?.shut).slice(0, 8) : [w.provinces[c.capital], ...provs.filter(p => p.id !== c.capital).sort((x, y) => provincePop(y) - provincePop(x))].filter(Boolean).slice(0, 3), each = called / depots.length;
   for (const p of depots) { const u = makeUnit(w, c.id, p.id, each, .9, 55 + c.legitimacy * .3, 'infantry'); u.called = true; u.calledAt = w.turn; u.morale = 60; }
   c.calledUpAt = w.turn; c.calledUpMen = called;
   news(w, `${c.name} has ordered mobilisation: about ${Math.round(called)} thousand reservists are joining the colours.`, { kind: 'war', countries: [c.id] });
