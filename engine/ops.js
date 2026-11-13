@@ -282,7 +282,7 @@ export function carrySigned(w) {
   for (const a of (w.signing || []).splice(0)) {
     const ch = w.characters[a.actor], c = ch && w.countries[ch.country], o = w.countries[a.target]; if (!ch?.alive || !c?.alive || !o) continue;
     const r = applyOp(w, ch, { op: 'accept_treaty', target: o.id, _late: true });
-    const text = r.ok ? `The proposal of ${o.name} arrived, and it was signed as you had ordered. ${r.msg}` : `Nothing was signed with ${o.name} this quarter: ${/^No proposal|^Which proposal/.test(r.msg) ? `no single proposal of theirs reached us (${r.msg})` : r.msg} The order to sign does not stand over: it has to be given again when their paper is on the table.`;
+    const text = r.ok ? `The proposal of ${o.name} arrived, and it was signed as you had ordered. ${r.msg}` : `Nothing was signed with ${o.name} this quarter: ${/^No new proposal/.test(r.msg) ? r.msg : /^No proposal|^Which proposal/.test(r.msg) ? `no single proposal of theirs reached us (${r.msg})` : r.msg} The order to sign does not stand over: it has to be given again when their paper is on the table.`;
     for (const x of new Set([ch, w.characters[c.leader]])) tell(w, x, 'Foreign Ministry', text);
     (w.awaited ||= []).push({ turn: w.turn, actor: ch.id, country: c.id, op: { op: 'accept_treaty', target: o.id }, ok: !!r.ok, text });
   }
@@ -558,7 +558,10 @@ function withdraw(w, c, t) {
 }
 // A treaty laid before several states at once, by one of them, by a mediator who is not a party, or at a conference.
 function proposeMany(w, c, op, others, mediator = false) {
-  const kind = op.kind, cf = op.conference ? (w.conferences || []).find(x => x.id === op.conference) : null, table = cf ? [cf.host, ...cf.came] : null;
+  // States that are not at war settle a quarrel by a paper too: it is entered as a pact between states at peace and carries its land, its money
+  // and its clauses all the same. (World 23: "the Treaty of Terento: Terento ceded outright..." was refused, "there is no war among them to end".)
+  const others0 = mediator ? [...others] : [c.id, ...others], settles = op.kind === 'peace' && !others0.some((a, i) => others0.some((b, j) => j > i && atWar(w, a, b)));
+  const kind = settles ? 'nonaggression' : op.kind, cf = op.conference ? (w.conferences || []).find(x => x.id === op.conference) : null, table = cf ? [cf.host, ...cf.came] : null;
   if (![...TREATY, 'guarantee'].includes(kind) || kind === 'protection') return fail(kind === 'protection' ? 'A treaty of protection is between a protector and the state it protects: two parties.' : 'Invalid proposal.');
   if (op.conference && !cf?.open) return fail('No such conference is sitting.');
   if (cf && !table.includes(c.id)) return fail('Only those at the table can lay a treaty before the conference.');
@@ -580,7 +583,7 @@ function proposeMany(w, c, op, others, mediator = false) {
   w.treaties.push(t); if (cf) (cf.treaties ||= []).push(id);
   const text = `${kind.replace('_', ' ')}${of ? ` of the independence of ${of.name}` : ''} among ${invited.map(x => cname(w, x)).join(', ')}. ${terms}${clauses.length ? ` Clauses: ${clauses.map(x => clauseText(w, x)).join('; ')}.` : ''}${grants.length ? ` Provinces to change hands: ${grants.map(g => `${w.provinces[g.province].name} (${g.province}) from ${cname(w, w.provinces[g.province].owner)} to ${cname(w, g.to)}`).join(', ')}.` : ''}${t.annex ? ' Each side keeps the land it now holds.' : ''}${reparations ? ` ${cname(w, payer)} pays ${cname(w, payee)} ${Math.round(reparations * 100)}% of a quarter's output in gold.` : ''}${secret ? ' It is to be kept secret: known to those who govern and, where it concerns the army, to their chiefs of staff.' : ''} It comes into force when ${need === invited.length ? 'all' : need} of them have signed${need < invited.length ? ', and stays open to the rest' : ''}.`;
   for (const x of invited) if (x !== c.id) tell(w, w.characters[w.countries[x].leader], c.name, `${mediator ? `${c.name} offers its mediation. Proposal` : cf ? `Laid before the conference ${cf.id}: proposal` : 'Treaty proposal'} ${id}: ${text} Issue an accept_treaty decision to sign.`);
-  return { ok: true, msg: `Proposal ${id} was laid before ${invited.filter(x => x !== c.id).map(x => cname(w, x)).join(', ')}: ${text}`, treaty: id };
+  return { ok: true, msg: `Proposal ${id} was laid before ${invited.filter(x => x !== c.id).map(x => cname(w, x)).join(', ')}: ${text}${settles ? ' (There is no war among them, so it is entered as a pact between states at peace and not as a peace treaty; the land, the money and the clauses it names stand as written.)' : ''}`, treaty: id };
 }
 // A duty aimed at one country's goods.
 function aimTariff(w, c, target, op) {
@@ -650,12 +653,25 @@ export function applyOp(w, actor, op) {
       r.msg = `${id} is no longer a body of its own: it came up and joined ${j.into}${b ? ` (${Math.round(b.men)} thousand men at ${w.provinces[b.province]?.name ?? b.province})` : ''} in ${quarterLabel(j.t)}. An order for those men is given to ${j.into}; to have them as a separate body again, detach them (move with men).`; } }
   return r;
 }
+// Whoever commands troops commands them: marches, standing orders, an attack with them, drill and arms, for the bodies that are his and for no
+// others. (World 23: a former chief of staff was given the relief army of a besieged fortress, three bodies and a hundred thousand men, by the
+// chief of staff's own order; every order he gave them came back "a private person is not authorized", and the fortress fell with him a
+// day's march off.)
+const COMMANDS = new Set(['move', 'set_posture', 'offensive', 'drill', 'equip']);
+const commandOf = (w, actor) => actor.status === 'free' ? Object.values(w.units).filter(u => u.country === actor.country && u.commander === actor.id).map(u => u.id) : [];
+function ownCommand(w, actor, op) {
+  if (!COMMANDS.has(op.op)) return null; const mine = commandOf(w, actor); if (!mine.length) return null;
+  const named = [op.unit, ...(Array.isArray(op.units) ? op.units : op.units ? [op.units] : [])].filter(x => x != null && x !== '').map(String);
+  if (op.op === 'offensive' && !named.length) return { ...op, units: mine, from: undefined };
+  return named.length && named.every(id => mine.includes(id)) && op.all !== true && op.province == null && op.facing == null ? op : null;
+}
 function applyOne(w, actor, op) {
   if (!actor?.alive) return { ok: false, msg: 'The dead give no orders.' };
   const c = alive(w, actor.country);
   if (!c || !op?.op) return { ok: false, msg: 'Invalid operation.' };
   const perm = permissionsOf(c, actor, w), held = actor.status === 'imprisoned' || actor.status === 'exiled';
-  if (perm && !perm.has(op.op) && (held || !delegated(c, actor, op.op))) return { ok: false, msg: held ? `Someone who is ${actor.status} cannot do this: ${op.op}` : `${c[actor.role] === actor.id ? actor.role : 'A private person'} is not authorized for this operation: ${op.op}${c.general === actor.id && ['mobilize', 'demobilize', 'recruit', 'disband', 'declare_war', 'build_ship'].includes(op.op) ? `. It is for whoever governs to order: a word or a letter from the ruler does not carry it, the ruler has to give the order as ${his(w.characters[c.leader])} own decision` : ''}${OPEN_WAY[op.op] && !governs(w, c, actor) ? `. ${OPEN_WAY[op.op]}` : ''}` };
+  const own = perm && !perm.has(op.op) && !held && !delegated(c, actor, op.op) ? ownCommand(w, actor, op) : null; if (own) op = own;
+  if (!own && perm && !perm.has(op.op) && (held || !delegated(c, actor, op.op))) return { ok: false, msg: held ? `Someone who is ${actor.status} cannot do this: ${op.op}` : `${c[actor.role] === actor.id ? actor.role : 'A private person'} is not authorized for this operation: ${op.op}${c.general === actor.id && ['mobilize', 'demobilize', 'recruit', 'disband', 'declare_war', 'build_ship'].includes(op.op) ? `. It is for whoever governs to order: a word or a letter from the ruler does not carry it, the ruler has to give the order as ${his(w.characters[c.leader])} own decision` : ''}${OPEN_WAY[op.op] && !governs(w, c, actor) ? `. ${OPEN_WAY[op.op]}` : ''}${COMMANDS.has(op.op) && commandOf(w, actor).length ? `. A commander gives such orders to the troops he commands and to no others: yours are ${commandOf(w, actor).join(', ')}, and the order has to name them` : ''}` };
   // A law passed by a legislature is above a veto; a decree is not.
   if (!op._law || op._decree) {
     const blocker = vetoedBy(w, c, actor, op.op);
@@ -1589,7 +1605,8 @@ function applyOne(w, actor, op) {
       if (!target || !TREATY.includes(op.kind)) return fail('Invalid proposal.');
       if (!dealsWith(w, c.id, target.id) && op.kind !== 'peace') return fail(recognisesText(w, c, target));
       if (!maySign(w, c.id, target.id, op.kind)) return fail(`Between this state and ${target.name} stand ${tieWord(tieOf(w, c.id, target.id))}: nothing of this kind can be signed between the two unless a third state carries it (a mediator, a conference), or relations are restored first (set_relations).`);
-      if (op.kind === 'peace' && !atWar(w, c.id, target.id)) return fail('There is no war between you to end.');
+      // (Between states that are not at war a paper called a peace is a pact between states at peace: it carries its land and clauses all the same.)
+      if (op.kind === 'peace' && !atWar(w, c.id, target.id)) op = { ...op, kind: 'nonaggression', settles: true };
       // An armistice stops the fighting where the lines stand and leaves the war, the occupied land and the blockade as they are, for as long as it runs.
       if (op.kind === 'armistice') { if (!atWar(w, c.id, target.id)) return fail('There is no war between you to halt.'); if (hasTreaty(w, c.id, target.id, 'armistice')) return fail('An armistice between you is already in force.'); }
       if (op.kind === 'alliance') { const lord = protectorOf(w, c); if (lord?.alive && lord.id !== target.id) return fail(`Under the treaty of protection with ${lord.name} this state makes no alliances of its own.`); }
@@ -1599,7 +1616,7 @@ function applyOne(w, actor, op) {
       w.treaties.push({ id, kind: op.kind, ...(op.kind === 'protection' ? { protector: op.protector === 'them' ? target.id : c.id } : {}), parties: [c.id, target.id], active: false, pending: true, proposer: c.id, terms: String(op.terms || '').slice(0, 2000), clauses, breaches: [], expires: null, durationTurns: op.turns ? Math.round(num(op.turns, 1, 200, 40)) : null, annex: !!op.annex, cede, reparations, payer, turn: w.turn, secret });
       tell(w, w.characters[target.leader], c.name, `Treaty proposal ${id}${secret ? ' (to be kept secret: known to those who govern and, where it concerns the army, to their chiefs of staff)' : ''}: ${op.kind.replace('_', ' ')}. ${String(op.terms || '').slice(0, 240)}${clauses.length ? ` Clauses: ${clauses.map(x => clauseText(w, x)).join('; ')}.` : ''}${cede.length ? ` Provinces to change hands: ${cede.map(pid => `${w.provinces[pid].name} (${pid}) to ${other(pid).name}`).join(', ')}.` : ''}${op.annex ? ' Each side keeps the land it now holds.' : ''}${reparations ? ` ${w.countries[payer].name} pays ${Math.round(reparations * 100)}% of a quarter's output in gold.` : ''} Issue an accept_treaty decision to accept.`);
       { const land = settlementText(w, w.treaties.at(-1)); if (land && op.kind === 'peace') tell(w, w.characters[target.leader], c.name, `What proposal ${id} does to the land, whatever its wording: ${land}`);
-        return { ok: true, msg: `Proposal ${id} was sent.${land ? ` ${land}${op.kind === 'peace' ? ' If the wording of the treaty means something else, the provinces have to be named in it (cede), or it has to say that each side keeps what it holds (annex).' : ''}` : ''}`, treaty: id }; }
+        return { ok: true, msg: `Proposal ${id} was sent.${op.settles ? ' (There is no war between you, so it is entered as a pact between states at peace and not as a peace treaty; the land, the money and the clauses it names stand as written.)' : ''}${land ? ` ${land}${op.kind === 'peace' ? ' If the wording of the treaty means something else, the provinces have to be named in it (cede), or it has to say that each side keeps what it holds (annex).' : ''}` : ''}`, treaty: id }; }
     }
     // A demand with a date on it. If it is accepted its terms take effect like a treaty's; if it runs out, war is expected of the one who made it.
     case 'ultimatum': {
@@ -1640,7 +1657,14 @@ function applyOne(w, actor, op) {
       return { ok: true, msg: `${ch.name} is recognised by you as the rightful government of ${home.name}. It weighs on the standing of those who rule there, and they will not forgive it.` };
     }
     case 'accept_treaty': {
-      const waiting = w.treaties.filter(x => (x.pending && x.parties.includes(c.id) && x.proposer !== c.id && !(x.signed || []).includes(c.id)) || (x.multi && x.active && (x.open || []).includes(c.id))), from = waiting.filter(x => !target || x.proposer === target.id), named = op.id != null && op.id !== '' ? w.treaties.find(x => x.id === String(op.id)) : null, t = named ? waiting.find(x => x.id === named.id) ?? null : waiting.find(x => x.id === op.id) ?? (from.length === 1 && (target || op.id == null || op.id === '') ? from[0] : null);
+      const waiting = w.treaties.filter(x => (x.pending && x.parties.includes(c.id) && x.proposer !== c.id && !(x.signed || []).includes(c.id)) || (x.multi && x.active && (x.open || []).includes(c.id))), from = waiting.filter(x => !target || x.proposer === target.id), named = op.id != null && op.id !== '' ? w.treaties.find(x => x.id === String(op.id)) : null,
+        // A signature given without a number goes to a paper that came this quarter or the last, never to an older one that happens to lie on the
+        // table. (World 23: three governments agreed by letter that Terento passed to Terona outright; the chair never laid that paper; "sign the
+        // second paper laid by the chair" put Terona's name on the chair's first paper of two quarters before, which kept Terento Morovian, and
+        // the war ended on it. World 22: the same rule signed a commission its government had refused the quarter before.)
+        fresh = from.filter(x => (x.turn ?? w.turn) >= w.turn - 1), stale = from.filter(x => !fresh.includes(x)),
+        t = named ? waiting.find(x => x.id === named.id) ?? null : waiting.find(x => x.id === op.id) ?? (fresh.length === 1 && (target || op.id == null || op.id === '') ? fresh[0] : null),
+        old = !t && !named && stale.length ? ` What lies on the table from ${target ? target.name : 'others'} is older: ${stale.map(x => `${x.id} (${x.kind.replace(/_/g, ' ')}, laid in ${quarterLabel(x.turn ?? w.turn)}: "${String(x.terms || '').slice(0, 140)}${String(x.terms || '').length > 140 ? '...' : ''}")`).join('; ')}. A signature given without a number goes only to a paper that came this quarter or the last: if one of those is the paper meant, sign it by its number; if a newer paper was meant, it has not been laid.` : '';
       // A signature goes to the paper that was named, or to none. (World 17: an order to sign a treaty already signed put the signature on the one
       // other paper on the table, a commission its government had refused three times.)
       if (named && !t) { const ours = (named.parties || []).includes(c.id), rest = waiting.length ? ` Unsigned on the table: ${waiting.map(x => `${x.id} (${x.kind}, from ${w.countries[x.proposer]?.name ?? x.proposer})`).join(', ')}.` : '';
@@ -1649,9 +1673,9 @@ function applyOne(w, actor, op) {
       // A signature ordered for a paper that has not arrived yet waits for it: in a quarter two governments agree by letter, one sends the treaty and
       // the other signs, and which of the two orders reaches the engine first is chance. It is given when the quarter's proposals are all in
       // (carrySigned, before the quarter is played), and whoever ordered it is told what came of it.
-      if (!t && target && !from.length && !op._late) { const q = (w.signing ||= []), at = q.findIndex(x => x.actor === actor.id && x.target === target.id), entry = { turn: w.turn, actor: actor.id, target: target.id }; if (at >= 0) q[at] = entry; else q.push(entry);
-        return { ok: true, waits: `sign:${target.id}`, msg: `No proposal from ${target.name} has reached us yet${waiting.length ? ` (what lies on the table, ${waiting.map(x => x.id).join(', ')}, is not theirs)` : ''}. The signature is ready: it is given to whatever single proposal of theirs arrives this quarter, and if none comes nothing is signed. The Foreign Ministry reports which.` }; }
-      if (!t) return fail(waiting.length ? `Which proposal? Waiting: ${waiting.map(x => x.id).join(', ')}.` : 'No proposal is waiting.');
+      if (!t && target && !fresh.length && !op._late) { const q = (w.signing ||= []), at = q.findIndex(x => x.actor === actor.id && x.target === target.id), entry = { turn: w.turn, actor: actor.id, target: target.id }; if (at >= 0) q[at] = entry; else q.push(entry);
+        return { ok: true, waits: `sign:${target.id}`, msg: `No ${stale.length ? 'new ' : ''}proposal from ${target.name} has reached us yet${waiting.filter(x => !stale.includes(x)).length ? ` (what lies on the table, ${waiting.filter(x => !stale.includes(x)).map(x => x.id).join(', ')}, is not theirs)` : ''}.${old} The signature is ready: it is given to whatever single proposal of theirs arrives this quarter, and if none comes nothing is signed. The Foreign Ministry reports which.` }; }
+      if (!t) return fail(old ? `No new proposal${target ? ` from ${target.name}` : ''} has reached us.${old}` : waiting.length ? `Which proposal? Waiting: ${waiting.map(x => x.id).join(', ')}.` : 'No proposal is waiting.');
       if (t.multi) return signMany(w, c, t);
       const other = alive(w, t.proposer); if (!other) { t.pending = false; return fail('The other party is gone.'); }
       if (!t.ultimatum && !maySign(w, c.id, other.id, t.kind)) return fail(`Between this state and ${other.name} stand ${tieWord(tieOf(w, c.id, other.id))}: this cannot be signed until relations are restored (set_relations), unless a third state carries it.`);

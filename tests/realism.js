@@ -1289,7 +1289,7 @@ chain('A separate peace takes one country out of a war and leaves the rest fight
   assert.equal(war.active, true, 'the war goes on'); assert.deepEqual([war.a, war.b], [['U1'], ['U2']]); assert.equal(taken.controller, 'U1', 'the occupation of the one still at war stands');
   applyOp(w, leaderOf(w, 'U1'), { op: 'propose_treaty', target: 'U2', kind: 'peace', terms: 'White peace' }); applyOp(w, leaderOf(w, 'U2'), { op: 'accept_treaty' });
   assert.equal(war.active, false); assert.equal(taken.controller, 'U2', 'and goes back with the peace');
-  assert.equal(applyOp(w, leaderOf(w, 'U1'), { op: 'propose_treaty', target: 'U2', kind: 'peace', terms: 'Again' }).ok, false, 'no peace without a war');
+  { const again = applyOp(w, leaderOf(w, 'U1'), { op: 'propose_treaty', target: 'U2', kind: 'peace', terms: 'Again' }); assert.ok(again.ok && /no war between you, so it is entered as a pact between states at peace and not as a peace treaty/.test(again.msg) && w.treaties.find(t => t.id === again.treaty).kind === 'nonaggression', `with no war a paper called a peace is a pact between states at peace: ${again.msg}`); }
   assert.equal(applyOp(w, leaderOf(w, 'U1'), { op: 'declare_war', target: 'U1' }).ok, false, 'no war on oneself');
 });
 chain('A peace can name provinces and who pays: the land changes hands, gold is paid as far as there is gold, the rest is owed, and the peace binds', () => {
@@ -4360,7 +4360,9 @@ chain('World 18, second review: a ceiling on troops is counted once the men have
     const w = inherited(2696855, 8), [c, d, e] = aliveCountries(w), L = ld(w, c), O = w.characters[c.opposition], M = w.characters[c.oligarch];
     const made = applyOp(w, L, { op: 'create_institution', name: 'Commission on the Wage Floor', powers: ['industry'], budget_pct_gdp: .001, _law: true }); assert.ok(made.ok, made.msg); const inst = c.institutions.find(i => i.name === 'Commission on the Wage Floor');
     const no = applyOp(w, O, { op: 'appoint_institution', id: inst.id, role: 'member' }); assert.ok(!no.ok && /You cannot make appointments to Commission on the Wage Floor: its members are named by [^]*whoever governs\. A name put to one of them by letter is theirs to seat or to refuse/.test(no.msg), no.msg);
-    const med = applyOp(w, L, { op: 'mediate', between: [d.id, e.id], kind: 'peace', terms: 'Good offices.' }); assert.ok(!med.ok && /There is no war among them to end or to halt\. A quarrel short of war is not ended by a peace[^]*call_conference/.test(med.msg), med.msg);
+    // (Since world 23 a third state's paper between two that are not at war is laid as a pact between states at peace; an armistice still wants a war.)
+    const med = applyOp(w, L, { op: 'mediate', between: [d.id, e.id], kind: 'peace', terms: 'Good offices.' }); assert.ok(med.ok && /There is no war among them, so it is entered as a pact between states at peace/.test(med.msg), med.msg);
+    const halt = applyOp(w, L, { op: 'mediate', between: [d.id, e.id], kind: 'armistice', terms: 'Good offices.' }); assert.ok(!halt.ok && /There is no war among them to end or to halt[^]*call_conference/.test(halt.msg), halt.msg);
     const debt = { id: 'B-9001', creditor: M.id, debtor: O.id, amount: 30, owed: 36, due: w.turn + 4, terms: 'A loan.', status: 'paid', turn: 0, closedAt: w.turn };
     (w.debts ||= []).push(debt); const buy = applyOp(w, L, { op: 'buy_debt', debt: 'B-9001' }); assert.ok(!buy.ok && /Note B-9001 is no longer open: it was paid in [^,]*, and nothing stands on it/.test(buy.msg), buy.msg);
     const facts = factsNow_(w, ['In 1892: kept two sets of books.', `Owes 36 to ${M.name} on a note of hand (B-9001), due Q1 1902.`]); assert.ok(facts[0] === 'In 1892: kept two sets of books.' && /\[Since then that note has been paid, in [^:]*: nothing stands on it now\.\]$/.test(facts[1]), `a file that names a note since paid tells its reader: ${facts[1]}`);
@@ -5803,6 +5805,45 @@ chain('World 23, second review: an order can wait for a quarter named by its dat
   assert.ok(so.ok && new RegExp(`in ${date}`).test(so.msg) && (w.standingOrders || []).some(x => x.by === L.id && x.when?.turn === w.turn + 2), `the order is entered for the quarter named: ${so.msg.slice(0, 200)}`);
   const past = applyOp(w, L, { op: 'standing_order', when: { date: 'Q1 1899' }, then: [{ op: 'report', topic: 'army' }] }), odd = applyOp(w, L, { op: 'standing_order', when: { date: 'next spring' }, then: [{ op: 'report', topic: 'army' }] });
   assert.ok(!past.ok && /is past/.test(past.msg) && !odd.ok && /Name the quarter as it is written/.test(odd.msg), `a date that is past, or no date, says so: ${past.msg} | ${odd.msg}`);
+});
+chain('World 23, fourth review: a signature given without a number goes to a paper that has just come and never to an old one that lies on the table; and states at peace can sign away land by a paper that is not a peace', () => {
+  // World 23, Q1 1903: three governments agreed by letter that Terento passed to Terona outright; the chair proclaimed it and never laid the paper.
+  // "Sign the second paper laid by the chair" put Terona's name on the chair's first paper, two quarters old, which kept Terento Morovian; the war
+  // ended on it. The treaty written afterwards to put it right was refused: "there is no war among them to end".
+  const w = inherited(2696855, 8), cs = aliveCountries(w), a = cs[0], b = cs[1], m = cs[2], La = ld(w, a), Lb = ld(w, b), Lm = ld(w, m); w.wars = [{ id: 'S-t39', a: [a.id], b: [b.id], civil: false, active: true, start: w.turn, name: 't39' }];
+  const first = applyOp(w, Lm, { op: 'mediate', between: [a.id, b.id], kind: 'peace', terms: 'The first paper: the frontier as it stood, and a vote in three years.' }); assert.ok(first.ok && first.treaty, first.msg);
+  w.turn += 2; // two quarters pass, and the paper lies unsigned
+  const sign = applyOp(w, La, { op: 'accept_treaty', target: m.id });
+  assert.ok(sign.ok && sign.waits && /No new proposal from .* has reached us yet\. What lies on the table from .* is older: A\d+ \(peace, laid in Q\d \d{4}: "The first paper/.test(sign.msg) && !w.treaties.find(t => t.id === first.treaty).active && !(w.treaties.find(t => t.id === first.treaty).signed || []).includes(a.id), `the old paper is not signed by a signature that names none: ${sign.msg.slice(0, 360)}`);
+  carrySigned(w); const told = La.inbox.map(x => x.text).join('\n');
+  assert.ok(/Nothing was signed with [^:]*: No new proposal from .* has reached us\. What lies on the table/.test(told) && w.wars[0].active, `and when the quarter's papers are in and none is new, nothing is signed and the ruler is told what lies there: ${told.slice(-420)}`);
+  const byNumber = applyOp(w, La, { op: 'accept_treaty', id: first.treaty }); assert.ok(byNumber.ok && (w.treaties.find(t => t.id === first.treaty).signed || []).includes(a.id), `named by its number it is signed: ${byNumber.msg.slice(0, 120)}`);
+  // A paper that has just come is signed without its number, as before.
+  const second = applyOp(w, Lm, { op: 'mediate', between: [a.id, b.id], kind: 'armistice', terms: 'The second paper.' }), quick = applyOp(w, Lb, { op: 'accept_treaty', target: m.id });
+  assert.ok(second.ok && quick.ok && !quick.waits, `a paper of this quarter is signed on the sender's name alone, when it is the only new one: ${quick.msg.slice(0, 160)}`);
+  // States at peace: land by a paper that is not a peace.
+  const x = inherited(2696855, 8), xs = aliveCountries(x), p = xs[0], q = xs.find(o => o.id !== p.id && countryProvinces(x, o.id).some(v => v.owner === o.id && v.id !== o.capital)), land = countryProvinces(x, q.id).find(v => v.owner === q.id && v.id !== q.capital); x.wars = [];
+  const paper = applyOp(x, ld(x, p), { op: 'propose_treaty', target: q.id, kind: 'peace', cede: [land.id], terms: 'The Treaty of the province: ceded outright and at once.', _law: true });
+  assert.ok(paper.ok && /no war between you, so it is entered as a pact between states at peace/.test(paper.msg), `a paper called a peace between states at peace is entered, not refused: ${paper.msg.slice(0, 260)}`);
+  const done = applyOp(x, ld(x, q), { op: 'accept_treaty', id: paper.treaty, _law: true });
+  assert.ok(done.ok && land.owner === p.id && land.controller === p.id, `and signed, it hands over the land it names (${land.owner}): ${done.msg.slice(0, 200)}`);
+});
+chain('World 23, fourth review: whoever commands troops can give them orders, and no others', () => {
+  // World 23: a former chief of staff, a private person, was given the relief army of a besieged fortress by the chief of staff's order. Eleven
+  // orders he gave it came back "a private person is not authorized", and the fortress fell with him a day's march off.
+  const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), old = w.characters[c.general];
+  const us = Object.values(w.units).filter(u => u.country === c.id).sort((a, b) => b.men - a.men), mine = us[0], other = us[1], near = w.provinces[mine.province].neighbors.map(n => w.provinces[n]).find(p => p.controller === c.id);
+  const out = applyOp(w, L, { op: 'dismiss' }); assert.ok(out.ok && c.general !== old.id, `the chief of staff is dismissed: ${out.msg.slice(0, 100)}`);
+  const none = applyOp(w, old, { op: 'move', unit: mine.id, to: near.id }); assert.ok(!none.ok && /A private person is not authorized/.test(none.msg), `a private person orders no troops: ${none.msg}`);
+  const give = applyOp(w, L, { op: 'appoint_commander', unit: mine.id, character: old.id }); assert.ok(give.ok && mine.commander === old.id, give.msg);
+  const march = applyOp(w, old, { op: 'move', unit: mine.id, to: near.id }), stand = applyOp(w, old, { op: 'set_posture', unit: mine.id, posture: 'defensive' }), drill = applyOp(w, old, { op: 'drill', unit: mine.id });
+  assert.ok(march.ok && stand.ok && (drill.ok || !/not authorized/.test(drill.msg)), `given a command, he marches, posts and drills it: ${march.msg.slice(0, 80)} | ${stand.msg.slice(0, 60)} | ${drill.msg.slice(0, 80)}`);
+  const no = applyOp(w, old, { op: 'move', unit: other.id, to: near.id }), all = applyOp(w, old, { op: 'set_posture', posture: 'defensive', all: true }), call = applyOp(w, old, { op: 'mobilize', men: 10 });
+  assert.ok(!no.ok && new RegExp(`A commander gives such orders to the troops he commands and to no others: yours are ${mine.id}`).test(no.msg) && !all.ok && !call.ok, `but not another man's corps, not the whole army, and not the reserve: ${no.msg.slice(-160)}`);
+  // An attack with no units named is an attack with his own.
+  const foe = aliveCountries(w).find(o => o.id !== c.id && Object.values(w.provinces).some(p => p.controller === o.id && p.neighbors.includes(mine.province)));
+  if (foe) { w.wars.push({ id: 'S-t40', a: [c.id], b: [foe.id], civil: false, active: true, start: w.turn, name: 't40' }); mine.target = null; delete mine.posture; const to = Object.values(w.provinces).find(p => p.controller === foe.id && p.neighbors.includes(mine.province));
+    const go = applyOp(w, old, { op: 'offensive', to: to.id, manner: 'probe' }); assert.ok(go.ok && mine.attack?.to === to.id && !other.attack, `he attacks with what he commands: ${go.msg.slice(0, 140)}`); }
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');
