@@ -5624,5 +5624,20 @@ chain('World 22, fourth review: the chief of staff posts his own officers within
   if (civ) { const no = applyOp(w, G, { op: 'post_person', character: civ.id, office: 'war college' }); assert.ok(!no.ok && /is not one of them/.test(no.msg), `somebody who is not his officer is not his to post: ${no.msg}`); }
   const out = applyOp(w, L, { op: 'post_person', character: man.id, dismiss: true }); assert.ok(out.ok && /out of the state's service/.test(out.msg), `the government puts a man out of the service: ${out.msg}`);
 });
+chain('World 22, fourth review: the counting house speaks of a thing that is dug as of ground, not of a works: where no deposit is known it says so, and where one lies unworked it names it', () => {
+  // World 22, Tirara: "Phosphate sells here at 80 against 24... A works that made it here would sell every load (found_company...)" was read by a
+  // mill owner in a country with no known phosphate, and she founded a pit on a rumour. (Both sentences approved by the user, 2026-11-13.)
+  const w = inherited(2696855, 8), cs = aliveCountries(w), c = cs.find(x => !countryProvinces(w, x.id).some(p => p.deposits?.phosphate?.known)) ?? cs[0], M = w.characters[c.oligarch];
+  const lines = () => seatMemoranda_(w, c, M, 'oligarch').flatMap(([, l]) => l).join('\n');
+  for (const p of countryProvinces(w, c.id)) if (p.deposits?.phosphate) p.deposits.phosphate.known = false;
+  for (const g of Object.keys(c.prices)) if (g !== 'phosphate') c.prices[g] = Math.min(c.prices[g], (w.globalPrice[g] ?? c.prices[g]) * (c.rer ?? 1) * 1.2);
+  (c._need ||= {}).phosphate = 1; c.prices.phosphate = (w.globalPrice.phosphate) * (c.rer ?? 1) * 3;
+  const none = lines();
+  assert.ok(/Phosphate sells here at \d+ against \d+ on the world's exchanges\. No deposit of it is known on our soil: a pit cannot be founded on ground the mining returns do not show, and a survey is the government's to order\. A cargo bought abroad under contract would sell every load\. Or leave it to others\./.test(none) && !/A works that made it here/.test(none), `no known deposit, and the counting house says so: ${none.slice(0, 500)}`);
+  const p = countryProvinces(w, c.id)[1]; p.deposits.phosphate = { amount: 400, rich: 1, known: true, mine: 0 };
+  const idle = lines();
+  assert.ok(new RegExp(`Phosphate sells here at \\d+ against \\d+ on the world's exchanges\\. A pit on the deposit at ${p.name} would sell every load \\(found_company; the engineers' price is in the survey\\), and so would a cargo bought abroad under contract\\. Or leave it to others\\.`).test(idle), `a deposit that lies unworked is named: ${idle.slice(0, 500)}`);
+  p.deposits.phosphate.mine = .5; assert.ok(/Phosphate sells here[^]*A works that made it here would sell every load/.test(lines()), 'where every known deposit is worked the old sentence stands');
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');
