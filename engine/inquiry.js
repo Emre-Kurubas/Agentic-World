@@ -8,7 +8,7 @@
 import { clamp, rand, news, nextId, quarterLabel } from './util.js';
 import { governs } from './polity.js';
 import { keptQuiet } from './press.js';
-import { isOpen, STATE, firmValue, lawFor } from './firms.js';
+import { isOpen, STATE, firmValue, lawFor, partsOf, inHundred } from './firms.js';
 
 export const INQUIRY_OPS = new Set(['inquire', 'inspect']);
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
@@ -26,8 +26,10 @@ function matterOf(w, c, into) {
   const said = String(into ?? '').trim(), key = /^(the\s+)?(courts?|bench|judges|judiciary)$/i.test(said) ? 'courts' : said, own = (o, k) => !!o && Object.hasOwn(o, k), people = ids => [...new Set(ids)].map(id => w.characters[id]).filter(x => x?.alive);
   const posts = post => Object.values(w.characters).filter(x => x.alive && x.country === c.id && (x.post === post || x.clerkOf === post)).map(x => x.id);
   if (own(w.firms, key) && w.firms[key].country === c.id) { const f = w.firms[key], law = lawFor(c, f), owner = w.characters[f.owner];
-    return { kind: 'works', key, name: f.name, persons: people([f.owner]), re: new RegExp(`${f.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|safety|wage|strike|disaster|works|mine`, 'i'),
-      plain: [`${f.name} belongs to ${f.owner === STATE ? 'the state' : owner?.name ?? 'no one in particular'}; it pays ${r2(f.wage ?? 1)} of the going wage and spends ${r2(f.safety ?? .3)} of 1 on safety${law ? ` (the law requires ${law.wage ? `${r2(law.wage)} and ` : ''}${r2(law.safety)}${(f.safety ?? .3) < law.safety - .001 ? ': it is under the legal floor' : ''})` : ' (no law sets a floor)'}; last quarter it made ${r2(f.lastProfit ?? 0)} after tax and paid ${r2(f.lastTax ?? 0)} in tax; a buyer would give about ${n(firmValue(w, f))} for it${f.disasterAt != null ? `; its last disaster was in ${quarterLabel(f.disasterAt)}${f.lastDisaster ? ` (${f.lastDisaster.what.toLowerCase()}, about ${f.lastDisaster.dead} dead), when it spent ${r2(f.lastDisaster.safety ?? .3)} of 1 on safety` : ''}` : ''}.`] }; }
+    // The register shows whose name each part stands in; who stands behind a nominee is found, if at all, in what those people have done.
+    const parts = partsOf(f), reg = parts.length ? ` The register shows ${parts.map(x => `${inHundred(x.share)} in the name of ${x.to === STATE ? 'the state' : w.characters[x.nominee ?? x.to]?.name ?? 'a holder'}`).join(', ')}.` : '';
+    return { kind: 'works', key, name: f.name, persons: people([f.owner, ...parts.flatMap(x => [x.to, x.nominee]).filter(x => x && x !== STATE)]), re: new RegExp(`${f.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|safety|wage|strike|disaster|works|mine`, 'i'),
+      plain: [`${f.name} belongs to ${f.owner === STATE ? 'the state' : owner?.name ?? 'no one in particular'}; it pays ${r2(f.wage ?? 1)} of the going wage and spends ${r2(f.safety ?? .3)} of 1 on safety${law ? ` (the law requires ${law.wage ? `${r2(law.wage)} and ` : ''}${r2(law.safety)}${(f.safety ?? .3) < law.safety - .001 ? ': it is under the legal floor' : ''})` : ' (no law sets a floor)'}; last quarter it made ${r2(f.lastProfit ?? 0)} after tax and paid ${r2(f.lastTax ?? 0)} in tax; a buyer would give about ${n(firmValue(w, f))} for it${f.disasterAt != null ? `; its last disaster was in ${quarterLabel(f.disasterAt)}${f.lastDisaster ? ` (${f.lastDisaster.what.toLowerCase()}, about ${f.lastDisaster.dead} dead), when it spent ${r2(f.lastDisaster.safety ?? .3)} of 1 on safety` : ''}` : ''}.${reg}`] }; }
   const inst = (c.institutions || []).find(i => i.id === key || String(i.name).toLowerCase() === key.toLowerCase());
   if (inst) return { kind: 'body', key: inst.id, name: inst.name, persons: people([inst.head, ...(inst.members || []), inst.founder]), re: new RegExp(`${String(inst.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|fund|skim|drew|budget`, 'i'),
     plain: [`${inst.name} draws ${r2((inst.budget ?? 0) * 100)} in the hundred of the country's output${inst.amount ? ` and ${n(inst.amount)} a quarter from its founder` : ''}; it is funded to ${n((inst.funding ?? 1) * 100)} in the hundred and stands at ${n((inst.strength ?? 0) * 100)} of 100${inst._quarter?.used?.skim ? `; ${r2(inst._quarter.used.skim)} was drawn out of it by its head this quarter` : ''}.`] };

@@ -169,7 +169,7 @@ const views = {
   },
   minds() { const t = S.data.log?.trace || []; if (!t.length) return '<p class="empty">No character thought this turn.</p>'; return t.map(x => `<div class="entry"><span class="swatch" style="background:${cColor(x.country)}"></span> <button class="linky" type="button" data-person="${x.actor}">${esc(x.name)}</button><span class="badge">${ROLE[x.role] || esc(x.role)}</span>${x.standing && x.standing !== 'in office' ? `<span class="badge no">${esc(x.standing)}</span>` : ''}${x.model ? `<span class="badge">${esc(x.model)}</span>` : ''} <span class="small muted">${esc(country(x.country)?.name)}</span>${x.persona ? `<div class="persona">${esc(x.persona)}</div>` : ''}${x.lookups?.length ? `<div class="looked">Topics looked up: ${esc(x.lookups.join(', '))}</div>` : ''}${x.monologue ? `<blockquote>${esc(x.monologue)}</blockquote>` : ''}${x.decisions?.length ? `<ul>${x.decisions.map(d => `<li>${esc(d)}</li>`).join('')}</ul>` : '<div class="small muted">Chose to do nothing this turn.</div>'}</div>`).join(''); },
   messages() { const m = S.data.log?.messages || []; return m.length ? m.map(x => `<div class="entry"><button class="linky" type="button" data-person="${x.from}">${esc(x.fromName)}</button> <span class="muted">→ ${esc(x.toName)}</span>${x.undelivered ? '<span class="badge no">Not delivered</span>' : ''}<blockquote>${esc(x.text)}</blockquote></div>`).join('') : '<p class="empty">No secret messages this turn.</p>'; },
-  referee() { const r = (S.data.log?.rulings || []).filter(x => x.source !== 'rule'); return r.length ? r.map(x => `<div class="entry"><span class="who2">${esc(x.name)}</span><span class="badge ${x.success ? 'ok' : 'no'}">${x.success ? 'Succeeded' : 'Failed'}</span><span class="badge">${Math.round(x.probability * 100)}% probability</span><div>${esc(x.narrative)}</div>${x.results?.length ? `<div class="small muted">${x.results.map(y => `${esc(y.op)}: ${esc(y.msg)}`).join(', ')}</div>` : ''}</div>`).join('') : '<p class="empty">No decisions went to the referee this turn.</p>'; }
+  referee() { const r = (S.data.log?.rulings || []).filter(x => x.source !== 'rule'); return r.length ? r.map(x => `<div class="entry"><span class="who2">${esc(x.name)}</span>${verdictBadge(x, (x.results || []).some(y => y.ok === false))}${diceBadge(x)}<div>${esc(x.narrative)}</div>${x.results?.length ? `<div class="small muted">${x.results.map(y => `${esc(y.op)}: ${esc(y.msg)}`).join(', ')}</div>` : ''}</div>`).join('') : '<p class="empty">No decisions went to the referee this turn.</p>'; }
 };
 
 // The ledger and the person timeline share the same entry view.
@@ -186,9 +186,22 @@ function ledgerUrl(f, cursor) {
   if (cursor) q.set('cursor', cursor);
   return `/api/ledger?${q}`;
 }
+// What came of a ruling, in the words the character was told. No dice are rolled where the engine has an operation for the order: the
+// figure is shown only where it was a real chance. (A watcher read "Failed, 100% probability" on a clerk who had been sounded and had
+// named his price: the order had not been carried out, nothing had been rolled, and something had been learned.)
+function verdictBadge(x, refused) {
+  const v = x.verdict || '', short = !v ? (x.success === false ? 'Failed' : refused ? 'Not carried out' : '') : /^Failed/.test(v) ? 'Failed' : /^Not carried out/.test(v) ? 'Not carried out' : /^Only partly/.test(v) ? 'Partly carried out' : /^Ordered/.test(v) ? 'Waiting' : /^Recorded as words/.test(v) ? 'Words only' : /^Said, and it is in the papers/.test(v) ? 'Words, in the papers' : 'Carried out';
+  const cls = short === 'Carried out' ? 'ok' : short === 'Failed' || short === 'Not carried out' ? 'no' : '';
+  return short ? `<span class="badge ${cls}" title="${esc(v || short)}">${short}</span>` : '';
+}
+function diceBadge(x) {
+  if (x.probability != null && x.probability < 1) return `<span class="badge">Dice: ${Math.round(x.probability * 100)}% chance</span>`;
+  if (x.refereeProbability != null) return `<span class="badge" title="The referee named a chance of ${Math.round(x.refereeProbability * 100)}%, but the order has an operation and the engine gave the outcome">No dice: the engine decided</span>`;
+  return '';
+}
 function entryHtml(e) {
   const x = e.x || {}, who = e.n ? (e.a?.[0] ? `<button class="linky" type="button" data-person="${e.a[0]}">${esc(e.n)}</button>` : `<b>${esc(e.n)}</b>`) : '', to = e.to ? `<span class="muted">→ ${e.a?.[1] ? `<button class="linky" type="button" data-person="${e.a[1]}">${esc(e.to)}</button>` : esc(e.to)}</span>` : '';
-  const flags = `${e.s === 'rule' || e.s === 'mock' ? '' : ''}${e.ok === false ? `<span class="badge no">${e.k === 'message' ? 'Not delivered' : 'Failed'}</span>` : ''}${x.secret ? '<span class="badge">Secret</span>' : ''}${e.k === 'message' && x.read ? '<span class="badge ok">Read in the same quarter</span>' : ''}${e.k === 'message' && x.intercepted ? '<span class="badge no">Copied by the censor</span>' : ''}${x.probability != null && e.k === 'ruling' ? `<span class="badge">${Math.round(x.probability * 100)}% probability</span>` : ''}${e.imp >= 3 ? '<span class="badge no">Major event</span>' : ''}`;
+  const flags = `${e.s === 'rule' || e.s === 'mock' ? '' : ''}${e.k === 'ruling' ? verdictBadge(x, e.ok === false) : e.ok === false ? `<span class="badge no">${e.k === 'message' ? 'Not delivered' : 'Failed'}</span>` : ''}${x.secret ? '<span class="badge">Secret</span>' : ''}${e.k === 'message' && x.read ? '<span class="badge ok">Read in the same quarter</span>' : ''}${e.k === 'message' && x.intercepted ? '<span class="badge no">Copied by the censor</span>' : ''}${e.k === 'ruling' ? diceBadge(x) : ''}${e.imp >= 3 ? '<span class="badge no">Major event</span>' : ''}`;
   let body = `<p>${esc(e.text)}</p>`, more = '';
   if (e.k === 'query') { body = `<p class="muted">Looked up: ${esc(e.q)}</p>`; more = `<details><summary>Answer received</summary><pre>${esc(e.text)}</pre></details>`; }
   if (e.k === 'thought') { const parts = []; if (x.decisions?.length) parts.push(`<ul>${x.decisions.map(d => `<li>${esc(d)}</li>`).join('')}</ul>`); if (x.lookups?.length) parts.push(`<div class="looked">Topics looked up: ${esc(x.lookups.join(', '))}</div>`); if (x.persona) parts.push(`<div class="persona">${esc(x.persona)}</div>`); if (parts.length) more = `<details><summary>Decisions and identity</summary>${parts.join('')}</details>`; if (!e.text) body = ''; }

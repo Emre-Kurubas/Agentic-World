@@ -409,16 +409,19 @@ export class Game {
     const fit = fitToPrint(narrative), printed = !!(fit && pub && carried && !refused.length && !waits && source === 'referee' && printable(w, ops));
     if (printed) news(w, `${c?.name ?? ''}: ${fit}`, { kind: 'politics', countries: [ch.country], ...(ops.every(op => op?.op === 'custom') && (c?.pressFreedom ?? 50) < 35 && c?.leader !== ch.id ? { hush: true } : {}) });
     // The person who gave the order is told what actually came of it, in the engine's own words, not only what was intended.
+    // The same verdict the character reads is kept in the record, so that whoever watches reads what the character read (panel).
+    let told = null;
     if (source === 'referee' && narrative) {
       const plain = m => m && !['Applied.', 'Recorded.'].includes(m), said = results.filter(r => plain(r.msg)).map(r => `${r.ok ? '' : `${r.op} was NOT carried out: `}${r.msg}`).join(' ');
       // A decision that no operation carried (an instruction to one's people, a resolve, a speech) is told back as what it was. (World 16: such
       // rulings came back "Succeeded", and a ruler waited ten quarters for an account he had "successfully" ordered.)
       const words = !said && !results.some(r => !['custom', 'noop'].includes(r.op));
       const verdict = !success ? 'Failed' : refused.length === results.length && results.length ? 'Not carried out' : refused.length ? 'Only partly carried out' : waits ? (results.some(r => String(r.waits).startsWith('take:')) ? 'Ordered; part of it waits on the fighting' : 'Ordered, and waiting on the quarter') : words ? (printed ? 'Said, and it is in the papers; nothing else was set in motion' : 'Recorded as words only; nothing was set in motion') : 'Succeeded';
+      told = verdict;
       ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: ${verdict}: ${narrative}${note ? ` (Your secretary adds: ${note})` : ''}${said ? ` [${said.slice(0, 1500)}]` : ''}`); ch.outcomes = ch.outcomes.slice(-60); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
     }
     // What is recorded as the probability is the chance that was actually rolled; where the referee named one and no dice were due, its figure is kept beside it.
-    return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, ...(note ? { note } : {}), probability: diced || prob <= 0 ? prob : 1, ...(prob > 0 && prob < 1 && !diced ? { refereeProbability: prob } : {}), success, results, source, decision, decisionText, ops, printed };
+    return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, ...(note ? { note } : {}), probability: diced || prob <= 0 ? prob : 1, ...(prob > 0 && prob < 1 && !diced ? { refereeProbability: prob } : {}), success, ...(told ? { verdict: told } : {}), results, source, decision, decisionText, ops, printed };
   }
 
   async turn() {

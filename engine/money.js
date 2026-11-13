@@ -87,7 +87,12 @@ export const vaultPremium = c => c.vault == null || !(vaultBase(c) > 1) ? 0 : VA
 export const BORROW_FREE = .005, BORROW_COSTS = .25, PRESS = .5, PRESS_CAP = .02;
 export const borrowHabit = c => Math.max(BORROW_FREE, c.borrowBase ?? 0);
 export const borrowBeyond = c => c.borrowBase == null ? 0 : Math.max(0, (c.borrowAvg || 0) - borrowHabit(c));
-export const borrowPremium = c => clamp(borrowBeyond(c) * BORROW_COSTS, 0, .01);
+// Lenders price the same borrowing by who asks. A state that owes little and sits on gold is let run for years before they stir; one that
+// already owes a third of a year's output is asked the whole price at once. (World 20: the richest state in the world, owing eight in the
+// hundred of a year's output with more than a year's output in gold, was asked nearly ten in the hundred a year after four quarters of
+// borrowing, the same as a republic that owed four times as much.)
+export const borrowStanding = c => clamp((c.debt || 0) / Math.max((c.gdp || 1) * 4, 1) / .3, .35, 1.3) * clamp(1.15 - Math.max(c.reserves || 0, 0) / Math.max(c.realGdp || c.gdp || 1, 1) * .35, .7, 1.15);
+export const borrowPremium = c => clamp(borrowBeyond(c) * BORROW_COSTS * borrowStanding(c), 0, .01);
 // What a state's borrowing does beyond its own books, each quarter it borrows (called from the quarter's accounts, economy.js fiscal): what the
 // country's own savers cannot take up is found by the banks against new money, and new money beyond what output asks for is what moves prices.
 // (Tried and taken out again, 2026-11-13: the banks of states with gold to spare taking up part of a dearer neighbour's loan in gold. In a

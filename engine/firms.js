@@ -8,6 +8,7 @@ import { governs } from './polity.js';
 
 const SCALE = .05, MAX_PER_COUNTRY = 20, BANKRUPT_TURNS = 6;
 export const STATE = 'state';
+const ROLE_SEATS = ['leader', 'general', 'opposition', 'oligarch'];
 export const isOpen = f => f.status === 'open';
 // The law of a works: the general floor under pay and safety and, where a law names a trade ("every mine and pit"), that trade's own,
 // whichever asks more. (World 19: three governments decreed a floor for the mines alone after three pit disasters; the law could only
@@ -22,6 +23,29 @@ const stepPrice = (w, f) => { const p = w.provinces[f.province]; return f.sector
 const secondHand = (w, f) => f.stake * capacity(w, f) * stepPrice(w, f) * (f.sector === 'mine' ? .1 : .2);
 // A company is worth the cash in its till and what its works bring in: about three years of what it has lately earned (f.earn, smoothed over the
 // last few quarters so that one strike or one lucky season does not set the price), and never less than the works would fetch second-hand.
+// Parts of a house in other names (f.parts: [{ to: a person's id or STATE, share, nominee?, since, paid? }]). The house stays its owner's: he
+// runs it, sets its wages and sells it; no more than 49 in the hundred can stand in other names. A part carries its share of every dividend,
+// of whatever the owner draws from the till, and of the price when the house is sold; it is its holder's to pass on. A nominee is the name
+// in the register where the real holder is to stay unnamed. (Four games running somebody tried to write a share over: an owner buying a
+// president with a fifth of a mine, a junta taking a third of a steel works it had paid for, a ruler squeezing a larger cut out of an
+// oligarch through a banker's name. The money moved as gifts and contracts, and no share could change hands. The user asked for it, 2026-11-13.)
+export const MAX_OUT = .49;
+export const partsOf = f => (f.parts || []).filter(x => x.share > 1e-6);
+export const heldOut = f => partsOf(f).reduce((a, x) => a + x.share, 0);
+export const inHundred = v => `${Math.round(v * 1000) / 10} in the hundred`;
+// What a house pays out goes to each part first; what is left is its owner's. Gold follows money that crosses a frontier.
+function payParts(w, c, f, amount) {
+  let rest = amount;
+  for (const x of partsOf(f)) { const m = amount * x.share; if (!(m > 0)) continue;
+    if (x.to === STATE) { c.treasury += m * (c.rate || 1); c._stateProfit = (c._stateProfit || 0) + m * (c.rate || 1); }
+    else { const h = w.characters[x.to]; if (!h?.alive) continue; h.wealth += m; abroad(w, c, h, m); }
+    x.paid = +m.toFixed(3); rest -= m; }
+  return rest;
+}
+function abroad(w, c, person, m) { if (person.country === c.id) return; const paid = Math.min(Math.max(c.reserves, 0), m); c.reserves -= paid; goldMoved(c, 'dividends', -paid); const o = w.countries[person.country]; if (o?.alive) { o.reserves += paid; goldMoved(o, 'dividends', paid); } }
+// The parts are bought out with the house: each takes its share of the price, and what is left is the seller's.
+function buyOutParts(w, c, f, price) { const rest = payParts(w, c, f, price); for (const x of partsOf(f)) { const h = w.characters[x.to]; if (h?.alive) h.inbox.push({ turn: w.turn, from: 'Registry of companies', text: `${f.name} has been sold. Your ${inHundred(x.share)} of it was bought out with the house: ${Math.round(price * x.share * 10) / 10} is paid to you.` }); } delete f.parts; return rest; }
+function voidParts(w, f, why) { for (const x of partsOf(f)) { const h = w.characters[x.to]; if (h?.alive) h.inbox.push({ turn: w.turn, from: 'Registry of companies', text: `${f.name} ${why}. Your ${inHundred(x.share)} of it is worth nothing now.` }); } delete f.parts; }
 export const firmValue = (w, f) => Math.max(f.cash, 0) + Math.max(secondHand(w, f), 12 * Math.max(f.earn ?? f.lastProfit ?? 0, 0));
 
 function setCapacity(w, f, next) {
@@ -43,7 +67,7 @@ export function restake(w, province, sector, resource, old, next, payer) {
 export function seizeFirm(w, c, firm, tell) {
   const owner = w.characters[firm.owner];
   if (owner) { tell(w, owner, c.name, `The state seized ${firm.name}.`); if (owner.country !== c.id && w.countries[owner.country]) w.countries[owner.country].relations[c.id] = clamp((w.countries[owner.country].relations[c.id] ?? 0) - 25, -100, 100); }
-  firm.owner = STATE; firm.offer = null;
+  voidParts(w, firm, 'was seized by the state'); firm.owner = STATE; firm.offer = null;
 }
 // Capital put into a company becomes works only after they are built, and only if the country has the machinery to equip them.
 // A quarter of it stays in the company's till as working cash; the rest buys works at what they cost in that province, and what the place cannot take stays in the till too.
@@ -141,12 +165,11 @@ export function firmStep(w) {
     if (profit > 0) {
       // Two fifths of a profit is paid out to whoever owns the company. One held in small parcels by people the story cannot name has nobody to pay:
       // its directors keep the whole in the till, and it goes into the works when they next build. No money leaves the world by that door.
-      const owner = w.characters[f.owner], dividend = f.owner === STATE || owner ? profit * .4 : 0; f.cash += profit - dividend;
+      // Parts in other names take their share first (payParts); a part whose holder has died goes back to the house.
+      if (f.parts) { for (const x of f.parts) if (x.to !== STATE && !w.characters[x.to]?.alive) { x.share = 0; w.characters[f.owner]?.inbox.push({ turn: w.turn, from: 'Registry of companies', text: `The part of ${f.name} that stood to the account of ${w.characters[x.to]?.name ?? 'its late holder'} has come back to the house on the holder's death.` }); } f.parts = partsOf(f); if (!f.parts.length) delete f.parts; }
+      const owner = w.characters[f.owner], full = profit * .4, held = f.owner === STATE || !!owner, dividend = f.parts ? payParts(w, c, f, full) : full; f.cash += profit - (held ? full : full - dividend);
       if (f.owner === STATE) { c.treasury += dividend * (c.rate || 1); c._stateProfit = (c._stateProfit || 0) + dividend * (c.rate || 1); }
-      else if (owner) {
-        owner.wealth += dividend;
-        if (owner.country !== f.country) { const paid = Math.min(Math.max(c.reserves, 0), dividend); c.reserves -= paid; goldMoved(c, 'dividends', -paid); if (w.countries[owner.country]?.alive) { w.countries[owner.country].reserves += paid; goldMoved(w.countries[owner.country], 'dividends', paid); } }
-      }
+      else if (owner) { owner.wealth += dividend; abroad(w, c, owner, dividend); }
     } else f.cash += profit;
     // A private company that earns and has cash in hand builds: this is where industry's own growth comes from. Sick banks, dear credit and unrest make owners wait.
     if (profit > 0 && f.owner !== STATE && f.cash > 20 && w.turn >= (f.buildsUntil ?? 0) && c.bankHealth >= 30 && (c.interestRate ?? .01) < .05 && p.unrest < 55) { const spend = f.cash * .5; if (!expand(w, c, f, spend, x => x)) { f.cash -= spend; f.buildsUntil = w.turn + 4; } }
@@ -157,7 +180,7 @@ export function firmStep(w) {
 
 function bankrupt(w, f, c, p) {
   const cap = capacity(w, f); setCapacity(w, f, cap * (1 - .35 * f.stake));
-  f.status = 'bankrupt'; f.closedAt = w.turn; f.stake = 0; f.offer = null;
+  f.status = 'bankrupt'; f.closedAt = w.turn; f.stake = 0; f.offer = null; voidParts(w, f, 'went bankrupt');
   w.characters[f.owner]?.inbox.push({ turn: w.turn, from: 'Court', text: `${f.name} went bankrupt.` });
   news(w, `${c.name}: ${f.name} went bankrupt, workers were laid off in ${p.name}.`, { kind: 'economy', countries: [c.id] });
   p.unrest = clamp(p.unrest + 4, 0, 100);
@@ -221,8 +244,10 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
       if (!firm || !isOpen(firm)) return fail('No such company.');
       const state = firm.owner === STATE && isHead && firm.country === c.id; if (firm.owner !== actor.id && !state) return fail('This company is not yours.');
       const m = Math.min(num(op.amount, 0, 1e9, 0), Math.max(firm.cash, 0)); if (!(m > .01)) return fail(`${firm.name} has no cash to take.`);
-      firm.cash -= m; if (state) c.treasury += m * (c.rate || 1); else actor.wealth += m;
-      return { ok: true, msg: `${Math.round(m * 10) / 10} was taken out of ${firm.name}${state ? ' into the treasury' : ''}; it keeps ${Math.round(firm.cash * 10) / 10}.` };
+      // What is taken out of the till is a dividend like any other: the parts in other names take their share of it.
+      const out = heldOut(firm), mine = firm.parts ? payParts(w, w.countries[firm.country], firm, m) : m;
+      firm.cash -= m; if (state) c.treasury += mine * (c.rate || 1); else actor.wealth += mine;
+      return { ok: true, msg: `${Math.round(m * 10) / 10} was taken out of ${firm.name}${state ? ' into the treasury' : ''}${out > 0 ? `, of which ${Math.round((m - mine) * 10) / 10} went to the ${inHundred(out)} that stands in other names` : ''}; it keeps ${Math.round(firm.cash * 10) / 10}.` };
     }
     case 'sell_company': {
       if (!firm || !isOpen(firm) || firm.owner !== actor.id) return fail('This company is not yours.');
@@ -245,7 +270,7 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
       if (op.state === true || firm.offer?.state) {
         if (!isHead || firm.offer?.state !== c.id) return fail(firm.offer?.state ? 'That offer was made to the state, and it is for whoever governs it to take.' : 'No offer to the state lies on this works. The state can still take it without one (nationalize_company).');
         const price = firm.offer.price, seller = w.characters[firm.owner]; if (c.treasury < price) return fail(`The treasury holds ${Math.round(c.treasury)}; the price is ${Math.round(price)}.`);
-        c.treasury -= price; (c._outlay ||= {}).other = (c._outlay.other || 0) + price; if (seller) { seller.wealth += price / (c.rate || 1); tell(w, seller, c.name, `The state has taken ${firm.name} at your price; ${Math.round(price / (c.rate || 1))} is paid to you.`); }
+        c.treasury -= price; (c._outlay ||= {}).other = (c._outlay.other || 0) + price; const gold = firm.parts ? buyOutParts(w, c, firm, price / (c.rate || 1)) : price / (c.rate || 1); if (seller) { seller.wealth += gold; tell(w, seller, c.name, `The state has taken ${firm.name} at your price; ${Math.round(price / (c.rate || 1))} is paid to you.`); }
         firm.owner = STATE; firm.offer = null; c.ownership = clamp(c.ownership + .02, 0, 1); news(w, `${c.name}: the state bought ${firm.name} from ${seller?.name ?? 'its owners'}.`, { kind: 'economy', countries: [c.id] });
         return { ok: true, msg: `${firm.name} is the state's, bought for ${Math.round(price)}. It is run and drawn on like any state works.` };
       }
@@ -253,9 +278,9 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
       if (!agreed && !open && !forSale) return fail('No sale offer.');
       const price = agreed || forSale ? firm.offer.price : firmValue(w, firm);
       if (actor.wealth < price) return fail('Not enough wealth.');
-      const seller = w.characters[firm.owner], home = w.countries[firm.country]; actor.wealth -= price;
-      if (firm.owner === STATE && home) { home.treasury += price * (home.rate || 1); home.ownership = clamp(home.ownership - .02, 0, 1); tell(w, w.characters[home.leader], actor.name, `${firm.name} was bought from the state for ${Math.round(price)}.`); }
-      else if (seller) { seller.wealth += price; tell(w, seller, actor.name, `${firm.name} was sold; you received ${Math.round(price)}.`); }
+      const seller = w.characters[firm.owner], home = w.countries[firm.country]; actor.wealth -= price; const left = firm.parts && home ? buyOutParts(w, home, firm, price) : price;
+      if (firm.owner === STATE && home) { home.treasury += left * (home.rate || 1); home.ownership = clamp(home.ownership - .02, 0, 1); tell(w, w.characters[home.leader], actor.name, `${firm.name} was bought from the state for ${Math.round(price)}.`); }
+      else if (seller) { seller.wealth += left; tell(w, seller, actor.name, `${firm.name} was sold; you received ${Math.round(left)}${left < price - .05 ? ` of the ${Math.round(price)} paid, the rest going to the parts that stood in other names` : ''}.`); }
       firm.owner = actor.id; firm.offer = null; leaveTrace(w, actor, `Bought ${firm.name}.`);
       return ok();
     }
@@ -275,6 +300,40 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
       firm.offer = { buyer: buyer.id, price }; leaveTrace(w, actor, `Offered ${firm.name} to ${buyer.name} for ${Math.round(price)}.`);
       tell(w, buyer, c.name, `The state offers you ${firm.name} (${firm.id}) for ${Math.round(price)}. Take it with buy_company.`);
       return { ok: true, msg: 'The offer was made. The sale happens if they take it.' };
+    }
+    // A part of a house written over to another person or to the state, by its owner; or passed on, or given back, by whoever holds one.
+    case 'assign_share': {
+      if (!firm || !isOpen(firm)) return fail('No such company.');
+      const home = w.countries[firm.country], stateWorks = firm.owner === STATE, owns = firm.owner === actor.id || (stateWorks && isHead && firm.country === c.id), mine = partsOf(firm).find(x => x.to === actor.id);
+      if (!owns && !mine) return fail(`${firm.name} is not yours, and no part of it stands to your account.`);
+      const raw = Number(op.share ?? op.part), asked = Number.isFinite(raw) ? (raw > 1 && raw <= 100 ? raw / 100 : clamp(raw, 0, 1)) : 0;
+      const key = String(op.to ?? op.character ?? op.buyer ?? '').trim(), toState = op.state === true || /^(the )?state$/i.test(key) || key === firm.country;
+      const person = toState ? null : (Object.hasOwn(w.characters, key) ? w.characters[key] : Object.values(w.characters).find(x => x.alive && x.name.toLowerCase() === key.toLowerCase()));
+      if (!toState && !person?.alive) return fail('Say to whom the part goes (to: a person, or "state" for the treasury of the country the works stands in).');
+      const nomKey = String(op.nominee ?? '').trim(), nominee = nomKey ? (Object.hasOwn(w.characters, nomKey) ? w.characters[nomKey] : Object.values(w.characters).find(x => x.alive && x.name.toLowerCase() === nomKey.toLowerCase())) : null;
+      if (nomKey && (!nominee?.alive || nominee.id === person?.id)) return fail('The nominee is the person whose name is to stand in the register in place of the holder\'s: no such person.');
+      const target = toState ? STATE : person.id, backHome = owns ? false : (toState ? stateWorks : person.id === firm.owner), r1 = v => Math.round(v * 10) / 10;
+      (firm.parts ||= []);
+      if (owns) {
+        if (!(asked >= .005)) return fail('Say how large a part (share: 0.2 is a fifth of the house).');
+        if (toState && stateWorks) return fail(`${firm.name} is the state's already.`); if (person?.id === actor.id && !stateWorks) return fail('The house is yours already: what is not in other names is yours.');
+        const out = heldOut(firm); if (out + asked > MAX_OUT + 1e-9) return fail(`No more than 49 in the hundred of a house can stand in other names while it remains its owner's${out > 0 ? `: ${inHundred(out)} of ${firm.name} does already` : ''}. To part with more, sell it (sell_company).`);
+        const x = firm.parts.find(y => y.to === target && (y.nominee ?? null) === (nominee?.id ?? null)) ?? firm.parts[firm.parts.push({ to: target, share: 0, since: w.turn, ...(nominee ? { nominee: nominee.id } : {}) }) - 1]; x.share += asked;
+      } else {
+        const part = asked >= .005 ? Math.min(asked, mine.share) : mine.share; mine.share -= part;
+        if (!backHome) { const x = firm.parts.find(y => y.to === target && (y.nominee ?? null) === (nominee?.id ?? null)) ?? firm.parts[firm.parts.push({ to: target, share: 0, since: w.turn, ...(nominee ? { nominee: nominee.id } : {}) }) - 1]; x.share += part; }
+        firm.parts = partsOf(firm); if (!firm.parts.length) delete firm.parts;
+        const owner = w.characters[firm.owner], whom = backHome ? 'the house' : toState ? home.name : person.name; if (backHome) tell(w, stateWorks ? w.characters[home.leader] : owner, actor.name, `${actor.name} has given back ${inHundred(part)} of ${firm.name}: it is the house's again.`);
+        else { tell(w, toState ? w.characters[home.leader] : person, actor.name, `${inHundred(part)} of ${firm.name} (${firm.id}), which stood to the account of ${actor.name}, now stands ${toState ? 'to the treasury\'s account' : nominee ? `in the name of ${nominee.name}, for your account` : 'in your name'}: its share of every dividend, and of the price if the house is sold. It is ${toState ? 'the state\'s' : 'yours'} to pass on (assign_share).`); if (owner?.alive) tell(w, owner, 'Registry of companies', `${inHundred(part)} of ${firm.name} has passed from ${actor.name} to ${toState ? home.name : (nominee ?? person).name}.`); if (nominee) tell(w, nominee, actor.name, `${inHundred(part)} of ${firm.name} is entered in your name. It is not yours: you hold it for ${person.name}.`); }
+        if (person && !backHome) { leaveTrace(w, actor, `Passed ${inHundred(part)} of ${firm.name} to ${person.name}${nominee ? `, in the name of ${nominee.name}` : ''}.`); if (nominee) { leaveTrace(w, person, `Holds ${inHundred(part)} of ${firm.name} in the name of ${nominee.name}.`); leaveTrace(w, nominee, `Holds ${inHundred(part)} of ${firm.name} in own name for ${person.name}.`); } }
+        return { ok: true, msg: `${inHundred(part)} of ${firm.name} has passed from you to ${whom}${mine.share > 1e-6 ? `; ${inHundred(mine.share)} still stands to your account` : ''}.` };
+      }
+      // Told, and remembered: a part given to somebody who holds a seat, or hidden behind another name, is a paper that can be found.
+      const seat = person && ROLE_SEATS.some(r => home?.[r] === person.id), giver = stateWorks ? `the state's works ${firm.name}` : firm.name, share = inHundred(asked);
+      if (toState) tell(w, w.characters[home.leader], actor.name, `${share} of ${firm.name} (${firm.id}) now stands to the treasury's account, by its owner's deed: that share of every dividend is paid into the treasury, and of the price if the house is sold. The house remains its owner's to run. The state can pass its part on (assign_share).`);
+      else { tell(w, person, actor.name, `${share} of ${giver} (${firm.id}) now stands ${nominee ? `in the name of ${nominee.name}, for your account` : 'in your name'}, by ${stateWorks ? 'the government\'s' : 'its owner\'s'} deed: that share of every dividend comes to you, and of the price if the house is sold. The house remains ${stateWorks ? 'the state\'s' : 'its owner\'s'} to run. The part is yours to pass on or to give back (assign_share).`); if (nominee) tell(w, nominee, actor.name, `${share} of ${firm.name} is entered in your name. It is not yours: you hold it for ${person.name}, and what it pays goes to ${person.name}.`); }
+      if (person && (seat || nominee || stateWorks)) { leaveTrace(w, actor, `Wrote ${share} of ${giver} over to ${person.name}${nominee ? `, in the name of ${nominee.name}` : ''}.`); leaveTrace(w, person, `Took ${share} of ${giver} from ${actor.name}${nominee ? `, held in the name of ${nominee.name}` : ''}.`); if (nominee) leaveTrace(w, nominee, `Holds ${share} of ${firm.name} in own name for ${person.name}.`); }
+      return { ok: true, msg: `${share} of ${firm.name} now stands ${toState ? `to the account of the treasury of ${home.name}` : nominee ? `in the name of ${nominee.name}, for ${person.name}` : `in the name of ${person.name}`}: that share of every dividend, of whatever is drawn from the till, and of the price if the house is sold. The house is still ${stateWorks ? 'the state\'s' : 'yours'} to run; ${inHundred(heldOut(firm))} of it now stands in other names. The deed is a gift: whatever was to be paid for it is paid by its own order.${person && (seat || nominee) ? ' It is a paper that can be found: by an inquiry into the house, or by whoever goes through the registers for either of you.' : ''}` };
     }
     default: return fail('Unknown company operation.');
   }

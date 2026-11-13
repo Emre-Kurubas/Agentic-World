@@ -5367,5 +5367,43 @@ chain('World 20, first review: a petition that lies before the government no lon
     run(v, 1); run(twin, 1); assert.ok(u.quality > tu.quality + .02 && tu.quality > .8, `men who drill learn faster than barracks routine teaches (${u.quality.toFixed(3)} against ${tu.quality.toFixed(3)})`);
     run(v, 1); run(twin, 1); assert.ok(u.quality - tu.quality < .08, 'the order is for one quarter'); }
 });
+import { partsOf as partsOf_, heldOut as heldOut_ } from '../engine/firms.js';
+import { borrowStanding as borrowStanding_ } from '../engine/money.js';
+chain('A part of a house can stand in another name: its owner writes it over to a person or to the state, the dividend and the price of a sale follow the parts, a nominee\'s name can stand in the register, the deed is a paper that can be found, whoever holds a part can pass it on or give it back, and seizure and ruin take the parts with the house; and lenders ask less of a state that owes little and sits on gold', () => {
+  // World 20: in three states at once somebody tried to write a share over (a fifth of a mine to a president, a third of a steel works to
+  // the state that had paid for it, a ruler's cut through a banker's name). The money moved as gifts; no share could change hands.
+  const w = inherited(2696855, 8); run(w, 2);
+  const c = aliveCountries(w).find(x => Object.values(w.firms).some(f => f.status === 'open' && f.owner === x.oligarch && f.country === x.id && f.lastProfit > 1)), M = w.characters[c.oligarch], L = ld(w, c), G = w.characters[c.general], O = w.characters[c.opposition];
+  const f = Object.values(w.firms).filter(x => x.status === 'open' && x.owner === M.id && x.country === c.id).sort((a, b) => b.lastProfit - a.lastProfit)[0], clerk = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post && ![L.id, G.id, O.id, M.id].includes(x.id));
+  assert.ok(/not yours, and no part of it stands to your account/.test(applyOp(w, O, { op: 'assign_share', id: f.id, to: L.id, share: .2 }).msg), 'only the owner, or whoever holds a part');
+  assert.ok(/Say how large a part/.test(applyOp(w, M, { op: 'assign_share', id: f.id, to: L.id }).msg) && /Say to whom/.test(applyOp(w, M, { op: 'assign_share', id: f.id, share: .2 }).msg));
+  L.inbox = []; const s0 = (L.secrets || []).length, gift = applyOp(w, M, { op: 'assign_share', id: f.id, to: L.id, share: 20 });
+  assert.ok(gift.ok && Math.abs(heldOut_(f) - .2) < 1e-9 && /^20 in the hundred of [^]* now stands in the name of [^:]*: that share of every dividend[^]*It is a paper that can be found/.test(gift.msg) && L.inbox.some(m => /20 in the hundred of [^]* now stands in your name, by its owner's deed/.test(m.text)) && (L.secrets || []).length === s0 + 1 && M.secrets.some(x => /^Wrote 20 in the hundred of /.test(x.text)), `a fifth is written over to whoever governs, and both are the keepers of a paper: ${gift.msg}`);
+  assert.ok(/No more than 49 in the hundred of a house can stand in other names[^]*: 20 in the hundred of /.test(applyOp(w, M, { op: 'assign_share', id: f.id, to: G.id, share: .3 }).msg), 'the house stays its owner\'s');
+  const nom = applyOp(w, M, { op: 'assign_share', id: f.id, to: G.id, share: .04, nominee: clerk.id }); assert.ok(nom.ok && new RegExp(`now stands in the name of ${clerk.name}, for ${G.name}`).test(nom.msg), nom.msg);
+  const reg = lookUp(w, O, 'companies').split('\n').find(l => l.startsWith(f.id + ' ')); assert.ok(new RegExp(`20 in the hundred in the name of ${L.name}, 4 in the hundred in the name of ${clerk.name}`).test(reg) && !reg.includes(G.name), `the register shows the nominee's name and not the holder's: ${reg}`);
+  assert.ok(new RegExp(`You hold 4 in the hundred of ${f.id} [^]*in the name of ${clerk.name}: it paid you`).test(lookUp(w, G, 'my_companies')) && new RegExp(`is entered in your name: you hold it for ${G.name}`).test(lookUp(w, clerk, 'my_companies')) && /two fifths was paid out, 76 in the hundred of that to you and the rest to the parts that stand in other names/.test(lookUp(w, M, 'my_companies')), 'each reads what is his');
+  assert.ok(applyOp(w, M, { op: 'assign_share', id: f.id, to: 'state', share: .1 }).ok); const twin = structuredClone(w); delete twin.firms[f.id].parts;
+  const before = { L: L.wealth, G: G.wealth, M: M.wealth, clerk: clerk.wealth }; run(w, 1); run(twin, 1); const tf = twin.firms[f.id], tM = twin.characters[M.id], full = f.lastProfit * .4;
+  if (f.status === 'open' && f.lastProfit > 0) { const pL = partsOf_(f).find(x => x.to === L.id), pS = partsOf_(f).find(x => x.to === 'state');
+    assert.ok(Math.abs(pL.paid - full * .2) < .02 && Math.abs(pS.paid - full * .1) < .02 && L.wealth > before.L && G.wealth > before.G && clerk.wealth <= before.clerk + 1e-9, `the dividend follows the parts, the nominee gets nothing (${pL.paid} of ${full})`);
+    assert.ok(Math.abs((M.wealth - before.M) - (tM.wealth - before.M) + full * .34) < Math.max(.1, full * .1), `and the owner has that much less: ${(M.wealth - before.M).toFixed(2)} against ${(tM.wealth - before.M).toFixed(2)}`); }
+  { // The till: a draw is a dividend.
+    f.cash = Math.max(f.cash, 20); const m0 = M.wealth, l0 = L.wealth, d = applyOp(w, M, { op: 'draw_company', id: f.id, amount: 10 }); assert.ok(d.ok && Math.abs(M.wealth - m0 - 6.6) < .01 && Math.abs(L.wealth - l0 - 2) < .01 && /of which 3\.4 went to the 34 in the hundred that stands in other names/.test(d.msg), d.msg); }
+  { // Passed on and given back.
+    const on = applyOp(w, L, { op: 'assign_share', id: f.id, to: O.id, share: .05 }); assert.ok(on.ok && Math.abs(partsOf_(f).find(x => x.to === L.id).share - .15) < 1e-9 && Math.abs(partsOf_(f).find(x => x.to === O.id).share - .05) < 1e-9 && /5 in the hundred of [^]* has passed from you to [^;]*; 15 in the hundred still stands to your account/.test(on.msg), on.msg);
+    const back = applyOp(w, L, { op: 'assign_share', id: f.id, to: M.id }); assert.ok(back.ok && !partsOf_(f).some(x => x.to === L.id) && Math.abs(heldOut_(f) - .19) < 1e-9 && /has passed from you to the house/.test(back.msg), `what is given back is the house's again: ${back.msg}`); }
+  { // An inquiry into the house.
+    const q = structuredClone(w), qc = q.countries[c.id]; qc.bureaucracy = 90; qc.courts = 80; const r = applyOp(q, ld(q, qc), { op: 'inquire', into: f.id }); assert.ok(r.ok, r.msg); run(q, 1); const told = ld(q, qc).inbox.map(m => m.text).join('\n');
+    assert.ok(new RegExp(`The register shows [^.]*4 in the hundred in the name of ${clerk.name}`).test(told), `the inquiry reads the register: ${told.slice(-600)}`); }
+  { // Sold: the parts are bought out with the house.
+    const v = structuredClone(w), vf = v.firms[f.id], vM = v.characters[M.id], vO = v.characters[O.id], vG = v.characters[G.id], buyer = v.characters[v.countries[c.id].leader]; buyer.wealth = 500; const t0 = v.countries[c.id].treasury, o0 = vO.wealth, g0 = vG.wealth, m0 = vM.wealth;
+    assert.ok(applyOp(v, vM, { op: 'sell_company', id: f.id, price: 100, open: true }).ok); const b = applyOp(v, buyer, { op: 'buy_company', id: f.id }); assert.ok(b.ok && !vf.parts && Math.abs(vO.wealth - o0 - 5) < .01 && Math.abs(vG.wealth - g0 - 4) < .01 && Math.abs(vM.wealth - m0 - 81) < .01 && v.countries[c.id].treasury > t0 && vO.inbox.some(m => /was bought out with the house: 5 is paid to you/.test(m.text)), `each part takes its share of the price: owner ${(vM.wealth - m0).toFixed(1)}`); }
+  { // Seized: the parts go with it.
+    const v = structuredClone(w), vO = v.characters[O.id]; vO.inbox = []; assert.ok(applyOp(v, ld(v, v.countries[c.id]), { op: 'nationalize_company', id: f.id, _law: true }).ok && !v.firms[f.id].parts && vO.inbox.some(m => /was seized by the state\. Your 5 in the hundred of it is worth nothing now/.test(m.text)), 'a seizure takes the parts too, and their holders are told'); }
+  { // Lenders and who asks.
+    const rich = structuredClone(c), poor = structuredClone(c); rich.debt = rich.gdp * 4 * .08; rich.reserves = rich.realGdp * 1.2; poor.debt = poor.gdp * 4 * .36; poor.reserves = poor.realGdp * .2; rich.borrowBase = poor.borrowBase = .004; rich.borrowAvg = poor.borrowAvg = .03;
+    assert.ok(borrowStanding_(rich) < .3 && borrowStanding_(poor) > 1.1 && borrowPremium_(poor) > borrowPremium_(rich) * 3 && borrowPremium_(rich) > 0, `the same borrowing is priced by who asks (${(borrowPremium_(rich) * 400).toFixed(2)} against ${(borrowPremium_(poor) * 400).toFixed(2)} a year)`); }
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

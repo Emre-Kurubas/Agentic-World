@@ -34,7 +34,7 @@ import { proposeContract, acceptContract, cancelContract, toStateAccount, few as
 import { governmentSeats, institutionRoom, delegated, vetoedBy, makeInstitution, mustPassParliament, createBill, parliamentOpen, makeParliament, leadsParties, enactLaw, normalizeClauses, activateClauses, moneyStops, allocateSeats, clauseText, MAX_AGENCY_BUDGET, governs } from './polity.js';
 import { he, He, him, his } from './names.js';
 
-const FIRM_OPS = new Set(['found_company', 'invest_company', 'draw_company', 'sell_company', 'buy_company', 'nationalize_company', 'privatize_company']);
+const FIRM_OPS = new Set(['found_company', 'invest_company', 'draw_company', 'sell_company', 'buy_company', 'nationalize_company', 'privatize_company', 'assign_share']);
 const PERMISSIONS = {
   leader: null,
   general: new Set(['propose_contract', 'accept_contract', 'cancel_contract', 'found_company', 'invest_company', 'sell_company', 'buy_company', 'propose_law', 'withdraw_bill', 'vote_bill', 'lobby_bill', 'appoint_institution', 'publish_dossier', 'lend_private', 'repay_debt', 'forgive_debt', 'gather_dossier', 'blackmail', 'found_party', 'embezzle', 'create_institution', 'start_plot', 'fund_plot', 'invite_plot', 'join_plot', 'betray_plot', 'execute_plot', 'bribe', 'custom', 'propaganda']),
@@ -79,6 +79,8 @@ PERMISSIONS.private = new Set(PRIVATE);
 for (const seat of ['general', 'opposition', 'oligarch']) for (const op of [...OWN, ...OPEN_STANDING]) PERMISSIONS[seat].add(op);
 // The chief of staff also says who is paid first when the vote is short and how much of the arsenal an attack may not touch.
 for (const op of ['set_pay_priority', 'set_arsenal_reserve', 'drill']) { PERMISSIONS.general.add(op); QUIET.add(op); }
+// A part of a works is its holder's to pass on, whoever he is; the deed is a private paper.
+for (const k of Object.keys(PERMISSIONS)) if (PERMISSIONS[k] && (PERMISSIONS[k].has('sell_company') || k === 'private')) PERMISSIONS[k].add('assign_share'); QUIET.add('assign_share');
 PERMISSIONS.general.add('post_person'); PERMISSIONS.general.add('cancel_work'); PERMISSIONS.general.add('tender'); PERMISSIONS.general.add('equip'); QUIET.add('equip');
 // The chief of staff directs where the army's units and squadrons stand and who commands them. Raising and disbanding troops, war and peace stay with the ruler.
 for (const op of ['move', 'move_army', 'move_fleet', 'merge_units', 'merge_fleets', 'appoint_commander', 'spy', 'build', 'set_posture', 'amphibious', 'offensive', 'fleet_orders', 'bombard', 'lay_mines', 'prepare_plan', 'leak_plan']) PERMISSIONS.general.add(op);
