@@ -7,7 +7,7 @@
 // has a hand in the matter. What it finds lies in the inquirer's files on those people, where a prosecution can use it.
 import { clamp, rand, news, nextId, quarterLabel } from './util.js';
 import { governs } from './polity.js';
-import { keptQuiet } from './press.js';
+import { keptQuiet, findPaper } from './press.js';
 import { isOpen, STATE, firmValue, lawFor, partsOf, inHundred } from './firms.js';
 import { watch as postEye } from './court.js';
 
@@ -50,6 +50,13 @@ function matterOf(w, c, into) {
       : key === 'police' ? [`The police stand at ${n(c.police ?? 0)} of 100.`]
       : [`${b ? `Of what was assessed last quarter about ${n((b.collect ?? 1) * 100)} in the hundred was collected, and about ${n((b.graft ?? 0) * 100)} in the hundred of what was collected stuck to the hands it passed through. ` : ''}${run.length ? `The customs are leased under ${run.map(x => `${x.id} to the house of ${w.characters[x.from]?.name}, which keeps about ${n(x.drain)} a quarter`).join(', ')}.` : 'No lease or farm of the revenue is in force.'}`];
     return { kind: 'office', key, name: key === 'courts' ? 'the courts' : key === 'post' ? 'the post' : key === 'army' ? 'the army\'s stores and pay' : key === 'police' ? 'the police' : key === 'customs' ? 'the customs' : 'the treasury', persons: people(who), re: OFFICES[key], plain, leases: run }; }
+  // One body of troops is looked into as the army's stores and pay are, by whoever may open those; and a newspaper as a house of business is.
+  // (World 23, first review: a chief of staff asked three times why a corps was grumbling, and a ruler who held a paper, and they were told
+  // to say what was to be looked into.)
+  { const u = own(w.units, key) && w.units[key].country === c.id ? w.units[key] : null; if (u) { const cmd = w.characters[u.commander], at = w.provinces[u.province]?.name ?? u.province, paid = u.paid ?? Math.min(1, c.militaryFunding ?? 1);
+      return { kind: 'office', key: 'army', name: `${u.id} and its officers`, persons: people([u.commander, c.general]), re: OFFICES.army, leases: [], plain: [`${u.id}: ${Math.round(u.men * 10) / 10} thousand ${u.kind} at ${at}${cmd?.alive ? ` under ${cmd.name}` : ', with no commander named'}. It is paid and supplied to ${n(paid * 100)} in the hundred of what it costs; its spirit stands at ${n(u.morale)} of 100 and its faith in the government at ${n(u.loyalty)} of 100${u.calledAt != null && u.called ? '; it is made up of reservists called up' : ''}${(u.quality ?? 1) < .95 ? '; it is not yet drilled to the army\'s standard' : ''}.`] }; } }
+  { const np = findPaper(c, key); if (np) { const o = w.characters[np.owner]; return { kind: 'paper', key: np.id, name: np.name, persons: people([np.owner]), re: new RegExp(`${np.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|paper|press|print|publish|editor`, 'i'),
+      plain: [`${np.name} (${np.id}) is held by ${o?.alive ? o.name : 'nobody now living'}. It has about ${n(np.funds ?? 0)} in its till and is read by about ${n((np.reach ?? 0) * 100)} in the hundred of those who read at all${np.serves ? `; its line is ${np.serves === 'government' ? 'the government\'s' : np.serves === 'against' ? 'against the government' : np.serves === 'none' ? 'nobody\'s' : np.serves === 'owner' ? 'its owner\'s' : `that of ${c.parties.find(q => q.id === np.serves)?.name ?? 'a party'}`}` : ''}${np.print === 'hold' ? '; what its men find about persons is kept back for its owner and not printed' : ''}.`] }; } }
   const p = own(w.provinces, key) ? w.provinces[key] : null;
   if (p && p.controller === c.id) return { kind: 'province', key, name: `the administration of ${p.name}`, persons: people([p.governor]), re: new RegExp(`${p.name}|governor|tax|levy|bribe`, 'i'), plain: [`${p.name}: unrest ${n(p.unrest)} of 100${p.governor && w.characters[p.governor]?.alive ? `; ${w.characters[p.governor].name} governs it` : '; it has no governor of its own'}.`] };
   const deadKey = key.replace(/^death:/, ''), dead = own(w.characters, deadKey) ? w.characters[deadKey] : null;
@@ -57,7 +64,7 @@ function matterOf(w, c, into) {
     return { kind: 'death', key: dead.id, name: `the death of ${dead.name}`, persons: people(plot ? [plot.leader, ...(plot.members || [])] : []), re: /kill|shot|assassin|murder|poison/i, plot, plain: [`${dead.name} ${dead.death.how ?? 'died'} in ${quarterLabel(dead.death.turn)}.`] }; }
   return null;
 }
-export const INTO = 'a works (its id, SR...), a body of the state or a foundation (its id or name), a contract (CT...) or an arrangement with a banking house (OF...), an office (treasury, customs, army, police, courts, post), a province of ours (P...), or a death (death:K...)';
+export const INTO = 'a works (its id, SR...), a body of the state or a foundation (its id or name), a contract (CT...) or an arrangement with a banking house (OF...), an office (treasury, customs, army, police, courts, post), one body of troops of ours (B...), a newspaper (its id or name), a province of ours (P...), or a death (death:K...)';
 
 export function inquiryOp(w, actor, c, op, h) {
   const { fail, num } = h, state = governs(w, c, actor);
@@ -76,7 +83,7 @@ export function inquiryOp(w, actor, c, op, h) {
   const m = matterOf(w, c, op.into ?? op.id ?? op.matter); if (!m) return fail(`Say what is to be looked into (into): ${INTO}. One person is looked into with gather_dossier.`);
   const list = (w.inquiries ||= []); if (list.some(x => x.by === actor.id && x.key === m.key)) return fail(`An inquiry of yours into ${m.name} is sitting already; it reports when the quarter is out.`);
   const staff = !state && c.general === actor.id && m.key === 'army', owner = m.kind === 'works' && w.firms[m.key].owner === actor.id, sits = !!c.parliament && c.parliament.legislative !== false, house = !state && !staff && sits && h.leads;
-  if (!state && !staff && ['office', 'province'].includes(m.kind) && !house) return fail(`The books of ${m.name} are the state's: only whoever governs can have them opened${sits ? ', or the leader of a party that holds seats in the house, by an inquiry of the house (you lead no such party)' : c.parliament ? `; the ${c.parliament.name ?? 'council'} advises and cannot call for the state's books` : ''}.`);
+  if (!state && !staff && ['office', 'province'].includes(m.kind) && !house) return fail(`The books of ${m.name} are the state's: only whoever governs can have them opened${sits ? ', or the leader of a party that holds seats in the house, by an inquiry of the house (you lead no such party)' : c.parliament && h.leads ? `; the ${c.parliament.name ?? 'council'} advises and cannot call for the state's books` : ''}.${!h.leads ? ' A private person can have a works, a paper, a contract or a death looked into with his own money, and a person with a file (gather_dossier).' : ''}`);
   const fee = state || staff ? h.pays(Math.max(c.gdp, 1) * .0003) : owner || house ? 0 : Math.min(Math.max(actor.wealth, 0), Math.max(1, num(op.amount, 0, 40, 2))); if (!state && !staff && !owner && !house) { if (actor.wealth < 1) return fail('Men who ask questions are paid, and you have nothing to pay them with.'); actor.wealth -= fee; }
   const eye = state ? clamp(.3 + c.bureaucracy / 250 + (c.courts ?? 40) / 400 + auditors(c) * .25, .25, .9) : staff ? .45 : owner ? .7 : house ? clamp(.25 + (c.courts ?? 40) / 300, .2, .6) : clamp(.12 + actor.power / 400 + fee / 60, .1, .5);
   const open = house || op.public === true;

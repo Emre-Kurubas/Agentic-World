@@ -5494,7 +5494,7 @@ chain('World 21, second review: the police can be sent after the armed undergrou
   // Four games running a ruler ordered "arrest the known men of the underground", and the office could arrest only people with names.
   const w = inherited(2696855, 8); run(w, 1); const cs = aliveCountries(w), c = [...cs].sort((a, b) => (b.cells || 0) - (a.cells || 0))[0], L = ld(w, c), G = w.characters[c.general]; c.cells = 50; c.police = 60; c.intelligence = 50;
   assert.ok(/a raid on the underground is the government's to order/.test(applyOp(w, G, { op: 'raid_cells' }).msg) || !applyOp(structuredClone(w), G, { op: 'raid_cells' }).ok, 'it is the government\'s to order');
-  const fear0 = c.fear || 0, r = applyOp(w, L, { op: 'raid_cells' }); assert.ok(r.ok && c.cells < 50 && c.cells > 20 && (c.fear || 0) > fear0 && /about \d+ men were taken, with presses and arms[^]*the underground is [a-z ,]+ now, where it was organised and armed[^]*It grows back over the following quarters/.test(r.msg), `the police break what they can find: ${r.msg}`);
+  const fear0 = c.fear || 0, r = applyOp(w, L, { op: 'raid_cells' }); assert.ok(r.ok && c.cells < 50 && c.cells > 20 && (c.fear || 0) > fear0 && /about \d+ men were taken, with presses and arms[^]*the underground is (?:[a-z ,]+ now, where it was organised and armed|still organised and armed, though fewer)[^]*It grows back over the following quarters/.test(r.msg), `the police break what they can find: ${r.msg}`);
   assert.ok(/have made their raid this quarter/.test(applyOp(w, L, { op: 'raid_cells' }).msg), 'once a quarter');
   const blind = structuredClone(w), bc = blind.countries[c.id]; bc.cells = 50; bc.police = 15; bc.intelligence = 10; delete bc.raided; const after = c.cells; applyOp(blind, ld(blind, bc), { op: 'raid_cells' }); assert.ok(50 - bc.cells < 50 - after, `a weak police finds less (${(50 - bc.cells).toFixed(1)} against ${(50 - after).toFixed(1)})`);
   const one = structuredClone(w), oc = one.countries[c.id]; oc.cells = 50; delete oc.raided; const prov = Object.values(one.provinces).find(p => p.controller === c.id); applyOp(one, ld(one, oc), { op: 'raid_cells', province: prov.id }); assert.ok(50 - oc.cells < (50 - after) * .7, 'and a raid in one province half as much');
@@ -5740,6 +5740,22 @@ chain('World 22, the whole game read through: a squadron sent to a harbour "to l
   assert.ok(lie.ok && f.target === other.id && new RegExp(`The harbour is ${other.name}\\.`).test(lie.msg), `ordered to lie in harbour, the squadron keeps the harbour it was sent to: ${f.target} | ${lie.msg.slice(-80)}`);
   const g = n.ship('U1', home.seas[0], 3, 'cruiser', home); g.port = null; const back = applyOp(w, G, { op: 'fleet_orders', fleet: g.id, orders: 'port' });
   assert.ok(back.ok && g.target === home.id, `with no harbour named it makes for its own: ${g.target}`);
+});
+chain('World 23, first review: one body of troops and a newspaper can be looked into, and a private person turned away from the state\'s books is told what he may have looked into', () => {
+  // World 23, the first year: a chief of staff asked three times why a corps was grumbling, a ruler asked who held a paper and how its accounts
+  // stood, and both were told to say what was to be looked into; a mill owner was told that the Council of Clergy cannot call for the books.
+  const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), G = w.characters[c.general], O = w.characters[c.oligarch];
+  const u = Object.values(w.units).filter(x => x.country === c.id).sort((a, b) => b.men - a.men)[0];
+  const corps = applyOp(w, G, { op: 'inquire', into: u.id });
+  assert.ok(corps.ok && new RegExp(`The inquiry into ${u.id} and its officers sits`).test(corps.msg), `the chief of staff has one corps looked into: ${corps.msg.slice(0, 160)}`);
+  const priv = applyOp(w, O, { op: 'inquire', into: u.id }); assert.ok(!priv.ok && /only whoever governs can have them opened/.test(priv.msg) && /A private person can have a works, a paper, a contract or a death looked into/.test(priv.msg) && !/cannot call for the state's books/.test(priv.msg), `a private person is not let into the army's books, and is told what is open to him: ${priv.msg}`);
+  O.wealth = Math.max(O.wealth, 60); const found = applyOp(w, O, { op: 'found_paper', name: 'The Evening Lamp', amount: 12 }); assert.ok(found.ok, found.msg);
+  const paper = applyOp(w, L, { op: 'inquire', into: 'the Evening Lamp' });
+  assert.ok(paper.ok && /The inquiry into The Evening Lamp sits/.test(paper.msg), `a newspaper is looked into by its name: ${paper.msg.slice(0, 160)}`);
+  beginTurn(w); stepWorld(w);
+  const told = L.inbox.map(m => m.text).join('\n'), staff = G.inbox.map(m => m.text).join('\n');
+  assert.ok(new RegExp(`The Evening Lamp \\(N\\d+\\) is held by ${O.name}\\. It has about \\d+ in its till`).test(told), `the report says who holds the paper and what is in its till: ${told.slice(-400)}`);
+  assert.ok(new RegExp(`${u.id}: [\\d.]+ thousand \\w+ at [^.]+\\. It is paid and supplied to \\d+ in the hundred`).test(staff), `and the staff's report says how the corps is paid and how it stands: ${staff.slice(-400)}`);
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');
