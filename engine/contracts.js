@@ -31,12 +31,17 @@ export function proposeContract(w, actor, op, num) {
   const named = String(op.to ?? '').toLowerCase(), other = w.characters[op.to] ?? w.characters[w.countries[op.to]?.leader] ?? Object.values(w.characters).find(x => x.alive && x.name.toLowerCase() === named);
   if (!other?.alive || other.id === actor.id) return null;
   const hasGoods = GOODS.includes(op.good);
-  // A new offer to the same person replaces the one still lying unanswered on their desk.
-  for (const old of w.contracts || []) if (old.status === 'proposed' && old.a === actor.id && old.b === other.id) { old.status = 'withdrawn'; old.closedAt = w.turn; }
+  // A new offer to the same person replaces the one still lying unanswered on their desk, where it is the same matter written again: the same
+  // good, sold and paid for the same way, in about the same quantity. A paper about something else lies beside it. (World 22: a government
+  // put three papers before one maker, for field guns, siege pieces and wagons; each new one took the others off his desk, he signed last
+  // quarter's number every quarter for five quarters, and nothing was ever made.)
+  const g0 = hasGoods ? op.good : null, amt0 = hasGoods ? num(op.amount, 0, 1e5, 0) : 0, pays0 = op.payer === 'them' ? other.id : op.payer === 'none' ? null : actor.id, sells0 = hasGoods ? (op.seller === 'them' ? other.id : actor.id) : null, replaced = [];
+  for (const old of w.contracts || []) if (old.status === 'proposed' && old.a === actor.id && old.b === other.id && (old.good ?? null) === g0 && (old.seller ?? null) === sells0 && (old.payer ?? null) === pays0 && Math.abs((old.amount || 0) - amt0) <= Math.max(old.amount || 0, amt0) * .15 + 1e-9) { old.status = 'withdrawn'; old.closedAt = w.turn; replaced.push(old); }
   const k = { id: nextId(w, 'CT'), a: actor.id, b: other.id, terms: String(op.terms || '').slice(0, 1500), payer: op.payer === 'them' ? other.id : op.payer === 'none' ? null : actor.id, pay: op.pay_per_turn != null ? num(op.pay_per_turn, 0, 1e6, 0) : hasGoods && op.unit_price != null ? num(op.unit_price, 0, 1e5, 0) * num(op.amount, 0, 1e5, 0) : 0, good: hasGoods ? op.good : null, amount: hasGoods ? num(op.amount, 0, 1e5, 0) : 0, seller: hasGoods ? (op.seller === 'them' ? other.id : actor.id) : null, turns: Math.round(num(op.turns, 1, 80, 8)), status: 'proposed', turn: w.turn,
     // A paper may say that it begins later: "from the day my works stand", "from next spring". (World 19: a magnate sold arms from works a
     // year from standing, the paper ran from the next quarter, and he bought abroad to keep it.)
     ...(num(op.starts_in ?? op.start_in, 0, 40, 0) >= 2 ? { wait: Math.round(num(op.starts_in ?? op.start_in, 0, 40, 0)) - 1 } : {}) };
+  for (const old of replaced) old.replacedBy = k.id;
   const sc = signsForState(w, actor, op.state); if (sc) k.purse = { [actor.id]: sc.id };
   // To whom it is addressed. An offer of goods laid before whoever governs is laid before the state: no ruler clothes an army out of his own
   // pocket. It is the treasury's paper unless the one who wrote it says it is for the person (to_state:false), or the one who signs says so
@@ -61,7 +66,11 @@ export function acceptContract(w, actor, id, from, forState) {
   // signatures given for a paper that had been withdrawn went to the only other paper on the table, and two governments believed for
   // years in contracts that had never been made.)
   const named = /^CT\d+$/i.test(String(id ?? '').trim());
-  const k = named ? waiting.find(x => x.id.toLowerCase() === String(id).trim().toLowerCase()) : bySender.length === 1 ? bySender[0] : null; if (!k) return null;
+  // The same paper offered again under a new number is still that paper: a signature given for the old number goes to it, where nothing in it
+  // was changed (the good, the quantity, the money, the term). A paper that was changed is another paper, and is not signed unread.
+  const again = () => { let o = (w.contracts || []).find(x => x.id.toLowerCase() === String(id).trim().toLowerCase() && x.b === actor.id && x.status === 'withdrawn' && x.replacedBy), n = 0; const first = o; while (o?.replacedBy && n++ < 12) { const nx = (w.contracts || []).find(x => x.id === o.replacedBy); if (!nx) return null; o = nx; }
+    return first && o !== first && o.status === 'proposed' && o.b === actor.id && ['good', 'amount', 'pay', 'payer', 'seller', 'turns', 'wait', 'at'].every(key => (o[key] ?? null) === (first[key] ?? null)) ? o : null; };
+  const k = named ? waiting.find(x => x.id.toLowerCase() === String(id).trim().toLowerCase()) ?? again() : bySender.length === 1 ? bySender[0] : null; if (!k) return null;
   const sc = signsForState(w, actor, forState === false ? false : forState === true || k.toState === actor.country); if (sc) (k.purse ||= {})[actor.id] = sc.id;
   // Goods move and money is paid from the quarter after the signature: nobody delivers on the day the ink dries.
   k.status = 'active'; k.signed = w.turn; k.until = w.turn + k.turns + 1 + (k.wait || 0); say(w, w.characters[k.a], actor.name, `Contract ${k.id} accepted${sc ? ` for the state of ${sc.name}, on its treasury's account` : ''}.`);

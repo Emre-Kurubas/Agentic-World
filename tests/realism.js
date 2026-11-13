@@ -5551,5 +5551,19 @@ chain('World 22, first review: a bonus to "the capital" is paid to the troops th
   const b = applyOp(w, L, { op: 'concession', cls: 'army', unit: 'capital', amount: 10 }); assert.ok(b.ok && guard[0].loyalty > g0 && rest.loyalty <= r0 && new RegExp(`^${guard.map(u => u.id).join(', ')} (was|were) paid a bonus of 10`).test(b.msg), `the garrison of the capital is paid and the rest hear of it: ${b.msg}`);
   assert.ok(/No such body of troops: B0\.[^]*"capital" is whatever stands in the capital/.test(applyOp(w, L, { op: 'concession', cls: 'army', unit: 'B0', amount: 10 }).msg), 'and a body nobody knows is refused with the list');
 });
+chain('World 22, second review: two papers about different things lie side by side before the same person, the same paper offered again replaces itself, and a signature given for the old number of a paper offered again unchanged goes to that paper', () => {
+  // World 22: a government put three papers before one maker (field guns, siege pieces, wagons). Each new one took the others off his desk;
+  // he signed last quarter's number every quarter for five quarters, and nothing was ever made.
+  const w = inherited(2696855, 8); run(w, 1); const c = aliveCountries(w)[0], L = ld(w, c), M = w.characters[c.oligarch], open = () => w.contracts.filter(k => k.status === 'proposed' && k.a === L.id && k.b === M.id);
+  const guns = applyOp(w, L, { op: 'propose_contract', to: M.id, terms: 'Thirty field guns.', good: 'arms', amount: .4, pay_per_turn: 14, payer: 'me', seller: 'them', turns: 4, state: true }); assert.ok(guns.ok, guns.msg);
+  const siege = applyOp(w, L, { op: 'propose_contract', to: M.id, terms: 'Twelve siege pieces.', good: 'arms', amount: .2, pay_per_turn: 7.2, payer: 'me', seller: 'them', turns: 3, state: true }), wagons = applyOp(w, L, { op: 'propose_contract', to: M.id, terms: 'Three hundred wagons.', good: 'machines', amount: .3, pay_per_turn: 18, payer: 'me', seller: 'them', turns: 8, state: true });
+  assert.ok(siege.ok && wagons.ok && open().length === 3, `three papers about three things lie side by side (${open().map(k => k.id).join(', ')})`);
+  // The same paper written again replaces itself, and the old number still finds it.
+  const first = guns.contract ?? open()[0].id; w.turn += 1; const again = applyOp(w, L, { op: 'propose_contract', to: M.id, terms: 'Thirty field guns, as before.', good: 'arms', amount: .4, pay_per_turn: 14, payer: 'me', seller: 'them', turns: 4, state: true }); assert.ok(again.ok && open().length === 3 && !open().some(k => k.id === first), 'offered again, it takes the place of its own earlier copy and of nothing else');
+  const sign = applyOp(w, M, { op: 'accept_contract', id: first }); assert.ok(sign.ok && w.contracts.find(k => k.id === (again.contract ?? open().find(x => x.amount === .4)?.id) || (k.status === 'active' && k.good === 'arms' && k.amount === .4))?.status === 'active', `a signature for the old number goes to the same paper under its new one: ${sign.msg}`);
+  // Changed, it is another paper, and is not signed unread.
+  const sid = open().find(k => k.good === 'arms' && k.amount === .2).id; w.turn += 1; assert.ok(applyOp(w, L, { op: 'propose_contract', to: M.id, terms: 'Twelve siege pieces, cheaper.', good: 'arms', amount: .2, pay_per_turn: 5, payer: 'me', seller: 'them', turns: 3, state: true }).ok);
+  const no = applyOp(w, M, { op: 'accept_contract', id: sid }); assert.ok(!no.ok && /does not wait for your signature/.test(no.msg) && open().some(k => k.good === 'arms' && k.pay === 5), `a paper offered again with other terms is not signed under the old number: ${no.msg}`);
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');
