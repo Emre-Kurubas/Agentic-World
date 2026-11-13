@@ -5405,5 +5405,48 @@ chain('A part of a house can stand in another name: its owner writes it over to 
     const rich = structuredClone(c), poor = structuredClone(c); rich.debt = rich.gdp * 4 * .08; rich.reserves = rich.realGdp * 1.2; poor.debt = poor.gdp * 4 * .36; poor.reserves = poor.realGdp * .2; rich.borrowBase = poor.borrowBase = .004; rich.borrowAvg = poor.borrowAvg = .03;
     assert.ok(borrowStanding_(rich) < .3 && borrowStanding_(poor) > 1.1 && borrowPremium_(poor) > borrowPremium_(rich) * 3 && borrowPremium_(rich) > 0, `the same borrowing is priced by who asks (${(borrowPremium_(rich) * 400).toFixed(2)} against ${(borrowPremium_(poor) * 400).toFixed(2)} a year)`); }
 });
+import { watchSight as watchSight_, lookedAway as lookedAway_ } from '../engine/standing.js';
+chain('A watch is not an all-seeing eye: the police see poorly into barracks unless the government has a man of its own among the officers, a chief of police who has agreed to look away makes his watchers look away and lets the letters pass, and somebody with people of his own often notices the men across the street', () => {
+  // World 20: a chief of staff gathered a circle while her leader lay ill. The police saw it in two quarters, copied every letter she wrote,
+  // and she never knew she was watched. "If the police see everything no plot can ever succeed."
+  const w = inherited(2696855, 8); run(w, 1); const c = aliveCountries(w)[0], L = ld(w, c), G = w.characters[c.general], O = w.characters[c.opposition]; c.police = 60; c.postalSecrecy = false; G.power = 60; O.power = 40;
+  const chief = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'police' && x.status === 'free'); assert.ok(chief, 'there is a chief of police');
+  assert.ok(applyOp(w, L, { op: 'watch', character: G.id }).ok && applyOp(w, L, { op: 'watch', character: O.id }).ok);
+  const tally = (v, who, n = 60) => { let circle = 0, deed = 0, noticed = 0; for (let i = 0; i < n; i++) { const x = structuredClone(v); x.rng = 500 + i * 7919; const t = x.characters[who.id]; (t.secrets ||= []).push({ turn: x.turn, text: 'Took 20 from a foreign purse.' }); x.plots.push({ id: 'K-t', country: c.id, kind: 'coup', leader: t.id, members: [], progress: 10, secrecy: .9, active: true, start: x.turn }); watchStep(x); const f = ld(x, x.countries[c.id]).dossiers[t.id]?.facts ?? []; if (f.includes('Took 20 from a foreign purse.')) deed++; if (f.some(s => /Gathers people about (him|her) in secret/.test(s))) circle++; if (x.watches.find(y => y.key === t.id)?.noticed != null) noticed++; } return { circle, deed, noticed }; };
+  const civilian = tally(w, O), soldier = tally(w, G);
+  assert.ok(soldier.circle < civilian.circle * .7 && soldier.deed < civilian.deed && civilian.circle >= 15, `the police see less of a man of the army than of a civilian (circle ${soldier.circle} against ${civilian.circle} of 60, deeds ${soldier.deed} against ${civilian.deed})`);
+  { const x = structuredClone(w); watchStep(x); assert.ok(ld(x, x.countries[c.id]).inbox.some(m => /The police keep their watch on [^]* from the street: what passes in the mess and behind the barrack gates they see poorly/.test(m.text)), 'and whoever ordered the watch is told so'); const n = ld(x, x.countries[c.id]).inbox.length; watchStep(x); assert.ok(ld(x, x.countries[c.id]).inbox.filter(m => /from the street/.test(m.text)).length === 1, 'once'); }
+  // A man of the government's own among the officers.
+  const inside = structuredClone(w), ic = inside.countries[c.id], u = Object.values(inside.units).find(y => y.country === c.id && inside.characters[y.commander]?.alive && y.commander !== G.id); assert.ok(u, 'a commander to buy');
+  inside.characters[u.commander].handler = L.id; const seen = tally(inside, G); assert.ok(seen.circle > soldier.circle && Math.abs(watchSight_(inside, ic, inside.watches[0], ld(inside, ic), inside.characters[G.id]).circle - watchSight_(w, c, w.watches[1], L, O).circle) < 1e-9, `with a man of its own among the officers the government sees the army as it sees anybody (${seen.circle} against ${soldier.circle})`);
+  // The staff's own watch on an officer sees as before.
+  { const x = structuredClone(w), xc = x.countries[c.id], off = x.characters[Object.values(x.units).find(y => y.country === c.id && x.characters[y.commander]?.alive && y.commander !== G.id).commander], r = applyOp(x, x.characters[G.id], { op: 'watch', character: off.id }); assert.ok(r.ok, r.msg); const mine = x.watches.at(-1); assert.ok(mine.state && !watchSight_(x, xc, mine, x.characters[G.id], off).wall, 'the staff watching its own officers is inside the gates already'); }
+  // The chief of police looks away.
+  const bought = structuredClone(w), bc = bought.countries[c.id], bchief = bought.characters[chief.id]; bchief.blind = { for: O.id, until: bought.turn + 4 }; assert.ok(lookedAway_(bought, bc, O.id) && !lookedAway_(bought, bc, G.id));
+  const dim = tally(bought, O); assert.ok(dim.circle < civilian.circle * .6 && dim.deed < civilian.deed * .6, `his watchers look away with him (circle ${dim.circle} against ${civilian.circle}, deeds ${dim.deed} against ${civilian.deed})`);
+  const opened = v => { let n = 0; for (let i = 0; i < 40; i++) { const x = structuredClone(v); x.rng = 100 + i * 7919; const had = ld(x, x.countries[c.id]).inbox.length; postOf_(x, x.characters[O.id], x.characters[c.oligarch], 'Meet me at the mill.'); if (ld(x, x.countries[c.id]).inbox.length > had) n++; } return n; };
+  assert.ok(opened(bought) < opened(w) - 8, `and the letters pass (${opened(bought)} of 40 opened against ${opened(w)})`);
+  bchief.blind.until = bought.turn - 1; assert.ok(!lookedAway_(bought, bc, O.id), 'for as long as the bargain holds');
+  // Noticing.
+  const clerk = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.status === 'free' && !ROLES.some(r => c[r] === x.id) && x.post === 'treasury'); const small = structuredClone(w); small.watches = []; assert.ok(applyOp(small, ld(small, small.countries[c.id]), { op: 'watch', character: clerk.id }).ok); small.characters[clerk.id].power = 10;
+  const quiet = tally(small, clerk); assert.ok(soldier.noticed > quiet.noticed + 8 && soldier.noticed >= 14 && soldier.noticed <= 40, `a chief of staff notices the men across the street far oftener than a clerk does (${soldier.noticed} against ${quiet.noticed} of 60 in a quarter)`);
+});
+import { atWar as atWar20 } from '../engine/world.js';
+chain('World 20, second review: an order can wait on our own ultimatum and is given the day it is refused or runs out, and not if it is taken back; and the post can be looked into', () => {
+  const w = inherited(2696855, 8); run(w, 1); const cs = aliveCountries(w), c = cs.find(x => !x.parliament || x.parliament.legislative === false) ?? cs[0], L = ld(w, c);
+  const foe = cs.find(o => o.id !== c.id && Object.values(w.provinces).some(p => p.controller === o.id && p.neighbors.some(n => w.provinces[n].controller === c.id))), F = ld(w, foe), prize = Object.values(w.provinces).find(p => p.controller === foe.id && p.neighbors.some(n => w.provinces[n].controller === c.id));
+  assert.ok(/No ultimatum of ours to [^]* is running: the ultimatum is sent first/.test(applyOp(w, L, { op: 'standing_order', when: { ultimatum: foe.id }, then: [{ op: 'declare_war', target: foe.id }] }).msg), 'there must be an ultimatum to wait on');
+  const u = applyOp(w, L, { op: 'ultimatum', target: foe.id, turns: 1, demand: `The cession of ${prize.name}.`, clauses: [] }); assert.ok(u.ok, u.msg); const paper = w.treaties.filter(t => t.ultimatum && t.proposer === c.id).at(-1);
+  const so = applyOp(w, L, { op: 'standing_order', when: { ultimatum: foe.id }, then: [{ op: 'declare_war', target: foe.id }] }); assert.ok(so.ok && new RegExp(`refuses our ultimatum \\(${paper.id}\\) or lets it run out`).test(so.msg), `the order waits on the ultimatum by the name of the state it went to: ${so.msg}`);
+  { // Taken back: the order never comes to its day.
+    const v = structuredClone(w), vc = v.countries[c.id]; assert.ok(applyOp(v, ld(v, vc), { op: 'withdraw_treaty', id: paper.id }).ok); run(v, 2); assert.ok(!atWar20(v, c.id, foe.id), 'an ultimatum taken back does not set the order off'); }
+  { // Refused: it is given the same quarter.
+    const v = structuredClone(w), vf = v.countries[foe.id]; const no = applyOp(v, ld(v, vf), { op: 'decline_treaty', id: paper.id }); assert.ok(no.ok, no.msg); run(v, 1); assert.ok(atWar20(v, c.id, foe.id), 'refused, and the war that was ordered to follow is declared'); }
+  { // Left to run out.
+    const v = structuredClone(w); run(v, 3); assert.ok(atWar20(v, c.id, foe.id), 'left to run out, the same'); }
+  // The post.
+  const o = cs.find(x => !x.postalSecrecy && x.intelligence > 30) ?? cs[0], R = ld(w, o), r = applyOp(w, R, { op: 'inquire', into: 'the post office' }); assert.ok(r.ok, r.msg); run(w, 1);
+  assert.ok(R.inbox.some(m => /letters in a hundred are opened in the post, copied and sent on[^]*It is done by the government's order: a copy goes to /.test(m.text) || /Next to nothing is opened in the ordinary run of the post/.test(m.text)), `the inquiry into the post says how much is opened and for whom: ${R.inbox.map(m => m.text).filter(t => /post/i.test(t)).join(' | ').slice(0, 500)}`);
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

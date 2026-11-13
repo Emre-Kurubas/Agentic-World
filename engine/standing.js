@@ -7,7 +7,7 @@
 // staff may call up the reserve without waiting for me" and "once their columns have left the pass, send the reservists home" about thirty-five
 // times, and nothing in the engine could hold an order for its day or put a ruler's power in another's hands.
 import { clamp, rand, news, nextId, quarterLabel } from './util.js';
-import { aliveCountries } from './world.js';
+import { aliveCountries, ROLES } from './world.js';
 import { governs } from './polity.js';
 import { he, him, his } from './names.js';
 
@@ -26,7 +26,25 @@ export const watchRoom = c => ({ person: 3 + Math.floor((c.police ?? 40) / 20), 
 const PRIVATE_WATCH = 2;
 export const watchesOf = (w, actor) => (w.watches || []).filter(x => x.by === actor.id);
 // Is this person under the eye of that country's police? (The post asks, before it lets a letter pass.)
-export const watchedIn = (w, countryId, personId) => (w.watches || []).some(x => x.kind === 'person' && x.state && x.country === countryId && x.key === personId);
+// A watch is not an all-seeing eye. (World 20: a chief of staff who gathered a circle while her leader lay ill was seen by the police within
+// two quarters, every letter she wrote was copied, and she never knew she was watched. The user asked what anybody could do against it,
+// 2026-11-13, and chose these three.)
+//  - A chief of police who has agreed to look away from somebody (deeds.js blind) makes his watchers look away too.
+//  - The police see poorly into barracks: a watch they keep on a man of the army shows them little, unless whoever keeps the watch has a
+//    man of his own among the officers. The staff's own watch on its officers sees as before.
+//  - Somebody with a household and people of his own often notices the men across the street; a chief of staff soonest.
+const chiefOf = (w, c) => Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'police' && x.status === 'free');
+export const lookedAway = (w, c, personId) => { const chief = chiefOf(w, c); return !!chief?.blind && chief.blind.until >= w.turn && chief.blind.for === personId; };
+export const ofTheArmy = (w, c, t) => c.general === t.id || t.office === 'staff' || Object.values(w.units).some(u => u.country === c.id && u.commander === t.id) || Object.values(w.fleets || {}).some(f => f.country === c.id && f.commander === t.id);
+export const manInside = (w, c, by) => Object.values(w.characters).some(x => x.alive && x.status === 'free' && x.country === c.id && x.id !== by.id && (x.handler === by.id || x.payroll === by.id) && ofTheArmy(w, c, x));
+// What a watch sees of what the watched does in secret, and of a circle gathering about him; and how likely he is to notice it, a quarter.
+export function watchSight(w, c, x, by, t) {
+  const police = c.police ?? 40, fromPolice = x.state && c.general !== by.id, away = fromPolice && lookedAway(w, c, t.id) ? .3 : 1, wall = fromPolice && ofTheArmy(w, c, t) && !manInside(w, c, by);
+  const own = ROLES.some(r => c[r] === t.id) || ofTheArmy(w, c, t);
+  return { deeds: (x.state ? clamp(.35 + police / 200, .3, .85) : .3) * away * (wall ? .7 : 1), circle: (x.state ? clamp(.2 + police / 300, .2, .5) : .12) * away * (wall ? .4 : 1), wall, away: away < 1,
+    noticed: clamp((own ? .14 : .08) + (t.power || 0) / (own ? 300 : 500) + (c.general === t.id ? .08 : 0) - (x.state ? police / (own ? 800 : 500) : 0), own ? .08 : .03, own ? .45 : .3) };
+}
+export const watchedIn = (w, countryId, personId) => (w.watches || []).some(x => x.kind === 'person' && x.state && x.country === countryId && x.key === personId) && !(w.countries[countryId] && lookedAway(w, w.countries[countryId], personId));
 const menFacing = (w, c, o) => { const ours = new Set(Object.values(w.provinces).filter(p => p.controller === c.id).map(p => p.id)); return sum(Object.values(w.units).filter(u => u.country === o.id && w.provinces[u.province]?.controller === o.id && w.provinces[u.province].neighbors.some(n => ours.has(n))), u => u.men); };
 const watchWords = (w, x) => x.kind === 'person' ? `${w.characters[x.key]?.name ?? x.key} (${x.key})` : x.kind === 'party' ? `the ${w.countries[x.country]?.parties.find(p => p.id === x.key)?.name ?? x.key}` : x.kind === 'province' ? `${w.provinces[x.key]?.name ?? x.key}` : `the frontier with ${nameOf(w, x.key)}`;
 export const standingWords = (w, ch) => {
@@ -105,7 +123,7 @@ export function standingOp(w, actor, c, op, h) {
 }
 
 // The days an order can wait for, each of them something the engine itself knows to have happened.
-const FORMS = 'attacked (somebody goes to war with us; by: a state, if only that one counts), mobilised (a named state, or with true any state on our frontier, calls up its reserve), war_on (somebody goes to war with a named state), troops (the men of a state in a named province rise above or fall below a number), treaty (a paper comes into force, or ends), bill (a bill passes, or is rejected), lost (a province of ours falls into other hands), after (so many quarters)';
+const FORMS = 'attacked (somebody goes to war with us; by: a state, if only that one counts), mobilised (a named state, or with true any state on our frontier, calls up its reserve), war_on (somebody goes to war with a named state), troops (the men of a state in a named province rise above or fall below a number), treaty (a paper comes into force, or ends), ultimatum (a named state refuses our ultimatum or lets it run out), bill (a bill passes, or is rejected), lost (a province of ours falls into other hands), after (so many quarters)';
 function normWhen(w, c, raw) {
   const k = raw && typeof raw === 'object' ? raw : {}, st = id => w.countries[id]?.alive ? id : null;
   if (k.attacked) { const by = st(k.by); return { when: { attacked: true, ...(by ? { by } : {}) }, words: `the day ${by ? nameOf(w, by) : 'any state'} goes to war with us` }; }
@@ -114,6 +132,12 @@ function normWhen(w, c, raw) {
   if (k.troops && w.provinces[k.troops.province]) { const p = w.provinces[k.troops.province], who = st(k.troops.country) ?? (p.controller !== c.id ? p.controller : null), above = Number(k.troops.above), below = Number(k.troops.below);
     if (!who) return { no: 'Say whose troops are to be counted there (country).' }; if (!(above >= 0) && !(below >= 0)) return { no: 'Say the number: above (so many thousand or more) or below (so many thousand or fewer).' };
     return { when: { troops: { province: p.id, country: who, ...(above >= 0 ? { above } : { below }) } }, words: `the day the troops of ${nameOf(w, who)} at ${p.name} ${above >= 0 ? `number ${above} thousand or more` : `are down to ${below} thousand or fewer`}, as far as the staff can count them` }; }
+  // "If they refuse, we march": the day our ultimatum to a state is refused or runs out. (World 20: a ruler sent an ultimatum and ordered the
+  // attack that was to follow it in the same breath, to be countermanded by his own hand if the other bent. The attack could not be entered
+  // for want of a war, and he found out a quarter later.)
+  if (k.ultimatum) { const to = st(typeof k.ultimatum === 'object' ? k.ultimatum.target ?? k.ultimatum.to : k.ultimatum), t = w.treaties.filter(x => x.pending && x.ultimatum && x.proposer === c.id && (!to || x.parties.includes(to))).at(-1);
+    if (!t) return { no: `No ultimatum of ours${to ? ` to ${nameOf(w, to)}` : ''} is running: the ultimatum is sent first, and the order that waits on it after.` };
+    const other = t.parties.find(id => id !== c.id); return { when: { treaty: t.id, state: 'ended' }, words: `the day ${nameOf(w, other)} refuses our ultimatum (${t.id}) or lets it run out` }; }
   if (k.treaty) { const id = String(k.treaty.id ?? k.treaty), t = w.treaties.find(x => x.id === id), ended = (k.treaty.state ?? k.state) === 'ended'; if (!t) return { no: `No such paper: ${id}.` }; return { when: { treaty: id, state: ended ? 'ended' : 'signed' }, words: `the day ${id} ${ended ? 'is no longer in force' : 'comes into force'}` }; }
   if (k.bill) { const id = String(k.bill.id ?? k.bill), b = aliveCountries(w).flatMap(o => o.bills || []).find(x => x.id === id), state = ['rejected', 'withdrawn'].includes(k.bill.state ?? k.state) ? (k.bill.state ?? k.state) : 'passed'; if (!b) return { no: `No such bill: ${id}.` }; return { when: { bill: id, state }, words: `the day bill ${id} is ${state}` }; }
   if (k.lost && w.provinces[k.lost]?.controller === c.id) return { when: { lost: k.lost }, words: `the day ${w.provinces[k.lost].name} falls into other hands` };
@@ -126,7 +150,7 @@ const holds = (w, so) => { const c = w.countries[so.country], k = so.when, fresh
   if (k.mobilised) { const who = k.mobilised === true ? [...new Set(Object.values(w.provinces).filter(p => p.controller === c.id).flatMap(p => p.neighbors.map(n => w.provinces[n].controller)))].filter(id => id && id !== c.id) : [k.mobilised]; return who.some(id => w.countries[id]?.alive && (w.countries[id].calledUpAt ?? -1) >= so.since); }
   if (k.war_on) return fresh.some(x => x.b.includes(k.war_on) && (!k.by || x.a.includes(k.by)));
   if (k.troops) { const men = sum(Object.values(w.units).filter(u => u.country === k.troops.country && u.province === k.troops.province), u => u.men); return k.troops.above != null ? men >= k.troops.above : men <= k.troops.below; }
-  if (k.treaty) { const t = w.treaties.find(x => x.id === k.treaty); return k.state === 'ended' ? !!t && !t.active && !t.pending : !!t?.active; }
+  if (k.treaty) { const t = w.treaties.find(x => x.id === k.treaty); return k.state === 'ended' ? !!t && !t.active && !t.pending && t.withdrawn == null : !!t?.active; }
   if (k.bill) { const b = aliveCountries(w).flatMap(o => [...(o.bills || []), ...(o.laws || [])]).find(x => x.id === k.bill); return !!b && b.status === k.state; }
   if (k.lost) return w.provinces[k.lost]?.controller !== c.id;
   if (k.turn != null) return w.turn >= k.turn;
@@ -160,10 +184,12 @@ export function watchStep(w) {
     if (x.state && !(governs(w, c, by) || c.general === by.id)) { drop(`The watch on ${watchWords(w, x)} is no longer yours to keep: the men who kept it answer to the office, not to you.`); continue; }
     if (!x.state) { if (by.wealth < x.fee) { drop(`The men watching ${watchWords(w, x)} have gone home unpaid.`); continue; } by.wealth -= x.fee; }
     if (x.kind === 'person') { const t = w.characters[x.key]; if (!t?.alive) { drop(`${t?.name ?? 'The person you had watched'} is dead; the watch is at an end.`); continue; }
-      const eye = x.state ? clamp(.35 + (c.police ?? 40) / 200, .3, .85) : .3, seen = (t.secrets || []).filter(s => s.turn === w.turn && !s.old && !s.published && rand(w) < eye).map(s => s.text);
-      const circle = (w.plots || []).find(p => p.active && (p.leader === t.id || (p.members || []).includes(t.id))); if (circle && rand(w) < (x.state ? clamp(.2 + (c.police ?? 40) / 300, .2, .5) : .12)) seen.push(`${circle.leader === t.id ? `Gathers people about ${him(t)} in secret and is at the head of something that is being prepared` : `Goes by night to meetings ${he(t)} tells nobody of: ${he(t)} belongs to something that is being prepared`} (seen by the watch in ${quarterLabel(w.turn)}).`);
+      const sight = watchSight(w, c, x, by, t), eye = sight.deeds, seen = (t.secrets || []).filter(s => s.turn === w.turn && !s.old && !s.published && rand(w) < eye).map(s => s.text);
+      const circle = (w.plots || []).find(p => p.active && (p.leader === t.id || (p.members || []).includes(t.id))); if (circle && rand(w) < sight.circle) seen.push(`${circle.leader === t.id ? `Gathers people about ${him(t)} in secret and is at the head of something that is being prepared` : `Goes by night to meetings ${he(t)} tells nobody of: ${he(t)} belongs to something that is being prepared`} (seen by the watch in ${quarterLabel(w.turn)}).`);
       if (seen.length) { const file = by.dossiers[t.id] ||= { turn: w.turn, about: t.name, facts: [] }; file.turn = w.turn; file.facts = [...new Set([...file.facts, ...seen])].slice(-12); say(w, by, 'The watch', `On ${t.name} (${t.id}) this quarter: ${seen.join(' ')} It is in your file on ${t.name}.`); }
-      if (!x.noticed && rand(w) < clamp(.08 + t.power / 500 - (x.state ? (c.police ?? 40) / 500 : 0), .03, .3)) { x.noticed = w.turn; say(w, t, 'Your household', 'You are being watched: the same men stand across the street day after day, and your letters come a day late. Whose men they are you can guess.'); }
+      // Once, when the watch is first kept on a man of the army with nobody of the government's inside it, whoever ordered it is told how little it will show.
+      if (sight.wall && !x.warned) { x.warned = w.turn; say(w, by, 'The watch', `The police keep their watch on ${t.name} from the street: what passes in the mess and behind the barrack gates they see poorly. They would see as much as of anybody if the government had a man of its own among the officers.`); }
+      if (!x.noticed && rand(w) < sight.noticed) { x.noticed = w.turn; say(w, t, 'Your household', 'You are being watched: the same men stand across the street day after day, and your letters come a day late. Whose men they are you can guess.'); }
     } else if (x.kind === 'party') { const p = c.parties.find(q => q.id === x.key); if (!p) { drop('The party you had watched is no more.'); continue; }
       const gifts = x.state ? (p.gifts || []).filter(g => g.turn === w.turn) : [], was = x.seen; x.seen = { funds: Math.round(p.funds ?? 0), org: Math.round(p.organization ?? 0) };
       if (!was || was.funds !== x.seen.funds || was.org !== x.seen.org || gifts.length) say(w, by, 'The watch', `The ${p.name} this quarter: ${x.seen.funds} in its chest${was ? ` (it was ${was.funds})` : ''}, its organisation at ${x.seen.org} of 100${gifts.length ? `; paid into it by ${gifts.map(g => `${w.characters[g.from]?.name ?? 'an unknown hand'} (${Math.round(g.amount)})`).join(', ')}` : x.state ? '; nobody was seen paying into it' : '; who pays into it hired men cannot see'}.`);

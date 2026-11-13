@@ -9,21 +9,27 @@ import { clamp, rand, news, nextId, quarterLabel } from './util.js';
 import { governs } from './polity.js';
 import { keptQuiet } from './press.js';
 import { isOpen, STATE, firmValue, lawFor, partsOf, inHundred } from './firms.js';
+import { watch as postEye } from './court.js';
 
 export const INQUIRY_OPS = new Set(['inquire', 'inspect']);
 const say = (w, ch, from, text) => { if (ch?.alive) ch.inbox.push({ turn: w.turn, from, text }); };
 const r2 = v => Math.round(v * 100) / 100, n = v => Math.round(v);
 const auditors = c => clamp((c.institutions || []).filter(i => i.id && (i.powers || []).some(p => ['audit', 'judiciary'].includes(p))).reduce((a, i) => a + (i.strength ?? 0), 0), 0, 1);
 const labourInspectors = c => clamp((c.institutions || []).filter(i => i.id && (i.powers || []).includes('industry')).reduce((a, i) => a + (i.strength ?? 0), 0), 0, 1.2);
-const OFFICES = { treasury: /treasur|embezz|skim|customs|lease|tax|contract|offer|purse|fund|paid|money/i, army: /army|arsenal|suppl|officer|regiment|contract|pay|rifle|boot|plan|staff/i, police: /police|arrest|file|dossier|bribe|warn/i, customs: /customs|lease|smuggl|duty|tariff/i, courts: /court|judge|bench|trial|tried|verdict|acquit|convict|forge|prosecut|sentence/i };
+// (The post: who opens letters, and by whose order. World 20: an opposition leader whose letters had been printed in the government's papers
+// twice asked to have the post looked into, and the office did not know the word.)
+const OFFICES = { post: /post|letter|copied|opened|watch|printed|published/i, treasury: /treasur|embezz|skim|customs|lease|tax|contract|offer|purse|fund|paid|money/i, army: /army|arsenal|suppl|officer|regiment|contract|pay|rifle|boot|plan|staff/i, police: /police|arrest|file|dossier|bribe|warn/i, customs: /customs|lease|smuggl|duty|tariff/i, courts: /court|judge|bench|trial|tried|verdict|acquit|convict|forge|prosecut|sentence/i };
 // The bench as an inquiry finds it: how far it is its own master, and what it has tried of late and how each case went. Nobody's books show
 // money reaching a judge: a bench is moved by what is laid before it and by what the government can make it fear, and neither leaves a receipt.
 const benchWords = (w, c) => { const k = c.courts ?? 40, tr = (c.trials || []).slice(-6);
   return `The bench stands at ${n(k)} of 100 as its own master: ${k >= 65 ? 'it wants proof, and acquits without it' : k >= 35 ? 'it is open to pressure, and for the rest weighs what is laid before it' : 'it is the government\'s creature and convicts nearly whoever is brought, though not every time'}. ${tr.length ? `Tried of late: ${tr.map(t => `${t.name}, ${t.verdict === 'forged' ? 'acquitted when papers laid against the accused were found to be forged' : t.verdict === 'acquitted' ? 'acquitted' : t.verdict === 'executed' ? 'found guilty and put to death' : `found guilty${t.years ? ` (${t.years} years)` : ''}`} in ${quarterLabel(t.turn)} on ${t.papers ? `${t.papers} paper${t.papers > 1 ? 's' : ''}` : 'no papers, only the charge'}, the case brought by ${w.characters[t.by]?.name ?? 'the government'}`).join('; ')}.` : 'It has tried nobody of note of late.'} Nothing in any book shows money reaching a judge: a verdict here is the bench's own reading of what was laid before it, each paper weighing for something and none of them for everything.`; };
 
+// The post, as its own clerks know it: how much of it is opened and for whom. Whose letters, and who carried a copy to a newspaper, no book says.
+const postWords = (w, c) => { const share = postEye(c), ruler = w.characters[c.leader];
+  return c.postalSecrecy ? 'The law forbids the opening of letters, and the sorting rooms keep no room for it: what has been printed from anybody\'s letters did not come from the post.' : `${share >= .005 ? `About ${Math.max(1, n(share * 100))} letters in a hundred are opened in the post, copied and sent on, and more of those that cross the frontier` : 'Next to nothing is opened in the ordinary run of the post'}; the letters of anybody the police keep under watch are opened as a matter of course. It is done by the government's order: a copy goes to ${ruler?.alive ? ruler.name : 'whoever governs'} and into the file kept on the writer. What is printed from such copies is printed by whoever holds them. Only a law (the secrecy of the post) ends it.`; };
 // What the matter is, who has a hand in it, what about it is plain fact, and which traces belong to it.
 function matterOf(w, c, into) {
-  const said = String(into ?? '').trim(), key = /^(the\s+)?(courts?|bench|judges|judiciary)$/i.test(said) ? 'courts' : said, own = (o, k) => !!o && Object.hasOwn(o, k), people = ids => [...new Set(ids)].map(id => w.characters[id]).filter(x => x?.alive);
+  const said = String(into ?? '').trim(), key = /^(the\s+)?(courts?|bench|judges|judiciary)$/i.test(said) ? 'courts' : /^(the\s+)?(post|posts|post office|mails?|letters|black cabinet|opening of letters)$/i.test(said) ? 'post' : said, own = (o, k) => !!o && Object.hasOwn(o, k), people = ids => [...new Set(ids)].map(id => w.characters[id]).filter(x => x?.alive);
   const posts = post => Object.values(w.characters).filter(x => x.alive && x.country === c.id && (x.post === post || x.clerkOf === post)).map(x => x.id);
   if (own(w.firms, key) && w.firms[key].country === c.id) { const f = w.firms[key], law = lawFor(c, f), owner = w.characters[f.owner];
     // The register shows whose name each part stands in; who stands behind a nominee is found, if at all, in what those people have done.
@@ -39,11 +45,11 @@ function matterOf(w, c, into) {
   const o = (w.offers || []).find(x => x.id === key && x.country === c.id);
   if (o) return { kind: 'offer', key, name: `the arrangement ${o.id}`, persons: people([o.from, o.to]), re: /offer|lease|suppl|purse|paid|took/i, plain: [o.status === 'running' ? `${o.id} is in force: ${o.text}.` : `${o.id} is ${o.status}.`] };
   if (own(OFFICES, key)) { const run = (w.offers || []).filter(x => key !== 'courts' && x.status === 'running' && x.country === c.id && (key === 'army' ? x.kind === 'supply' : x.kind === 'lease')), b = c.lastBooks;
-    const who = key === 'courts' ? [c.leader, ...posts('police'), ...(c.trials || []).map(t => t.by)] : key === 'army' ? [c.general, ...Object.values(w.units).filter(u => u.country === c.id).map(u => u.commander), ...posts('army')] : key === 'police' ? posts('police') : [...posts('treasury'), ...(key === 'customs' ? [] : [c.leader])];
-    const plain = key === 'courts' ? [benchWords(w, c)] : key === 'army' ? [`The forces are paid and supplied to ${n((c.militaryFunding ?? 1) * 100)} in the hundred of what they cost${run.length ? `; the army's stores are bought under ${run.map(x => `${x.id} (from the suppliers of ${w.characters[x.from]?.name}'s house, at about ${n(x.drain)} a quarter over the price)`).join(', ')}` : ''}.`]
+    const who = key === 'courts' ? [c.leader, ...posts('police'), ...(c.trials || []).map(t => t.by)] : key === 'post' ? [c.leader, ...posts('police')] : key === 'army' ? [c.general, ...Object.values(w.units).filter(u => u.country === c.id).map(u => u.commander), ...posts('army')] : key === 'police' ? posts('police') : [...posts('treasury'), ...(key === 'customs' ? [] : [c.leader])];
+    const plain = key === 'courts' ? [benchWords(w, c)] : key === 'post' ? [postWords(w, c)] : key === 'army' ? [`The forces are paid and supplied to ${n((c.militaryFunding ?? 1) * 100)} in the hundred of what they cost${run.length ? `; the army's stores are bought under ${run.map(x => `${x.id} (from the suppliers of ${w.characters[x.from]?.name}'s house, at about ${n(x.drain)} a quarter over the price)`).join(', ')}` : ''}.`]
       : key === 'police' ? [`The police stand at ${n(c.police ?? 0)} of 100.`]
       : [`${b ? `Of what was assessed last quarter about ${n((b.collect ?? 1) * 100)} in the hundred was collected, and about ${n((b.graft ?? 0) * 100)} in the hundred of what was collected stuck to the hands it passed through. ` : ''}${run.length ? `The customs are leased under ${run.map(x => `${x.id} to the house of ${w.characters[x.from]?.name}, which keeps about ${n(x.drain)} a quarter`).join(', ')}.` : 'No lease or farm of the revenue is in force.'}`];
-    return { kind: 'office', key, name: key === 'courts' ? 'the courts' : key === 'army' ? 'the army\'s stores and pay' : key === 'police' ? 'the police' : key === 'customs' ? 'the customs' : 'the treasury', persons: people(who), re: OFFICES[key], plain, leases: run }; }
+    return { kind: 'office', key, name: key === 'courts' ? 'the courts' : key === 'post' ? 'the post' : key === 'army' ? 'the army\'s stores and pay' : key === 'police' ? 'the police' : key === 'customs' ? 'the customs' : 'the treasury', persons: people(who), re: OFFICES[key], plain, leases: run }; }
   const p = own(w.provinces, key) ? w.provinces[key] : null;
   if (p && p.controller === c.id) return { kind: 'province', key, name: `the administration of ${p.name}`, persons: people([p.governor]), re: new RegExp(`${p.name}|governor|tax|levy|bribe`, 'i'), plain: [`${p.name}: unrest ${n(p.unrest)} of 100${p.governor && w.characters[p.governor]?.alive ? `; ${w.characters[p.governor].name} governs it` : '; it has no governor of its own'}.`] };
   const deadKey = key.replace(/^death:/, ''), dead = own(w.characters, deadKey) ? w.characters[deadKey] : null;
@@ -51,7 +57,7 @@ function matterOf(w, c, into) {
     return { kind: 'death', key: dead.id, name: `the death of ${dead.name}`, persons: people(plot ? [plot.leader, ...(plot.members || [])] : []), re: /kill|shot|assassin|murder|poison/i, plot, plain: [`${dead.name} ${dead.death.how ?? 'died'} in ${quarterLabel(dead.death.turn)}.`] }; }
   return null;
 }
-export const INTO = 'a works (its id, SR...), a body of the state or a foundation (its id or name), a contract (CT...) or an arrangement with a banking house (OF...), an office (treasury, customs, army, police, courts), a province of ours (P...), or a death (death:K...)';
+export const INTO = 'a works (its id, SR...), a body of the state or a foundation (its id or name), a contract (CT...) or an arrangement with a banking house (OF...), an office (treasury, customs, army, police, courts, post), a province of ours (P...), or a death (death:K...)';
 
 export function inquiryOp(w, actor, c, op, h) {
   const { fail, num } = h, state = governs(w, c, actor);
