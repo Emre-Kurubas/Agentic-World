@@ -195,6 +195,7 @@ function verdictBadge(x, refused) {
   return short ? `<span class="badge ${cls}" title="${esc(v || short)}">${short}</span>` : '';
 }
 function diceBadge(x) {
+  if (x.probability != null && x.probability <= 0) return '<span class="badge">Ruled out by the referee</span>';
   if (x.probability != null && x.probability < 1) return `<span class="badge">Dice: ${Math.round(x.probability * 100)}% chance</span>`;
   if (x.refereeProbability != null) return `<span class="badge" title="The referee named a chance of ${Math.round(x.refereeProbability * 100)}%, but the order has an operation and the engine gave the outcome">No dice: the engine decided</span>`;
   return '';
