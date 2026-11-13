@@ -293,7 +293,7 @@ export function carryTaken(w) {
     const stay = !ours && young && promised(w, c, p) ? h.then.filter(n => n.any) : []; if (stay.length) keep.push({ ...h, then: stay, else: [] });
     const said = (ours ? h.then : foe ? h.else : []).flatMap(n => carryNode(w, ch, n, fresh)), lost = (ours ? h.else : foe ? h.then : [...h.then, ...h.else]).filter(n => !stay.includes(n)).map(n => n.op.op);
     if (!said.length && !lost.length) continue;
-    const head = ours ? `${p.name} is in our hands.` : foe ? `The attack on ${p.name} did not carry the place, and no attack of ours on it is in hand any more.` : `${p.name} is no longer the enemy's to take (${cname(w, p.controller)} holds it).`;
+    const head = ours ? `${p.name} is in our hands.` : foe ? ((w.battles || []).some(b => b.province === p.id && b.attacker === c.id) || w.turn - h.turn > 0 ? `The attack on ${p.name} did not carry the place, and no attack of ours on it is in hand any more.` : `The attack on ${p.name} was called off before it went in, and no attack of ours on it is in hand any more.`) : `${p.name} is no longer the enemy's to take (${cname(w, p.controller)} holds it).`;
     const text = `${head}${said.length ? ` What was ordered ${ours ? 'to follow its capture' : 'for that case'}: ${said.join(' ')}` : ''}${lost.length ? ` What was ordered ${ours ? 'for the case that the attack failed' : foe ? 'to follow its capture' : 'to hang on it'} lapses (${lost.join(', ')}).` : ''}`;
     for (const x of new Set([ch, w.characters[c.leader], w.characters[c.general]])) tell(w, x, 'General Staff', text);
     (w.awaited ||= []).push({ turn: w.turn, actor: ch.id, country: c.id, op: { op: 'follow', province: p.id }, ok: ours, text });
@@ -625,10 +625,13 @@ const RANKS = { normal: 0, recalled: 1, broken: 2 };
 // One order, given by two desks on the same morning, is one order. A ruler and his chief of staff who each write down what they agreed in
 // their letters do not raise two regiments, dig two lines or detach two columns: the second desk is told the first has given it.
 // (World 18: the same two thousand men were detached twice from one corps, and the same line of works paid for twice.)
-const ONCE = new Set(['build', 'recruit', 'mobilize', 'demobilize', 'disband', 'merge_units', 'merge_fleets', 'build_ship', 'move', 'buy_goods', 'sell_goods']);
+// (World 22: a ruler and her chief of staff each wrote "detach seven cruisers to Ordona", and fourteen of twenty-one sailed.)
+const ONCE = new Set(['build', 'recruit', 'mobilize', 'demobilize', 'disband', 'merge_units', 'merge_fleets', 'build_ship', 'move', 'amphibious', 'move_fleet', 'buy_goods', 'sell_goods']);
+// Orders that only divide a body when they carry a number: without one, giving them twice changes nothing.
+const PART = { move: 'men', amphibious: 'men', move_fleet: 'ships' };
 const sameOrder = op => JSON.stringify(Object.keys(op).filter(k => !k.startsWith('_') && !['if_done', 'if_refused', 'once_taken'].includes(k)).sort().map(k => [k, op[k]]));
 export function applyOp(w, actor, op) {
-  const c = actor?.alive ? w.countries[actor.country] : null, key = c?.alive && op?.op && ONCE.has(op.op) && (op.op !== 'move' || op.men != null) ? sameOrder(op) : null;
+  const c = actor?.alive ? w.countries[actor.country] : null, key = c?.alive && op?.op && ONCE.has(op.op) && (!PART[op.op] || op[PART[op.op]] != null) ? sameOrder(op) : null;
   // (Only for whoever could have given it: an order outside a seat's powers is refused as it always was.)
   const perm = key ? permissionsOf(c, actor, w) : null, mine = !perm || perm.has(op.op) || delegated(c, actor, op.op);
   if (key && mine) { const by = quarterBook(w, c).given?.[key], first = by && by !== actor.id ? w.characters[by] : null; if (first) return { ok: true, twice: true, msg: `${first.name} gave this same order this morning and it has been carried out. It is one order: it is not carried out a second time, and nothing more is paid for it.` }; }
@@ -719,7 +722,7 @@ function applyOne(w, actor, op) {
         if (!target && who) { const field = p && p.controller === c.id && has(p.deposits, op.resource) ? `the ${GOOD_LABEL[op.resource]} field at ${p.name} (${p.id})` : null;
           if (!field) return fail('No such deposit.');
           tell(w, who, c.name, `The government lets it be known that ${field} is yours to open with your own capital. In law a subject needs no grant to open a works (found_company); a royalty or a share spoken of binds only once it is put into a contract between you.`);
-          return { ok: true, msg: `${who.name} is told that ${field} is open to ${who.name}'s own capital. Nothing more than that word was given, because nothing more is needed: a subject opens a works himself (found_company) and pays the business tax like any other. A royalty to the treasury, or a share held for the crown, binds only as a contract between you (propose_contract with state:true). A concession in the full sense, a share of what a field raises, is what one state grants another.` }; } }
+          return { ok: true, msg: `${who.name} is told that ${field} is open to ${who.name}'s own capital. Nothing more than that word was given, because nothing more is needed: a subject opens a works himself (found_company) and pays the business tax like any other. A royalty of a fixed sum to the treasury binds only as a contract between you (propose_contract with state:true, and starts_in for the quarters until the works stands); a royalty that is a part of what the works earns is a part of the house written over to the state by its owner once it is founded (assign_share with to state: that part of every dividend goes to the treasury). A concession in the full sense, a share of what a field raises, is what one state grants another.` }; } }
       if (!target) return fail('No such target: a concession is granted to a state (target) or, as leave to open a field, to a person of ours (character).'); const p = w.provinces[op.province]; if (!p || p.controller !== c.id || !has(p.deposits, op.resource)) return fail('No such deposit.'); (p.concessions ||= {})[op.resource] = { holder: target.id, share: num(op.share, .05, .9) }; tell(w, w.characters[target.leader], c.name, `You have been granted ${Math.round(num(op.share, .05, .9) * 100)}% of the ${GOOD_LABEL[op.resource]} raised at ${p.name}.`); news(w, `${c.name} granted the ${p.name} ${GOOD_LABEL[op.resource]} concession to ${target.name}.`, { kind: 'economy', countries: [c.id, target.id] }); return { ok: true, msg: 'The concession is theirs. Whatever they pay for it is for them to send.' }; }
     case 'revoke_concession': { const p = w.provinces[op.province]; const con = p?.concessions?.[op.resource]; if (!con || p.controller !== c.id) return fail('No such concession.'); const o = w.countries[con.holder]; if (o) o.relations[c.id] = clampRel((o.relations[c.id] ?? 0) - 35); delete p.concessions[op.resource]; news(w, `${c.name} seized the ${p.name} concession.`, { kind: 'diplomacy', countries: [c.id, con.holder] }); return ok(); }
     case 'lend': { if (!target) return fail('No such target.'); if (op.amount != null && num(op.amount, 0, 1e7, 0) > Math.max(c.reserves, 0) + .5) return fail(`The reserve holds ${Math.round(Math.max(c.reserves, 0))} in gold: ${Math.round(num(op.amount, 0, 1e7, 0))} cannot be lent out of it.`); const amt = op.amount != null ? num(op.amount, 0, 1e7, 0) : Math.min(Math.max(c.reserves, 0), Math.max(c.realGdp, 1) * num(op.pct_gdp, 0, .4)); if (amt <= 0) return fail('There is no gold to lend.'); if (op.rate != null) (target.creditTerms ||= {})[c.id] = { rate: num(op.rate, 0, .15, .012) }; c.reserves -= amt; target.reserves += amt; goldMoved(c, 'lent', -amt); goldMoved(target, 'borrowed', amt); target.creditors[c.id] = (target.creditors[c.id] || 0) + amt; tell(w, w.characters[target.leader], c.name, `${Math.round(amt)} in gold has been lent to your state. It is owed back with interest; if you do not want the debt, return it with repay_foreign.`); news(w, `${c.name} lent money to the government of ${target.name}.`, { kind: 'economy', countries: [c.id, target.id] }); return { ok: true, msg: `${Math.round(amt)} gold lent.` }; }
@@ -1284,6 +1287,14 @@ function applyOne(w, actor, op) {
       // Troops carried to a coast of their own country's, an ally's or one opened to them need no squadron: only ships, and water no enemy holds.
       const u = w.units[op.unit], p = w.provinces[op.to]; if (!u || u.country !== c.id || !p?.coast) return fail('Invalid landing order.');
       if (freshlyCalled(w)(u) && p.controller !== c.id && atWar(w, c.id, p.controller)) return fail(`${u.id} was called up this quarter: it can be shipped to a coast of our own, and goes against a coast the enemy holds from next quarter.`);
+      // A number carries a detachment and leaves the rest of the unit where it stands. (World 22: "detach 6 thousand men from B93 and carry
+      // them by sea to Ordona" shipped the whole corps of 129 thousand, the army of the home island, to an outlying harbour.)
+      { const asked = Number(op.men); if (Number.isFinite(asked) && asked >= .1 && asked < u.men - .05 && u.province !== p.id) {
+          const men = Math.round(asked * 10) / 10, d = makeUnit(w, c.id, u.province, men, u.quality, u.loyalty, u.kind); if (u.eth) { d.eth = u.eth; d.rel = u.rel; }
+          d.morale = u.morale; d.equip = u.equip; if (u.bond != null) d.bond = u.bond; u.men -= men;
+          const { men: _, ...rest } = op, r = applyOp(w, actor, { ...rest, unit: d.id });
+          if (!r.ok) { u.men += d.men; delete w.units[d.id]; return r; }
+          return { ...r, msg: `${d.id}, ${menText(men)}, was detached from ${u.id}. ${r.msg} ${u.id} keeps ${menText(u.men)}.` }; } }
       const from = w.provinces[u.province];
       if (u.province === p.id) return fail('The unit is already there.');
       if (!from.coast) return fail('The unit must first march to the coast to embark.');
@@ -2134,6 +2145,7 @@ const OPEN_WAY = {
   note: 'Notes between governments are sent by whoever governs',
   tender: 'The state\'s buying is put to tender by whoever governs, or by the chief of staff for the army\'s stores. A house that wants the business answers a tender with its price (bid), or offers a contract of its own (propose_contract)',
   award_tender: 'A tender is the government\'s to award',
+  survey: 'The ground is surveyed by the state\'s engineers at the order of whoever governs. A house that wants a province looked at asks the government for it; what a survey finds is entered in the mining returns, and a pit can be founded on it then (found_company)',
   inspect: 'The inspectors of works answer to whoever governs. An owner knows his own works, and anybody can have a works or another matter looked into (inquire)',
 };
 const fail = msg => ({ ok: false, msg });

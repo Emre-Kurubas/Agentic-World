@@ -105,6 +105,9 @@ export function noteOp(w, actor, c, op, { fail, num, governs, allowance }) {
       if (h.aiControlled) {
         if (!(price > 0)) return fail('No price was offered.');
         const bids = w.bids ||= [], old = bids.findIndex(b => b.debt === d.id && b.from === actor.id), bid = { debt: d.id, from: actor.id, price, state, quiet, turn: w.turn }; if (old >= 0) bids[old] = bid; else bids.push(bid);
+        // On the state's account a note is paid for out of the secret funds, and they carry only so much in a quarter. (World 22: a ruler offered
+        // 26 "on the state's account" where the funds carry 19; the holder tried twice to sell and was told she "no longer had" the money.)
+        if (state && price > Math.max(c.gdp, 1) * .002 + .01) return fail(`On the state's account a note is bought with the secret funds, and they carry about ${r1(Math.max(c.gdp, 1) * .002)} in a quarter: ${r1(price)} cannot be paid out of them. Offer a sum within that, or offer it from your own purse (without state).`);
         say(w, h, actor.name, `${actor.name} offers you ${r1(price)} for note ${d.id}, on which ${who.name} owes you ${Math.round(d.owed)} (${dueWords(d)}). Selling it is yours to decide (sell_debt with debt ${d.id} and to ${actor.id}); the offer stands for a year.`);
         return ok(`Your offer of ${r1(price)} for note ${d.id} has gone to ${h.name}, who holds it. Selling is ${his(h)} to decide; the offer stands for four quarters, and a new one replaces it.`);
       }
@@ -130,7 +133,10 @@ export function noteOp(w, actor, c, op, { fail, num, governs, allowance }) {
       const bid = bidsOn(w, d.id).find(b => b.from === to.id), want = op.price != null ? num(op.price, 0, 1e6, 0) : null;
       if (bid) {
         if (want != null && want > bid.price + .01) return fail(`${to.name} has offered ${r1(bid.price)} for it, not ${r1(want)}.`);
-        const tc = w.countries[to.country], paid = payFor(w, tc, to, bid.price, bid.state && tc?.alive && tc.leader === to.id, allowance); if (!paid) return fail(`${to.name} no longer has the ${r1(bid.price)} ${he(to)} offered.`);
+        const tc = w.countries[to.country], onState = bid.state && tc?.alive && tc.leader === to.id, paid = payFor(w, tc, to, bid.price, onState, allowance);
+        if (!paid && onState) { const limit = Math.max(tc.gdp, 1) * .002, never = bid.price > limit + .01; say(w, to, 'Treasury', `${actor.name} agreed to sell you note ${d.id} for ${r1(bid.price)}, and the sale fell through: the offer was made on the state's account, and the secret funds, which carry about ${r1(limit)} in a quarter, ${never ? 'cannot pay such a sum in any quarter' : 'had not that much left this quarter'}. ${never ? 'A smaller offer, or one from your own purse, would have to replace it (buy_debt).' : 'It can be sold to you in a quarter when the funds are less drawn on.'}`);
+          return fail(`${to.name} offered the ${r1(bid.price)} on the state's account, and the state's secret funds, which carry about ${r1(limit)} in a quarter, ${never ? 'cannot pay such a sum in any quarter: the note is not sold, and the offer would have to be made again within that or from a private purse' : 'have not that much left this quarter: the note is not sold now, and can be offered again next quarter'}. ${to.name} is told.`); }
+        if (!paid) return fail(`${to.name} no longer has the ${r1(bid.price)} ${he(to)} offered.`);
         actor.wealth += paid; say(w, to, actor.name, assign(w, d, to, paid, bid.quiet)); return ok(`Note ${d.id} is sold to ${to.name} for ${r1(paid)}.`);
       }
       // A banking house discounts paper: it buys a note for less than it expects to see of it. Nobody else nobody plays buys notes.

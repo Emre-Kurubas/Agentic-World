@@ -5574,5 +5574,55 @@ chain('World 22, third review: a call the service refuses is not a character\'s 
   for (const s of ['Failed to authenticate. API Error: 403 Attention Required! | Cloudflare', 'API Error: 503 Service Unavailable', 'API Error 529', 'fetch failed', 'read ECONNRESET', 'getaddrinfo ENOTFOUND api', 'Connection error.', '502 Bad Gateway']) assert.ok(SERVICE_RE_.test(s), `known for what it is: ${s}`);
   for (const s of ['The Prince orders the land tax lowered by a point.', 'I will not sign his paper while his reservists are still marching.', 'claude exit code 1']) assert.ok(!SERVICE_RE_.test(s), `not mistaken for it: ${s}`);
 });
+chain('World 22, fourth review: a number in an order to ship troops carries that many and no more, and a squadron detached by two desks on one morning is detached once', () => {
+  // World 22, Q3 1903: "Detach 6 thousand men from B93 and carry them by sea to Ordona" shipped the whole corps of 129 thousand; and the ruler
+  // and the chief of staff each wrote "seven cruisers of G94 to Ordona", and fourteen of twenty-one sailed.
+  const n = twoNavies(), w = n.w, c = w.countries.U1, L = ld(w, c), G = n.gen, home = n.ha, own = countryProvinces(w, 'U1'), isle = own.find(p => p.id !== home.id && p.coast) ?? own[1];
+  for (const p of Object.values(w.provinces)) p.neighbors = p.neighbors.filter(x => x !== isle.id); isle.neighbors = []; w.wars = []; c.shipping = Math.max(c.shipping || 0, 40); const corps = soldier(w, 'U1', home.id, 30);
+  const at = () => Object.values(w.units).filter(u => u.country === 'U1' && u.province === isle.id), there0 = at().reduce((s, u) => s + u.men, 0);
+  const ship = applyOp(w, L, { op: 'amphibious', unit: corps.id, to: isle.id, men: 6 }), landed = at().reduce((s, u) => s + u.men, 0) - there0;
+  assert.ok(ship.ok && corps.province === home.id && Math.abs(corps.men - 24) < .01 && Math.abs(landed - 6) < .2 && /was detached from .*carried by sea.* keeps 24 thousand men/.test(ship.msg), `six thousand of thirty are carried and twenty-four stay: ${ship.msg.slice(0, 300)}`);
+  const twice = applyOp(w, G, { op: 'amphibious', unit: corps.id, to: isle.id, men: 6 });
+  assert.ok(twice.ok && twice.twice && Math.abs(corps.men - 24) < .01, `the same order from the chief of staff the same morning ships nobody else: ${twice.msg}`);
+  c.shipping = 0; c._lifted = 0; w.turn += 1; const none = applyOp(w, L, { op: 'amphibious', unit: corps.id, to: isle.id, men: 6 }), stray = Object.values(w.units).filter(u => u.country === 'U1' && u.province === home.id && u.id !== corps.id && Math.abs(u.men - 6) < .2);
+  assert.ok(!none.ok && Math.abs(corps.men - 24) < .01 && !stray.length, `with no ships no detachment is made: ${none.msg.slice(0, 200)}`);
+  // the squadron
+  const f = n.ship('U1', home.seas[0], 6, 'cruiser', home), to = home.seas[0], n0 = Object.values(w.fleets).filter(x => x.country === 'U1').length, s0 = f.ships;
+  const a = applyOp(w, L, { op: 'move_fleet', fleet: f.id, to, ships: 2 }), b = applyOp(w, G, { op: 'move_fleet', fleet: f.id, to, ships: 2 });
+  assert.ok(a.ok && b.ok && b.twice && Object.values(w.fleets).filter(x => x.country === 'U1').length === n0 + 1 && f.ships === s0 - 2, `two ships are detached once though two desks wrote it: ${a.msg.slice(0, 160)} | ${b.msg.slice(0, 120)}`);
+  const whole = applyOp(w, L, { op: 'move_fleet', fleet: f.id, to }), again = applyOp(w, G, { op: 'move_fleet', fleet: f.id, to });
+  assert.ok(whole.ok && again.ok && !again.twice, 'an order to the whole squadron given twice is the same order still, and is not turned away');
+});
+chain('World 22, fourth review, small things: a pit founded on a rumour is told what the returns show and whose a survey is; and a note offered for on the state\'s account beyond what the secret funds carry is refused when it is offered, not when it is sold', () => {
+  const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), O = w.characters[c.oligarch];
+  const p = countryProvinces(w, c.id).find(q => !q.deposits?.phosphate?.known) ?? countryProvinces(w, c.id)[0]; O.wealth = 200;
+  const pit = applyOp(w, O, { op: 'found_company', name: 'Rumour Phosphate', sector: 'mine', resource: 'phosphate', province: p.id, amount: 40 });
+  assert.ok(!pit.ok && O.wealth === 200 && new RegExp(`No known deposit: the mining returns show no phosphate at ${p.name}`).test(pit.msg) && /a survey is the government's to order \(survey\), and a house that wants one asks for it/.test(pit.msg), `the refusal says what is known and whose a survey is: ${pit.msg}`);
+  const sv = applyOp(w, O, { op: 'survey', province: p.id });
+  assert.ok(!sv.ok && /not authorized for this operation: survey\. The ground is surveyed by the state's engineers at the order of whoever governs/.test(sv.msg), `a private survey order says who orders one: ${sv.msg}`);
+  // the note
+  const Op = w.characters[c.opposition]; O.aiControlled = true; (w.debts ||= []).push({ id: 'B-t28', debtor: Op.id, creditor: O.id, amount: 55, owed: 60, due: w.turn + 8, terms: 'A note of hand.', status: 'open', turn: w.turn });
+  const limit = c.gdp * .002, big = applyOp(w, L, { op: 'buy_debt', debt: 'B-t28', price: Math.ceil(limit) + 5, state: true });
+  const small = applyOp(w, L, { op: 'buy_debt', debt: 'B-t28', price: Math.floor(limit) - 1, state: true });
+  assert.ok(small.ok && (w.bids || []).some(b => b.debt === 'B-t28' && b.state), `one within them is laid before the holder: ${small.msg}`);
+  assert.ok(!big.ok && /bought with the secret funds, and they carry about [\d.]+ in a quarter/.test(big.msg) , `an offer the funds can never pay is refused when it is made: ${big.msg}`);
+});
+chain('World 22, fourth review: the chief of staff posts his own officers within the army, and an officer taken off the staff is off the staff, not out of the service', () => {
+  // World 22, Akulia: "post him to the war college" was refused the chief of staff; "remove him from the general staff" then read "out of the
+  // state's service", and the Prince had to make a chair for a resentful colonel.
+  const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), G = w.characters[c.general];
+  const man = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.status === 'free' && !['leader', 'general', 'opposition', 'oligarch'].some(r => c[r] === x.id) && (x.clerkOf === 'army' || x.role === 'officer'));
+  assert.ok(man, 'an officer of the staff or the army to post'); const l0 = man.loyalty;
+  const col = applyOp(w, G, { op: 'post_person', character: man.id, office: 'war college', title: 'officer of the historical section, war college' });
+  assert.ok(col.ok && !man.clerkOf && /historical section/.test(man.office) && /off the general staff/.test(col.msg) && /sees no longer what passed over/.test(col.msg), `the chief of staff posts his officer to a school of the army: ${col.msg}`);
+  const customs = applyOp(w, G, { op: 'post_person', character: man.id, office: 'customs' });
+  assert.ok(!customs.ok && /the customs, the treasury, the police and the provinces are the government's to fill/.test(customs.msg), `not to the customs: ${customs.msg}`);
+  const back = applyOp(w, G, { op: 'post_person', character: man.id, office: 'staff' }); assert.ok(back.ok && man.clerkOf === 'army', `and back to the staff: ${back.msg}`);
+  const off = applyOp(w, G, { op: 'post_person', character: man.id, office: 'staff', dismiss: true });
+  assert.ok(off.ok && !man.clerkOf && /is off the general staff, with no post in the army/.test(off.msg) && !/out of the state's service/.test(off.msg), `taken off the staff by its chief, he is off the staff: ${off.msg}`);
+  const civ = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.status === 'free' && x.id !== man.id && !['leader', 'general', 'opposition', 'oligarch'].some(r => c[r] === x.id) && x.clerkOf !== 'army' && x.role !== 'officer' && !['treasury', 'police'].includes(x.post));
+  if (civ) { const no = applyOp(w, G, { op: 'post_person', character: civ.id, office: 'war college' }); assert.ok(!no.ok && /is not one of them/.test(no.msg), `somebody who is not his officer is not his to post: ${no.msg}`); }
+  const out = applyOp(w, L, { op: 'post_person', character: man.id, dismiss: true }); assert.ok(out.ok && /out of the state's service/.test(out.msg), `the government puts a man out of the service: ${out.msg}`);
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');
