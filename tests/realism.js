@@ -5467,7 +5467,25 @@ chain('World 20, third review: a thin store of bread is called thin only when it
   const O = w.characters[d.opposition], party = d.parties.find(p => leadsOf(w, d, O).includes(p)); O.wealth = 30; assert.ok(applyOp(w, O, { op: 'found_society', kind: 'mutual', name: 'Brotherhood of Labour and Mutual Aid', amount: 2 }).ok); const soc = societiesOf_(d, party.id)[0], s0 = soc.funds;
   const g = applyOp(w, O, { op: 'give', to: 'Brotherhood of Labour', amount: 2 }); assert.ok(g.ok && soc.funds === s0 + 2, `a gift finds the society by the first words of its name: ${g.msg}`);
   assert.ok(applyOp(w, O, { op: 'petition', demand: 'A floor under safety in every pit.', class: 'workers' }).ok); massStep_(w); w.turn += 1; const early = applyOp(w, O, { op: 'petition', demand: 'A widows\' fund.' });
-  assert.ok(!early.ok && new RegExp(`they can carry the next from ${quarterLabelOf(w.turn + 1).replace(/[.*+?^${}()|[\]\\]/g, '\\// [economy, map] checks of the economy, the resources and the map are added above this line.')}`).test(early.msg), `the committees say when: ${early.msg}`); w.turn += 1; assert.ok(applyOp(w, O, { op: 'petition', demand: 'A widows\' fund.' }).ok, 'and then they can');
+  assert.ok(!early.ok && new RegExp(`they can carry the next from ${quarterLabelOf(w.turn + 1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(early.msg), `the committees say when: ${early.msg}`); w.turn += 1; assert.ok(applyOp(w, O, { op: 'petition', demand: 'A widows\' fund.' }).ok, 'and then they can');
+});
+chain('World 21, first review: a bill is found by its title, somebody is pressed only with a file on himself and is told which files are held, a watch can be ordered off on a day, and a mine ordered without its mineral is told what lies there', () => {
+  const w = inherited(2696855, 8); run(w, 1); const cs = aliveCountries(w), c = cs.find(x => x.parliament) ?? cs[0], L = ld(w, c), O = w.characters[c.opposition], M = w.characters[c.oligarch], party = c.parties.find(p => !p.banned);
+  (c.bills ||= []).push({ id: 'Y-t', title: 'Business Tax Reduction Act', status: 'pending', voteAt: w.turn + 2, ops: [{ op: 'set_tax', kind: 'business', rate: .15 }], votes: {}, lobby: {} }); M.wealth = 40;
+  const lob = applyOp(w, M, { op: 'lobby_bill', bill: 'Business Tax Reduction Act', party: party.id, amount: 10, side: 'yes' }); assert.ok(lob.ok && c.bills.at(-1).lobby[party.id] === 10, `a bill is found by its title: ${lob.msg}`);
+  assert.ok(/No such bill is waiting for a vote\. Before the house: [^]*Y-t Business Tax Reduction Act/.test(applyOp(w, M, { op: 'lobby_bill', bill: 'The Moon Act', party: party.id, amount: 5 }).msg), 'and one nobody knows is answered with what is before the house');
+  if (leadsOf(w, c, O).length) assert.ok(applyOp(w, O, { op: 'vote_bill', bill: 'the business tax reduction act', vote: 'no' }).ok, 'a vote finds it the same way');
+  // Blackmail.
+  const clerk = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.post === 'treasury'); O.dossiers[M.id] = { turn: w.turn, about: M.name, facts: ['Paid 3 to a minister in 1894.'] };
+  const bm = applyOp(w, O, { op: 'blackmail', character: clerk.id, demand: 'Tell me what the books show.' }); assert.ok(!bm.ok && new RegExp(`You hold no file on ${clerk.name}: somebody is pressed with what is known of himself, not of another\\. You hold files on: ${M.name}\\.`).test(bm.msg), bm.msg);
+  // A watch taken off on a day.
+  M.wealth = 40; assert.ok(applyOp(w, M, { op: 'watch', character: O.id }).ok); const so = applyOp(w, M, { op: 'standing_order', when: { after: 1 }, then: [{ op: 'watch', character: O.id, lift: true }] }); assert.ok(so.ok, `"watch her for one quarter": ${so.msg}`);
+  assert.ok(/cannot be kept for a day: delegate is a standing matter itself/.test(applyOp(w, L, { op: 'standing_order', when: { after: 1 }, then: [{ op: 'delegate', to: 'general', powers: ['recruit'] }] }).msg), 'what cannot be kept for a day is named');
+  run(w, 2); assert.ok(!(w.watches || []).some(x => x.by === M.id && x.key === O.id), 'and on its day the watch is off');
+  // A mine without its mineral.
+  const p = Object.values(w.provinces).find(q => q.controller === c.id && Object.values(q.deposits || {}).some(d => d.known && d.amount > 0)), known = Object.entries(p.deposits).filter(([, d]) => d.known && d.amount > 0).map(([g]) => g);
+  const mine = applyOp(w, L, { op: 'build', province: p.id, kind: 'mine', amount: 60, _law: true }); assert.ok(!mine.ok && new RegExp(`Say which deposit is to be worked \\(resource\\): known at ${p.name} (is|are) ${known.join(', ')}\\.`).test(mine.msg), mine.msg);
+  const wrong = applyOp(w, L, { op: 'build', province: p.id, kind: 'mine', resource: known.includes('oil') ? 'rare' : 'oil', amount: 60, _law: true }); assert.ok(!wrong.ok && new RegExp(`is known at ${p.name}\\. Known there: `).test(wrong.msg), wrong.msg);
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

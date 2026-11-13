@@ -73,7 +73,7 @@ function quoteFree(w, c, p, kind, resource) {
   if (Object.hasOwn(PLANTS, kind)) return { what: PLANTS[kind].toLowerCase(), price: plantPrice(p), machines: machinesFor(p), room: MAX_PLANT - p.plants[kind], has: p.plants[kind], usual: 1, unit: 'level' };
   if (kind === 'mine') {
     const d = typeof resource === 'string' && Object.hasOwn(p.deposits, resource) ? p.deposits[resource] : null;
-    if (!d?.known) return { no: resource === 'timber' ? 'Timber is not mined: it is cut by the country people of a forest province. Logging roads and sawmills (forestry) raise what the forest yields.' : 'No such known deposit here.' };
+    if (!d?.known) return { no: resource === 'timber' ? 'Timber is not mined: it is cut by the country people of a forest province. Logging roads and sawmills (forestry) raise what the forest yields.' : (() => { const known = Object.entries(p.deposits || {}).filter(([, x]) => x?.known && x.amount > 0).map(([g]) => g); return typeof resource === 'string' && resource ? `No ${resource} is known at ${p.name}.${known.length ? ` Known there: ${known.join(', ')}.` : ' No deposit is known there.'}` : known.length ? `Say which deposit is to be worked (resource): known at ${p.name} ${known.length > 1 ? 'are' : 'is'} ${known.join(', ')}.` : `No deposit is known at ${p.name}: there is nothing there to mine.`; })() };
     return { what: `${GOOD_LABEL[resource]} mine`, price: minePrice(p), machines: machinesFor(p), room: MAX_MINE - d.mine, has: d.mine, usual: 1, unit: 'level' };
   }
   if (kind === 'farming') return { what: 'drainage, wells and terraces', price: FARMING * tillers(p), room: fertileMax(p) - p.fertility, has: p.fertility, usual: .1, unit: 'fertility' };

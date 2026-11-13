@@ -109,8 +109,9 @@ export function standingOp(w, actor, c, op, h) {
     case 'standing_order': {
       const mine = (w.standingOrders ||= []).filter(x => x.by === actor.id); if (mine.length >= 8) return fail('Eight orders of yours are waiting for their day already; withdraw one first (cancel_order).');
       const k = normWhen(w, c, op.when); if (k.no) return fail(k.no);
-      const then = (Array.isArray(op.then) ? op.then : op.then ? [op.then] : []).filter(o => o && typeof o === 'object' && !STANDING_OPS.has(o.op) && h.known(o.op)).map(plainOp).slice(0, 16);
-      if (!then.length) return fail('Say what is to be done when the day comes: one or more operations (then).');
+      const then = (Array.isArray(op.then) ? op.then : op.then ? [op.then] : []).filter(o => o && typeof o === 'object' && (!STANDING_OPS.has(o.op) || (o.op === 'watch' && o.lift === true)) && h.known(o.op)).map(plainOp).slice(0, 16);
+      // (World 21: "watch her for one quarter" was written as a watch and an order to lift it next quarter; the lifting was dropped as a standing matter.)
+      if (!then.length) { const dropped = (Array.isArray(op.then) ? op.then : op.then ? [op.then] : []).filter(o => o && typeof o === 'object' && STANDING_OPS.has(o.op)).map(o => o.op); return fail(dropped.length ? `What was to be done on the day cannot be kept for a day: ${[...new Set(dropped)].join(', ')} ${dropped.length > 1 ? 'are standing matters themselves' : 'is a standing matter itself'} and is ordered on the day (a watch can be taken off on a day: watch with lift).` : 'Say what is to be done when the day comes: one or more operations (then).'); }
       const so = { id: nextId(w, 'SO'), by: actor.id, country: c.id, when: k.when, words: k.words, then, label: String(op.label ?? '').slice(0, 160), since: w.turn, again: op.again === true };
       w.standingOrders.push(so);
       // An order is given on its day with the powers its owner has that day. What is not his to order today is said today.
