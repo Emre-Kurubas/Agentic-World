@@ -5796,5 +5796,13 @@ chain('A fortress can be laid under siege without being stormed: enough men shut
   const storm = applyOp(s.w, s.L, { op: 'offensive', to: s.place.id, units: [s.foot.id, s.art.id], manner: 'assault', shelling: true }); s.go();
   assert.ok(storm.ok && s.w.battles.some(b => b.province === s.place.id && b.manner === 'assault'), `ordered to storm, the besiegers storm: ${JSON.stringify(s.w.battles).slice(0, 160)}`);
 });
+chain('World 23, second review: an order can wait for a quarter named by its date', () => {
+  // Four games running "pay the note when it falls due in Q1 1902" came back "the office cannot reckon how many quarters away that is".
+  const w = inherited(2696855, 8), c = aliveCountries(w)[0], L = ld(w, c), y = 1900 + Math.floor((w.turn + 2) / 4), q = (w.turn + 2) % 4 + 1, date = `Q${q} ${y}`;
+  const so = applyOp(w, L, { op: 'standing_order', when: { date }, then: [{ op: 'report', topic: 'army' }], label: 'By its date' });
+  assert.ok(so.ok && new RegExp(`in ${date}`).test(so.msg) && (w.standingOrders || []).some(x => x.by === L.id && x.when?.turn === w.turn + 2), `the order is entered for the quarter named: ${so.msg.slice(0, 200)}`);
+  const past = applyOp(w, L, { op: 'standing_order', when: { date: 'Q1 1899' }, then: [{ op: 'report', topic: 'army' }] }), odd = applyOp(w, L, { op: 'standing_order', when: { date: 'next spring' }, then: [{ op: 'report', topic: 'army' }] });
+  assert.ok(!past.ok && /is past/.test(past.msg) && !odd.ok && /Name the quarter as it is written/.test(odd.msg), `a date that is past, or no date, says so: ${past.msg} | ${odd.msg}`);
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

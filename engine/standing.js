@@ -124,7 +124,7 @@ export function standingOp(w, actor, c, op, h) {
 }
 
 // The days an order can wait for, each of them something the engine itself knows to have happened.
-const FORMS = 'attacked (somebody goes to war with us; by: a state, if only that one counts), mobilised (a named state, or with true any state on our frontier, calls up its reserve), war_on (somebody goes to war with a named state), troops (the men of a state in a named province rise above or fall below a number), treaty (a paper comes into force, or ends), peace (our war with a named state ends), ultimatum (a named state refuses our ultimatum or lets it run out), bill (a bill passes, or is rejected), lost (a province of ours falls into other hands), after (so many quarters)';
+const FORMS = 'attacked (somebody goes to war with us; by: a state, if only that one counts), mobilised (a named state, or with true any state on our frontier, calls up its reserve), war_on (somebody goes to war with a named state), troops (the men of a state in a named province rise above or fall below a number), treaty (a paper comes into force, or ends), peace (our war with a named state ends), ultimatum (a named state refuses our ultimatum or lets it run out), bill (a bill passes, or is rejected), lost (a province of ours falls into other hands), after (so many quarters), date (a quarter by its name, Q3 1903)';
 function normWhen(w, c, raw) {
   const k = raw && typeof raw === 'object' ? raw : {}, st = id => w.countries[id]?.alive ? id : null;
   if (k.attacked) { const by = st(k.by); return { when: { attacked: true, ...(by ? { by } : {}) }, words: `the day ${by ? nameOf(w, by) : 'any state'} goes to war with us` }; }
@@ -146,6 +146,9 @@ function normWhen(w, c, raw) {
   // could wait on, nothing was entered, and she gave the orders again a quarter later.)
   if (k.peace) { const foe = st(typeof k.peace === 'object' ? k.peace.with ?? k.peace.target : k.peace); if (!foe || foe === c.id) return { no: 'Say with which state the peace is waited for (peace: its id).' }; if (!atWar(w, c.id, foe)) return { no: `We are not at war with ${nameOf(w, foe)}: there is no peace to wait for, and what was to follow it can be ordered today.` }; return { when: { peace: foe }, words: `the day our war with ${nameOf(w, foe)} is over` }; }
   if (k.lost && w.provinces[k.lost]?.controller === c.id) return { when: { lost: k.lost }, words: `the day ${w.provinces[k.lost].name} falls into other hands` };
+  // A date is a day like any other: "pay the note when it falls due in Q1 1902". (Four games running such orders came back "the office cannot
+  // reckon how many quarters away that is": the count is the office's to make.)
+  { const said = k.date ?? k.on ?? k.quarter, m = /^\s*Q([1-4])\s*(\d{4})\s*$/i.exec(String(said ?? '')); if (said != null) { if (!m) return { no: `Name the quarter as it is written on every paper (date: "Q3 1903").` }; const turn = (Number(m[2]) - 1900) * 4 + Number(m[1]) - 1; if (turn <= w.turn) return { no: `${quarterLabel(turn)} is ${turn === w.turn ? 'this quarter' : 'past'}: an order for today is given today.` }; if (turn - w.turn > 40) return { no: 'That is more than ten years off: no order waits so long.' }; return { when: { turn }, words: `in ${quarterLabel(turn)}` }; } }
   if (Number(k.after) >= 1) { const n = Math.min(40, Math.round(Number(k.after))); return { when: { turn: w.turn + n }, words: `in ${quarterLabel(w.turn + n)}` }; }
   return { no: `Say the day the order waits for (when), as one of: ${FORMS}.` };
 }
