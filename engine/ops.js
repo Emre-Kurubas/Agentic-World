@@ -398,10 +398,22 @@ const cname = (w, id) => w.countries[id]?.name ?? id;
 // treaty are the parties' own; this is what will actually happen, and whoever offers, receives or signs it is told so by name.
 // What a government pays at home, beyond the people lost, for land it signs away without a battle fought for it; and what the army thinks of it.
 export const UNFOUGHT = { standing: 8, army: 12, loyalty: 8, morale: 6 };
+// What land signed away costs a government at home, beyond the people who go with it: more, by up to four fifths, while its army still stands
+// in the field at something like the strength it went to war with; no more than the people are worth when the army has been broken. A
+// government that gives up a province with its army intact is said to have surrendered it; one whose army was beaten is said to have lost a war.
+// (World 21: a state ceded a province and a tenth of its people four quarters into a war with a larger army than it began with, for six points.)
+export function cedeCost(w, x, lost) {
+  const now = sum(Object.values(w.units).filter(u => u.country === x.id), u => u.men), began = x.war?.men0 > 0 ? x.war.men0 : now, standing = clamp(now / Math.max(began, 1e-9), 0, 1.5), more = clamp((standing - .6) / .4, 0, 1) * .8;
+  return { cost: clamp(lost * 70 * (1 + more), 1, 36), plain: clamp(lost * 70, 1, 28), standing, more };
+}
 export function settlementText(w, t) {
   if (!t) return ''; const name = pid => `${w.provinces[pid]?.name} (${pid})`, out = [];
   const cede = (t.cede || []).map(x => x && typeof x === 'object' ? x : { province: x }).filter(x => w.provinces[x.province]);
   if (cede.length && w.dearLand) { const soft = [...new Set(cede.map(x => { const p = w.provinces[x.province], to = x.to ?? t.parties.find(id => id !== p.owner); return hasFought(w, p.owner, to) ? null : p.owner; }).filter(Boolean))].filter(id => !cede.some(x => (x.to ?? t.parties.find(y => y !== w.provinces[x.province].owner)) === id)); if (soft.length) out.push(`${soft.map(id => cname(w, id)).join(' and ')} ${soft.length > 1 ? 'have' : 'has'} fought no battle for this land: a government that signs land away so pays for it at home, beyond the people it loses, with about ${UNFOUGHT.standing} of its standing and with the army's trust.`); }
+  // What signing would cost each government that gives up land, as its army stands today (cedeCost).
+  if (cede.length && t.kind === 'peace') { const giving = [...new Set(cede.map(x => w.provinces[x.province].owner))].filter(id => w.countries[id]?.alive && t.parties.includes(id) && !cede.some(x => (x.to ?? t.parties.find(y => y !== w.provinces[x.province].owner)) === id));
+    for (const id of giving) { const x = w.countries[id], all = Math.max(ownedPeople(w, id), 1e-9), going = sum(cede.filter(y => w.provinces[y.province].owner === id), y => provincePop(w.provinces[y.province])), lost = going / all; if (!(lost > .005)) continue; const k = cedeCost(w, x, lost);
+      out.push(`${cname(w, id)} would sign away about ${Math.round(lost * 100)} in the hundred of its people. As its army stands today that costs its government about ${Math.round(k.cost)} of its standing at home${k.more >= .2 && k.cost - k.plain >= 1 ? `, where a government whose army had been beaten would pay about ${Math.round(k.plain)}: land given up with the army still in the field is called a surrender` : ''}.`); } }
   if (cede.length) out.push(`On signing these provinces change hands: ${cede.map(x => { const p = w.provinces[x.province], to = x.to ?? t.parties.find(id => id !== p.owner); return `${name(x.province)} from ${cname(w, p.owner)} to ${cname(w, to)}`; }).join('; ')}.`);
   if (t.kind === 'peace') {
     const held = Object.values(w.provinces).filter(p => t.parties.includes(p.owner) && t.parties.includes(p.controller) && p.owner !== p.controller && !cede.some(x => x.province === p.id));
@@ -493,7 +505,7 @@ function settleTerms(w, t, fresh) {
   if (t.kind === 'guarantee' && t.of) for (const id of fresh) if (id !== t.of && !(w.guarantees ||= []).some(x => x.by === id && x.of === t.of)) w.guarantees.push({ by: id, of: t.of, turn: w.turn, treaty: t.id });
   if (forced) {
     for (const id of t.parties) { const x = w.countries[id], lost = (had[id] - ownedPeople(w, id)) / Math.max(had[id], 1), won = (ownedPeople(w, id) - had[id]) / Math.max(had[id], 1);
-      if (lost > .005) { const cost = clamp(lost * 70, 1, 28); x.legitimacy = clamp(x.legitimacy - cost, 0, 100); x.blocs.army.sat = clamp(x.blocs.army.sat - lost * 40, 0, 100); note(id, ` About ${Math.round(lost * 100)}% of the country's people went with the land that was signed away; the government's standing at home fell by about ${Math.round(cost)}.`); tell(w, w.characters[x.leader], 'The capital', `The peace took about ${Math.round(lost * 100)}% of the country's people with the land it gave up. It is being called a defeat, in the streets and in the army.`); }
+      if (lost > .005) { const { cost, plain, more } = cedeCost(w, x, lost), unbeaten = more >= .2 && cost - plain >= 1; x.legitimacy = clamp(x.legitimacy - cost, 0, 100); x.blocs.army.sat = clamp(x.blocs.army.sat - lost * 40 * (1 + more), 0, 100); note(id, ` About ${Math.round(lost * 100)}% of the country's people went with the land that was signed away; the government's standing at home fell by about ${Math.round(cost)}${unbeaten ? ` (a beaten army's government would have paid about ${Math.round(plain)}: the army still stood in the field, and it is called a surrender)` : ''}.`); tell(w, w.characters[x.leader], 'The capital', `The peace took about ${Math.round(lost * 100)}% of the country's people with the land it gave up. It is being called a defeat, in the streets and in the army.`); }
       else if (won > .005) x.legitimacy = clamp(x.legitimacy + clamp(won * 25, .5, 8), 0, 100); }
     for (const [x, y, fought] of pairs) { note(x, weighAims(w, w.countries[x], w.countries[y], fought, t.payer === y && t.payee === x ? paid : 0)); note(y, weighAims(w, w.countries[y], w.countries[x], fought, t.payer === x && t.payee === y ? paid : 0)); }
   }

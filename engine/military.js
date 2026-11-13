@@ -316,7 +316,12 @@ export function seat(w, c) {
 // own country's cost twice their keep in peace and two and a half times in war. A state that goes to war on its peace budget watches its army
 // go unpaid.
 // What one body of troops and one squadron cost to keep: the parts the whole bill is made of.
-const keepOfUnit = (w, c, u, out) => u.men * (UPKEEP[u.kind] ?? 1) * (w.provinces[u.province] && w.provinces[u.province].owner !== c.id ? (out ? 2.5 : 2) : out ? 2 : 1) * .8 * c.priceLevel;
+// Reservists just called cost half through the quarter they come in and the one after: they come in what they stand up in, with bread from
+// home, and the paymasters' lists fill slowly. After that they cost like any soldier. (World 21: a general call-up put armies on a fifth of
+// their pay in the quarter it was ordered.)
+export const CALL_UP = { quarters: 2, cost: .5 };
+const freshMen = (w, u) => u.calledAt != null && w.turn - u.calledAt < CALL_UP.quarters ? (u.called ? u.men : Math.min(u.calledMen || 0, u.men)) : 0;
+const keepOfUnit = (w, c, u, out) => (u.men - freshMen(w, u) * (1 - CALL_UP.cost)) * (UPKEEP[u.kind] ?? 1) * (w.provinces[u.province] && w.provinces[u.province].owner !== c.id ? (out ? 2.5 : 2) : out ? 2 : 1) * .8 * c.priceLevel;
 // A ship costs its keep whether it floats or lies in dock; a squadron kept at sea costs two fifths more than one lying in harbour.
 const keepOfFleet = (c, f, out) => (f.ships + (f.damaged || 0) * .5) * SHIPS[kindOf(f)].power * (f.port ? 1 : 1.4) * (out ? 1.5 : 1) * 3 * c.priceLevel;
 export function upkeepCost(w, c) {
@@ -462,6 +467,8 @@ export function joinUnits(w, a, b) {
   const n = a.men + b.men, res = calledIn(a) + calledIn(b);
   for (const k of ['quality', 'morale', 'equip', 'loyalty', 'bond']) if (a[k] != null || b[k] != null) b[k] = ((a[k] ?? b[k]) * a.men + (b[k] ?? a[k]) * b.men) / n;
   b.men = n; b.dug = Math.min(a.dug || 0, b.dug || 0);
+  // Men just called keep the day of their calling when they join another body (their cheaper first quarters go with them).
+  if (a.calledAt != null && calledIn(a) > 0) b.calledAt = Math.max(b.calledAt ?? -99, a.calledAt);
   if (res >= n - .05) { b.called = true; delete b.calledMen; } else { delete b.called; if (res > .05) b.calledMen = res; else delete b.calledMen; }
   // Where it went is kept for a while, so that an order still addressed to it can say what became of it (ops.js applyOp).
   (w.joined ||= {})[a.id] = { into: b.id, at: b.province, t: w.turn }; { const ks = Object.keys(w.joined); if (ks.length > 120) for (const k of ks.slice(0, ks.length - 120)) delete w.joined[k]; }

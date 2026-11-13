@@ -2,7 +2,7 @@
 // Armies that face each other across a border now and then shoot at each other, and a people watches how its kin are treated on the other side.
 // Both leave a grievance at home that weighs on whoever governs until it is answered or forgotten. A state also has men who have served and
 // gone home: calling them back is quick, large, costly to the fields and the works, and seen by every neighbour.
-import { clamp, rand, news, sum } from './util.js';
+import { clamp, rand, news, sum, quarterLabel } from './util.js';
 import { aliveCountries, countryProvinces, atWar, hasTreaty, provincePop, makeUnit, goHome } from './world.js';
 import { groupsOf, yokeOn } from './culture.js';
 import { fighting, upkeepCost, inTheField, calledIn } from './military.js';
@@ -98,8 +98,8 @@ export function mobilize(w, c, op, pay, fail) {
     o.relations[c.id] = clamp((o.relations[c.id] ?? 0) - 10, -100, 100);
     for (const ch of [w.characters[o.leader], w.characters[o.general]]) if (ch?.alive) say(w, ch, 'General Staff', `${c.name} is mobilising: about ${Math.round(called)} thousand reservists called to the colours, on top of the standing army. They will be under arms within the quarter. Whether it is meant for us is not known.`); }
   // Whoever calls them up is told at once what he has taken on: what the forces now cost a quarter, and how much of that the vote for the army covers.
-  const cost = upkeepCost(w, c), voted = c.budget.military * c.gdp * (c.paidRatio ?? 1), bill = ` With them the forces cost about ${Math.round(cost)} a quarter${inTheField(w, c.id) ? '' : ' in barracks, and twice that once they take the field'}; the military budget provides ${Math.round(voted)}, which is ${Math.round(voted / Math.max(cost, 1) * 100)} in the hundred of it. Below about 85 in the hundred men who are not paid go home, and the rest lose heart.`;
-  return { ok: true, msg: `About ${called} thousand reservists are called up and form at ${depots.map(p => p.name).join(', ')}; ${Math.round(c.reserve)} thousand remain in the reserve.${short} They can march and hold ground at once; they are fit to go into an attack from next quarter, when they have come in, drawn their rifles and formed. They left fields and works to come, they must be paid like the rest of the army, and every neighbour knows.${bill}${note}` };
+  const cost = upkeepCost(w, c), voted = c.budget.military * c.gdp * (c.paidRatio ?? 1), later = (() => { const kept = Object.values(w.units).filter(u => u.country === c.id && u.calledAt === w.turn).map(u => [u, u.calledAt]); for (const [u] of kept) u.calledAt = w.turn - 9; const full = upkeepCost(w, c); for (const [u, at] of kept) u.calledAt = at; return full; })(), bill = ` For this quarter and the next the men just called cost half a soldier's keep (they come in what they stand up in, and the pay lists fill slowly): with them the forces cost about ${Math.round(cost)} a quarter now and about ${Math.round(later)} from ${quarterLabel(w.turn + 2)}${inTheField(w, c.id) ? '' : ', in barracks, and twice that once they take the field'}; the military budget provides ${Math.round(voted)}, which is ${Math.round(voted / Math.max(cost, 1) * 100)} in the hundred of it. Below about 85 in the hundred men who are not paid go home, and the rest lose heart.`;
+  return { ok: true, msg: `About ${called} thousand reservists are called up and form at ${depots.map(p => p.name).join(', ')}; ${Math.round(c.reserve)} thousand remain in the reserve.${short} They can march and hold ground at once; they are fit to go into an attack from next quarter, when they have come in, drawn their rifles and formed. They left fields and works to come, and every neighbour knows.${bill}${note}` };
 }
 // Sending the reservists home again.
 // how: null stands every reservist down; a positive number is that many thousand men, a negative one that share of them; unit names one called-up body.
