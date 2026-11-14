@@ -275,6 +275,15 @@ export function carryStanding(w) { standingStep(w, applyOp, carryList); tenderSt
 // And once more when the quarter has been played: an order that waited for something the quarter brought (a vote of the house, a war, troops on a
 // frontier) is given the same quarter and not a quarter late, and its owner wakes to what came of it and not to an order still "waiting".
 export function carryStandingLate(w) { standingStep(w, applyOp, carryList); }
+// A paper whose words give a province back to the state that owns it, and whose list of provinces that change hands gives the same province to
+// the other side, contradicts itself: it is not laid, and whoever wrote it is told. (World 26, Q3 1902: Tirara and Hazland agreed by letter that
+// Hazburga, which Tirara held, went home to Hazland for 500 in gold. The paper said "Hazburga is returned to the Republic of Hazland" and listed
+// Hazburga among the provinces that change hands, which gave it to Tirara for good; Hazland's signature, ordered before the paper came, was put
+// on it unread. Its president: "She robbed me in my own handwriting." Tirara's ruler: "My letters are words; his signature is a treaty.")
+function givenBackInWords(w, terms, moves) { const text = String(terms || '');
+  for (const [pid, from] of moves) { const p = w.provinces[pid], owner = w.countries[from]; if (!p || !owner) continue; const short = owner.name.split(' ').pop().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), home = new RegExp(`\\bto\\s+(?:the\\s+)?(?:[A-Z][\\w']*\\s+(?:of\\s+)?){0,5}${short}\\b`);
+    for (const s of text.split(/(?<=[.;])\s+/)) if ((s.includes(p.name) || new RegExp(`\\b${pid}\\b`).test(s)) && /\b(returned|returns|return|restored|restores|restore|handed back|given back|gives back|goes back|go back|comes home|goes home)\b/i.test(s) && home.test(s)) return `The paper contradicts itself and was not laid. Its words say that ${p.name} goes back to ${owner.name}, whose it is; its list of provinces that change hands gives ${p.name} away from ${owner.name}. A province that is only occupied goes back to its owner by itself the day a peace is signed, and is not listed; a province that is to change owners is listed, and the words then say so.`; }
+  return null; }
 export function carrySigned(w) {
   // A request to borrow that no government answered in two quarters lapses, and whoever asked is told.
   if (w.loanAsks?.length) w.loanAsks = w.loanAsks.filter(a => { if (w.turn - a.turn < 2 && w.countries[a.from]?.alive && w.countries[a.to]?.alive) return true; const b = w.countries[a.from]; if (b?.alive) tell(w, w.characters[b.leader], 'Treasury', `Our request to borrow ${a.amount} of the houses of ${w.countries[a.to]?.name ?? 'that state'} was never answered and has lapsed. Nothing was lent.`); return false; });
@@ -287,7 +296,7 @@ export function carrySigned(w) {
     tell(w, ch, 'Your secretary', r.ok ? `The offer of ${from.name} arrived, and it was signed as you had ordered. ${r.msg}` : came.length > 1 ? `Nothing was signed with ${from.name} this quarter: ${came.length} papers of theirs lay before you (${came.map(k => k.id).join(', ')}), and the one signature you had ordered could not tell which was meant. They still lie there: sign each by its number (accept_contract with the id).` : `Nothing was signed with ${from.name} this quarter: no single offer of theirs reached you. The order to sign does not stand over: it has to be given again when their paper lies before you.`); }
   for (const a of (w.signing || []).splice(0)) {
     const ch = w.characters[a.actor], c = ch && w.countries[ch.country], o = w.countries[a.target]; if (!ch?.alive || !c?.alive || !o) continue;
-    const r = applyOp(w, ch, { op: 'accept_treaty', target: o.id, _late: true });
+    const r = applyOp(w, ch, { op: 'accept_treaty', target: o.id, cede: a.cede ?? [], _late: true });
     const text = r.ok ? `The proposal of ${o.name} arrived, and it was signed as you had ordered. ${r.msg}` : `Nothing was signed with ${o.name} this quarter: ${/^No new proposal/.test(r.msg) ? r.msg : /^No proposal|^Which proposal/.test(r.msg) ? `no single proposal of theirs reached us (${r.msg})` : r.msg} The order to sign does not stand over: it has to be given again when their paper is on the table.`;
     for (const x of new Set([ch, w.characters[c.leader]])) tell(w, x, 'Foreign Ministry', text);
     (w.awaited ||= []).push({ turn: w.turn, actor: ch.id, country: c.id, op: { op: 'accept_treaty', target: o.id }, ok: !!r.ok, text });
@@ -589,6 +598,7 @@ function proposeMany(w, c, op, others, mediator = false) {
   // In a treaty among several, land goes where the treaty says, by name: each province to one of the parties.
   const grants = (Array.isArray(op.cede) ? op.cede : []).filter(g => g && typeof g === 'object' && w.provinces[g.province] && invited.includes(w.provinces[g.province].owner) && invited.includes(g.to) && w.provinces[g.province].owner !== g.to).slice(0, 24).map(g => ({ province: g.province, to: g.to, from: w.provinces[g.province].owner }));
   if (Array.isArray(op.cede) && op.cede.length && !grants.length) return fail('In a treaty among several, each province ceded must be named with the party that receives it: cede:[{province,to}].');
+  { const no = givenBackInWords(w, op.terms, grants.map(g => [g.province, g.from ?? w.provinces[g.province]?.owner])); if (no) return fail(no); }
   const reparations = num(op.reparations, 0, .3, 0), payer = invited.includes(op.reparations_from) ? op.reparations_from : null, payee = invited.includes(op.reparations_to) ? op.reparations_to : null;
   if (reparations > 0 && (!payer || !payee || payer === payee)) return fail('In a treaty among several, an indemnity names who pays and who receives it: reparations_from and reparations_to.');
   const left = [], id = nextId(w, 'A'), clauses = normalizeClauses(w, op.clauses, invited, left), terms = String(op.terms || '').slice(0, 2000);
@@ -1698,6 +1708,7 @@ function applyOne(w, actor, op) {
       if (!maySign(w, c.id, target.id, op.kind)) return fail(`Between this state and ${target.name} stand ${tieWord(tieOf(w, c.id, target.id))}: nothing of this kind can be signed between the two unless a third state carries it (a mediator, a conference), or relations are restored first (set_relations).`);
       // (Between states that are not at war a paper called a peace is a pact between states at peace: it carries its land and clauses all the same.)
       if (op.kind === 'peace' && !atWar(w, c.id, target.id)) op = { ...op, kind: 'nonaggression', settles: true };
+      { const no = givenBackInWords(w, op.terms, (Array.isArray(op.cede) ? op.cede : []).map(x => x && typeof x === 'object' ? x.province : x).filter(pid => [c.id, target.id].includes(w.provinces[pid]?.owner)).map(pid => [pid, w.provinces[pid].owner])); if (no) return fail(no); }
       // An armistice stops the fighting where the lines stand and leaves the war, the occupied land and the blockade as they are, for as long as it runs.
       if (op.kind === 'armistice') { if (!atWar(w, c.id, target.id)) return fail('There is no war between you to halt.'); if (hasTreaty(w, c.id, target.id, 'armistice')) return fail('An armistice between you is already in force.'); }
       if (!['peace', 'armistice'].includes(op.kind) && atWar(w, c.id, target.id)) return fail(`We are at war with ${target.name}: between states at war only an armistice or a peace is signed.`);
@@ -1765,9 +1776,13 @@ function applyOne(w, actor, op) {
       // A signature ordered for a paper that has not arrived yet waits for it: in a quarter two governments agree by letter, one sends the treaty and
       // the other signs, and which of the two orders reaches the engine first is chance. It is given when the quarter's proposals are all in
       // (carrySigned, before the quarter is played), and whoever ordered it is told what came of it.
-      if (!t && target && !fresh.length && !op._late) { const q = (w.signing ||= []), at = q.findIndex(x => x.actor === actor.id && x.target === target.id), entry = { turn: w.turn, actor: actor.id, target: target.id }; if (at >= 0) q[at] = entry; else q.push(entry);
+      if (!t && target && !fresh.length && !op._late) { const q = (w.signing ||= []), at = q.findIndex(x => x.actor === actor.id && x.target === target.id), entry = { turn: w.turn, actor: actor.id, target: target.id, cede: (Array.isArray(op.cede) ? op.cede : []).map(String) }; if (at >= 0) q[at] = entry; else q.push(entry);
         return { ok: true, waits: `sign:${target.id}`, msg: `No ${stale.length ? 'new ' : ''}proposal from ${target.name} has reached us yet${waiting.filter(x => !stale.includes(x)).length ? ` (what lies on the table, ${waiting.filter(x => !stale.includes(x)).map(x => x.id).join(', ')}, is not theirs)` : ''}.${old} The signature is ready: it is given to whatever single proposal of theirs arrives this quarter, and if none comes nothing is signed. The Foreign Ministry reports which.` }; }
       if (!t) return fail(old ? `No new proposal${target ? ` from ${target.name}` : ''} has reached us.${old}` : waiting.length ? `Which proposal? Waiting: ${waiting.map(x => x.id).join(', ')}.` : 'No proposal is waiting.');
+      // The signature that waited for a paper is given unread. It is not given to a paper that takes land from us, unless the order to sign named
+      // that land. (World 26: "my standing order to sign whatever single paper she sent signed it blind".)
+      if (op._late) { const ours = [...Object.entries(t.cedeFrom || {}).filter(([, from]) => from === c.id).map(([pid]) => pid), ...(t.grants || []).filter(g => (g.from ?? w.provinces[g.province]?.owner) === c.id).map(g => g.province)].filter(pid => !(op.cede || []).includes(pid));
+        if (ours.length) return fail(`${t.id} came from ${w.countries[t.proposer]?.name ?? 'them'} and was not signed: as it is laid it gives up ${ours.map(pid => `${w.provinces[pid]?.name} (${pid})`).join(', ')}, of which the order to sign said nothing, and a signature given before a paper is read is not put on one that parts with land. It lies on the table: "${String(t.terms || '').slice(0, 300)}". If that is what is meant, it is signed by its number (accept_treaty with the id).`); }
       if (t.multi) return signMany(w, c, t);
       const other = alive(w, t.proposer); if (!other) { t.pending = false; return fail('The other party is gone.'); }
       if (!['peace', 'armistice'].includes(t.kind) && !t.ultimatum && atWar(w, c.id, other.id)) { t.pending = false; return fail(`${t.id} was written between states at peace, and we are at war with ${other.name} now: it is off the table. Between states at war only an armistice or a peace is signed.`); }
@@ -2267,6 +2282,8 @@ function build(w, c, op, actor) {
     const r = build(w, c, { ...op, province: best.x.id }, actor); return r.ok ? { ...r, msg: `No place was named, so the engineers chose ${best.x.name} (${best.x.id}): ${known ? 'by their estimate a point of the work adds most there for what it costs' : 'the work serves the most people there for what it costs'}. ${r.msg}` } : r;
   }
   if (op.province == null || op.province === '') return fail('Say where it is to be built (province).');
+  // (World 26: a chief of staff ordered field works for the corps lying before Terento, twice, and was told the province was not his.)
+  { const q = w.provinces[op.province]; if (q && q.controller !== c.id && ['trench', 'depot'].includes(op.kind) && Object.values(w.units).some(u => u.country === c.id && u.province === q.id)) return fail(`${q.name} is not in our hands: works are laid out by the engineers on ground we hold. Troops that stand still dig themselves in where they are, on any ground, deeper each quarter and deepest on the defensive; what they have dug tells for them when they are attacked while they stand on the defensive (set_posture).`); }
   const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('That province is not under your control.');
   const kind = op.kind; if (!has(PLANTS, kind) && !WORKS.includes(kind)) return fail('Unknown building type.');
   // The chief of staff may have his own troops dig in where they stand; everything else that is built is the government's to order.

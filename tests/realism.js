@@ -6206,5 +6206,38 @@ chain('World 26, second review: besiegers who lay before a fortress when the qua
   const q = countryProvinces(w, c.id).find(o => o.id !== c.capital && o.id !== p.id), half = applyOp(w, L, { op: 'relieve_province', province: q.id, quarters: 2 }); assert.ok(half.ok && q.remit.share === .5 && /No share was named, so half the tax is forgiven/.test(half.msg), half.msg);
   const seat = applyOp(w, L, { op: 'appoint_minister', post: 'treasury', character: c.oligarch }); assert.ok(!seat.ok && /holds a seat of (his|her) own in the country/.test(seat.msg), seat.msg);
 });
+chain('World 26, third review: in the fight before a besieged place the garrison\'s trenches help it no more than the walls do; an order can wait for an armistice that has no number yet; and besiegers asked for field works on the enemy\'s ground are told how troops dig in', () => {
+  const stage = (besiegers, garrison) => { const w = inherited(2696855, 8), cs = aliveCountries(w), a = cs[0], prov = countryProvinces(w, a.id).filter(p => p.owner === a.id);
+    const from = prov.find(p => p.neighbors.some(n => w.provinces[n].controller !== a.id && w.countries[w.provinces[n].controller]?.alive)), place = w.provinces[from.neighbors.find(n => w.provinces[n].controller !== a.id && w.countries[w.provinces[n].controller]?.alive)], b = w.countries[place.controller];
+    for (const u of Object.values(w.units)) if ([from.id, place.id, ...place.neighbors].includes(u.province)) delete w.units[u.id];
+    place.fort = 1; place.trench = 0; delete place.siege; w.wars = [{ id: 'S-t52', a: [a.id], b: [b.id], civil: false, active: true, start: w.turn, name: 't52' }]; a.stock.arms = 400; b.stock.arms = 400; a.treasury = 9000; b.treasury = 9000; a.budget.military = .2; b.budget.military = .2;
+    const foot = soldier(w, a.id, from.id, besiegers), inside = soldier(w, b.id, place.id, garrison), home = place.neighbors.map(id => w.provinces[id]).find(p => p.controller === b.id); inside.posture = 'defensive'; inside.dug = 5;
+    return { w, a, b, from, place, foot, inside, home, L: ld(w, a), G: w.characters[a.general], Lb: ld(w, b), go: () => { beginTurn(w); stepWorld(w); }, told: c => w.characters[c.leader].inbox.map(m => m.text).join('\n') }; };
+  // Terento, Q1 1903: "the works help neither side in such a fight", and then "we fought from our works (trenches the troops had dug themselves over many months)".
+  const x = stage(90, 30); assert.ok(applyOp(x.w, x.L, { op: 'offensive', to: x.place.id, units: [x.foot.id], manner: 'siege' }).ok); x.go(); assert.ok(x.place.siege?.shut && x.inside.shutIn === x.place.id, 'the place is shut in');
+  const relief = soldier(x.w, x.b.id, x.home.id, 70); assert.ok(applyOp(x.w, x.Lb, { op: 'move', unit: relief.id, to: x.place.id }).ok); for (const m of [x.L, x.Lb]) m.inbox = []; x.go();
+  const fight = (x.w.battles || []).filter(f => f.province === x.place.id).at(-1), both = `${x.told(x.a)}\n${x.told(x.b)}`;
+  assert.ok(fight && /fights the besiegers in the open/.test(x.told(x.b)), `the relief is fought in the open: ${x.told(x.b).slice(0, 200)}`);
+  assert.ok(!(fight.why || []).includes('works') && !/fought from (our )?works|trenches the troops had dug/.test(both), `and what the garrison dug counts for nobody there: ${JSON.stringify(fight.why)}`);
+  // "Once the armistice is signed, send the reservists home."
+  const y = stage(60, 20), none = applyOp(y.w, y.L, { op: 'standing_order', when: { armistice: 'U999' }, then: [{ op: 'set_gold_floor', amount: 123 }] }); assert.ok(!none.ok && /Say with which state/.test(none.msg), none.msg);
+  const so = applyOp(y.w, y.L, { op: 'standing_order', when: { armistice: y.b.id }, then: [{ op: 'set_gold_floor', amount: 123 }] }); assert.ok(so.ok && new RegExp(`the day an armistice between us and ${y.b.name} comes into force`).test(so.msg), `the order waits for a paper that has no number yet: ${so.msg.slice(0, 200)}`);
+  carryStanding(y.w); assert.notEqual(y.a.goldFloor, 123, 'and nothing is done before it is signed');
+  assert.ok(applyOp(y.w, y.L, { op: 'propose_treaty', target: y.b.id, kind: 'armistice' }).ok); const sign = applyOp(y.w, y.Lb, { op: 'accept_treaty', target: y.a.id }); assert.ok(sign.ok, sign.msg);
+  carryStanding(y.w); assert.equal(y.a.goldFloor, 123, 'the day the armistice is in force, the order is given');
+  // Field works for troops that lie on the enemy's ground.
+  const z = stage(60, 20); z.foot.province = z.place.id; const dig = applyOp(z.w, z.G, { op: 'build', province: z.place.id, kind: 'trench' });
+  assert.ok(!dig.ok && /is not in our hands: works are laid out by the engineers on ground we hold\. Troops that stand still dig themselves in/.test(dig.msg), `besiegers are told how troops dig in: ${dig.msg.slice(0, 200)}`);
+  // Hazburga, Q3 1902: "is returned to the Republic of Hazland" in the words, and the same province among those that change hands.
+  const peace = () => { const v = stage(60, 20); for (const u of Object.values(v.w.units)) if (u.province === v.place.id && u.country === v.b.id) delete v.w.units[u.id]; v.foot.province = v.place.id; v.place.controller = v.a.id; return v; };
+  const p1 = peace(), words = `${p1.place.name} (${p1.place.id}) is returned to the ${p1.b.name}. The war ends.`, both2 = applyOp(p1.w, p1.L, { op: 'propose_treaty', target: p1.b.id, kind: 'peace', cede: [p1.place.id], terms: words });
+  assert.ok(!both2.ok && /The paper contradicts itself and was not laid/.test(both2.msg) && !p1.w.treaties.some(t => t.pending && t.proposer === p1.a.id), `a paper that gives a province back in words and away in its list is not laid: ${both2.msg.slice(0, 200)}`);
+  const plain = applyOp(p1.w, p1.L, { op: 'propose_treaty', target: p1.b.id, kind: 'peace', terms: words }); assert.ok(plain.ok, plain.msg); assert.ok(applyOp(p1.w, p1.Lb, { op: 'accept_treaty', target: p1.a.id }).ok); assert.ok(p1.place.owner === p1.b.id && p1.place.controller === p1.b.id, 'without the list, the occupied province goes home on signing');
+  // A signature ordered before the paper came is not put on a paper that parts with land the order did not name.
+  const p2 = peace(), gives = `${p2.place.name} (${p2.place.id}) passes to ${p2.a.name}. The war ends.`; assert.ok(applyOp(p2.w, p2.Lb, { op: 'accept_treaty', target: p2.a.id }).waits, 'the signature waits for the paper'); assert.ok(applyOp(p2.w, p2.L, { op: 'propose_treaty', target: p2.b.id, kind: 'peace', cede: [p2.place.id], terms: gives }).ok); p2.Lb.inbox = []; carrySigned(p2.w);
+  assert.ok(p2.place.owner === p2.b.id && /was not signed: as it is laid it gives up/.test(p2.Lb.inbox.map(m => m.text).join(' ')), `it is held back, and its government told why: ${p2.Lb.inbox.at(-1)?.text.slice(0, 200)}`);
+  const p3 = peace(); applyOp(p3.w, p3.Lb, { op: 'accept_treaty', target: p3.a.id, cede: [p3.place.id] }); applyOp(p3.w, p3.L, { op: 'propose_treaty', target: p3.b.id, kind: 'peace', cede: [p3.place.id], terms: `${p3.place.name} (${p3.place.id}) passes to ${p3.a.name}. The war ends.` }); carrySigned(p3.w);
+  assert.equal(p3.place.owner, p3.a.id, 'where the order to sign named the land, the paper is signed as before');
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

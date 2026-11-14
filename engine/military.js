@@ -569,16 +569,21 @@ function resolve(w, pid, us) {
   // had won the field drew off without a shot: "the troops sent to lay siege to Brunmarka could not shut it in".)
   // (At Brunmarka the defenders beaten in the field had fallen back into the place, so that no investment was written on it; what tells is
   // who was there first: besiegers who stood before the place when the quarter began are met by whoever marches up to it.)
+  // A fight in the open before a besieged place: the works help neither side, and that holds for what the garrison has dug as for the walls.
+  // (World 26, third review: the relief of Terento was reported to both staffs as a battle "in the open, where the works help neither side", and
+  // the same report gave the garrison's trenches, "dug over many months", as a reason it was won. Replayed twelve times without them the day
+  // went the same way each time: the forest decided it.)
+  let open = false;
   { const sieging = A.filter(u => u.attack?.to === pid && u.attack.manner === 'siege'), came = u => u.march?.turn === w.turn && u.march.reached === pid && u.march.from !== pid, stood = sum(A.filter(u => !came(u) && u.shipped !== w.turn), u => u.men) >= sum(A, u => u.men) * .5,
       before = (p.siege?.by === atkSide[0] || (stood && sieging.length > 0)) && holds && defSide.includes(p.controller);
     // (Only troops that came in this quarter by road or by sea are a relieving force; whatever else stands inside is garrison.)
     const relief = before ? D.filter(u => u.shutIn !== pid && ((u.march?.turn === w.turn && u.march.reached === pid && u.march.from !== pid) || u.shipped === w.turn)) : [];
-    if (!(sieging.length && sum(sieging, u => u.men) >= sum(A, u => u.men) * .5) && relief.length && p.siege && !p.siege.shut && relief.length === D.length) { holds = false; const n = sum(relief, u => u.men);
+    if (!(sieging.length && sum(sieging, u => u.men) >= sum(A, u => u.men) * .5) && relief.length && p.siege && !p.siege.shut && relief.length === D.length) { holds = false; open = true; const n = sum(relief, u => u.men);
       mark(w, w.countries[atkSide[0]], `A relieving force of about ${about(n)} thousand has come up to ${p.name}, which we have invested: it has to be fought in the open before the place, which the staff reports below as the fight for ${p.name}.`);
       mark(w, w.countries[defCountry], `Our relieving force, about ${Math.round(n * 10) / 10} thousand, has come up to ${p.name} and fights the enemy who lies before the fortress in the open; the works help neither side in such a fight.`); }
     if (sieging.length && sum(sieging, u => u.men) >= sum(A, u => u.men) * .5 && holds && defSide.includes(p.controller)) {
       if (!relief.length) { besiege(w, p, A, D, atkSide[0], defCountry); return; }
-      holds = false; for (const u of sieging) u.attack.manner = 'assault'; const n = sum(relief, u => u.men);
+      holds = false; open = true; for (const u of sieging) u.attack.manner = 'assault'; const n = sum(relief, u => u.men);
       mark(w, w.countries[atkSide[0]], `A relieving force of about ${about(n)} thousand has come up to ${p.name} against our siege lines: the siege has become a battle in the open before the place, which the staff reports below as the fight for ${p.name}.`);
       mark(w, w.countries[defCountry], `Our relieving force, about ${Math.round(n * 10) / 10} thousand, has come up to ${p.name} and fights the besiegers in the open before the place, together with the garrison; the works help neither side in such a fight.`); } }
   const pass = w.strategic.find(s => s.ref === pid && s.type === 'pass'), bridge = !pass && w.strategic.find(s => s.ref === pid && s.type === 'bridge'), point = 1;
@@ -626,7 +631,7 @@ function resolve(w, pid, us) {
   const plan = (1 + .07 * ready) * (manner === 'all_out' ? 1.1 : 1) * (1 + .18 * flank) * (surprise && paper >= 0 ? 1.12 : 1) * (paper > 0 ? 1.08 : paper < 0 ? .9 : 1), luckD = between(w, .85, 1.15), luckA = between(w, .85, 1.15);
   // On a coast the ships' guns reach the field for whichever side has ships off it in water that is theirs.
   const gunsA = shipGuns(w, p, atkSide, menD), gunsD = shipGuns(w, p, defSide, menA);
-  const fD = sum(D, u => force(w, u, terrain, fire[u.country], breach)) * crowdD * gunsD * luckD;
+  const fD = sum(D, u => force(w, open ? { ...u, dug: 0 } : u, terrain, fire[u.country], breach)) * crowdD * gunsD * luckD;
   const fA = sum(A, u => force(w, u, 1, fire[u.country])) * crowdA * plan * gunsA * luckA;
   // A reconnaissance that finds the place all but empty walks in.
   if (manner === 'probe' && fA > fD * 4) manner = 'assault';
@@ -649,7 +654,7 @@ function resolve(w, pid, us) {
   // What each side's own average was, for the account its staff gives afterwards.
   const avg = (xs, f) => sum(xs, u => f(u) * u.men) / Math.max(men(xs), 1e-9), sup = xs => avg(xs, u => supplyOf(w, u).factor), far = xs => [...xs].sort((a, b) => supplyOf(w, a).factor - supplyOf(w, b).factor)[0];
   const led = xs => avg(xs, u => leadOf(commanderOf(w, u))), heart = xs => avg(xs, u => u.morale), kit = xs => avg(xs, u => u.equip * u.quality * w.countries[u.country].tech.mil), shells = xs => avg(xs, u => .55 + .45 * (fire[u.country] ?? 1));
-  const dugD = avg(D, u => 1 + (u.dug || 0) * .1 * (1 - breach)), deepest = Math.max(0, ...D.map(u => u.dug || 0));
+  const dugD = open ? 1 : avg(D, u => 1 + (u.dug || 0) * .1 * (1 - breach)), deepest = open ? 0 : Math.max(0, ...D.map(u => u.dug || 0));
   // How far each thing favoured the attacker (above one) or the defender (below it).
   const told = { numbers: (menA * crowdA) / Math.max(menD * crowdD, 1e-9), ground: 1 / natural, works: 1 / (works * dugD), supply: sup(A) / sup(D), shells: shells(A) / shells(D), command: led(A) / led(D), spirit: heart(A) / Math.max(heart(D), 1), arms: kit(A) / Math.max(kit(D), 1e-9), plan, fleet: gunsA / gunsD, luck: luckA / luckD };
   const winGen = commanderOf(w, (atkWins ? A : D)[0]), loseGen = commanderOf(w, (atkWins ? D : A)[0]);
