@@ -144,6 +144,7 @@ export const aimsText = (w, aim) => [aim.provinces?.length ? `${aim.provinces.ma
 
 // Whether the two have brought a paper into force between them since that quarter (since the day the demand was made).
 const settledSince = (w, a, b, turn) => w.treaties.some(t => t.active && !t.ultimatum && t.parties.includes(a) && t.parties.includes(b) && (t.since ?? -99) >= turn);
+const alliedIn = (w, a, b, war) => w.treaties.some(t => t.active && t.kind === 'alliance' && t.parties.includes(a) && t.parties.includes(b) && (() => { const lim = (t.clauses || []).filter(cl => cl.type === 'mutual_defense' && cl.against?.length); return !lim.length || lim.some(cl => war.a.some(id => cl.against.includes(id))); })());
 export function diplomacyStep(w) {
   const cs = aliveCountries(w);
   for (const c of cs) {
@@ -162,11 +163,12 @@ export function diplomacyStep(w) {
     news(w, `${to.name} has let ${from.name}'s ultimatum run out unanswered.`, { kind: 'diplomacy', countries: [from.id, to.id] });
     say(w, w.characters[from.leader], 'Foreign Ministry', `${to.name} has not accepted the ultimatum (${t.id}). For three quarters the country and the world will take a declaration of war as the consequence you announced. If nothing follows, the threat will be remembered as empty.`);
   }
-  // A guarantee or an alliance is tested when the friend is attacked.
+  // A guarantee or an alliance is tested when the friend is attacked. (An alliance written against named states is owed only when one of them
+  // is among the attackers: until world 25 it was held against the ally in every war, whatever the paper said.)
   for (const war of w.wars.filter(x => x.active && !x.civil)) {
     for (const victim of war.b.map(id => w.countries[id]).filter(o => o?.alive)) for (const g of cs) {
       if (g.id === victim.id || sideOf(war, g.id) === 'a') continue;
-      const bound = (w.guarantees || []).some(x => x.by === g.id && x.of === victim.id) ? 'guarantee' : hasTreaty(w, g.id, victim.id, 'alliance') ? 'alliance' : w.treaties.some(t => t.active && t.kind === 'protection' && t.protector === g.id && t.parties.includes(victim.id)) ? 'protection' : null; if (!bound) continue;
+      const bound = (w.guarantees || []).some(x => x.by === g.id && x.of === victim.id) ? 'guarantee' : alliedIn(w, g.id, victim.id, war) ? 'alliance' : w.treaties.some(t => t.active && t.kind === 'protection' && t.protector === g.id && t.parties.includes(victim.id)) ? 'protection' : null; if (!bound) continue;
       const key = `${g.id}>${victim.id}`, seen = war.called ||= {};
       // Whoever is at war with the attacker has come to help, whether it entered this war or declared one of its own.
       if (sideOf(war, g.id) === 'b' || war.a.some(id => atWar(w, g.id, id))) { if (seen[key] !== 'kept') { seen[key] = 'kept'; shame(w, g, 5, `it stood by ${victim.name} when ${victim.name} was attacked`); } continue; }

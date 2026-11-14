@@ -1,7 +1,7 @@
 import { clamp, sum, news, rand, between, nextId, pick, quarterLabel } from './util.js';
 import { hush, cowed, informers, frighten, DREAD } from './fear.js';
 import { recognised, disputeSettled } from './crises.js';
-import { CLASSES, ROLES, countryProvinces, provincePop, aliveCountries, makeCountry, spawnCharacter, atWar, clampRel } from './world.js';
+import { CLASSES, ROLES, countryProvinces, provincePop, aliveCountries, makeCountry, spawnCharacter, atWar, clampRel, goHome } from './world.js';
 import { voiceOf } from './press.js';
 import { allocateSeats, onBenches, rivalParty, seatGovernment, makeParliament } from './polity.js';
 import { issueCurrency } from './money.js';
@@ -143,6 +143,9 @@ export function installLeader(w, c, ch, regimeChange, keepSlot = false) {
   ch.role = 'leader'; ch.status = 'free'; ch.loyalty = 100; ch.power = Math.max(ch.power, 60); c.leader = ch.id; c.heir = null;
   if (!keepSlot && held && oldRole !== 'leader' && ROLES.includes(oldRole)) fillSeat(w, c, oldRole, ch, 'became head of state');
   if (regimeChange) Object.assign(c, regimeChange);
+  // Whoever governs leads no stroke against the government and sits in none. (Bug hunt before world 25: a general whose plot was still
+  // running when the succession made him ruler was "overthrown" by his own plot when a member sprang it.)
+  for (const pl of w.plots || []) if (pl.active && pl.country === c.id && pl.kind !== 'assassination') { if (pl.leader === ch.id) pl.active = false; else if (pl.members?.includes(ch.id)) pl.members = pl.members.filter(x => x !== ch.id); }
 }
 
 // Who rules next depends on what kind of state it is. A named successor comes first everywhere; after that the army turns to its chief,
@@ -381,6 +384,7 @@ export function armySides(w, c, pl) {
 export function executePlot(w, pl, { fate, acts = {}, by = null } = {}) {
   const c = w.countries[pl.country], lead = w.characters[pl.leader];
   if (!pl.active || !c?.alive || !lead?.alive) return 'The plot is no longer valid.';
+  if (lead.id === c.leader && pl.kind !== 'assassination') { pl.active = false; return 'The plot is no longer valid: the one who led it governs.'; }
   pl.active = false;
   // A stroke thought of yesterday is not a stroke prepared: until a plot has had some quarters (or money, or hands) behind it, it carries little weight of its own.
   const prep = pl.progress < 40 ? .3 + pl.progress / 80 : .55 + pl.progress / 160, inPlot = [...new Set([pl.leader, ...pl.members])].map(x => w.characters[x]).filter(Boolean);
@@ -456,7 +460,7 @@ export function executePlot(w, pl, { fate, acts = {}, by = null } = {}) {
     const military = ['general', 'officer'].includes(lead.role), had = { elections: !!c.elections, regime: c.regime };
     // Soldiers who seize the state rule as soldiers until they say otherwise: no vote is due and the army names what follows. What they do about the press is theirs to order.
     // What is done in the first hours is for those who took the palace to say (acts); where they say nothing it goes as it always has.
-    const first = military ? { regime: 'Military junta', elections: false, succession: 'army' } : { succession: c.elections ? c.succession : 'open' };
+    const first = military ? { regime: 'Military junta', elections: false, succession: 'army' } : { succession: c.elections ? c.succession ?? 'open' : 'open' };
     if (typeof acts.elections === 'boolean') first.elections = acts.elections; if (SUCCESSION.includes(acts.succession)) first.succession = acts.succession; if (acts.regime) first.regime = String(acts.regime).slice(0, 60); else if (military && acts.elections === true) delete first.regime;
     installLeader(w, c, lead, first);
     if (end === 'dead') {
@@ -669,6 +673,11 @@ export function collapseStep(w) {
     const held = {}; for (const p of Object.values(w.provinces)) if (p.owner === c.id) held[p.controller] = (held[p.controller] || 0) + 1;
     const victor = w.countries[Object.entries(held).sort((a, b) => b[1] - a[1])[0]?.[0]], winner = victor?.alive && victor.id !== c.id ? victor : null;
     news(w, `${c.name} has passed into history: its last territory has fallen.`, { kind: 'disaster', countries: [c.id, ...(winner ? [winner.id] : [])] });
+    // Neither its gold nor its soldiers leave the world with it: the gold falls to whoever holds its land, the men lay down their arms and
+    // go home to the provinces that were its own, and the prisoners it held go back to their countries.
+    { const gold = Math.max(c.reserves || 0, 0); if (gold > 0 && winner) { winner.reserves += gold; goldMoved(winner, 'loot', gold); goldMoved(c, 'loot', -gold); c.reserves = 0; }
+      const men = sum(Object.values(w.units).filter(u => u.country === c.id), u => u.men), own = Object.values(w.provinces).filter(p => p.owner === c.id); if (men > 0 && own.length) goHome(own, men);
+      for (const [id, n] of Object.entries(c.captives || {})) { const o = w.countries[id]; if (o?.alive && n > 0) goHome(countryProvinces(w, o.id).filter(p => p.owner === o.id), n); } c.captives = {}; }
     for (const u of Object.values(w.units)) if (u.country === c.id) delete w.units[u.id];
     for (const f of Object.values(w.fleets)) if (f.country === c.id) delete w.fleets[f.id];
     // Its people do not vanish with the state. The ruler and the chief of staff fall into the victor's hands; the rest live on under new masters as private persons.
@@ -686,7 +695,7 @@ export function collapseStep(w) {
       }
     }
     for (const p of Object.values(w.provinces)) if (p.owner === c.id) p.owner = p.controller;
-    for (const o of aliveCountries(w)) delete o.creditors[c.id];
+    for (const o of aliveCountries(w)) { delete o.creditors[c.id]; if (o.captives) delete o.captives[c.id]; }
     // A rising that wins the whole country is no longer a rising: it governs under the country's own name.
     if (winner?.parent === c.id) { winner.recognition = null; winner.name = c.name; winner.rootName = c.rootName ?? winner.rootName; winner.parent = null; if (w.provinces[c.capital]?.controller === winner.id) winner.capital = c.capital; news(w, `The victors of the civil war now govern as ${winner.name}.`, { kind: 'politics', countries: [winner.id] }); }
   }
@@ -694,7 +703,9 @@ export function collapseStep(w) {
     war.a = war.a.filter(x => w.countries[x]?.alive); war.b = war.b.filter(x => w.countries[x]?.alive);
     if (!war.a.length || !war.b.length) { war.active = false; news(w, `${war.name} is over.`, { kind: 'war', countries: [...war.a, ...war.b] }); }
   }
-  for (const t of w.treaties) if (t.active && t.parties.some(x => !w.countries[x]?.alive)) t.active = false;
+  // A treaty between two ends with either of them; one among several stands among those who are left, while two are.
+  for (const t of w.treaties) if (t.active && t.parties.some(x => !w.countries[x]?.alive)) { const left = t.parties.filter(x => w.countries[x]?.alive); if (t.multi && left.length >= 2) { t.parties = left; t.signed = (t.signed || []).filter(x => left.includes(x)); } else { t.active = false; w.guarantees = (w.guarantees || []).filter(x => x.treaty !== t.id); } }
+  if (w.guarantees?.length) w.guarantees = w.guarantees.filter(x => w.countries[x.by]?.alive && w.countries[x.of]?.alive);
 }
 
 export function relationDrift(w) {

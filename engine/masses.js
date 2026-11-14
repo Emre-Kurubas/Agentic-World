@@ -28,6 +28,8 @@ export const strikeChest = c => clamp(societiesOf(c).filter(s => s.kind === 'uni
 
 export function massOp(w, actor, c, op, h) {
   const { fail, num } = h, state = governs(w, c, actor), party = partyOf(w, c, actor);
+  // A party that is forbidden carries no petition, founds no society and holds no meeting in the open.
+  if (party?.banned && ['petition', 'found_society', 'rally', 'call_strike'].includes(op.op)) return fail(`The ${party.name} is forbidden: it has no committees, halls or meetings in the open. What a forbidden party does it does in secret (a plot, money to the underground), or after the ban is lifted.`);
   switch (op.op) {
     // Signatures and marks gathered for a demand, in the name of a class, and laid before whoever governs.
     case 'petition': {
@@ -97,6 +99,8 @@ export function massOp(w, actor, c, op, h) {
       return { ok: true, msg: `The meeting at ${p.name} drew ${size >= 60 ? 'a great crowd' : size >= 30 ? 'a fair crowd' : 'a thin crowd'}: the party's organisation and standing are the better for it by about that much. A crowd comes for a party it knows (organisation) and follows already, that prints (a paper of yours), where meeting is free, and when it is angry.` };
     }
     case 'forbid_meetings': { if (!state) return fail('Only whoever governs forbids or allows public meetings.'); const on = op.on !== false; if (!!c.noMeetings === on) return { ok: true, msg: on ? 'Public meetings are forbidden already.' : 'Public meetings are allowed already.' };
+      // (Forbidden and allowed again ten times in a quarter, it frightened the country ten times.)
+      if (c.meetingsAt === w.turn) return fail('The decree on public meetings was changed this quarter already; it can be changed again in the next.'); c.meetingsAt = w.turn;
       c.noMeetings = on; c.pressFreedom = clamp(c.pressFreedom + (on ? -4 : 3), 0, 100); if (on) frighten(c, 3); news(w, `${c.name}: public meetings are ${on ? 'forbidden' : 'allowed again'}.`, { kind: 'politics', countries: [c.id] });
       return { ok: true, msg: on ? 'Public meetings are forbidden: the police break up any that is held, and what happens then depends on how many came. It is a door shut, and counted as one.' : 'Public meetings are allowed again.' }; }
     // Calling the men out where the party's union stands among them.

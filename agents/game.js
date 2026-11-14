@@ -86,13 +86,22 @@ async function pool(items, n, fn) {
 }
 
 // See applyRuling: the one person an order names by number, where the operation written for it names somebody the order does not mention.
+// It never re-aims the order (a first version did, and "have the chief of staff arrested, and let K7 be told" arrested K7): it holds the
+// operation back and says why, so that nothing is done to anybody the order did not mean. It keeps out of the way where the order speaks of
+// the person by what he is ("the chief of staff", "the treasurer") and where the order names the one person with his number beside a name.
+const ROLE_WORDS = { leader: /\b(ruler|president|king|queen|emperor|empress|prince|princess|chairman|head of (the )?(state|government)|leader)\b/i, general: /\b(chief of (the )?(general )?staff|general|marshal)\b/i, opposition: /\b(opposition)\b/i, oligarch: /\b(magnate|oligarch|owner|industrialist)\b/i, officer: /\b(commander|colonel|captain|major|officer|admiral|general|governor)\b/i, official: /\b(treasur|minister|keeper|police|chief|governor|clerk|secretary|official)/i, financier: /\b(banker|house|financier)\b/i, agitator: /\b(league|guard|chief|agitator)\b/i, former_leader: /\b(former|old|late|deposed|fallen)\b/i };
 function namedPerson(w, op, text) {
   const x = typeof op?.character === 'string' ? w.characters[op.character] : null; if (!x) return op;
   const said = String(text), has = s => s && said.toLowerCase().includes(String(s).toLowerCase());
-  if (new RegExp(`\\b${x.id}\\b`).test(said) || has(x.name) || has(x.name.split(' ').pop())) return op;
-  const ids = [...new Set(said.match(/\bK\d+\b/g) || [])].filter(id => w.characters[id]?.alive);
-  return ids.length === 1 ? { ...op, character: ids[0] } : op;
+  if (new RegExp(`\\b${x.id}\\b`).test(said) || has(x.name) || has(x.name.split(' ').pop()) || has(x.name.split(' ')[0])) return op;
+  if (ROLE_WORDS[x.role]?.test(said)) return op;
+  // Only where the order names exactly one person, with the number beside the name: "Maria Ur-Nanna (K31)".
+  const ids = [...new Set(said.match(/\bK\d+\b/g) || [])].filter(id => w.characters[id]?.alive), y = ids.length === 1 ? w.characters[ids[0]] : null;
+  if (!y || !new RegExp(`${y.name.split(' ').pop()}\\s*\\(${y.id}\\)`, 'i').test(said)) return op;
+  return { ...op, _misnamed: { wrote: x.id, named: y.id } };
 }
+
+const misnamed = (w, m) => ({ ok: false, msg: `The office entered this for ${w.characters[m.wrote]?.name} (${m.wrote}), whom your order does not name; your order names ${w.characters[m.named]?.name} (${m.named}). Nothing was done to either: give the order again, naming whom you mean.` });
 
 export class Game {
   constructor({ world, cfg, backend, store, onUpdate }) { Object.assign(this, { w: world, cfg, backend, store, onUpdate }); this.status = 'ready'; this.progress = ''; this.stop = false; this.sessions = store?.loadSessions?.() ?? {}; }
@@ -367,7 +376,7 @@ export class Game {
       }
     }
     for (const [cid, r] of Object.entries(this.pending.referee)) {
-      for (const h of Array.isArray(r?.rulings) ? r.rulings : []) {
+      for (const h of (Array.isArray(r?.rulings) ? r.rulings : []).filter(h => h && typeof h === 'object')) {
         const ch = w.characters[h.actor];
         if (!ch || !actors.some(a => a.id === ch.id)) continue;
         rulings.push(this.applyRuling(ch, { narrative: String(h.narrative || '').slice(0, 1500), note: String(h.note || '').slice(0, 1500), prob: Number.isFinite(Number(h.probability ?? 1)) ? clamp(Number(h.probability ?? 1), 0, 1) : 1, public: !!h.public, ops: Array.isArray(h.operations) ? h.operations.slice(0, 16) : [], decision: h.decision, decisionText: this.pending.actors[ch.id]?.decisions?.[h.decision], source: 'referee' }));
@@ -409,7 +418,7 @@ export class Game {
     // who was watched for a quarter while the woman the empress meant was not.)
     if (source === 'referee' && decisionText) ops = ops.map(op => namedPerson(w, op, decisionText));
     const chancy = op => op?.op === 'custom', diced = prob > 0 && prob < 1 && (!ops.length || ops.some(chancy)), luck = prob >= 1 || (prob > 0 && (!diced || rand(w) < prob));
-    const results = prob > 0 ? carryList(w, ch, ops, (plain, op) => chancy(op) && !luck ? { ok: false, chance: true, msg: 'It did not come off.' } : plain.op === 'report' ? orderReport(w, ch, plain) : safeApply(w, ch, plain)) : [];
+    const results = prob > 0 ? carryList(w, ch, ops, (plain, op) => (op?._misnamed ?? plain?._misnamed) ? misnamed(w, op?._misnamed ?? plain._misnamed) : chancy(op) && !luck ? { ok: false, chance: true, msg: 'It did not come off.' } : plain.op === 'report' ? orderReport(w, ch, plain) : safeApply(w, ch, plain)) : [];
     // The ruling as a whole failed if the dice went against it and nothing else in it was done.
     const success = prob > 0 && (luck || results.some(r => !r.chance && !r.skipped && r.ok !== false));
     const refused = results.filter(r => r.ok === false), carried = success && (!results.length || refused.length < results.length), waits = results.some(r => r.waits);
@@ -476,7 +485,8 @@ export class Game {
 // declined. Only a government with a seat there can speak to it; from anyone else it is a letter to nobody.
 // What of a referee's account a newspaper could print: its sentences about the world, without those about the ruling itself (what could not
 // be entered, what the engine can or cannot do, what is or is not on the table). Empty when nothing else is left.
-const CLERKS = /\b(engine|operations?|cannot be (carried|entered|ordered|done|paid)|could not be (carried|entered|ordered|done|paid)|(is|was|are|were) not carried|not on the table|no such (paper|offer|contract|person|unit|province|bill)|instruction only|undertakings? only|only as a promise|is on record to receive|names no (newspaper|person|sum|province)|needs? a new order)\b/i;
+// ("operation" alone is a word of war as well as of the office: only the office's uses of it are struck out.)
+const CLERKS = /\b(engine|no (such )?operations?|operations? (open|available|known|listed|exists?|for this|that (carries|pays|does))|cannot be (carried|entered|ordered|done|paid)|could not be (carried|entered|ordered|done|paid)|(is|was|are|were) not carried|not on the table|no such (paper|offer|contract|person|unit|province|bill)|instruction only|undertakings? only|only as a promise|is on record to receive|names no (newspaper|person|sum|province)|needs? a new order)\b/i;
 export const fitToPrint = text => String(text || '').split(/(?<=[.!?])\s+/).filter(s => s.trim() && !CLERKS.test(s)).join(' ').trim();
 
 export function toTable(w, ch, messages) {
@@ -499,7 +509,7 @@ const greeted = (w, state, text, living) => { const head = String(text ?? '').sl
 export function recipient(w, to, from = null, text = '') {
   const key = String(to ?? '').trim(); if (!key) return null;
   if (w.countries[key]?.alive && text) { const g = greeted(w, w.countries[key], text, Object.values(w.characters).filter(x => x.alive)); if (g) return g; }
-  const direct = w.characters[key] ?? w.characters[w.countries[key]?.leader]; if (direct) return direct;
+  const own = (o, k) => o && Object.hasOwn(o, k) ? o[k] : undefined, direct = own(w.characters, key) ?? own(w.characters, key.toUpperCase()) ?? w.characters[own(w.countries, key)?.leader]; if (direct) return direct;
   const ids = key.match(/\b[KU]\d+\b/g) || [], byId = ids.map(id => w.characters[id]).find(Boolean); if (byId) return byId;
   const low = key.toLowerCase().replace(/^k[\s?\-:.]+/, ''), bare = low.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').replace(/[\s.,;:]+$/, '').trim(), living = Object.values(w.characters).filter(x => x.alive);
   const named = living.find(x => x.name.toLowerCase() === bare); if (named) return named;
@@ -546,7 +556,7 @@ function orderReport(w, ch, op) {
 
 function sanitize(r, cfg) {
   if (!r || r.fallback) return { fallback: true };
-  const messages = (Array.isArray(r.messages) ? r.messages : []).slice(0, cfg.maxMessagesPerActor).map(m => ({ to: String(m.to || ''), text: String(m.text || '').slice(0, 6000) })).filter(m => m.to && m.text);
+  const messages = (Array.isArray(r.messages) ? r.messages : []).filter(m => m && typeof m === 'object').slice(0, cfg.maxMessagesPerActor).map(m => ({ to: String(m.to || ''), text: String(m.text || '').slice(0, 6000) })).filter(m => m.to && m.text);
   // The cuts below only stop a runaway answer; nobody is asked to be brief.
   const out = { identity: String(r.identity || '').slice(0, 6000), publicFace: String(r.public_face || '').slice(0, 600), monologue: String(r.inner_voice || '').slice(0, 12000), decisions: (Array.isArray(r.decisions) ? r.decisions : []).slice(0, cfg.maxDecisionsPerActor).map(x => String(x).slice(0, 3000)), messages, notes: String(r.notes || '').slice(0, 6000) };
   if (r._ops) out._ops = r._ops;

@@ -74,6 +74,8 @@ export const watch = c => c.postalSecrecy ? 0 : clamp((c.intelligence - 15) / 26
 function fillPosts(w, c, report = false) {
   const mine = minorsOf(w, c), room = () => mine.length < 22, put = [];
   for (const post of Object.keys(POSTS)) if (!mine.some(x => x.post === post && x.status === 'free') && room()) {
+    // (The man who held it from a cell or from abroad holds it no longer: two people are not keeper of the same treasury.)
+    for (const x of mine) if (x.post === post && x.status !== 'free') x.post = null;
     const ch = spawnCharacter(w, c.id, post === 'house' ? 'financier' : 'official', c.axes, { power: post === 'house' ? 36 : 28 }); ch.post = post;
     if (post === 'house') { ch.wealth = Math.round(70 + rand(w) * 130); (w.bonds ||= []).push({ id: nextId(w, 'O'), holder: ch.id, country: c.id, amount: Math.round(ch.wealth * .8), turn: w.turn }); } mine.push(ch); if (post !== 'house') put.push([ch, post === 'treasury' ? 'keeps the treasury (appoint_minister)' : 'heads the police (appoint_minister)']);
   }

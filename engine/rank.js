@@ -45,12 +45,14 @@ export function initTable(w) { const r = reckon(w); w.table = { turn: w.turn, ye
 export function rankStep(w) {
   if (!w.table) { initTable(w); return; }
   if (w.turn % 4 !== 3) return;
-  const old = w.table, r = reckon(w), now = order(w, r.score, old.order), year = yearOf(w.turn + 1), cs = aliveCountries(w), name = id => short(w.countries[id]);
+  const old = { ...w.table, order: w.table.order.filter(id => w.countries[id]?.alive) }, r = reckon(w), now = order(w, r.score, old.order), year = yearOf(w.turn + 1), cs = aliveCountries(w), name = id => short(w.countries[id]);
   const passed = [];
   for (const c of cs) {
     const was = old.order.indexOf(c.id), is = now.indexOf(c.id); if (was < 0) continue;
     const places = was - is, rel = old.score[c.id] > 0 ? r.score[c.id] / old.score[c.id] - 1 : 0, nation = .6 + (clamp(c.axes?.nation ?? 0, -100, 100) + 100) / 200 * .8;
-    const felt = clamp(places * 1.5 + clamp(rel * 20, -2, 2), -5, 4) * nation;
+    // (Only a place won or lost is felt at home. A share that moves a little inside a year, with nobody passed, is the chancelleries'
+    // arithmetic and no government's doing: a state is handed over settled, and its ruler does not watch a slide he did not cause.)
+    const felt = clamp(places * 1.5, -5, 4) * nation;
     // What moved most, in the chancelleries' own terms.
     const moved = Object.keys(WEIGH).map(k => [k, (r.parts[c.id][k] - (old.parts?.[c.id]?.[k] ?? r.parts[c.id][k])) * WEIGH[k]]).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0];
     const over = now.slice(is + 1).filter(id => old.order.indexOf(id) >= 0 && old.order.indexOf(id) < was), by = now.slice(0, is).filter(id => old.order.indexOf(id) > was);
@@ -68,6 +70,7 @@ export function rankStep(w) {
 // For the morning's briefing, to every seat: it is printed, after all.
 export function tableLine(w, c) {
   const t = w.table; if (!t) return '';
-  const at = t.order.indexOf(c.id);
-  return `The table of the powers (${t.year}; reckoned when each year closes, by armies and fleets, gold, works, land and people; the figure is the share of the world's strength): ${t.order.map((id, i) => `${i + 1}. ${short(w.countries[id] ?? { name: id })} ${Math.round(t.score[id])}`).join(', ')}.${at >= 0 ? ` We stand ${ORD(at + 1)}.` : ''}`;
+  // (A state that has gone since the table was reckoned is not printed in it.)
+  const order = t.order.filter(id => w.countries[id]?.alive), at = order.indexOf(c.id);
+  return `The table of the powers (${t.year}; reckoned when each year closes, by armies and fleets, gold, works, land and people; the figure is the share of the world's strength): ${order.map((id, i) => `${i + 1}. ${short(w.countries[id])} ${Math.round(t.score[id])}`).join(', ')}.${at >= 0 ? ` We stand ${ORD(at + 1)}.` : ''}`;
 }

@@ -49,7 +49,7 @@ export const CREEDS = {
   monarchy: { name: 'Throne and Altar', keepers: 'The court and the great families', bloc: 'bureaucracy', warn: 'It is said at court already, and a crown that the great families think is giving itself away finds them slow to serve it.',
     text: 'This state is Throne and Altar: the crown governs and councils advise; the old families and the state\'s own people fill the offices; and the crowd has no part in government. The court and the great families hold the crown to it.',
     tenets: [
-      { key: 'crown', w: 3, kept: (w, c) => (c.elections ? 0 : .5) + (!c.parliament ? .5 : c.parliament.legislative === false ? .35 : 0), said: 'a chamber votes where the crown used to decide', mend: 'the chamber sent home or kept to advice (set_institutions, dissolve_parliament)' },
+      { key: 'crown', w: 3, kept: (w, c) => (c.elections ? 0 : .5) + (!c.parliament ? .5 : c.parliament.legislative === false ? .35 : 0), said: 'a chamber votes where the crown used to decide', mend: 'the chamber sent home or kept to advice (suspend_parliament, set_institutions)' },
       { key: 'offices', w: 2, kept: (w, c) => others(w, c, (p, g) => statusOf(c, g).office ? 0 : 1), said: 'the offices are opened to those who never held them', mend: 'the offices kept for the state\'s own (set_status)' },
       { key: 'crowd', w: 2, kept: (w, c) => quiet(c), said: 'unions, meetings and papers speak for the crowd', mend: 'the unions and the meetings forbidden, the papers held down' }] },
   agrarian: { name: 'the Land', keepers: 'The landlords', bloc: 'capital', warn: 'It is said at every hunt already, and landlords who think the government has turned on them collect its taxes slowly and send their sons to other regiments.',

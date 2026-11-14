@@ -221,7 +221,7 @@ export function militaryStep(w, onStation = null, afterFight = null) {
     // A garrison shut in and ordered out breaks through the siege lines, and pays for it by how many stand round it.
     if (u.shutIn === u.province && w.provinces[u.province]?.siege?.shut) { const here = Object.values(w.units).filter(x => x.province === u.province), foes = here.filter(x => fighting(w, x.country, u.country)), ours = here.filter(x => x.shutIn === u.province), back = wayBack(w, u, u.province), p = w.provinces[u.province];
       if (!back) { went.held = 'it is shut in and there is no way out'; continue; }
-      const odds = sum(foes, x => x.men) / Math.max(sum(ours, x => x.men), .1), loss = clamp(.08 + .08 * (odds - 1), .1, .45), caught = u.men * loss, k = w.countries[u.country], foe = w.countries[p.siege.by];
+      const odds = sum(foes, x => x.men) / Math.max(sum(ours, x => x.men), .1), loss = foes.length ? clamp(.08 + .08 * (odds - 1), .1, .45) : 0, caught = u.men * loss, k = w.countries[u.country], foe = w.countries[p.siege.by];
       u.men -= caught; if (foe?.alive) { const held = foe.captives ||= {}; held[u.country] = (held[u.country] || 0) + caught * .6; } u.morale = clamp(u.morale - 8, 0, 100); u.from = u.province; u.province = back; u.dug = 0; delete u.shutIn; went.provinces = 1; went.reached = back; went.held = u.target === back ? '' : 'it broke out through the siege lines and could go no further this quarter'; if (u.target === back) u.target = null;
       mark(w, k, `${u.id} broke out of ${p.name} through the siege lines and reached ${w.provinces[back].name} with ${Math.round(u.men * 10) / 10} thousand men; about ${Math.round(caught * 10) / 10} thousand were lost or taken on the way.`); if (foe?.alive) mark(w, foe, `Part of the garrison of ${p.name}, about ${about(u.men + caught)} thousand, broke out through our lines toward ${w.provinces[back].name}; about ${about(caught)} thousand of them were cut down or taken.`);
       continue; }
@@ -264,7 +264,11 @@ export function militaryStep(w, onStation = null, afterFight = null) {
   const byProv = {};
   for (const u of Object.values(w.units)) (byProv[u.province] ||= []).push(u);
   for (const [pid, us] of Object.entries(byProv)) resolve(w, pid, us);
-  for (const u of Object.values(w.units)) if (u.men < .2 || u.morale <= 3) { delete w.units[u.id]; }
+  for (const u of Object.values(w.units)) if (u.men < .2 || u.morale <= 3) {
+    const c = w.countries[u.country];
+    if (u.men >= .2 && c?.alive) { const home = Object.values(w.provinces).filter(p => p.owner === c.id && p.controller === c.id); goHome(home, u.men); (w.gone ||= {})[u.id] = { t: w.turn, how: 'it broke up: the men would serve no longer and went home' };
+      const text = `${u.id}, ${Math.round(u.men * 10) / 10} thousand men at ${w.provinces[u.province]?.name ?? 'its station'}, has broken up: there was no spirit left in it, and the men have gone home.`; for (const id of new Set([c.leader, c.general])) { const ch = w.characters[id]; if (ch?.alive) ch.inbox.push({ turn: w.turn, from: 'General Staff', text }); } }
+    delete w.units[u.id]; }
   const remaining = {};
   for (const u of Object.values(w.units)) (remaining[u.province] ||= []).push(u);
   // A siege lasts only while the besieger stands there at war.

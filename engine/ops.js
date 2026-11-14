@@ -217,6 +217,8 @@ export function onceTaken(w, actor, pid, op) {
 export function carryList(w, ch, ops, each) {
   const results = [], nodes = [], run = each ?? (plain => applyOp(w, ch, plain)), placeName = id => w.provinces[id]?.name ?? id;
   (ops || []).forEach((op, i) => {
+    // (An entry that is no order at all, a null or a bare word, is answered as one that could not be read.)
+    if (!op || typeof op !== 'object') { results.push({ op: null, ok: false, msg: 'This entry could not be read as an order.' }); return; }
     const { if_done, if_refused, once_taken, ...plain } = op ?? {}, hang = Number.isInteger(if_done) ? 'done' : Number.isInteger(if_refused) ? 'refused' : null, n = hang === 'done' ? if_done : if_refused, on = hang && n >= 0 && n < i ? results[n] : null;
     if (on?.waits) {
       const a = (w.awaiting || []).find(x => x.key === on.waits && x.actor === ch.id);
@@ -485,7 +487,7 @@ function settleTerms(w, t, fresh) {
   const warring = []; if (t.kind === 'peace') for (const x of fresh) for (const y of t.parties) if (x !== y && atWar(w, x, y)) warring.push([x, y, warsBetween(w, x, y)]);
   let moved = false; const gave = {}, got = {};
   for (const g of t.grants || []) {
-    const p = w.provinces[g.province]; if (g.done || !p || !t.parties.includes(p.owner) || !t.parties.includes(g.to) || p.owner === g.to) continue;
+    const p = w.provinces[g.province]; if (g.done || !p || !t.parties.includes(p.owner) || !t.parties.includes(g.to) || p.owner === g.to || (g.from && g.from !== p.owner)) continue;
     const giver = w.countries[p.owner], taker = w.countries[g.to]; g.done = true; moved = true; (gave[giver.id] ||= []).push([p, taker.id, hasFought(w, giver.id, taker.id)]); got[taker.id] = true;
     p.owner = taker.id; p.controller = taker.id; p.admin = Math.min(p.admin ?? .5, .3); p.governor = null; delete p.siege; handOver(w, p, giver.id, taker.id, forced);
     if (giver.capital === p.id) { const next = [...countryProvinces(w, giver.id)].sort((a, b) => provincePop(b) - provincePop(a))[0]; if (next) giver.capital = next.id; }
@@ -552,6 +554,13 @@ function signMany(w, c, t) {
   return { ok: true, msg: `Acceded: ${t.id} now binds this state with ${names}.${notes[c.id] || ''}` };
 }
 // One party leaves a treaty among several. It is a broken word like any other; the treaty stands for the rest.
+// A treaty between two ends when one of them goes to war with the other. From a treaty among several the one who went to war is out, and it
+// stands among the rest; what was guaranteed under a treaty that has ended is guaranteed no longer.
+// (Bug hunt before world 25: one of three allies attacked another, and the alliance of the other two was struck out with it.)
+function leaveOrEnd(w, t, id) {
+  if (t.multi && t.parties.length > 2) { t.parties = t.parties.filter(x => x !== id); t.signed = (t.signed || []).filter(x => x !== id); (t.left ||= []).push(id); w.guarantees = (w.guarantees || []).filter(x => !(x.treaty === t.id && x.by === id)); return false; }
+  t.active = false; w.guarantees = (w.guarantees || []).filter(x => x.treaty !== t.id); return true;
+}
 function withdraw(w, c, t) {
   const rest = t.parties.filter(x => x !== c.id), justified = rest.includes(t.breaches?.at(-1)?.party);
   t.parties = rest; t.signed = (t.signed || []).filter(x => x !== c.id); (t.left ||= []).push(c.id); w.guarantees = (w.guarantees || []).filter(x => !(x.treaty === t.id && x.by === c.id));
@@ -578,16 +587,16 @@ function proposeMany(w, c, op, others, mediator = false) {
   const of = kind === 'guarantee' ? alive(w, op.of) : null; if (kind === 'guarantee' && (!of || invited.includes(of.id))) return fail('Name the state whose independence is guaranteed (of); it is not itself a signatory.');
   const need = mediator ? invited.length : clamp(Math.round(num(op.need, 2, invited.length, invited.length)), 2, invited.length), secret = !!op.secret && !['peace', 'armistice'].includes(kind);
   // In a treaty among several, land goes where the treaty says, by name: each province to one of the parties.
-  const grants = (Array.isArray(op.cede) ? op.cede : []).filter(g => g && typeof g === 'object' && w.provinces[g.province] && invited.includes(w.provinces[g.province].owner) && invited.includes(g.to) && w.provinces[g.province].owner !== g.to).slice(0, 24).map(g => ({ province: g.province, to: g.to }));
+  const grants = (Array.isArray(op.cede) ? op.cede : []).filter(g => g && typeof g === 'object' && w.provinces[g.province] && invited.includes(w.provinces[g.province].owner) && invited.includes(g.to) && w.provinces[g.province].owner !== g.to).slice(0, 24).map(g => ({ province: g.province, to: g.to, from: w.provinces[g.province].owner }));
   if (Array.isArray(op.cede) && op.cede.length && !grants.length) return fail('In a treaty among several, each province ceded must be named with the party that receives it: cede:[{province,to}].');
   const reparations = num(op.reparations, 0, .3, 0), payer = invited.includes(op.reparations_from) ? op.reparations_from : null, payee = invited.includes(op.reparations_to) ? op.reparations_to : null;
   if (reparations > 0 && (!payer || !payee || payer === payee)) return fail('In a treaty among several, an indemnity names who pays and who receives it: reparations_from and reparations_to.');
-  const id = nextId(w, 'A'), clauses = normalizeClauses(w, op.clauses, invited), terms = String(op.terms || '').slice(0, 2000);
+  const left = [], id = nextId(w, 'A'), clauses = normalizeClauses(w, op.clauses, invited, left), terms = String(op.terms || '').slice(0, 2000);
   const t = { id, kind, multi: true, parties: [...invited], invited: [...invited], signed: mediator ? [] : [c.id], need, active: false, pending: true, proposer: c.id, mediator: mediator ? c.id : null, terms, clauses, breaches: [], expires: null, durationTurns: op.turns ? Math.round(num(op.turns, 1, 200, 40)) : null, annex: !!op.annex, cede: [], grants, reparations, payer, payee, turn: w.turn, secret, conference: cf?.id ?? null, of: of?.id ?? null };
   w.treaties.push(t); if (cf) (cf.treaties ||= []).push(id);
   const text = `${kind.replace('_', ' ')}${of ? ` of the independence of ${of.name}` : ''} among ${invited.map(x => cname(w, x)).join(', ')}. ${terms}${clauses.length ? ` Clauses: ${clauses.map(x => clauseText(w, x)).join('; ')}.` : ''}${grants.length ? ` Provinces to change hands: ${grants.map(g => `${w.provinces[g.province].name} (${g.province}) from ${cname(w, w.provinces[g.province].owner)} to ${cname(w, g.to)}`).join(', ')}.` : ''}${t.annex ? ' Each side keeps the land it now holds.' : ''}${reparations ? ` ${cname(w, payer)} pays ${cname(w, payee)} ${Math.round(reparations * 100)}% of a quarter's output in gold.` : ''}${secret ? ' It is to be kept secret: known to those who govern and, where it concerns the army, to their chiefs of staff.' : ''} It comes into force when ${need === invited.length ? 'all' : need} of them have signed${need < invited.length ? ', and stays open to the rest' : ''}.`;
   for (const x of invited) if (x !== c.id) tell(w, w.characters[w.countries[x].leader], c.name, `${mediator ? `${c.name} offers its mediation. Proposal` : cf ? `Laid before the conference ${cf.id}: proposal` : 'Treaty proposal'} ${id}: ${text} Issue an accept_treaty decision to sign.`);
-  return { ok: true, msg: `Proposal ${id} was laid before ${invited.filter(x => x !== c.id).map(x => cname(w, x)).join(', ')}: ${text}${settles ? ' (There is no war among them, so it is entered as a pact between states at peace and not as a peace treaty; the land, the money and the clauses it names stand as written.)' : ''}`, treaty: id };
+  return { ok: true, msg: `Proposal ${id} was laid before ${invited.filter(x => x !== c.id).map(x => cname(w, x)).join(', ')}: ${text}${left.length ? ` Left out of the paper, because the treaty office could not enter them: ${left.join('; ')}.` : ''}${settles ? ' (There is no war among them, so it is entered as a pact between states at peace and not as a peace treaty; the land, the money and the clauses it names stand as written.)' : ''}`, treaty: id };
 }
 // A duty aimed at one country's goods.
 function aimTariff(w, c, target, op) {
@@ -641,7 +650,24 @@ const ONCE = new Set(['build', 'recruit', 'mobilize', 'demobilize', 'disband', '
 // Orders that only divide a body when they carry a number: without one, giving them twice changes nothing.
 const PART = { move: 'men', amphibious: 'men', move_fleet: 'ships' };
 const sameOrder = op => JSON.stringify(Object.keys(op).filter(k => !k.startsWith('_') && !['if_done', 'if_refused', 'once_taken', 'label'].includes(k)).sort().map(k => [k, op[k]]));
+// A name is a name. Where the office wrote an object in the place of one ("unit": {"id": "B12"}), the id inside it is what was meant; an
+// object with no id names nothing, and a list of names keeps only its names. (Found by tools/fuzz.mjs: such a field reached the replies as
+// "[object Object]".)
+const NAMED = ['unit', 'fleet', 'province', 'character', 'target', 'to', 'id', 'party', 'paper', 'bill', 'plot', 'debt', 'war', 'sea', 'into', 'tender', 'people', 'good', 'resource', 'sector', 'successor', 'buyer', 'nominee', 'against', 'objective', 'once_taken'];
+const LISTED = ['units', 'provinces', 'goods', 'first', 'targets', 'spare', 'members', 'parties', 'invite', 'between', 'at', 'from'];
+function plainNames(op) {
+  if (!op || typeof op !== 'object') return op; let out = op; const set = (k, v) => { if (out === op) out = { ...op }; out[k] = v; };
+  const one = v => v && typeof v === 'object' && !Array.isArray(v) ? (typeof v.id === 'string' || typeof v.id === 'number' ? v.id : typeof v.name === 'string' ? v.name : '') : v;
+  for (const k of NAMED) if (op[k] && typeof op[k] === 'object' && !Array.isArray(op[k])) set(k, one(op[k]));
+  for (const k of LISTED) if (Array.isArray(op[k]) && op[k].some(x => x == null || typeof x === 'object')) set(k, op[k].map(one).filter(x => typeof x === 'string' && x || typeof x === 'number'));
+  return out;
+}
+// A number that was written and is no number above nothing: "many", -2, NaN. (Until world 25 such a number was read as "no number", and an
+// order to discharge "-2" of a corps dissolved the corps.)
+// (A nought is a field left empty, as the office fills fields it has nothing for: it is "no number", not a number that cannot be read.)
+const unreadable = v => v != null && v !== '' && Number(v) !== 0 && !(Number.isFinite(Number(v)) && Number(v) > 0);
 export function applyOp(w, actor, op) {
+  op = plainNames(op);
   const c = actor?.alive ? w.countries[actor.country] : null, key = c?.alive && op?.op && ONCE.has(op.op) && (!PART[op.op] || op[PART[op.op]] != null) ? sameOrder(op) : null;
   // (Only for whoever could have given it: an order outside a seat's powers is refused as it always was.)
   const perm = key ? permissionsOf(c, actor, w) : null, mine = !perm || perm.has(op.op) || delegated(c, actor, op.op);
@@ -704,7 +730,7 @@ function applyOne(w, actor, op) {
   if (SEAT_OPS.has(op.op)) return seatOp(w, actor, c, op, { fail, num, governs: governs(w, c, actor), personFor });
   switch (op.op) {
     // A rate is ordered in a day and collected by offices: a capable state has the new rate in force at once, a thin one takes several quarters to get there.
-    case 'set_tax': { if (!has(c.tax, op.kind)) return fail('No such tax type.'); const to = num(op.rate, 0, .7), was = c.tax[op.kind], r = reach(w, c); c.tax[op.kind] = was + (to - was) * r; if (r < 1 && Math.abs(to - c.tax[op.kind]) > .003) (c.taxTarget ||= {})[op.kind] = to; else if (c.taxTarget) delete c.taxTarget[op.kind];
+    case 'set_tax': { if (!has(c.tax, op.kind)) return fail('No such tax type.'); if (op.rate == null || op.rate === '' || !(Number.isFinite(Number(op.rate)) && Number(op.rate) >= 0)) return fail(`Say the rate the ${op.kind} tax is set to (rate), as a fraction: 0.2 is twenty in the hundred. It stands at ${pc(c.tax[op.kind])}; nothing was changed.`); const to = num(op.rate, 0, .7), was = c.tax[op.kind], r = reach(w, c); c.tax[op.kind] = was + (to - was) * r; if (r < 1 && Math.abs(to - c.tax[op.kind]) > .003) (c.taxTarget ||= {})[op.kind] = to; else if (c.taxTarget) delete c.taxTarget[op.kind];
       return r < 1 && Math.abs(to - was) > .003 ? { ok: true, msg: `The ${op.kind} tax is ordered to ${pc(to)}. With the offices the state has, it stands at ${pc(c.tax[op.kind])} this quarter and reaches the new rate over the next few.` } : ok(); }
     case 'set_budget': { if (!BUDGET.includes(op.category)) return fail('No such budget category.'); const was = c.budget[op.category] ?? 0;
       // "Raise the vote to cover the full cost of the forces" is an order about the cost, not about a share of output: the office reckons the
@@ -713,7 +739,7 @@ function applyOne(w, actor, op) {
       if (op.share == null || !Number.isFinite(Number(op.share))) return fail(`Say what part of a quarter's output the vote is to be (share)${op.category === 'military' ? ', or what part of the cost of the forces it is to carry (covers: 1 for the whole of it)' : ''}. It stands at ${Math.round(was * 1000) / 10} in the hundred.`);
       c.budget[op.category] = num(op.share, 0, .45); const now = c.budget[op.category], pc = v => Math.round(v * 1000) / 10, cost = op.category === 'military' ? upkeepCost(w, c) : 0;
       return { ok: true, msg: `The vote for ${op.category} is ${pc(now)}% of output (it was ${pc(was)}%): about ${Math.round(now * gdp)} a quarter.${cost > 0 ? ` The forces as they stand and are posted cost about ${Math.round(cost)} a quarter: the vote covers ${Math.round(now * gdp / cost * 100)} in the hundred of it.` : ''} All the votes together now come to ${pc(BUDGET.reduce((a, k) => a + (c.budget[k] || 0), 0))}% of output; the budget report shows what that leaves of the revenue.` }; }
-    case 'set_tariff': { if (target) return aimTariff(w, c, target, op); const to = num(op.rate, 0, 1), was = c.tariff, r = reach(w, c); c.tariff = was + (to - was) * r; c.tariffTarget = r < 1 && Math.abs(to - c.tariff) > .003 ? to : null; return r < 1 && Math.abs(to - was) > .003 ? { ok: true, msg: `The tariff is ordered to ${pc(to)}; the customs houses apply ${pc(c.tariff)} this quarter and the rest follows.` } : ok(); }
+    case 'set_tariff': { if (target) return aimTariff(w, c, target, op); if (op.rate == null || op.rate === '' || !(Number.isFinite(Number(op.rate)) && Number(op.rate) >= 0)) return fail(`Say the rate the general tariff is set to (rate), as a fraction: 0.15 is fifteen in the hundred. It stands at ${pc(c.tariff)}; nothing was changed.`); const to = num(op.rate, 0, 1), was = c.tariff, r = reach(w, c); c.tariff = was + (to - was) * r; c.tariffTarget = r < 1 && Math.abs(to - c.tariff) > .003 ? to : null; return r < 1 && Math.abs(to - was) > .003 ? { ok: true, msg: `The tariff is ordered to ${pc(to)}; the customs houses apply ${pc(c.tariff)} this quarter and the rest follows.` } : ok(); }
     // The order is the part of what the arms works can make that the state asks of them: 0.4 is forty in the hundred. (Until world 19 the
     // figure was a share of all industry, of which a quarter already meant flat out: in twelve quarters eleven orders for "forty", "sixty"
     // and "eighty in the hundred" all set the works to run flat out, and one to "slow down to thirty" changed nothing.)
@@ -807,11 +833,13 @@ function applyOne(w, actor, op) {
     case 'answer_loan': { if (!governs(w, c, actor)) return fail('A request to borrow of the country\'s houses is answered by whoever governs.');
       const asks = w.loanAsks || [], ask = asks.find(a => a.to === c.id && (a.id === op.id || (op.id == null && (target ? a.from === target.id : asks.filter(x => x.to === c.id).length === 1)))); if (!ask) return fail(asks.some(a => a.to === c.id) ? `Which request? Waiting: ${asks.filter(a => a.to === c.id).map(a => `${a.id} (${w.countries[a.from]?.name}, ${a.amount})`).join(', ')}.` : 'No request to borrow of our houses lies before you.');
       const b = w.countries[ask.from], said = String(op.answer ?? '').toLowerCase(), yes = ['grant', 'granted', 'yes', 'accept', 'allow'].includes(said), no = ['refuse', 'refused', 'no', 'decline', 'deny'].includes(said), words = op.words ? String(op.words).slice(0, 600) : '';
-      if (!yes && !no) return fail('Say how it is answered (answer): grant or refuse.'); asks.splice(asks.indexOf(ask), 1); if (!b?.alive) return fail('The state that asked is no more.');
+      if (!yes && !no) return fail('Say how it is answered (answer): grant or refuse.'); if (!b?.alive) { asks.splice(asks.indexOf(ask), 1); return fail('The state that asked is no more.'); }
+      if (no) asks.splice(asks.indexOf(ask), 1);
       if (no) { tell(w, w.characters[b.leader], 'Treasury', `${c.name} has refused us leave to borrow of its houses (${ask.amount} was asked).${words ? ` Its answer: "${words}"` : ''}`); return { ok: true, msg: `${b.name} is refused: nothing is lent, and its government is told.` }; }
       if (b.defaulted || atWar(w, c.id, b.id) || c.capitalClosed) return fail(`Nothing can be lent to ${b.name} as things stand: ${b.defaulted ? 'it has defaulted, and no house will put gold on its name' : atWar(w, c.id, b.id) ? 'we are at war with it' : 'the movement of capital out of the country is closed'}.`);
       const real = Math.max(b.realGdp, 1), floorL = Math.max(c.realGdp, 1) * .3, room = Math.max(0, real * (.6 + b.legitimacy / 100) - externalDebt(b)), out = used(w, c, 'lentOut'), spare = Math.max(0, (c.reserves + out - floorL) * .25 - out), want = op.amount != null ? Math.min(num(op.amount, 0, 1e7, 0), ask.amount) : ask.amount, amt = Math.min(room, spare, want);
       if (!(amt > 0)) return fail(`The houses can find nothing to lend ${b.name} this quarter: ${spare <= 0 ? 'they will let no more gold out of the country now' : 'by their reckoning it owes abroad all it can carry'}.`);
+      asks.splice(asks.indexOf(ask), 1);
       allowance(w, c, 'lentOut', Infinity, amt); c.reserves -= amt; b.reserves += amt; goldMoved(c, 'lent', -amt); goldMoved(b, 'borrowed', amt); b.creditors[c.id] = (b.creditors[c.id] || 0) + amt; lentNote(w, c, b, amt, words);
       const extra = op.premium != null ? num(op.premium, 0, .03, 0) : lendingOf(c, b.id).premium, rate = foreignRate(b, externalDebt(b)) + extra; if (extra > 0) (b.creditTerms ||= {})[c.id] = { rate };
       news(w, `${b.name} borrowed gold from the banks of ${c.name}, with that government's leave.`, { kind: 'economy', countries: [c.id, b.id] });
@@ -830,7 +858,7 @@ function applyOne(w, actor, op) {
       if (at < 0 && rules.length >= 24) return fail('The statute book holds as many such rules as officials can keep apart; one would have to be withdrawn first.');
       const rule = at >= 0 ? rules[at] : { ...(prov ? { province: prov.id } : {}), ...(people ? { people } : {}) }; if (op.language) rule.language = op.language; if (op.faith) rule.faith = op.faith; if (at < 0) rules.push(rule);
       news(w, `${c.name} made a rule of its own for ${scope}: ${[rule.language ? `language ${rule.language}` : '', rule.faith ? `faith ${rule.faith}` : ''].filter(Boolean).join(', ')}.`, { kind: 'politics', countries: [c.id], ...(prov ? { province: prov.id } : {}) });
-      return { ok: true, msg: `For ${scope}: ${[rule.language ? `language ${rule.language}` : '', rule.faith ? `faith ${rule.faith}` : ''].filter(Boolean).join(', ')}. Where a rule names both a province and a people it goes before one that names only the people, that before one for the province, and all of them before the country's policy (language ${c.languagePolicy}, faith ${c.faithPolicy}).` };
+      return { ok: true, msg: `For ${scope}: ${[rule.language ? `language ${rule.language}` : '', rule.faith ? `faith ${rule.faith}` : ''].filter(Boolean).join(', ')}. Where a rule names both a province and a people it goes before one that names only the people, that before one for the province, and all of them before the country's policy (language ${c.languagePolicy ?? 'tolerate'}, faith ${c.faithPolicy ?? 'tolerate'}).` };
     }
     case 'appoint_governor': { const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('Province not yours.'); if (op.remove) { tell(w, w.characters[p.governor], c.name, `You are removed as governor of ${p.name}.`); p.governor = null; return ok(); } const ch = personFor(w, c, op, 'governor'); if (!ch || ch.country !== c.id || ch.status !== 'free') return fail(noPerson('No such person.')); p.governor = ch.id; tell(w, ch, c.name, `You are appointed governor of ${p.name}.`); return { ok: true, msg: `${ch.name} (${ch.id}) governs ${p.name}.` }; }
     case 'appoint_commander': {
@@ -925,7 +953,7 @@ function applyOne(w, actor, op) {
       return r.ok ? r : fail(r.msg);
     }
     // Money for the armed underground, at home or (with target) in another country. From the actor's own purse.
-    case 'fund_underground': { const where = target ?? c, m = Math.min(Math.max(actor.wealth, 0), num(op.amount, 0, 1e6, 0)); if (!(m >= 1)) return fail('No money to give them.'); actor.wealth -= m; return fundUnderground(w, actor, where, m, leaveTrace); }
+    case 'fund_underground': { if (op.target != null && op.target !== '' && !target) return fail(`No such state: ${String(op.target).slice(0, 40)}.`); const where = target ?? c, m = Math.min(Math.max(actor.wealth, 0), num(op.amount, 0, 1e6, 0)); if (!(m >= 1)) return fail('No money to give them.'); actor.wealth -= m; return fundUnderground(w, actor, where, m, leaveTrace); }
     // The lawful road against a person: a charge, a court, a verdict next quarter. Brought by whoever governs, on what is in their file.
     case 'prosecute': {
       const ch = has(w.characters, op.character) ? w.characters[op.character] : null; if (!ch?.alive || ch.country !== c.id || ch.id === actor.id) return fail('No such person here to charge.');
@@ -1230,6 +1258,7 @@ function applyOne(w, actor, op) {
       const base = port ? { d: 0, port: port.id } : baseMap(w, c.id)[goal] ?? { d: 99, port: null }, baseName = w.provinces[base.port]?.name;
       if (base.d > k.reach) return fail(`${seaLabel(w, goal)} lies ${base.d > 90 ? 'out of reach of' : `${base.d} seas from`} the nearest harbour that would coal our ships${baseName ? ` (${baseName})` : ''}; ${k.name} keep station ${k.reach} seas from a base at most. A harbour nearer to it would have to be ours, an ally's, or opened to us by treaty.`);
       // A number of ships sends a squadron and leaves the rest where they are.
+      if (unreadable(op.ships) || (Number(op.ships) > 0 && Number(op.ships) < 1)) return fail(`How many ships of ${f.id} are to go could not be read (ships: ${String(op.ships).slice(0, 20)}): a whole number of ships, one at the least; to send the whole squadron, leave the number out. Nothing was moved.`);
       const asked = Math.floor(Number(op.ships)); let x = f;
       if (asked >= 1 && asked < f.ships) { x = makeFleet(w, c.id, f.sea, asked, f.kind); for (const key of ['quality', 'morale', 'port', 'home', 'orders', 'coaled']) if (f[key] != null) x[key] = f[key]; f.ships -= asked; }
       x.target = op.to; if (!port && x.orders === 'port') delete x.orders;
@@ -1265,7 +1294,7 @@ function applyOne(w, actor, op) {
       const n = op.men != null ? Math.min(num(op.men, 0, 1e6, 0), held) : held; if (!(n > 0)) return fail('Say how many are to go, or leave the number out to send them all.');
       c.captives[target.id] = held - n; if (c.captives[target.id] < .01) delete c.captives[target.id];
       const provs = Object.values(w.provinces).filter(p => p.owner === target.id && p.controller === target.id); goHome(provs, n); target.reserve = (target.reserve || 0) + n;
-      const g = target.grudges?.[c.id]; if (g) g.incident = Math.max(0, g.incident - Math.min(6, n * .5)); target.relations[c.id] = clamp((target.relations[c.id] ?? 0) + Math.min(8, 2 + n * .4), -100, 100);
+      const g = target.grudges?.[c.id]; if (g) g.incident = Math.max(0, g.incident - Math.min(6, n * .5)); { const first = (c.freedAt ||= {})[target.id] !== w.turn; c.freedAt[target.id] = w.turn; target.relations[c.id] = clamp((target.relations[c.id] ?? 0) + Math.min(8, (first ? 2 : 0) + n * .4), -100, 100); }
       const words = n < 1 ? `${Math.max(1, Math.round(n * 10)) * 100}` : `${Math.round(n)} thousand`;
       news(w, `${c.name} has sent home ${words} prisoners of war to ${target.name}${atWar(w, c.id, target.id) ? ', with the war still on' : ''}.`, { kind: 'war', countries: [c.id, target.id] });
       tell(w, w.characters[target.leader], 'Foreign Ministry', `${c.name} has sent home ${words} of our men it held prisoner${held - n > .05 ? `; it keeps about ${Math.round((held - n) * 10) / 10} thousand more` : ''}. They are back in their provinces and on the reserve roll.`);
@@ -1286,7 +1315,7 @@ function applyOne(w, actor, op) {
       c.stock.arms -= shells; for (const u of fresh) u.drill = w.turn;
       return { ok: true, msg: `${fresh.map(u => u.id).join(', ')} (${Math.round(men)} thousand men) spend the quarter at field exercises and musketry: ${Math.round(cost)} from the treasury and ${Math.round(shells * 10) / 10} of arms from the arsenal. Men who drill come up to the army's standard in a few quarters where barracks routine takes years, and a little past it; the edge wears off again when the drilling stops. The order is for this quarter; it is given again for the next.${note}` }; }
     case 'set_pay_priority': {
-      const list = [...new Set((Array.isArray(op.first) ? op.first : op.first ? [op.first] : []).map(x => String(x).trim()).filter(Boolean))].slice(0, 24);
+      const list = [...new Set((Array.isArray(op.first) ? op.first : op.first ? [op.first] : []).filter(x => typeof x === 'string' || typeof x === 'number').map(x => String(x).trim()).filter(Boolean))].slice(0, 24);
       // A body that is not on the rolls (formed only this quarter, or misnamed) is left out and named; the rest of the order stands. (World 16: a
       // list of nine units and "army, navy" was refused whole for two units still forming.)
       const bad = list.filter(x => !(w.units[x]?.country === c.id || w.fleets[x]?.country === c.id || PAY_FIRST.includes(x))), unknown = bad.length ? ` Left out, not being a unit or squadron on our rolls today (nor one of ${PAY_FIRST.join(', ')}): ${bad.join(', ')}.` : ''; for (const x of bad) list.splice(list.indexOf(x), 1);
@@ -1364,6 +1393,7 @@ function applyOne(w, actor, op) {
       if (freshlyCalled(w)(u) && p.controller !== c.id && atWar(w, c.id, p.controller)) return fail(`${u.id} was called up this quarter: it can be shipped to a coast of our own, and goes against a coast the enemy holds from next quarter.`);
       // A number carries a detachment and leaves the rest of the unit where it stands. (World 22: "detach 6 thousand men from B93 and carry
       // them by sea to Ordona" shipped the whole corps of 129 thousand, the army of the home island, to an outlying harbour.)
+      if (unreadable(op.men) || (Number(op.men) > 0 && Number(op.men) < .1)) return fail(`How many of ${u.id} are to go could not be read, or it is fewer than a hundred men (men: ${String(op.men).slice(0, 20)}): a detachment is given in thousands, 0.1 at the least; to march the whole unit, leave the number out. Nothing was moved.`);
       { const asked = Number(op.men); if (Number.isFinite(asked) && asked >= .1 && asked < u.men - .05 && u.province !== p.id) {
           const men = Math.round(asked * 10) / 10, d = makeUnit(w, c.id, u.province, men, u.quality, u.loyalty, u.kind); if (u.eth) { d.eth = u.eth; d.rel = u.rel; }
           d.morale = u.morale; d.equip = u.equip; if (u.bond != null) d.bond = u.bond; u.men -= men;
@@ -1498,6 +1528,8 @@ function applyOne(w, actor, op) {
       const u = w.units[op.unit]; if (!u || u.country !== c.id) return fail('No such unit.');
       const here = w.provinces[u.province], home = here && here.controller === c.id && here.owner === c.id ? here : w.provinces[c.capital];
       // A number discharges that many and the unit stays in being; with no number the whole unit goes home.
+      if (unreadable(op.men)) return fail(`How many are to be discharged from ${u.id} could not be read (men: ${String(op.men).slice(0, 20)}): give it in thousands, a number above nothing (0.5 is five hundred men); to dissolve the whole unit, leave the number out. Nothing was done.`);
+      if (Number(op.men) > 0 && Number(op.men) < .05) return fail(`Fewer than fifty men are not discharged by an order of the government; ${u.id} stands as it was. (The number is in thousands: 0.5 is five hundred men.)`);
       const asked = Number(op.men), part = Number.isFinite(asked) && asked > 0 && asked < u.men - .05, men = part ? Math.round(asked * 10) / 10 : u.men;
       const count = menText(men);
       // The discharged are trained men: they go on the reserve roll, and their rifles go back to the arsenal.
@@ -1519,6 +1551,7 @@ function applyOne(w, actor, op) {
       // Where no road leads (an island, a possession across the sea) the troops go by ship, as a landing on a friendly coast does: "detach six
       // thousand and ship them to Ordona" is a march order to whoever writes it. (World 16: five such orders were answered "No route.")
       const dest = w.provinces[op.to], dry = u.province !== op.to && !pathStep(w, u.province, op.to, c.id), bySea = x => { const r = applyOp(w, actor, { op: 'amphibious', unit: x.id, to: op.to }); return { ...r, msg: `No road leads from ${w.provinces[x.province === op.to ? u.province : x.province]?.name ?? 'there'} to ${dest.name}: ${r.ok ? 'the troops went by sea' : 'the troops would have to go by sea, and could not'}. ${r.msg}${r.ok ? '' : ' (Troops embark from a province of ours on the coast; the crossing wants merchant tonnage and water no enemy holds.)'}` }; };
+      if (unreadable(op.men) || (Number(op.men) > 0 && Number(op.men) < .1)) return fail(`How many of ${u.id} are to march could not be read, or it is fewer than a hundred men (men: ${String(op.men).slice(0, 20)}): a detachment is given in thousands, 0.1 at the least; to march the whole unit, leave the number out. Nothing was moved.`);
       const asked = Number(op.men); if (!(Number.isFinite(asked) && asked >= .1 && asked < u.men - .05)) return dry ? bySea(u) : applyOrder(w, c, u, op.to, true);
       const stays = u.province === op.to;
       const men = Math.round(asked * 10) / 10, d = makeUnit(w, c.id, u.province, men, u.quality, u.loyalty, u.kind); if (u.eth) { d.eth = u.eth; d.rel = u.rel; }
@@ -1598,7 +1631,7 @@ function applyOne(w, actor, op) {
       }
       { const lord = protectorOf(w, c); if (lord?.alive && lord.id !== target.id) return fail(`Under the treaty of protection with ${lord.name} this state does not make war on its own. The treaty would have to be broken first.`); }
       // Whatever was signed with them is torn up. Breaking a peace that is still fresh costs most, at home and with everyone who watches.
-      for (const t of w.treaties.filter(x => x.active && x.parties.includes(c.id) && x.parties.includes(target.id))) { t.active = false; if (['peace', 'nonaggression', 'alliance'].includes(t.kind)) { t.brokenBy = c.id; t.brokenAt = w.turn; } c.legitimacy = clamp(c.legitimacy - (t.kind === 'peace' ? 8 : 3), 0, 100); if (t.kind === 'peace') for (const o of aliveCountries(w)) if (o.id !== c.id) o.relations[c.id] = clampRel((o.relations[c.id] ?? 0) - 6); }
+      for (const t of w.treaties.filter(x => x.active && x.parties.includes(c.id) && x.parties.includes(target.id))) { leaveOrEnd(w, t, c.id); if (['peace', 'nonaggression', 'alliance'].includes(t.kind)) { t.brokenBy = c.id; t.brokenAt = w.turn; } c.legitimacy = clamp(c.legitimacy - (t.kind === 'peace' ? 8 : 3), 0, 100); if (t.kind === 'peace') for (const o of aliveCountries(w)) if (o.id !== c.id) o.relations[c.id] = clampRel((o.relations[c.id] ?? 0) - 6); }
       w.wars.push({ id: nextId(w, 'S'), a: [c.id], b: [target.id], civil: false, active: true, start: w.turn, name: `${c.name} - ${target.name} War` }); c.embargo = c.embargo.filter(x => x !== target.id); c.relations[target.id] = -90; target.relations[c.id] = -90;
       // War after an ultimatum that was let run out is the consequence that was announced. War on someone one had a treaty with is a broken word.
       // What every other government and every lender marks: a war in breach of a treaty (most of all a peace not two years old), a war without an
@@ -1631,7 +1664,7 @@ function applyOne(w, actor, op) {
       for (const o of foes) {
         // Coming into a war against someone one has signed with is a broken word, by whatever door it is done.
         let broke = false;
-        for (const t of w.treaties.filter(x => x.active && x.parties.includes(c.id) && x.parties.includes(o.id))) { t.active = false; if (['peace', 'nonaggression', 'alliance'].includes(t.kind)) { t.brokenBy = c.id; t.brokenAt = w.turn; broke = true; } c.legitimacy = clamp(c.legitimacy - (t.kind === 'peace' ? 8 : 3), 0, 100); if (t.kind === 'peace') for (const a of aliveCountries(w)) if (a.id !== c.id) a.relations[c.id] = clampRel((a.relations[c.id] ?? 0) - 6); }
+        for (const t of w.treaties.filter(x => x.active && x.parties.includes(c.id) && x.parties.includes(o.id))) { leaveOrEnd(w, t, c.id); if (['peace', 'nonaggression', 'alliance'].includes(t.kind)) { t.brokenBy = c.id; t.brokenAt = w.turn; broke = true; } c.legitimacy = clamp(c.legitimacy - (t.kind === 'peace' ? 8 : 3), 0, 100); if (t.kind === 'peace') for (const a of aliveCountries(w)) if (a.id !== c.id) a.relations[c.id] = clampRel((a.relations[c.id] ?? 0) - 6); }
         if (broke) shame(w, c, -10, `it went to war with ${o.name} in spite of a treaty`);
         c.relations[o.id] = -90; o.relations[c.id] = -90; c.embargo = c.embargo.filter(x => x !== o.id);
         tell(w, w.characters[o.leader], 'Foreign Ministry', `${c.name} has entered the ${war.name} against you.`);
@@ -1650,26 +1683,27 @@ function applyOne(w, actor, op) {
       if (op.kind === 'peace' && !atWar(w, c.id, target.id)) op = { ...op, kind: 'nonaggression', settles: true };
       // An armistice stops the fighting where the lines stand and leaves the war, the occupied land and the blockade as they are, for as long as it runs.
       if (op.kind === 'armistice') { if (!atWar(w, c.id, target.id)) return fail('There is no war between you to halt.'); if (hasTreaty(w, c.id, target.id, 'armistice')) return fail('An armistice between you is already in force.'); }
+      if (!['peace', 'armistice'].includes(op.kind) && atWar(w, c.id, target.id)) return fail(`We are at war with ${target.name}: between states at war only an armistice or a peace is signed.`);
       if (op.kind === 'alliance') { const lord = protectorOf(w, c); if (lord?.alive && lord.id !== target.id) return fail(`Under the treaty of protection with ${lord.name} this state makes no alliances of its own.`); }
-      const id = nextId(w, 'A'), clauses = normalizeClauses(w, op.clauses, [c.id, target.id]), other = pid => w.provinces[pid].owner === c.id ? target : c;
+      const left = [], id = nextId(w, 'A'), clauses = normalizeClauses(w, op.clauses, [c.id, target.id], left), other = pid => w.provinces[pid].owner === c.id ? target : c;
       // Provinces named in a treaty change hands when it is signed: each goes from whichever of the two owns it to the other.
       const cede = [...new Set((Array.isArray(op.cede) ? op.cede : []).map(x => x && typeof x === 'object' ? x.province : x))].filter(pid => [c.id, target.id].includes(w.provinces[pid]?.owner)).slice(0, 24), reparations = num(op.reparations, 0, .3), payer = op.reparations_from === 'me' ? c.id : target.id, secret = !!op.secret && !['peace', 'armistice'].includes(op.kind);
-      w.treaties.push({ id, kind: op.kind, ...(op.kind === 'protection' ? { protector: op.protector === 'them' ? target.id : c.id } : {}), parties: [c.id, target.id], active: false, pending: true, proposer: c.id, terms: String(op.terms || '').slice(0, 2000), clauses, breaches: [], expires: null, durationTurns: op.turns ? Math.round(num(op.turns, 1, 200, 40)) : null, annex: !!op.annex, cede, reparations, payer, turn: w.turn, secret });
+      w.treaties.push({ id, kind: op.kind, ...(op.kind === 'protection' ? { protector: op.protector === 'them' ? target.id : c.id } : {}), parties: [c.id, target.id], active: false, pending: true, proposer: c.id, terms: String(op.terms || '').slice(0, 2000), clauses, breaches: [], expires: null, durationTurns: op.turns ? Math.round(num(op.turns, 1, 200, 40)) : null, annex: !!op.annex, cede, cedeFrom: Object.fromEntries(cede.map(pid => [pid, w.provinces[pid].owner])), reparations, payer, turn: w.turn, secret });
       tell(w, w.characters[target.leader], c.name, `Treaty proposal ${id}${secret ? ' (to be kept secret: known to those who govern and, where it concerns the army, to their chiefs of staff)' : ''}: ${op.kind.replace('_', ' ')}. ${String(op.terms || '').slice(0, 240)}${clauses.length ? ` Clauses: ${clauses.map(x => clauseText(w, x)).join('; ')}.` : ''}${cede.length ? ` Provinces to change hands: ${cede.map(pid => `${w.provinces[pid].name} (${pid}) to ${other(pid).name}`).join(', ')}.` : ''}${op.annex ? ' Each side keeps the land it now holds.' : ''}${reparations ? ` ${w.countries[payer].name} pays ${Math.round(reparations * 100)}% of a quarter's output in gold.` : ''} Issue an accept_treaty decision to accept.`);
       { const land = settlementText(w, w.treaties.at(-1)); if (land && op.kind === 'peace') tell(w, w.characters[target.leader], c.name, `What proposal ${id} does to the land, whatever its wording: ${land}`);
-        return { ok: true, msg: `Proposal ${id} was sent.${op.settles ? ' (There is no war between you, so it is entered as a pact between states at peace and not as a peace treaty; the land, the money and the clauses it names stand as written.)' : ''}${land ? ` ${land}${op.kind === 'peace' ? ' If the wording of the treaty means something else, the provinces have to be named in it (cede), or it has to say that each side keeps what it holds (annex).' : ''}` : ''}`, treaty: id }; }
+        return { ok: true, msg: `Proposal ${id} was sent.${left.length ? ` Left out of the paper, because the treaty office could not enter them: ${left.join('; ')}.` : ''}${op.settles ? ' (There is no war between you, so it is entered as a pact between states at peace and not as a peace treaty; the land, the money and the clauses it names stand as written.)' : ''}${land ? ` ${land}${op.kind === 'peace' ? ' If the wording of the treaty means something else, the provinces have to be named in it (cede), or it has to say that each side keeps what it holds (annex).' : ''}` : ''}`, treaty: id }; }
     }
     // A demand with a date on it. If it is accepted its terms take effect like a treaty's; if it runs out, war is expected of the one who made it.
     case 'ultimatum': {
       if (!target) return fail('No such country.'); if (atWar(w, c.id, target.id)) return fail('You are at war with them already.');
       if (w.treaties.some(t => t.pending && t.ultimatum && t.proposer === c.id && t.parties.includes(target.id))) return fail('An ultimatum of yours to them is still running.');
-      const id = nextId(w, 'A'), clauses = normalizeClauses(w, op.clauses, [c.id, target.id]), cede = [...new Set(Array.isArray(op.cede) ? op.cede : [])].filter(pid => w.provinces[pid]?.owner === target.id).slice(0, 24), reparations = num(op.reparations, 0, .3), quarters = Math.round(num(op.turns, 1, 4, 1));
+      const left = [], id = nextId(w, 'A'), clauses = normalizeClauses(w, op.clauses, [c.id, target.id], left), cede = [...new Set(Array.isArray(op.cede) ? op.cede : [])].filter(pid => w.provinces[pid]?.owner === target.id).slice(0, 24), reparations = num(op.reparations, 0, .3), quarters = Math.round(num(op.turns, 1, 4, 1));
       const demand = String(op.demand || op.terms || '').slice(0, 2000); if (!demand && !cede.length && !reparations && !clauses.length) return fail('An ultimatum has to demand something.');
-      w.treaties.push({ id, kind: 'settlement', parties: [c.id, target.id], active: false, pending: true, proposer: c.id, terms: demand, clauses, breaches: [], expires: null, durationTurns: 20, annex: false, cede, reparations, payer: target.id, turn: w.turn, ultimatum: { deadline: w.turn + quarters } });
+      w.treaties.push({ id, kind: 'settlement', parties: [c.id, target.id], active: false, pending: true, proposer: c.id, terms: demand, clauses, breaches: [], expires: null, durationTurns: 20, annex: false, cede, cedeFrom: Object.fromEntries(cede.map(pid => [pid, target.id])), reparations, payer: target.id, turn: w.turn, ultimatum: { deadline: w.turn + quarters } });
       const terms = `${demand}${clauses.length ? ` Clauses: ${clauses.map(x => clauseText(w, x)).join('; ')}.` : ''}${cede.length ? ` To be handed over: ${cede.map(pid => `${w.provinces[pid].name} (${pid})`).join(', ')}.` : ''}${reparations ? ` To be paid: ${Math.round(reparations * 100)}% of a quarter's output in gold.` : ''}`;
       news(w, `${c.name} has sent ${target.name} an ultimatum: ${terms} It runs out in ${quarters} quarter${quarters > 1 ? 's' : ''}.`, { kind: 'diplomacy', countries: [c.id, target.id] });
       tell(w, w.characters[target.leader], c.name, `ULTIMATUM ${id} from ${c.name}: ${terms} It runs out in ${quarters} quarter${quarters > 1 ? 's' : ''}. Accepting it (accept_treaty) puts its terms into force and will be seen at home as giving way. Letting it run out leaves ${c.name} to do what it has threatened, or to be shown up as having bluffed.`);
-      return { ok: true, msg: `Ultimatum ${id} is delivered and public. If ${target.name} lets it run out, war is expected of you within three quarters; if nothing follows, your word is worth less abroad and at home.`, treaty: id };
+      return { ok: true, msg: `Ultimatum ${id} is delivered and public.${left.length ? ` Left out of the paper, because the treaty office could not enter them: ${left.join('; ')}.` : ''} If ${target.name} lets it run out, war is expected of you within three quarters; if nothing follows, your word is worth less abroad and at home.`, treaty: id };
     }
     // A public promise to fight for another state if it is attacked.
     case 'guarantee': {
@@ -1719,6 +1753,7 @@ function applyOne(w, actor, op) {
       if (!t) return fail(old ? `No new proposal${target ? ` from ${target.name}` : ''} has reached us.${old}` : waiting.length ? `Which proposal? Waiting: ${waiting.map(x => x.id).join(', ')}.` : 'No proposal is waiting.');
       if (t.multi) return signMany(w, c, t);
       const other = alive(w, t.proposer); if (!other) { t.pending = false; return fail('The other party is gone.'); }
+      if (!['peace', 'armistice'].includes(t.kind) && !t.ultimatum && atWar(w, c.id, other.id)) { t.pending = false; return fail(`${t.id} was written between states at peace, and we are at war with ${other.name} now: it is off the table. Between states at war only an armistice or a peace is signed.`); }
       if (!t.ultimatum && !maySign(w, c.id, other.id, t.kind)) return fail(`Between this state and ${other.name} stand ${tieWord(tieOf(w, c.id, other.id))}: this cannot be signed until relations are restored (set_relations), unless a third state carries it.`);
       if (['peace', 'armistice'].includes(t.kind) && !atWar(w, c.id, other.id)) { t.pending = false; return fail(`There is no war between you to ${t.kind === 'peace' ? 'end' : 'halt'}.`); }
       const owned = id => sum(Object.values(w.provinces).filter(p => p.owner === id), provincePop), had = { [c.id]: owned(c.id), [other.id]: owned(other.id) };
@@ -1731,7 +1766,9 @@ function applyOne(w, actor, op) {
       if (land && (t.kind === 'peace' || t.cede?.length)) { news(w, `${c.name} and ${other.name}: ${land.replace('On signing these provinces change hands', 'by the treaty these provinces changed hands').replace('goes back to its owner the day the peace is signed', 'went back to its owner')}`, { kind: 'diplomacy', countries: [c.id, other.id], secret: !!t.secret }); tell(w, w.characters[other.leader], c.name, `${c.name} has signed ${t.id}. ${land}`); }
       const gave = {}, got = {}, surrender = {};
       for (const pid of t.cede || []) {
-        const p = w.provinces[pid], giver = w.countries[p.owner], taker = p.owner === c.id ? other : p.owner === other.id ? c : null; if (!taker) continue;
+        // (A province that changed hands between the writing and the signing is not handed back the other way: it goes from whoever held it
+        // when the paper was written, or it does not go.)
+        const p = w.provinces[pid], giver = w.countries[p.owner], taker = p.owner === c.id ? other : p.owner === other.id ? c : null; if (!taker || (t.cedeFrom?.[pid] && t.cedeFrom[pid] !== p.owner)) continue;
         (gave[giver.id] ||= []).push([p, taker.id, hasFought(w, giver.id, taker.id)]); got[taker.id] = true;
         p.owner = taker.id; p.controller = taker.id; p.admin = Math.min(p.admin ?? .5, .3); p.governor = null; delete p.siege; handOver(w, p, giver.id, taker.id, t.kind === 'peace' || !!t.ultimatum);
         if (giver.capital === pid) { const next = [...countryProvinces(w, giver.id)].sort((a, b) => provincePop(b) - provincePop(a))[0]; if (next) giver.capital = next.id; }
@@ -1923,7 +1960,7 @@ function applyOne(w, actor, op) {
       news(w, `${c.name}: ${ch.name} was ${fate === 'exiled' ? 'driven into exile' : 'arrested and imprisoned'}.`, { kind: 'politics', countries: [c.id] });
       return { ok: true, msg: `${ch.name} is now ${fate}.${took}${seat && c[seat] !== ch.id && w.characters[c[seat]] ? ` ${w.characters[c[seat]].name} (${c[seat]}) holds the seat now${seat === 'general' ? `; the War Ministry has told you how ${he(w.characters[c[seat]])} came by it` : ', put there by their own people and not by you'}.` : ''}` };
     }
-    case 'release': { const ch = w.characters[op.character]; if (!ch?.alive || ch.country !== c.id || !['imprisoned', 'exiled'].includes(ch.status)) return fail('No such prisoner or exile.'); const was = ch.status; ch.status = 'free'; tell(w, ch, c.name, was === 'exiled' ? 'You are allowed to return home.' : 'You are released from prison.'); news(w, `${c.name}: ${ch.name} was ${was === 'exiled' ? 'allowed to return from exile' : 'released from prison'}.`, { kind: 'politics', countries: [c.id] }); return { ok: true, msg: `${ch.name} is ${was === 'exiled' ? 'free to come home' : 'out of prison'} and has been told so; the papers have it.` }; }
+    case 'release': { const ch = w.characters[op.character]; if (!ch?.alive || ch.country !== c.id || !['imprisoned', 'exiled'].includes(ch.status)) return fail('No such prisoner or exile.'); const was = ch.status; ch.status = 'free'; ch.sentence = null; tell(w, ch, c.name, was === 'exiled' ? 'You are allowed to return home.' : 'You are released from prison.'); news(w, `${c.name}: ${ch.name} was ${was === 'exiled' ? 'allowed to return from exile' : 'released from prison'}.`, { kind: 'politics', countries: [c.id] }); return { ok: true, msg: `${ch.name} is ${was === 'exiled' ? 'free to come home' : 'out of prison'} and has been told so; the papers have it.` }; }
     case 'designate_successor': { if (op.remove) { c.heir = null; return ok(); } const ch = personFor(w, c, op, 'heir', { power: 40, age: [18, 45], ...(c.succession === 'dynasty' && !op.name ? { family: actor.name.split(' ').at(-1) } : {}) }); if (!ch?.alive || ch.country !== c.id || ch.status !== 'free' || ch.id === c.leader) return fail(noPerson('No such person to name.')); c.heir = ch.id; c._heirSecret = !!op.secret; tell(w, ch, w.characters[c.leader]?.name ?? c.name, 'You are named successor: if the ruler dies or falls, the government passes to you.'); news(w, `${c.name}: ${ch.name} was named successor.`, { kind: 'politics', countries: [c.id], secret: !!op.secret }); return ok(); }
     case 'persecute': return persecute(w, c, actor, op);
     case 'set_regime': { if (op.regime) c.regime = String(op.regime).slice(0, 60); if (op.ideology) c.ideology = String(op.ideology).slice(0, 80); if (SUCCESSION.includes(op.succession) && op.succession !== c.succession) { c.succession = op.succession; c.legitBase = (c.legitBase ?? 0) * .7; } if (typeof op.elections === 'boolean') { c.elections = op.elections; if (op.elections && c.nextElection <= w.turn) c.nextElection = w.turn + 8; if (op.elections && !c.parliament) makeParliament(c, 'Parliament'); } if (op.press_freedom !== undefined) c.pressFreedom = eased(c.pressFreedom, num(op.press_freedom, 0, 100), 'Press freedom', []); if (op.axes) for (const a of ['econ', 'auth', 'nation', 'faith']) if (op.axes[a] !== undefined) c.axes[a] = num(op.axes[a], -100, 100, c.axes[a]); c.legitimacy = clamp(c.legitimacy - 4, 0, 100); news(w, `${c.name} changed its regime: ${c.regime}.`, { kind: 'politics', countries: [c.id] }); return ok(); }
@@ -1944,7 +1981,10 @@ function applyOne(w, actor, op) {
       if ((pl.asked ||= {})[ch.id] === w.turn) return fail(`${ch.name} has had your offer this quarter; nothing changes by asking again before the next.`); pl.asked[ch.id] = w.turn;
       if (ch.aiControlled) { ch.inbox.push({ turn: w.turn, from: actor.name, text: `Secret offer: I want you to join the ${pl.kind} plot ${pl.id}. You may join, refuse or inform on it.` }); return { ok: true, msg: 'The offer was delivered; the choice is theirs.' }; } const p = ch.patron === actor.id && w.turn - (ch.soundedAt ?? -99) <= 12 ? 1 : clamp(.25 + ch.ambition / 180 - ch.loyalty / 220 + (w.countries[c.id].tension ?? 0) / 300, .03, .9); if (rand(w) < p) { pl.members.push(ch.id); ch.inbox.push({ turn: w.turn, from: actor.name, text: `You were approached about plot ${pl.id} (${pl.kind}) and joined.` }); return ok(); } if (ch.loyalty > 62) { pl.exposed = true; w.characters[c.leader].inbox.push({ turn: w.turn, from: ch.name, text: `${actor.name} invited me to a ${pl.kind} plot. Plot no ${pl.id}.` }); } return fail('The invitation was refused.'); }
     case 'join_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && x.country === c.id); if (!pl || pl.leader === actor.id || pl.members.includes(actor.id)) return fail('Could not join.'); if (actor.id === c.leader && pl.kind !== 'assassination') return fail('A ruler cannot join a plot against their own government.'); pl.members.push(actor.id); leaveTrace(w, actor, `Joined a plot (${pl.kind}).`); return ok(); }
-    case 'betray_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && x.country === c.id); if (!pl) return fail('No such plot.'); pl.exposed = true; actor.loyalty = clamp(actor.loyalty + 20, 0, 100); w.characters[c.leader].inbox.push({ turn: w.turn, from: actor.name, text: `Plot report ${pl.id}: ${pl.kind}, ringleader ${w.characters[pl.leader].name}.` }); return ok(); }
+    case 'betray_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && x.country === c.id); if (!pl) return fail('No such plot.');
+      // A plot is given away by somebody who is in it or was asked into it, and once.
+      if (pl.leader === actor.id) return fail('It is your own plot: whoever leads it ends it by not going on with it.'); if (!(pl.members || []).includes(actor.id) && !(pl.asked && Object.hasOwn(pl.asked, actor.id))) return fail('You are not in that plot: what you know of it from outside is laid before the government as a denunciation (denounce).'); if ((pl.betrayedBy ||= []).includes(actor.id)) return fail('You have told what you know of it already.'); pl.betrayedBy.push(actor.id);
+      pl.exposed = true; actor.loyalty = clamp(actor.loyalty + 20, 0, 100); w.characters[c.leader].inbox.push({ turn: w.turn, from: actor.name, text: `Plot report ${pl.id}: ${pl.kind}, ringleader ${w.characters[pl.leader].name}.` }); return ok(); }
     case 'execute_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && [x.leader, ...x.members].includes(actor.id)); if (!pl) return fail('No such plot.'); if (actor.id === w.countries[pl.country]?.leader && pl.kind !== 'assassination') return fail('A ruler cannot carry out a plot against their own government.'); return { ok: true, msg: executePlot(w, pl, { fate: op.fate, by: actor.id, acts: { elections: op.elections, parliament: op.parliament, succession: op.succession, regime: op.regime } }) }; }
     case 'fund_plot': { const pl = w.plots.find(x => x.id === op.plot && x.active && x.country === c.id); if (!pl) return fail('No such plot.'); const m = num(op.amount, 0, actor.wealth); actor.wealth -= m; pl.progress = clamp(pl.progress + m * .5, 0, 100); return ok(); }
     case 'bribe': { const ch = w.characters[op.character]; if (!ch?.alive || ch.id === actor.id) return fail('No such target.'); const m = num(op.amount, 0, actor.wealth); if (m <= 0) return fail('No money to give.');
@@ -2200,6 +2240,7 @@ function build(w, c, op, actor) {
   if (!(q.room > .005)) return fail(q.piece ? `${p.name} already has ${kind === 'dam' ? 'a dam' : `as much ${{ railway: 'railway', port: 'harbour', fort: 'fortress', battery: 'coastal battery', trench: 'field works', depot: 'supply depot', shipyard: 'shipyard' }[kind]} as it can hold`}.` : `The ${q.what} at ${p.name} cannot be carried further.`);
   const waste = wasteOf(w, c, p), level = Math.max(c.priceLevel, .01), each = q.price * level * waste;
   // A sum of nothing is no sum: the order then leaves the size of the work to the engineers.
+  for (const k of ['amount', 'pct_gdp']) if (op[k] != null && op[k] !== '' && !(Number.isFinite(Number(op[k])) && Number(op[k]) >= 0)) return fail(`The sum for the work could not be read (${k}: ${String(op[k]).slice(0, 20)}): name it as a number, or leave it out and the engineers build to the ordinary size. Nothing was begun.`);
   const named = op.amount != null ? num(op.amount, 0, 1e9, 0) : op.pct_gdp != null ? Math.max(c.gdp, 1) * num(op.pct_gdp, 0, .5, 0) : 0, purse = named > 0 ? named : null;
   let add = 1, cost = each, sized = 0;
   if (q.piece) { if (purse != null && purse < cost * .97) return fail(`A ${q.what} at ${p.name} costs about ${Math.round(cost)}${kind === 'railway' && ground(p) > 1.3 ? `, the ground being ${p.terrain}` : ''}; the ${Math.round(purse)} allotted would not build it.`); }
@@ -2289,7 +2330,8 @@ function offensive(w, c, op) {
   const foe = w.countries[to.controller];
   if (!atWar(w, c.id, to.controller)) return fail(`${to.name} is held by ${foe?.name ?? 'another state'}, with whom there is no war. An attack on it would be one, and war is declared by whoever governs (declare_war).`);
   if (hasTreaty(w, c.id, to.controller, 'armistice')) return fail('An armistice with them is in force: no attack while it lasts. It would have to be broken first (break_treaty).');
-  const ids = Array.isArray(op.units) ? op.units.map(String) : [], from = Array.isArray(op.from) ? op.from.map(String) : [], named = ids.length > 0;
+  const several = v => (Array.isArray(v) ? v : v != null && v !== '' ? String(v).split(/[\s,;]+|\band\b/) : []).map(x => String(x).trim()).filter(Boolean);
+  const ids = [...new Set([...several(op.units), ...several(op.unit)])], from = several(op.from), named = ids.length > 0;
   const unknown = ids.filter(id => !mine.some(u => u.id === id)); if (unknown.length) return fail(`No such unit of yours: ${unknown.join(', ')}.`);
   // With no units named, the troops meant are those that start from the provinces named, or else every unit already standing beside the objective that is free to move.
   const meant = named ? mine.filter(u => ids.includes(u.id)) : from.length ? mine.filter(u => from.includes(u.province)) : mine.filter(u => to.neighbors.includes(u.province) && u.posture !== 'defensive');

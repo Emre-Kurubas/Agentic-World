@@ -108,6 +108,8 @@ export function demobilize(w, c, how = null, unit = null) {
   // Reservists are sent home from wherever they serve: from the bodies formed of them, and from the regiments they were put into.
   const all = Object.values(w.units).filter(u => u.country === c.id && calledIn(u) > .05), us = unit ? all.filter(u => u.id === unit) : all; if (!us.length) return null;
   const under = sum(us, calledIn), want = how == null ? under : how < 0 ? under * -how : Math.min(how, under), provs = countryProvinces(w, c.id).filter(p => p.owner === c.id), pop = sum(provs, provincePop) || 1;
+  // (An order that sends nobody home is not an order carried out, and is not in the papers.)
+  if (!(want >= .05)) return { ok: false, msg: `No reservists were sent home: the number could not be read or comes to nothing. Say how many thousand (men), what part of them (share, up to 1), or neither for all ${Math.round(under * 10) / 10} thousand who are under arms.` };
   let left = want, men = 0;
   for (const u of us) { if (left <= 1e-9) break; const go = Math.min(calledIn(u), left); if (!u.called) u.calledMen = Math.max(0, (u.calledMen || 0) - go); c.stock.arms = (c.stock.arms || 0) + go * .05 * clamp(u.equip ?? .8, 0, 1); u.men -= go; left -= go; men += go; if (u.men < .05) { (w.gone ||= {})[u.id] = { t: w.turn, how: 'its reservists were sent home' }; delete w.units[u.id]; } }
   goHome(provs, men); c.reserve = (c.reserve || 0) + men;

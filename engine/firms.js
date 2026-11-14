@@ -229,6 +229,7 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
       if (mine && (!DEPOSITS.includes(op.resource) || op.resource === 'gold' || !p.deposits[op.resource]?.known)) { const there = Object.entries(p.deposits || {}).filter(([k, d]) => d?.known && d.amount > 0 && k !== 'gold').map(([k]) => GOOD_LABEL[k] ?? k), what = DEPOSITS.includes(op.resource) && op.resource !== 'gold' ? GOOD_LABEL[op.resource] ?? op.resource : null, else_ = what ? countryProvinces(w, host.id).filter(q => q.deposits?.[op.resource]?.known && q.deposits[op.resource].amount > 0).map(q => q.name).slice(0, 4) : [];
         return fail(`No known deposit: ${what ? `the mining returns show no ${what} at ${p.name}` : `a pit is founded on a deposit, and none was named (resource)`}${there.length ? `; what is known there is ${there.join(', ')}` : what ? ', and nothing else under that ground' : ''}.${what ? ` ${else_.length ? `In ${host.name} it is known at ${else_.join(', ')}.` : `None is known anywhere in ${host.name}.`} Ground nobody has surveyed may hold what the returns do not show: a survey is the government's to order (survey), and a house that wants one asks for it.` : ''}`); }
       if (openCount(w, host.id) >= MAX_PER_COUNTRY) return fail(`The register of ${host.name} holds ${MAX_PER_COUNTRY} houses and is full: a new one can be entered only when one of them is wound up, sold into another or taken over. A works you own already can be extended instead (invest_company), in the same trade and place.`);
+      if (isHead && op.state === true && host.id !== c.id) return fail(`${p.name} is ${host.name}'s: the treasury founds state works on its own soil. A private house can be founded there if that state is open to foreign capital.`);
       const state = isHead && op.state === true, amount = Math.min(num(op.amount, 0, 1e9, 0), state ? Math.max(c.treasury, 0) : actor.wealth);
       if (!(amount >= 1)) { const purse = `${state ? 'the treasury holds' : 'your purse holds'} ${Math.round(Math.max(state ? c.treasury : actor.wealth, 0) * 10) / 10}`; return fail(num(op.amount, 0, 1e9, 0) >= 1 ? `Not enough capital: ${purse}.` : `No capital was named: say how much is put into it (amount). A works is as large as the money put in; ${purse}, and the engineers' price for a works of the ordinary size there is in the survey (building:${p.id}).`); }
       const f = makeFirm(w, host, p, sector, mine ? op.resource : null, state ? STATE : actor.id, 0, String(op.name || '').slice(0, 60) || `${p.name} Company`);
@@ -243,7 +244,7 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
     }
     case 'invest_company': {
       if (!firm || !isOpen(firm)) return fail('No such company.');
-      const state = firm.owner === STATE && isHead;
+      const state = firm.owner === STATE && isHead && firm.country === c.id;
       if (firm.owner !== actor.id && !state) return fail('This company is not yours.');
       // A company can build out of what it has in its own till, as well as out of its owner's purse or the treasury.
       if (op.from_cash === true) {
@@ -269,6 +270,7 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
     case 'sell_company': {
       if (!firm || !isOpen(firm) || firm.owner !== actor.id) return fail('This company is not yours.');
       if (op.withdraw) { firm.offer = null; return { ok: true, msg: `${firm.name} is no longer for sale.` }; }
+      if (op.buyer === actor.id) return fail('The house is yours already: it cannot be sold to its own owner.');
       const price = num(op.price, 0, 1e9, firmValue(w, firm)), home = w.countries[firm.country], worth = Math.round(firmValue(w, firm));
       // To the state: the offer lies before whoever governs the country the works stands in, who takes it for the treasury or lets it lie.
       const toState = op.buyer === 'state' || op.state === true || (op.buyer != null && w.countries[op.buyer]), state = toState ? (w.countries[op.buyer] ?? home) : null;
@@ -291,15 +293,17 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
         firm.owner = STATE; firm.offer = null; c.ownership = clamp(c.ownership + .02, 0, 1); news(w, `${c.name}: the state bought ${firm.name} from ${seller?.name ?? 'its owners'}.`, { kind: 'economy', countries: [c.id] });
         return { ok: true, msg: `${firm.name} is the state's, bought for ${Math.round(price)}. It is run and drawn on like any state works.` };
       }
+      if (firm.owner === actor.id) return fail('The house is yours already.');
       const agreed = firm.offer?.buyer === actor.id, forSale = !!firm.offer?.open && firm.owner !== actor.id, open = firm.owner == null;
       if (!agreed && !open && !forSale) return fail('No sale offer.');
       const price = agreed || forSale ? firm.offer.price : firmValue(w, firm);
       if (actor.wealth < price) return fail('Not enough wealth.');
       const seller = w.characters[firm.owner], home = w.countries[firm.country]; actor.wealth -= price; const left = firm.parts && home ? buyOutParts(w, home, firm, price) : price;
       if (firm.owner === STATE && home) { home.treasury += left * (home.rate || 1); home.ownership = clamp(home.ownership - .02, 0, 1); tell(w, w.characters[home.leader], actor.name, `${firm.name} was bought from the state for ${Math.round(price)}.`); }
+      else if (!seller && home) { home.treasury += left * (home.rate || 1); tell(w, w.characters[home.leader], actor.name, `${firm.name}, which had no owner, was bought for ${Math.round(price)}; the price is paid into the treasury.`); }
       else if (seller) { seller.wealth += left; tell(w, seller, actor.name, `${firm.name} was sold; you received ${Math.round(left)}${left < price - .05 ? ` of the ${Math.round(price)} paid, the rest going to the parts that stood in other names` : ''}.`); }
       firm.owner = actor.id; firm.offer = null; leaveTrace(w, actor, `Bought ${firm.name}.`);
-      return ok();
+      return { ok: true, msg: `${firm.name} (${firm.id}) is yours, bought for ${Math.round(price)}${seller ? ` of ${seller.name}` : ''}. It is run, drawn on and built up like any house of yours (my_companies).` };
     }
     case 'nationalize_company': {
       if (!isHead) return fail('Only the leader can seize a company.');

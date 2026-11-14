@@ -79,7 +79,7 @@ const menOf = (w, c) => sum(Object.values(w.units).filter(u => u.country === c.i
 const PLANKS = {
   out: { words: L => `the ${L.goat} out of the frontier districts`, done: (w, c, L, k) => goatCount(w, c, L.goat) <= k.n0 * .7 || burdenOf(c, { eth: L.goat, rel: L.goatRel }) >= .3, how: 'resettle, set_status' },
   back: { words: (L, k, w) => `${w.provinces[k.province]?.name ?? 'the lost province'} back`, done: (w, c, L, k) => w.provinces[k.province]?.owner === c.id, how: 'by treaty, by ultimatum or by war' },
-  army: { words: () => 'the army made half again as large', done: (w, c, L, k) => menOf(w, c) >= k.n0 * 1.4, how: 'recruit, set_service' },
+  army: { words: () => 'the army made half again as large', done: (w, c, L, k) => k.n0 > 0 && menOf(w, c) >= k.n0 * 1.4, how: 'recruit, set_service' },
   tongue: { words: () => 'one tongue in school and office', done: (w, c) => c.languagePolicy === 'assimilate', how: 'set_culture_policy' },
   works: { words: () => 'the mines and mills in the hands of the state', done: (w, c, L, k) => (c.ownership ?? 0) >= Math.min(.9, k.n0 + .15), how: 'nationalize' },
   wage: { words: () => 'a wage floor by law', done: (w, c, L, k) => (c.labourLaw?.wage ?? 0) >= Math.max(1, k.n0 + .05), how: 'set_labour_law' },
@@ -154,7 +154,7 @@ function march(w, c, L) {
   const adopter = w.characters[L.adopted], heir = adopter?.alive && adopter.status === 'free' && adopter.country === c.id && adopter.id !== c.leader ? adopter : chief;
   if (rifles * 4 >= crowd || !heir) {
     const dead = Math.max(3, Math.round(crowd * (8 + rand(w) * 22))), taken = rand(w) < .5;
-    L.strength *= .45; c.blood = (c.blood || 0) + Math.min(6, dead / 60); frighten(c, DREAD.terror + Math.min(10, dead / 40)); if (cap) { cap.unrest = clamp(cap.unrest + 6, 0, 100); cap.scar = Math.max(cap.scar || 0, 2); }
+    L.strength *= .45; c.blood = (c.blood || 0) + Math.min(6, dead / 60); frighten(c, DREAD.terror + Math.min(10, dead / 40)); if (cap) { cap.unrest = clamp(cap.unrest + 6, 0, 100); cap.scar = { by: c.id, turn: w.turn, weight: clamp((cap.scar?.by === c.id ? cap.scar.weight : 0) + .15, 0, 1) }; }
     c.legitimacy = clamp(c.legitimacy - 2 * (.4 + c.pressFreedom / 100), 0, 100); if (chief && taken) sideline(w, chief, 'imprisoned');
     news(w, `${c.name}: the ${L.name} marched on ${cap?.name ?? 'the capital'} and was broken by the garrison: about ${dead} dead.${chief ? (taken ? ` ${chief.name} was taken.` : ` ${chief.name} got away.`) : ''}`, { kind: 'plot', countries: [c.id], province: c.capital });
     const told = `The ${L.name} came into ${cap?.name ?? 'the capital'}, ${thousand(crowd)} of them, and the garrison fired: about ${dead} dead in the streets, and the rest scattered.${chief ? (taken ? ` ${chief.name} is in the cells; ${he(chief)} can be charged (prosecute) or let go.` : ` ${chief.name} was not found.`) : ''} The league is broken for now, not ended: what bred it stands. The dead are remembered, and the country is the more afraid of its government for it.`;
@@ -185,7 +185,9 @@ export function leagueStep(w) {
         for (const ch of seated(w, c)) say(w, ch, ch.id === c.leader ? 'Police' : 'The town', `The ${L.name} has a new chief: ${n.name} (${n.id}), in the place of ${was?.name ?? 'the man it lost'}. ${K.word[0].toUpperCase() + K.word.slice(1)} does not end with one man.`); } }
     else delete L.headless;
     // Its strength settles where the grievance, the money behind it and the law's patience put it.
-    const ruled = L.adopted === c.leader, patron = w.characters[L.adopted], party = patron ? leadsParties(w, c, patron)[0] : null;
+    // (Whoever took it up and is now in a cell or abroad has it no longer: it is free to give its word to another.)
+    if (L.adopted && w.characters[L.adopted]?.status !== 'free') { delete L.adopted; delete L.adoptedAt; delete L.kept0; }
+    const ruled = L.adopted === c.leader, patron = w.characters[L.adopted], party = patron ? leadsParties(w, c, patron).find(p => !p.banned) ?? null : null;
     const open = (c.noMeetings ? .7 : 1) * cowed(c) * (L.banned ? clamp(1 - (c.police ?? 30) / 90, .2, .7) : 1) * (quiet(w, L) ? .6 : 1);
     const level = clamp((want[L.kind] * 1.1 + L.funds + (ruled ? 14 : 0) + (party ? (party.organization || 0) * .1 : 0)) * open, 0, 100);
     L.strength = clamp(L.strength + (level - L.strength) * .2, 0, 100); L.funds *= .7; L.seats = strongholds(w, c, L);
@@ -231,7 +233,8 @@ function breakWith(w, c, L, patron, cheated) {
 }
 
 export function leagueOp(w, actor, c, op, h) {
-  const { fail, num } = h, home = op.target && w.countries[op.target]?.alive ? w.countries[op.target] : c, L = leagueOf(home), ruler = governs(w, c, actor);
+  const { fail, num } = h; if (op.target != null && op.target !== '' && !w.countries[op.target]?.alive) return fail(`No such state: ${String(op.target).slice(0, 40)}.`);
+  const home = op.target && w.countries[op.target]?.alive ? w.countries[op.target] : c, L = leagueOf(home), ruler = governs(w, c, actor);
   if (!L) return fail(home.id === c.id ? 'There is no league in the country. One forms where a country is bitter beyond what it is used to; nobody founds it by order.' : `There is no league in ${home.name}.`);
   const chief = chiefOf(w, L), s = L.strength;
   switch (op.op) {
@@ -253,7 +256,7 @@ export function leagueOp(w, actor, c, op, h) {
       if (!chief || chief.status !== 'free') return fail(`The ${L.name} has no chief at liberty to give its word.`);
       if (L.banned && !ruler) return fail(`The ${L.name} is forbidden: to take it up now is to stand outside the law with it. (Whoever governs can lift the ban: ban_league with lift.)`);
       if (L.adopted === actor.id) return fail(`The ${L.name} is yours already. It counts what it was promised: ${kept(w, c, L)} of ${L.planks.length} done.`);
-      const other = w.characters[L.adopted]; if (other?.alive && other.country === c.id) return fail(`The ${L.name} has given its word to ${other.name}, who took up its programme in ${quarterLabel(L.adoptedAt ?? w.turn)}. It does not serve two.`);
+      const other = w.characters[L.adopted]; if (other?.alive && other.country === c.id && other.status === 'free') return fail(`The ${L.name} has given its word to ${other.name}, who took up its programme in ${quarterLabel(L.adoptedAt ?? w.turn)}. It does not serve two.`);
       if (ruler && L.banned) { delete L.banned; }
       L.adopted = actor.id; L.adoptedAt = w.turn; L.kept0 = kept(w, c, L); delete L.march;
       news(w, `${c.name}: ${actor.name} has taken up the programme of the ${L.name}: ${list(plankWords(w, L))}.`, { kind: 'politics', countries: [c.id] });
@@ -304,10 +307,11 @@ export function leagueOp(w, actor, c, op, h) {
     // Forbidden. What the police can reach is broken up; the hard men go where the police do not see.
     case 'ban_league': {
       if (home.id !== c.id || !ruler) return fail('A league is forbidden by whoever governs its country.');
-      if (op.lift) { if (!L.banned) return fail(`The ${L.name} is not forbidden.`); delete L.banned; news(w, `${c.name}: the ban on the ${L.name} is lifted.`, { kind: 'politics', countries: [c.id] }); return { ok: true, msg: `The ${L.name} may march again, and will: ${thousand(membersOf(w, c, L))} today.` }; }
+      if (op.lift) { if (!L.banned) return fail(`The ${L.name} is not forbidden.`); if (L.bannedAt === w.turn) return fail(`The ${L.name} was forbidden this quarter; the ban can be lifted in the next.`); delete L.banned; L.liftedAt = w.turn; news(w, `${c.name}: the ban on the ${L.name} is lifted.`, { kind: 'politics', countries: [c.id] }); return { ok: true, msg: `The ${L.name} may march again, and will: ${thousand(membersOf(w, c, L))} today.` }; }
+      if (L.bannedAt === w.turn || L.liftedAt === w.turn) return fail(`The decree on the ${L.name} was changed this quarter already; it can be changed again in the next.`);
       if (L.banned) return fail(`The ${L.name} is forbidden already (since ${quarterLabel(L.banned)}); what is left of it meets where the police do not see.`);
       const grip = clamp((c.police ?? 30) / 60, .25, 1.1), fight = s >= 45 && grip < .7, dead = fight ? Math.round(4 + rand(w) * s * .5) : 0, cut = clamp(grip * .65, .15, .7), under = s * cut * .5;
-      L.banned = w.turn; L.strength = s * (1 - cut); delete L.march; if (L.adopted) { const was = w.characters[L.adopted]; delete L.adopted; delete L.adoptedAt; say(w, was, 'The town', `The government has forbidden the ${L.name}, which had given you its men. They are an unlawful body now.`); }
+      L.banned = w.turn; L.bannedAt = w.turn; L.strength = s * (1 - cut); delete L.march; if (L.adopted) { const was = w.characters[L.adopted]; delete L.adopted; delete L.adoptedAt; say(w, was, 'The town', `The government has forbidden the ${L.name}, which had given you its men. They are an unlawful body now.`); }
       c.cellFunds = (c.cellFunds || 0) + under; frighten(c, 2 + s * .05 + dead * .2); if (dead) { c.blood = (c.blood || 0) + dead * .08; const cap = w.provinces[c.capital]; if (cap) cap.unrest = clamp(cap.unrest + 8, 0, 100); }
       news(w, `${c.name}: the government has forbidden the ${L.name}; its halls are shut and its papers seized${dead ? `. There was fighting where its men would not disperse: ${dead} dead` : ''}.`, { kind: 'politics', countries: [c.id] });
       if (chief) say(w, chief, 'Police', `The ${L.name} is forbidden.`);

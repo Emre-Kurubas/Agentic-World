@@ -87,7 +87,7 @@ export function stepWorld(w) {
     const provs = countryProvinces(w, c.id);
     c.history.push({
       fuel: +((c.fuelRatio ?? 1) * 100).toFixed(0), t: w.turn, gdp: Math.round(c.realGdp), infl: +(c.inflation * 100).toFixed(1), unemp: +(c.unemployment * 100).toFixed(1), debt: +((c.debt / Math.max(c.gdp * 4, 1)) * 100).toFixed(0),
-      pop: Math.round(sum(provs, provincePop)), legit: Math.round(c.legitimacy), unrest: Math.round(c.unrest), men: Math.round(sum(Object.values(w.units).filter(u => u.country === c.id), u => u.men)), food: +(c.foodRatio * 100).toFixed(0), treasury: Math.round(c.treasury), bal: Math.round(c.lastBalance ?? 0), reserves: Math.round(c.reserves), fx: c.fx ?? 100, input: +((c.inputRatio ?? 1) * 100).toFixed(0)
+      pop: Math.round(sum(provs, provincePop)), legit: Math.round(c.legitimacy), unrest: Math.round(c.unrest ?? 0), men: Math.round(sum(Object.values(w.units).filter(u => u.country === c.id), u => u.men)), food: +(c.foodRatio * 100).toFixed(0), treasury: Math.round(c.treasury), bal: Math.round(c.lastBalance ?? 0), reserves: Math.round(c.reserves), fx: c.fx ?? 100, input: +((c.inputRatio ?? 1) * 100).toFixed(0)
     });
     if (c.history.length > 240) c.history.shift();
   }

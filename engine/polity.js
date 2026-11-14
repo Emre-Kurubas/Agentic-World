@@ -300,9 +300,13 @@ export function billStep(w, apply) {
 const priceOf = c => { const p = c.price ?? c.unit_price, world = typeof p === 'string' && /world|market|day|exchange/i.test(p), off = num(c.off ?? c.discount, 0, .9, 0);
   return world ? { price: 'world', ...(off > 0 ? { off } : {}) } : Number(p) > 0 ? { price: num(p, 0, 1e5, 0) } : {}; };
 export const unitPrice = (w, cl) => cl.price === 'world' ? (w.globalPrice?.[cl.good] ?? 0) * (1 - (cl.off || 0)) : Number(cl.price) > 0 ? Number(cl.price) : 0;
-export function normalizeClauses(w, raw, parties) {
+// (dropped, where the caller gives a list: what could not be entered and why, for whoever wrote the paper. Until world 25 such a clause
+// vanished without a word, and a limit on troops with no number became a ban on all of them.)
+const WHY_NOT = { delivery: 'a delivery names a party that delivers and a good the trade knows', loan: 'a loan names two parties and a sum', assign: 'a claim made over names two parties and the state that owes', renounce: 'a renunciation names a party and provinces', troop_limit: 'a limit on troops names a party and a number of men', demilitarized_zone: 'a zone without troops names provinces', observers: 'observers are sent to named provinces', reschedule: 'a debt put on new terms names debtor, creditor and the rate of a quarter', tribute: 'a tribute names the party that pays' };
+export function normalizeClauses(w, raw, parties, dropped = null) {
   const out = [], isParty = x => parties.includes(x), turns = v => Math.round(num(v, 1, 80, 12));
   for (const c of Array.isArray(raw) ? raw.slice(0, 8) : []) {
+    const n0 = out.length;
     if (c?.type === 'tribute' && isParty(c.payer)) out.push({ type: 'tribute', payer: c.payer, ...(isParty(c.to) && c.to !== c.payer ? { to: c.to } : {}), pct_gdp: num(c.pct_gdp, 0, .2, .02), turns: turns(c.turns) });
     else if (c?.type === 'delivery' && isParty(c.from) && GOODS.includes(c.good)) out.push({ type: 'delivery', from: c.from, ...(isParty(c.to) && c.to !== c.from ? { to: c.to } : {}), good: c.good, amount: num(c.amount, 0, 1e5, 0), turns: turns(c.turns), ...(c.credit === true ? { credit: true } : {}), ...priceOf(c) });
     // Gold lent by one government to another under the paper: it leaves the lender's reserve the day the treaty comes into force, and is owed.
@@ -314,7 +318,7 @@ export function normalizeClauses(w, raw, parties) {
     else if (c?.type === 'tariff') out.push({ type: 'tariff', rate: num(c.rate, 0, 1, 0) });
     else if (c?.type === 'demilitarized_zone' && Array.isArray(c.provinces)) out.push({ type: 'demilitarized_zone', country: isParty(c.country) ? c.country : null, provinces: c.provinces.filter(p => w.provinces[p]).slice(0, 12) });
     // A limit on a state's troops: on all of them, or on those it keeps in named provinces (a frontier thinned out on both sides).
-    else if (c?.type === 'troop_limit' && isParty(c.country)) { const ps = (Array.isArray(c.provinces) ? c.provinces : []).filter(p => typeof p === 'string' && Object.hasOwn(w.provinces, p)).slice(0, 12); out.push({ type: 'troop_limit', country: c.country, men: num(c.men, 0, 1e6, 0), ...(ps.length ? { provinces: ps } : {}), ...(ps.length > 1 && c.total === true ? { total: true } : {}) }); }
+    else if (c?.type === 'troop_limit' && isParty(c.country) && c.men != null && c.men !== '' && Number.isFinite(Number(c.men)) && Number(c.men) >= 0) { const ps = (Array.isArray(c.provinces) ? c.provinces : []).filter(p => typeof p === 'string' && Object.hasOwn(w.provinces, p)).slice(0, 12); out.push({ type: 'troop_limit', country: c.country, men: num(c.men, 0, 1e6, 0), ...(ps.length ? { provinces: ps } : {}), ...(ps.length > 1 && c.total === true ? { total: true } : {}) }); }
     // Officers of each party count the other's troops in named provinces: what stands there is known to both, exactly.
     else if (c?.type === 'observers' && Array.isArray(c.provinces)) { const ps = c.provinces.filter(p => typeof p === 'string' && Object.hasOwn(w.provinces, p)).slice(0, 12); if (ps.length) out.push({ type: 'observers', provinces: ps }); }
     // An alliance may be against named states only: "if Kamestan, alone or with its allies, attacks first". Then nothing is owed in any
@@ -323,6 +327,7 @@ export function normalizeClauses(w, raw, parties) {
     // What one party owes the other in gold already, put on new terms: the interest of a quarter, as a fraction. (World 19: an alliance was
     // bought with "Kamestan will reschedule Tirara's 1667 gold debt at lower interest", and nothing could carry it.)
     else if (c?.type === 'reschedule' && isParty(c.debtor) && isParty(c.creditor) && c.debtor !== c.creditor && c.rate != null) out.push({ type: 'reschedule', debtor: c.debtor, creditor: c.creditor, rate: num(c.rate, 0, .15, .012) });
+    if (out.length === n0 && dropped) dropped.push(`${typeof c?.type === 'string' ? c.type.replace(/_/g, ' ') : 'a clause of no kind'} (${WHY_NOT[c?.type] ?? 'not a kind of clause the office knows'})`);
   }
   return out;
 }

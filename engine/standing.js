@@ -138,7 +138,7 @@ function normWhen(w, c, raw) {
   // for want of a war, and he found out a quarter later.)
   if (k.ultimatum) { const to = st(typeof k.ultimatum === 'object' ? k.ultimatum.target ?? k.ultimatum.to : k.ultimatum), t = w.treaties.filter(x => x.pending && x.ultimatum && x.proposer === c.id && (!to || x.parties.includes(to))).at(-1);
     if (!t) return { no: `No ultimatum of ours${to ? ` to ${nameOf(w, to)}` : ''} is running: the ultimatum is sent first, and the order that waits on it after.` };
-    const other = t.parties.find(id => id !== c.id); return { when: { treaty: t.id, state: 'ended' }, words: `the day ${nameOf(w, other)} refuses our ultimatum (${t.id}) or lets it run out` }; }
+    const other = t.parties.find(id => id !== c.id); return { when: { treaty: t.id, state: 'ended', unsigned: true }, words: `the day ${nameOf(w, other)} refuses our ultimatum (${t.id}) or lets it run out` }; }
   if (k.treaty) { const id = String(k.treaty.id ?? k.treaty), t = w.treaties.find(x => x.id === id), ended = (k.treaty.state ?? k.state) === 'ended'; if (!t) return { no: `No such paper: ${id}.` }; return { when: { treaty: id, state: ended ? 'ended' : 'signed' }, words: `the day ${id} ${ended ? 'is no longer in force' : 'comes into force'}` }; }
   if (k.bill) { const id = String(k.bill.id ?? k.bill), b = aliveCountries(w).flatMap(o => o.bills || []).find(x => x.id === id), state = ['rejected', 'withdrawn'].includes(k.bill.state ?? k.state) ? (k.bill.state ?? k.state) : 'passed'; if (!b) return { no: `No such bill: ${id}.` }; return { when: { bill: id, state }, words: `the day bill ${id} is ${state}` }; }
   // "Once peace is signed, the reservists go home and the squadrons come in": the day our war with a state is over, whatever paper ends it.
@@ -158,7 +158,7 @@ const holds = (w, so) => { const c = w.countries[so.country], k = so.when, fresh
   if (k.mobilised) { const who = k.mobilised === true ? [...new Set(Object.values(w.provinces).filter(p => p.controller === c.id).flatMap(p => p.neighbors.map(n => w.provinces[n].controller)))].filter(id => id && id !== c.id) : [k.mobilised]; return who.some(id => w.countries[id]?.alive && (w.countries[id].calledUpAt ?? -1) >= so.since); }
   if (k.war_on) return fresh.some(x => x.b.includes(k.war_on) && (!k.by || x.a.includes(k.by)));
   if (k.troops) { const men = sum(Object.values(w.units).filter(u => u.country === k.troops.country && u.province === k.troops.province), u => u.men); return k.troops.above != null ? men >= k.troops.above : men <= k.troops.below; }
-  if (k.treaty) { const t = w.treaties.find(x => x.id === k.treaty); return k.state === 'ended' ? !!t && !t.active && !t.pending && t.withdrawn == null : !!t?.active; }
+  if (k.treaty) { const t = w.treaties.find(x => x.id === k.treaty); return k.state === 'ended' ? !!t && !t.active && !t.pending && t.withdrawn == null && !(k.unsigned && t.since != null) : !!t?.active; }
   if (k.bill) { const b = aliveCountries(w).flatMap(o => [...(o.bills || []), ...(o.laws || [])]).find(x => x.id === k.bill); return !!b && b.status === k.state; }
   if (k.peace) return !atWar(w, c.id, k.peace);
   if (k.lost) return w.provinces[k.lost]?.controller !== c.id;
