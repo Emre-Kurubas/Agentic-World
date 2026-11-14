@@ -6066,5 +6066,25 @@ chain('The states are ranked and everybody sees the table: it is printed when a 
     const two = countryProvinces(v, cv.id).filter(q => q.id !== p.id).slice(0, 2), r2 = applyOp(v, O2, { op: 'found_company', sector: 'goods', amount: 10, provinces: two.map(q => q.id) });
     assert.ok(r2.ok && two.some(q => q.id === v.firms[r2.firm].province), 'and among the places the founder names, one of those'); }
 });
+chain('World 25, third review: an attack ordered on the besiegers of a place of our own is its relief; and a march ordered again to the place a unit is already marching to takes nothing from its orders', () => {
+  // Two faults of the office lost a fortress: a corps on its way in was halted a march short, and the relief ordered as an "attack" was refused.
+  const w = inherited(2696855, 8), cs = aliveCountries(w), a = cs[0], R = ld(w, a), G = w.characters[a.general], home = countryProvinces(w, a.id);
+  const b = cs.find(o => o.id !== a.id && home.some(p => p.neighbors.some(n => w.provinces[n].controller === o.id))), fort = home.find(p => p.neighbors.some(n => w.provinces[n].controller === b.id) && p.neighbors.some(n => w.provinces[n].controller === a.id && n !== a.capital)) ?? home.find(p => p.neighbors.some(n => w.provinces[n].controller === a.id));
+  const beside = w.provinces[fort.neighbors.find(n => w.provinces[n].controller === a.id)], far = home.find(p => p.id !== fort.id && p.id !== beside.id && !fort.neighbors.includes(p.id)) ?? beside;
+  w.wars = []; applyOp(w, ld(w, b), { op: 'declare_war', target: a.id, _law: true }); fort.fort = Math.max(fort.fort || 0, 1);
+  const mine = Object.values(w.units).filter(u => u.country === a.id).sort((x, y) => y.men - x.men), inside = mine[0], relief = mine[1], third = mine[2], foe = Object.values(w.units).filter(u => u.country === b.id).sort((x, y) => y.men - x.men)[0];
+  inside.province = fort.id; inside.shutIn = fort.id; inside.target = null; relief.province = beside.id; relief.target = null; delete relief.posture; foe.province = fort.id; foe.target = null; foe.attack = { to: fort.id, manner: 'siege', since: w.turn, start: w.turn }; fort.siege = { by: b.id, turns: 1, shut: true, since: w.turn };
+  const r = applyOp(w, R, { op: 'offensive', to: fort.id, units: [relief.id], manner: 'assault' });
+  assert.ok(r.ok && relief.target === fort.id && new RegExp(`^It is a relief: ${fort.name} is ours, and the enemy lies before its fortress with about \\d+ thousand men by the garrison's count\\. ${relief.id} \\([^)]*\\) march into ${fort.name}\\. Troops that come into a besieged place from outside fight the besiegers in the open`).test(r.msg), `an attack ordered on the enemy before a place of our own is carried out as its relief: ${r.msg.slice(0, 240)}`);
+  const no = applyOp(w, R, { op: 'offensive', to: beside.id, manner: 'assault' }); assert.ok(!no.ok && /is in our own hands: troops are sent there with move/.test(no.msg), 'a place of our own with no enemy before it is not attacked');
+  const none = applyOp(w, G, { op: 'offensive', to: fort.id, units: [inside.id] }); assert.ok(!none.ok && /stand inside the place already/.test(none.msg), `the garrison is not its own relief: ${none.msg}`);
+  // The march that is ordered again.
+  third.province = far.id; third.target = null; delete third.posture; const dest = beside.id === far.id ? fort.id : beside.id;
+  applyOp(w, R, { op: 'move', unit: third.id, to: dest }); applyOp(w, R, { op: 'set_posture', posture: 'defensive', unit: third.id });
+  assert.ok(third.target === dest && third.digAt === dest, 'a corps is marched to a place with orders to dig in there');
+  const again = applyOp(w, G, { op: 'move_army', to: dest, share: 1 }); assert.ok(again.ok && third.target === dest && third.digAt === dest, 'a general order to the army for the same place leaves its orders as they were');
+  w.turn += 1; const said = applyOp(w, R, { op: 'set_posture', posture: 'defensive', unit: third.id });
+  assert.ok(third.target === dest && third.digAt === dest && /still on the march with orders to dig in where it ends/.test(said.msg), `and next quarter "it continues there and stands on the defensive" does not halt it a march short: ${said.msg.slice(-230)}`);
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

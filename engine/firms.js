@@ -21,11 +21,14 @@ function capacity(w, f) { const p = w.provinces[f.province]; return f.sector ===
 // A step of capacity costs what it takes to equip the working people of its province. Second-hand, works fetch a fifth of that (a pit a tenth).
 // Where the engineers would put a works nobody has given a place: a pit on the richest known deposit of that thing nobody works yet; a
 // mill where the most hands are and the fewest works of its kind stand already, a harbour or a railway counting for a fifth more each.
-function siteFor(w, c, op, among) {
+export function siteFor(w, c, op, among = [], extend = false) {
   const pool = (among.length ? among : countryProvinces(w, c.id)).filter(p => p.controller === c.id && p.owner === c.id);
   if (op.sector === 'mine') { const worked = new Set(Object.values(w.firms || {}).filter(f => f.status === 'open' && f.sector === 'mine' && f.resource === op.resource).map(f => f.province)); const best = pool.filter(p => p.deposits?.[op.resource]?.known && p.deposits[op.resource].amount > 0 && !worked.has(p.id) && (p.deposits[op.resource].mine ?? 0) < MAX_MINE).sort((a, b) => b.deposits[op.resource].amount - a.deposits[op.resource].amount)[0]; return best ? { id: best.id, why: 'the richest known deposit of it that nobody works' } : null; }
   if (!(typeof op.sector === 'string' && Object.hasOwn(PLANTS, op.sector))) return null;
   const score = p => (p.pops?.workers?.n ?? 0) / (1 + (p.plants?.[op.sector] ?? 0) * 2) * (1 + (p.port ? .2 : 0) + (p.rail ? .2 : 0));
+  // (The state "extending its works" builds where its works of that kind stand already, if they stand anywhere.)
+  const there = extend ? pool.filter(p => (p.plants?.[op.sector] ?? 0) > .05 && p.plants[op.sector] < MAX_PLANT).sort((a, b) => b.plants[op.sector] - a.plants[op.sector])[0] : null;
+  if (there) return { id: there.id, why: 'the largest works of the kind in the country stand there, and can be carried further' };
   const best = pool.filter(p => (p.plants?.[op.sector] ?? 0) < MAX_PLANT).sort((a, b) => score(b) - score(a))[0];
   return best ? { id: best.id, why: `hands to be had${best.port ? ', a harbour' : ''}${best.rail ? ', the railway' : ''}, and ${(best.plants?.[op.sector] ?? 0) > .05 ? 'few works of the kind there yet' : 'no works of the kind there yet'}` } : null;
 }

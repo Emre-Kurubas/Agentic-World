@@ -6,7 +6,7 @@ import { makeFleet, TECHS, PLANTS, DEPOSITS, GOOD_LABEL, ROLES, spawnCharacter, 
 import { hasTech, sealOf, importOrder, SPREAD } from './economy.js';
 import { frighten, fearOf, fearWord, informers, DREAD } from './fear.js';
 import { FX_REGIMES, foreignRate, externalDebt, creditLeft, declareDefault, treasuryPays, vaultOf, vaultBase, sovereignRate } from './money.js';
-import { firmOp, seizeFirm, STATE } from './firms.js';
+import { firmOp, seizeFirm, STATE, siteFor } from './firms.js';
 import { queueProject, durationOf, WORKS, quote, ground, projectYield, wasteOf, projectLabel } from './projects.js';
 import { LANGUAGE_POLICY, FAITH_POLICY, groupsOf, removePeople, settlePeople, PEOPLE_OPS, peopleOp, hits, armedOf, privilege } from './culture.js';
 import { incapacitated } from './health.js';
@@ -2224,6 +2224,13 @@ function buildLine(w, c, op, actor) {
 }
 function build(w, c, op, actor) {
   if (op.kind === 'railway' && Array.isArray(op.line) && op.line.length === 2) return buildLine(w, c, op, actor);
+  // A works or a pit ordered with no place named: the engineers choose, as they do for a private house, and say where and why.
+  // (World 25: "commission an extension of the state arms works, within 200" and "a state steel works" both waited on a province.)
+  if (!w.provinces[op.province] && (has(PLANTS, op.kind) || op.kind === 'mine') && (!actor || governs(w, c, actor) || delegated(c, actor, 'build'))) {
+    const among = (Array.isArray(op.provinces) ? op.provinces : []).map(id => w.provinces[id]).filter(Boolean), site = siteFor(w, c, { sector: op.kind, resource: op.resource }, among, true);
+    if (!site) return fail(op.kind === 'mine' ? `No place was named, and the mining returns show no ${GOOD_LABEL[op.resource] ?? op.resource ?? 'deposit'} in the country that is not worked already: a pit is sunk on a known deposit (province, resource).` : 'No place was named, and the engineers found none in the country with room for such a works: name a province.');
+    const r = build(w, c, { ...op, province: site.id }, actor); return r.ok ? { ...r, msg: `No place was named, so the engineers chose ${w.provinces[site.id].name} (${site.id}): ${site.why}. ${r.msg}` } : r;
+  }
   const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('That province is not under your control.');
   const kind = op.kind; if (!has(PLANTS, kind) && !WORKS.includes(kind)) return fail('Unknown building type.');
   // The chief of staff may have his own troops dig in where they stand; everything else that is built is the government's to order.
@@ -2298,7 +2305,11 @@ function applyOrder(w, c, u, to, named = true) {
   // A march order and an order to hold the ground cannot both stand. The one given to the unit by name, and last, is the one that does.
   let lifted = ''; if (u.posture === 'defensive') { delete u.posture; lifted = ` ${u.id} had been standing on the defensive: this order lifts that one, and it leaves its works.`; }
   const off = u.attack ? ` It leaves the offensive against ${w.provinces[u.attack.to]?.name ?? 'its objective'} it had been ordered into.` : ''; delete u.attack;
-  u.target = to; u.marchSince = w.turn; delete u.digAt; delete u.joinTo; const q = marchQuarters(w, u, to), still = postureWords(u);
+  // (World 25: a standing order "if we are attacked the army goes to Terento" came to its day and re-ordered a corps already marching there
+  // with orders to dig in on arrival; the order to dig in was dropped, and next quarter "it continues to Terento and stands on the defensive"
+  // halted it one march short of the fortress, which was shut in that quarter without it.)
+  const same = u.target === to;
+  u.target = to; u.marchSince = w.turn; if (!same) delete u.digAt; delete u.joinTo; const q = marchQuarters(w, u, to), still = postureWords(u);
   const road = roadTo(w, u.province, to, c.id) || [], foes = road.filter(id => { const o = w.provinces[id].controller; return o !== c.id && atWar(w, c.id, o); }), through = foes.filter(id => id !== to).map(id => w.provinces[id].name);
   const fight = foes.includes(to) ? ` ${w.provinces[to].name} is held by the enemy: the unit attacks it as it arrives, by itself${through.length ? `, after fighting its way through ${through.join(', ')}` : ''}. (An offensive order would have it form up, wait for the others and go in to a plan.)` : through.length ? ` No road leads there over ground we hold or may cross: the way runs through ${through.join(', ')}, which the enemy holds, and the unit will have to fight its way through.` : '';
   return { ok: true, ...(foes.includes(to) ? { takes: to } : {}), msg: `${u.id} marches for ${w.provinces[to].name}${q ? `: about ${q} quarter${q > 1 ? 's' : ''} as the ground, the roads and the seasons stand (the army report shows how far it got each quarter and what held it)` : ''}.${fight}${lifted}${off}${still ? ` Its standing orders go with it: ${still}.` : ''}` };
@@ -2326,7 +2337,23 @@ function offensive(w, c, op) {
   const to = w.provinces[op.to]; if (!to) return fail('Name the province to be attacked (to).');
   const mine = Object.values(w.units).filter(u => u.country === c.id), on = mine.filter(u => u.attack?.to === to.id);
   if (op.cancel === true) { if (!on.length) return fail(`No offensive against ${to.name} is in hand.`); for (const u of on) { delete u.attack; if (u.province !== to.id) u.target = null; } return { ok: true, msg: `The offensive against ${to.name} is called off: ${on.map(u => u.id).join(', ')} stand where they are.` }; }
-  if (to.controller === c.id) return fail(`${to.name} is in our own hands${to.siege && to.siege.by !== c.id ? ': the enemy stands before its fortress, which has not fallen. Troops sent there (move) fight their way in to relieve it' : ': troops are sent there with move'}.`);
+  // A place of our own with the enemy before its fortress: the attack that is ordered is its relief. The troops march in, and troops that come
+  // into a besieged place from outside fight the besiegers in the open (military.js).
+  // (World 25: "B9, B10 and B772 march into Terento together to attack and defeat the besieging army in the open" came as an offensive and was
+  // answered "Terento is in our own hands... troops sent there (move) fight their way in"; a hundred and twenty thousand men stood a march away
+  // with grounded rifles the quarter the place was stormed. Its ruler: "it was lost by a clerk's sentence".)
+  if (to.controller === c.id) {
+    const foes = Object.values(w.units).filter(u => u.province === to.id && atWar(w, c.id, u.country));
+    if (!(to.siege && to.siege.by !== c.id) && !foes.length) return fail(`${to.name} is in our own hands: troops are sent there with move.`);
+    const list = v => (Array.isArray(v) ? v : v != null && v !== '' ? String(v).split(/[\s,;]+/) : []).map(x => String(x).trim()).filter(Boolean), want = [...new Set([...list(op.units), ...list(op.unit)])], from = list(op.from);
+    const out = mine.filter(u => u.province !== to.id && u.shutIn !== to.id), unknown = want.filter(id => !mine.some(u => u.id === id)); if (unknown.length) return fail(`No such unit of yours: ${unknown.join(', ')}.`);
+    const pick = want.length ? out.filter(u => want.includes(u.id)) : out.filter(u => to.neighbors.includes(u.province) && (from.length ? from.includes(u.province) : u.posture !== 'defensive'));
+    if (!pick.length) return fail(`The relief of ${to.name} has nobody to march: ${want.length ? 'the units named stand inside the place already' : `no troops of ours that are free to move stand beside it; name the units (units), or march them up first`}.`);
+    const res = pick.map(u => [u, applyOrder(w, c, u, to.id, true)]), gone = res.filter(([, r]) => r.ok), not = res.filter(([, r]) => !r.ok);
+    if (!gone.length) return fail(`The relief of ${to.name} could not march: ${not.map(([u, r]) => `${u.id}: ${r.msg}`).join(' ')}`);
+    const far = gone.filter(([u]) => !to.neighbors.includes(u.province)).map(([u]) => u.id), there = sum(foes, u => u.men);
+    return { ok: true, msg: `It is a relief: ${to.name} is ours, and the enemy lies before its fortress${there >= .5 ? ` with about ${Math.round(there)} thousand men by the garrison's count` : ''}. ${gone.map(([u]) => u.id).join(', ')} (${menText(sum(gone, ([u]) => u.men))}) march into ${to.name}${op._late ? ' next quarter' : ''}. Troops that come into a besieged place from outside fight the besiegers in the open, where the works help neither side and the garrison joins the fight; if they win, the siege is raised, and if they lose they fall back the way they came.${far.length ? ` ${far.join(', ')} ${far.length > 1 ? 'are' : 'is'} more than a march away and ${far.length > 1 ? 'come' : 'comes'} up as the roads allow, after the rest.` : ''}${not.length ? ` Not marched: ${not.map(([u, r]) => `${u.id} (${r.msg})`).join('; ')}.` : ''}` };
+  }
   const foe = w.countries[to.controller];
   if (!atWar(w, c.id, to.controller)) return fail(`${to.name} is held by ${foe?.name ?? 'another state'}, with whom there is no war. An attack on it would be one, and war is declared by whoever governs (declare_war).`);
   if (hasTreaty(w, c.id, to.controller, 'armistice')) return fail('An armistice with them is in force: no attack while it lasts. It would have to be broken first (break_treaty).');
