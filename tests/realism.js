@@ -6178,5 +6178,33 @@ await (async () => { // Chain: an order that comes back from the offices is laid
   assert.ok(twice.seen.back.length === 1 && twice.seen.again.length === 1 && /Given again the same morning\. Not carried out: Infantry is raised/.test(twice.out), `what comes back a second time waits for the morning: ${twice.out.slice(0, 400)}`);
   console.log('passed  Chain: an order that comes back from the offices is laid before its giver the same morning, once');
 })();
+chain('World 26, second review: besiegers who lay before a fortress when the quarter began are met in the open by whoever marches up to relieve it; they do not count the relieving army as its garrison and draw off', () => {
+  // Brunmarka, Q4 1901: the victor of the field ordered "hold the investment until it falls, no assault"; it was entered as a siege; 110 thousand
+  // marched up to relieve the place and were counted as the men inside it, and 94 thousand drew off without a shot.
+  const stage = (besiegers, garrison) => { const w = inherited(2696855, 8), cs = aliveCountries(w), a = cs[0], prov = countryProvinces(w, a.id).filter(p => p.owner === a.id);
+    const from = prov.find(p => p.neighbors.some(n => w.provinces[n].controller !== a.id && w.countries[w.provinces[n].controller]?.alive)), place = w.provinces[from.neighbors.find(n => w.provinces[n].controller !== a.id && w.countries[w.provinces[n].controller]?.alive)], b = w.countries[place.controller];
+    for (const u of Object.values(w.units)) if ([from.id, place.id, ...place.neighbors].includes(u.province)) delete w.units[u.id];
+    place.fort = 1; place.trench = 0; delete place.siege; w.wars = [{ id: 'S-t51', a: [a.id], b: [b.id], civil: false, active: true, start: w.turn, name: 't51' }]; a.stock.arms = 400; b.stock.arms = 400; a.treasury = 9000; b.treasury = 9000; a.budget.military = .2; b.budget.military = .2;
+    const foot = soldier(w, a.id, from.id, besiegers), inside = garrison ? soldier(w, b.id, place.id, garrison) : null, home = place.neighbors.map(id => w.provinces[id]).find(p => p.controller === b.id);
+    return { w, a, b, from, place, foot, inside, home, L: ld(w, a), Lb: ld(w, b), go: () => { beginTurn(w); stepWorld(w); }, told: c => w.characters[c.leader].inbox.map(m => m.text).join('\n') }; };
+  // They were there first: the relieving army fights them in the open.
+  const x = stage(95, 25); x.foot.province = x.place.id; x.foot.from = x.from.id; const n0 = (x.w.battles || []).length;
+  const order = applyOp(x.w, x.L, { op: 'offensive', to: x.place.id, units: [x.foot.id], manner: 'siege' }); assert.ok(order.ok && new RegExp(`the troops that lie before ${x.place.name} already`).test(order.msg) && !/the column must take first/.test(order.msg), `troops before the place are not a column that has still to reach it: ${order.msg.slice(0, 260)}`);
+  const relief = soldier(x.w, x.b.id, x.home.id, 85); assert.ok(applyOp(x.w, x.Lb, { op: 'move', unit: relief.id, to: x.place.id }).ok); x.go();
+  assert.ok(!/could not shut it in/.test(x.told(x.a)) && /A relieving force of about \d+ thousand has come up/.test(x.told(x.a)) && /fights the besiegers in the open/.test(x.told(x.b)), `the relieving army is a relieving army: ${x.told(x.a).split(/\n/).filter(t => new RegExp(x.place.name).test(t)).join(' || ').slice(0, 900)} :: relief at ${relief.province}, march ${JSON.stringify(relief.march)}, foot at ${x.foot.province} ${JSON.stringify(x.foot.attack)}, siege ${JSON.stringify(x.place.siege)}`);
+  const fight = (x.w.battles || []).slice(n0).find(f => f.province === x.place.id) ?? (x.w.battles || []).find(f => f.province === x.place.id); assert.ok(fight && fight.manner !== 'siege' && fight.lossA > 0 && fight.lossD > 0, 'and there is a battle for the place, with loss on both sides');
+  // Both came the same quarter: the reinforcement is inside before the lines are drawn, and too few besiegers draw off, as before.
+  const y = stage(95, 25); applyOp(y.w, y.L, { op: 'offensive', to: y.place.id, units: [y.foot.id], manner: 'siege' }); const more = soldier(y.w, y.b.id, y.home.id, 85); applyOp(y.w, y.Lb, { op: 'move', unit: more.id, to: y.place.id }); y.go();
+  assert.ok(/could not shut it in/.test(y.told(y.a)) && y.foot.province !== y.place.id, `besiegers who arrive with the reinforcement find it inside: ${y.told(y.a).slice(0, 200)}`);
+  // An investment with nobody ordered to besiege: whoever marches up fights before the place, and the works help neither side.
+  const z = stage(95, 0); z.foot.province = z.place.id; z.foot.from = z.from.id; z.place.siege = { by: z.a.id, turns: 1 }; const up = soldier(z.w, z.b.id, z.home.id, 60); applyOp(z.w, z.Lb, { op: 'move', unit: up.id, to: z.place.id }); z.go();
+  assert.ok(/has come up to [^,]+, which we have invested: it has to be fought in the open/.test(z.told(z.a)) && /fights the enemy who lies before the fortress in the open/.test(z.told(z.b)), `an investment is relieved in the open: ${z.told(z.a).slice(0, 300)}`);
+  // A remission that ran out is given again at its share; one with no share named is half the tax; and a seat-holder is not made keeper of the treasury, and is told why.
+  const w = inherited(2696855, 8), c = aliveCountries(w)[1], L = ld(w, c), p = countryProvinces(w, c.id).find(q => q.id !== c.capital); c.treasury = 2000;
+  assert.ok(applyOp(w, L, { op: 'relieve_province', province: p.id, remit: .3, quarters: 1 }).ok); delete p.remit; w.turn += 2;
+  const again = applyOp(w, L, { op: 'relieve_province', province: p.id, quarters: 2 }); assert.ok(again.ok && Math.abs(p.remit.share - .3) < 1e-9 && /had run out, and is given again at the share it had/.test(again.msg), again.msg);
+  const q = countryProvinces(w, c.id).find(o => o.id !== c.capital && o.id !== p.id), half = applyOp(w, L, { op: 'relieve_province', province: q.id, quarters: 2 }); assert.ok(half.ok && q.remit.share === .5 && /No share was named, so half the tax is forgiven/.test(half.msg), half.msg);
+  const seat = applyOp(w, L, { op: 'appoint_minister', post: 'treasury', character: c.oligarch }); assert.ok(!seat.ok && /holds a seat of (his|her) own in the country/.test(seat.msg), seat.msg);
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

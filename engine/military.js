@@ -561,10 +561,22 @@ function resolve(w, pid, us) {
   const D = us.filter(u => defSide.includes(u.country)), A = us.filter(u => atkSide.includes(u.country));
   // A siege is not a battle: the place is shut in and nobody storms it. If troops of the defender have come in from outside since it was shut,
   // it is a battle after all, in the open before the works, and the walls help nobody.
-  { const sieging = A.filter(u => u.attack?.to === pid && u.attack.manner === 'siege');
+  // The same holds for a fortress that is invested without being shut in: one whose field was lost, whose defenders were driven off, and
+  // before which the victor lies while it holds out (the investment, in militaryStep). Whoever marches up to it then comes from outside.
+  // (World 26, second review: Tirara won the field at Brunmarka and invested the fortress; the next quarter ruler and chief of staff both
+  // ordered "hold the investment until it falls, no assault", which was entered as a siege, while Hazland marched 110 thousand men up to relieve
+  // it. The relieving army was counted as the garrison, the besiegers were found too few to shut in 110 thousand, and 94 thousand men who
+  // had won the field drew off without a shot: "the troops sent to lay siege to Brunmarka could not shut it in".)
+  // (At Brunmarka the defenders beaten in the field had fallen back into the place, so that no investment was written on it; what tells is
+  // who was there first: besiegers who stood before the place when the quarter began are met by whoever marches up to it.)
+  { const sieging = A.filter(u => u.attack?.to === pid && u.attack.manner === 'siege'), came = u => u.march?.turn === w.turn && u.march.reached === pid && u.march.from !== pid, stood = sum(A.filter(u => !came(u) && u.shipped !== w.turn), u => u.men) >= sum(A, u => u.men) * .5,
+      before = (p.siege?.by === atkSide[0] || (stood && sieging.length > 0)) && holds && defSide.includes(p.controller);
+    // (Only troops that came in this quarter by road or by sea are a relieving force; whatever else stands inside is garrison.)
+    const relief = before ? D.filter(u => u.shutIn !== pid && ((u.march?.turn === w.turn && u.march.reached === pid && u.march.from !== pid) || u.shipped === w.turn)) : [];
+    if (!(sieging.length && sum(sieging, u => u.men) >= sum(A, u => u.men) * .5) && relief.length && p.siege && !p.siege.shut && relief.length === D.length) { holds = false; const n = sum(relief, u => u.men);
+      mark(w, w.countries[atkSide[0]], `A relieving force of about ${about(n)} thousand has come up to ${p.name}, which we have invested: it has to be fought in the open before the place, which the staff reports below as the fight for ${p.name}.`);
+      mark(w, w.countries[defCountry], `Our relieving force, about ${Math.round(n * 10) / 10} thousand, has come up to ${p.name} and fights the enemy who lies before the fortress in the open; the works help neither side in such a fight.`); }
     if (sieging.length && sum(sieging, u => u.men) >= sum(A, u => u.men) * .5 && holds && defSide.includes(p.controller)) {
-      // (Only troops that came in this quarter by road or by sea are a relieving force; whatever else stands inside is garrison.)
-      const relief = p.siege?.shut && p.siege.by === atkSide[0] ? D.filter(u => u.shutIn !== pid && ((u.march?.turn === w.turn && u.march.reached === pid && u.march.from !== pid) || u.shipped === w.turn)) : [];
       if (!relief.length) { besiege(w, p, A, D, atkSide[0], defCountry); return; }
       holds = false; for (const u of sieging) u.attack.manner = 'assault'; const n = sum(relief, u => u.men);
       mark(w, w.countries[atkSide[0]], `A relieving force of about ${about(n)} thousand has come up to ${p.name} against our siege lines: the siege has become a battle in the open before the place, which the staff reports below as the fight for ${p.name}.`);
