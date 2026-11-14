@@ -5516,7 +5516,8 @@ chain('World 21, third review: a fortress is not carried with the field before i
   assert.ok(fought.length === 1 && fought[0].attackerWon && over.controller === 'U2' && over.siege?.by === 'U1', `the field is won and the fortress holds: ${JSON.stringify(fought)} ${over.controller} ${JSON.stringify(over.siege)}`);
   assert.ok(/Our attack on [^.]* won the field, and the fortress is invested: it has not fallen, and falls in about \d quarters? if we stay before it and are not driven off\./.test(f.said()), `the besieger's staff says the place has not fallen: ${f.said().slice(0, 300)}`);
   const lost = w.characters[f.d.general].inbox.map(m => m.text).join('\n'); assert.ok(/The field at [^.]* is lost and our troops are driven off; the fortress still holds and is invested: it falls in about \d quarters? unless troops sent there \(move\) break the investment\./.test(lost), `and the beaten staff says the fortress still holds: ${lost.slice(-500)}`);
-  const back = applyOp(w, w.characters[f.d.general], { op: 'offensive', to: over.id, units: [def.id] }); assert.ok(!back.ok && /is in our own hands: the enemy stands before its fortress, which has not fallen\. Troops sent there \(move\) fight their way in to relieve it\./.test(back.msg), back.msg);
+  // (Since world 25 an attack ordered on the besiegers of a place of our own is carried out as its relief: tried here on a copy, so that what follows is the fortress left alone.)
+  { const v = structuredClone(w), back = applyOp(v, v.characters[f.d.general], { op: 'offensive', to: over.id, units: [def.id] }); assert.ok(back.ok && /^It is a relief: [^.]* is ours, and the enemy lies before its fortress/.test(back.msg) && v.units[def.id].target === over.id, back.msg); }
   for (let i = 0; i < 3 && over.controller !== 'U1'; i++) quarter(w); assert.equal(over.controller, 'U1', 'left alone, the fortress falls');
 });
 import { warCredit as warCredit_, warFooting as warFooting23, lendersWords as lendersWords_ } from '../engine/warcost.js';
@@ -6085,6 +6086,27 @@ chain('World 25, third review: an attack ordered on the besiegers of a place of 
   const again = applyOp(w, G, { op: 'move_army', to: dest, share: 1 }); assert.ok(again.ok && third.target === dest && third.digAt === dest, 'a general order to the army for the same place leaves its orders as they were');
   w.turn += 1; const said = applyOp(w, R, { op: 'set_posture', posture: 'defensive', unit: third.id });
   assert.ok(third.target === dest && third.digAt === dest && /still on the march with orders to dig in where it ends/.test(said.msg), `and next quarter "it continues there and stands on the defensive" does not halt it a march short: ${said.msg.slice(-230)}`);
+});
+chain('The order drill before world 25: an order can wait for the breach of a fortress that is besieged; a debt is paid off, and gold borrowed abroad, by the sum that was named; and the streets of one province can be held', () => {
+  // "Go on with the siege and the bombardment; as soon as the works are breached, storm it without waiting for a further order."
+  const w = inherited(2696855, 8), cs = aliveCountries(w), b = cs[0], fort = countryProvinces(w, b.id).find(p => p.id !== b.capital && p.neighbors.some(n => w.provinces[n].controller && w.provinces[n].controller !== b.id)), a = w.countries[fort.neighbors.map(n => w.provinces[n].controller).find(id => id && id !== b.id)], G = w.characters[a.general], R = ld(w, a); w.wars = [];
+  applyOp(w, R, { op: 'declare_war', target: b.id, _law: true }); const mine = Object.values(w.units).filter(u => u.country === a.id).sort((x, y) => y.men - x.men).slice(0, 2), held = Object.values(w.units).filter(u => u.country === b.id)[0];
+  held.province = fort.id; held.shutIn = fort.id; held.target = null; fort.fort = 1; fort.siege = { by: a.id, turns: 1, shut: true, since: w.turn };
+  for (const u of mine) { u.province = fort.id; u.target = null; u.attack = { to: fort.id, manner: 'siege', shelling: true, wait: true, since: w.turn, start: w.turn, ready: 0, go: w.turn }; }
+  const nowhere = applyOp(w, G, { op: 'standing_order', when: { breach: a.capital }, then: [{ op: 'offensive', to: a.capital, manner: 'assault' }] }); assert.ok(!nowhere.ok && /We lay no siege to/.test(nowhere.msg), `an order waits for a breach only where we besiege: ${nowhere.msg.slice(0, 120)}`);
+  const so = applyOp(w, G, { op: 'standing_order', when: { breach: fort.id }, then: [{ op: 'offensive', to: fort.id, units: mine.map(u => u.id), manner: 'assault' }] });
+  assert.ok(so.ok && new RegExp(`the day the works of ${fort.name} are breached, by the report of our own staff before it`).test(so.msg), `the storm is ordered for the day of the breach: ${so.msg.slice(0, 200)}`);
+  carryStanding(w); assert.ok(mine.every(u => u.attack.manner === 'siege'), 'while the works stand whole the besiegers do not storm');
+  fort.fort = .5; carryStanding(w); assert.ok(mine.every(u => u.attack?.manner === 'assault' && u.attack.to === fort.id) && G.inbox.some(m => /offensive/.test(m.text) && /storm the place this quarter|The troops before/.test(m.text)), `the works breached, the troops in the lines storm without a further order: ${G.inbox.at(-1)?.text.slice(0, 200)}`);
+  // A debt paid off by a sum.
+  const c = cs.find(o => o.id !== a.id && o.id !== b.id), L = ld(w, c); c.treasury = 500; const d0 = c.debt, pay = applyOp(w, L, { op: 'repay_state_debt', amount: 50 }); assert.ok(pay.ok && Math.abs(d0 - c.debt - 50) < .01 && Math.abs(c.treasury - 450) < .01, `fifty named is fifty paid: ${pay.msg}`);
+  // Gold borrowed abroad by a sum.
+  for (const o of cs) o.reserves = Math.max(o.reserves, o.realGdp * .6); const l = cs.find(o => o.id !== c.id), owed = c.creditors[l.id] || 0, got = applyOp(w, L, { op: 'borrow_foreign', target: l.id, amount: 120 });
+  assert.ok(got.ok && Math.abs((c.creditors[l.id] || 0) - owed - 120) < 1, `a sum named abroad is the sum asked for: ${got.msg}`); const none = applyOp(w, L, { op: 'borrow_foreign', target: l.id }); assert.ok(!none.ok && /Say how much/.test(none.msg), `and no sum named is said to be no sum: ${none.msg}`);
+  // The streets of one province.
+  const hot = [...countryProvinces(w, c.id)].sort((x, y) => y.unrest - x.unrest)[0], calm = countryProvinces(w, c.id).find(p => p.id !== hot.id), kept = applyOp(w, L, { op: 'repress', province: hot.id, strength: .6 });
+  assert.ok(kept.ok && hot.held > 0 && !calm.held && !(c.repress > 0) && new RegExp(`^The streets of ${hot.name} are held[^]*there, and nowhere else`).test(kept.msg), `the streets of one province are held, and of no other: ${kept.msg.slice(0, 140)}`);
+  const all = applyOp(w, L, { op: 'repress', strength: .5 }); assert.ok(all.ok && c.repress > 0, 'and with no province named, of the whole country, as before');
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

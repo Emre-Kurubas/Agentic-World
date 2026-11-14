@@ -1,0 +1,580 @@
+{
+ "besieged": {
+  "relieve": [
+   "B10 and B11 are to attack the besieging army at Terento (P264) and raise the siege now.",
+   "I order B10 and B11 at Belogradir (P237) to march at once against the army of Terona People's State (U5) round Terento (P264), to beat it in its lines and free the fortress.",
+   "B10 and B11 will go to the relief of Terento (P264) today and fall on the besiegers, and they will not stop until the siege is lifted.",
+   "Relieve Terento now: B10 and B11 march from Belogradir (P237) into Terento (P264) together, the same day, to attack and defeat the besieging army in the open. B322 holds Belogradir. The garrison of Terento stays in the fortress and does not come out.",
+   "The relief of Terento (P264) goes in this quarter: an assault by B10 and B11 from Belogradir (P237) on the Teronan siege army, both corps together."
+  ],
+  "breakout": [
+   "B9, break out of Terento (P264) and fight your way back to Belogradir (P237).",
+   "I command the garrison B9 to break out of Terento (P264) and cut its way through the Teronan lines, and not to halt until it has come back to Belogradir (P237).",
+   "Let B9 burst forth from Terento (P264), force a passage through the besiegers and fall back upon Belogradir (P237).",
+   "The garrison B9 is to quit Terento (P264) by force of arms, pierce the enemy's siege lines and win its way home to Belogradir (P237).",
+   "Send word to B9 inside Terento (P264): it is to sally out in full strength, fight through the army that shuts it in, and rejoin our forces at Belogradir (P237)."
+  ],
+  "hold": [
+   "B9 holds Terento (P264) to the last man.",
+   "I command the garrison B9 to hold Terento (P264) to the very last and on no account to yield the fortress, whatever may befall it.",
+   "Let B9 stand fast within Terento (P264); no assault, no hunger and no offer of terms is to make it surrender the place.",
+   "The garrison B9 is to defend Terento (P264) to the end and never give it up to the Teronans, come what may.",
+   "Write to B9 in Terento (P264) that it is to remain behind its walls and keep the fortress for Morovia at any cost, and not to leave or hand it over under any circumstances."
+  ],
+  "march_on": [
+   "B322 is to go on marching to Belogradir (P237) as ordered, and stand on the defensive there.",
+   "I confirm my standing order to B322: it is to continue its march to Belogradir (P237) and, once it arrives, take up a defensive position there.",
+   "Let B322 press on towards Belogradir (P237) as before, and on reaching it, hold its ground and await the enemy.",
+   "B322 keeps to the road for Belogradir (P237) as already commanded, and when it gets there it is to stand fast in defence.",
+   "Repeat to B322 that nothing is changed: it is to advance to Belogradir (P237), and there remain on the defensive and not go out against the enemy."
+  ],
+  "reinforce": [
+   "B323 is to march from Zorogradon (P210) to Belogradir (P237) and join the relief force.",
+   "I order B323 to leave Zorogradon (P210) at once and march to Belogradir (P237), where it is to join B10 and B11, the army that will relieve Terento.",
+   "Let B323 set out from Zorogradon (P210) for Belogradir (P237) and join the force assembled there.",
+   "B323 is to break camp at Zorogradon (P210), move up to Belogradir (P237) and take its place beside the relief force.",
+   "Send B323 forward from Zorogradon (P210) to Belogradir (P237) to reinforce the troops that are to go to the aid of Terento."
+  ],
+  "call_up": [
+   "Call up 30 thousand reservists, to assemble at Belogradir (P237).",
+   "I order a levy of 30 thousand men from the reserve, who are to be mustered at Belogradir (P237).",
+   "Summon 30 thousand of the reservists to the colours and let them gather at Belogradir (P237).",
+   "Let 30 thousand reserve men be called out and sent to form up at Belogradir (P237).",
+   "The office is to issue the call to arms for 30 thousand reservists, and have them report to Belogradir (P237) and be formed there."
+  ],
+  "dig_in": [
+   "B11 stays at Belogradir (P237), stands on the defensive and digs in; it is not to join any attack.",
+   "I command that B11 alone remain at Belogradir (P237), entrench itself and stand on the defensive, and that it take no part in any offensive.",
+   "Let B11 hold Belogradir (P237) and fortify its position there; the other troops may go forward, but B11 does not move out to attack.",
+   "B11 is to remain in place at Belogradir (P237), throw up earthworks and keep to defence, and it is not to be counted among the forces that strike.",
+   "Tell B11 that it is to stay behind at Belogradir (P237) as the guard of the place, dig itself in and wait on the defensive, and not to march against the enemy."
+  ],
+  "depot": [
+   "Lay out a supply depot at Belogradir (P237) for the relief force.",
+   "I order that a supply depot be established at Belogradir (P237) to feed and equip the relief force.",
+   "Let magazines be set up at Belogradir (P237), stocked with stores for the army that is to relieve Terento.",
+   "Have a depot of provisions and munitions laid out at Belogradir (P237) so that the relief force will not want for supplies.",
+   "The quartermasters are to establish a supply base at Belogradir (P237) and fill it for the use of the army gathered there."
+  ],
+  "relieve_fight": [
+   "B10 and B11 are to attack the army besieging Terento this quarter and drive it off.",
+   "I command B10 and B11 to march out from Belogradir (P237) this quarter, attack the Teronan army that besieges Terento (P264) and drive it from the walls.",
+   "Let B10 and B11 fall upon the besiegers of Terento (P264) this quarter and scatter them, so that the siege is raised.",
+   "B10 and B11 are to go to the relief of Terento (P264) now: they are to fall on the enemy army around it and throw it back.",
+   "Send B10 and B11 against the Teronan lines before Terento (P264) this quarter, to engage the besieging army and force it to abandon the siege."
+  ],
+  "call_up_both": [
+   "Raise 30 thousand reservists and form them at Belogradir (P237).",
+   "I direct that 30 thousand men of the reserve be called up and brought together at Belogradir (P237).",
+   "Let the call go out to the reserve for 30 thousand men, and let them be formed into troops at Belogradir (P237).",
+   "Bring 30 thousand reservists under arms and send them to Belogradir (P237) to be organised there.",
+   "Muster 30 thousand of our reserve men and have them gather at Belogradir (P237)."
+  ],
+  "march_two": [
+   "B280 is to march from Zorogradon (P210) to Belogradon (P181) and stand on the defensive there.",
+   "I order B280 to leave Zorogradon (P210), march to Belogradon (P181), and when it arrives, hold the place in a defensive posture.",
+   "Let B280 move from Zorogradon (P210) to Belogradon (P181) and take up a defensive stand there.",
+   "B280 is to break camp at Zorogradon (P210), proceed to Belogradon (P181) and remain there on guard, awaiting the enemy.",
+   "Send B280 from Zorogradon (P210) to garrison Belogradon (P181) on our own soil, where it is to hold fast and not go out to attack."
+  ],
+  "march_two+": [
+   "B280 continues its march to Belogradon (P181) and stands on the defensive on arrival.",
+   "I confirm my order of last quarter: B280 is to go on to Belogradon (P181) and, when it gets there, stand on the defensive.",
+   "Let B280 keep marching towards Belogradon (P181) as commanded, and on reaching it take up a defensive position.",
+   "B280 is to press on to Belogradon (P181) as before and hold the place on arrival, with no change to its orders.",
+   "Remind B280 that it is to complete its march to Belogradon (P181), and once there stay on guard and not take the offensive."
+  ]
+ },
+ "besieging": {
+  "go_on": [
+   "B59 and B58 hold their lines before Terento (P264) and keep the bombardment going; no assault.",
+   "Let B59 and B58 go on with the siege of Terento (P264) as they have begun, keeping the town shut in and under fire, and let them not attempt to storm it until I give the word.",
+   "Keep Terento (P264) invested and keep the shells falling on it; B59 and B58 are to maintain their ring about the fortress and shell it, and the walls are not to be assaulted for now."
+  ],
+  "storm": [
+   "B59 and B58 will storm Terento (P264) now.",
+   "I order B59 and B58 to deliver the assault upon Terento (P264) at once, with every man in the lines, and to carry the fortress.",
+   "Throw B59 and B58 against the works of Terento (P264) now, all together, and take the place by escalade and assault."
+  ],
+  "starve": [
+   "Cease the bombardment of Terento (P264); B59 and B58 keep their lines closed and starve the place out.",
+   "The guns before Terento (P264) are to fall silent so that we spare our shells; B59 and B58 will hold the ring about the fortress unbroken and let hunger do the work.",
+   "Hold your fire on Terento (P264) and save the powder. B59 and B58 are to keep the garrison pent up behind its walls and reduce it by famine, with no firing and no assault."
+  ],
+  "guns_up": [
+   "B57 will march from Draovia (P291) to the siege lines before Terento (P264).",
+   "I order the heavy guns of B57 to move up from Draovia (P291) and take their places in the lines before Terento (P264), where they will join the siege of the fortress.",
+   "Bring forward B57 from Draovia (P291) to the front of Terento (P264) and plant the heavy artillery in the lines beside B59 and B58."
+  ],
+  "lift": [
+   "Raise the siege of Terento (P264); B59 and B58 will fall back to Draovia (P291).",
+   "I am lifting the siege of Terento (P264). B59 and B58 are to break up their lines and withdraw to Draovia (P291), on our own soil.",
+   "B59 and B58 are to quit their positions before Terento (P264) and retire upon Draovia (P291); the investment of the fortress is abandoned."
+  ],
+  "detach": [
+   "Detach 10 thousand men from B59 and send them back to garrison Draovia (P291); the rest of B59 stays in the lines before Terento (P264).",
+   "From B59 take 10 thousand infantry and send them back to Draovia (P291) to hold it as its garrison, while the remainder of B59 keeps its place in the siege lines before Terento (P264).",
+   "Let 10 thousand men of B59 fall back to Draovia (P291) and be posted there as the garrison; B59's other men stay where they are before Terento (P264)."
+  ],
+  "storm_when": [
+   "Continue the siege and bombardment of Terento (P264), and as soon as the works are breached, B59 and B58 will storm it without awaiting a further order.",
+   "B59 and B58 keep Terento (P264) shut in and under fire. The moment the defences are breached they are to go in and take the place, and they need not wait for any new order from me.",
+   "Carry on shelling Terento (P264) and keeping it invested; once a breach is opened in the walls, B59 and B58 are to carry the fortress by assault on their own judgment, without referring back to me."
+  ],
+  "detach_both": [
+   "Take 10 thousand men out of B59 and send them back to Draovia (P291) as its garrison; the rest of B59 remains in the lines.",
+   "General Tessaro to B59: you will detach 10 thousand of your infantry and march them back to Draovia (P291) to garrison the town, while the remainder of your force keeps its place in the siege lines before Terento (P264).",
+   "Draw off 10 thousand from B59 and have them fall back on Draovia (P291) to hold it; the others of B59 stay where they are around Terento (P264)."
+  ],
+  "siege_two": [
+   "The siege of Terento (P264) continues, the guns to keep up their fire; no assault.",
+   "We will go on investing Terento (P264) and bombarding it as before, and no storming of the walls is to be attempted.",
+   "Hold the ring around Terento (P264) and keep battering it with our fire; the garrison is to be starved and shelled out, not stormed."
+  ],
+  "siege_two+": [
+   "B59 and B58 stay in the lines before Terento (P264), keep up the siege and the bombardment, and do not storm.",
+   "B59 and B58 are to maintain the siege of Terento (P264) as already ordered, continuing the bombardment and holding their positions in the lines; they are not to assault the fortress.",
+   "Let B59 and B58 keep their ground around Terento (P264) and go on shutting in and shelling the place; they are not to make any rush upon the walls."
+  ]
+ },
+ "front": {
+  "two_columns": [
+   "B69 from Kelmore (P96) and B70 from Keldale (P70) will attack Brunmarka (P97) together, on the same day.",
+   "I wish Brunmarka (P97) assaulted from two sides at once. B69 will advance out of Kelmore (P96) and B70 out of Keldale (P70), and both are to go in together, so that the enemy cannot turn his whole strength upon either.",
+   "Let B69 fall on Brunmarka (P97) from Kelmore (P96) while B70 marches in upon it from Keldale (P70). The two blows are to land together."
+  ],
+  "one_unit": [
+   "B69 alone will attack Brunmarka (P97) from Kelmore (P96). B71, the cavalry B316 and B70 stay where they are.",
+   "Let B69 alone go against Brunmarka (P97) out of Kelmore (P96). B71 and the cavalry B316 are to remain at Kelmore (P96), and B70 is to keep its place at Keldale (P70).",
+   "B69 is to fall on Brunmarka (P97) without support. B71, B316 and B70 are not to stir from their present positions."
+  ],
+  "probe": [
+   "B316 is to probe Brunmarka (P97) in force and report what stands there. No general action, and no other troops move.",
+   "Send the cavalry B316 out of Kelmore (P96) into Brunmarka (P97) to find out what the enemy holds there, in what strength and in what order. It is to draw off if he proves strong. This is a reconnaissance and not a battle, and B69, B71 and B70 are not to move.",
+   "Let B316 test the enemy at Brunmarka (P97) and bring me word of his numbers, without engaging itself deeply. The rest of the army will stay quiet."
+  ],
+  "prepared": [
+   "B69 and B71 will attack Brunmarka (P97) next quarter, not this one. This quarter they bring up shells.",
+   "I want B69 and B71 to spend this quarter bringing up shells at Kelmore (P96). Next quarter the guns are to open on Brunmarka (P97), and the infantry of B69 and B71 are to go in after them.",
+   "Hold B69 and B71 at Kelmore (P96) this quarter while the ammunition is gathered. The blow against Brunmarka (P97) is to be struck next quarter, guns first and then the infantry."
+  ],
+  "all_out": [
+   "B69 and B71 will take Brunmarka (P97) at any cost, and will renew the assault until it falls.",
+   "B69 and B71 are to attack Brunmarka (P97) and keep on attacking, wave upon wave, whatever the losses, until the province is in our hands. There is to be no breaking off.",
+   "Let B69 and B71 storm Brunmarka (P97) and press home again and again. I will accept any price, but the province must be carried."
+  ],
+  "concentrate": [
+   "B70 will march from Keldale (P70) to Kelmore (P96) and join B69. It is not to attack.",
+   "Order B70 to leave Keldale (P70) and go to Kelmore (P96), there to join B69. It is a movement of concentration only, and no attack on Brunmarka (P97) is to be made.",
+   "Let B70 shift from Keldale (P70) to Kelmore (P96) and unite with B69 there. It is to come up and stand beside them, not go forward against the enemy."
+  ],
+  "pull_back": [
+   "B71 will withdraw from the frontier and return to the capital as the army's reserve.",
+   "Take B71 away from Kelmore (P96) and send it back to the capital, where it will stand as the reserve of the army.",
+   "Let B71 fall back from the frontier to the capital and be held there in reserve."
+  ],
+  "then_dig": [
+   "B69 attacks Brunmarka (P97). If it is taken, B71 marches in behind B69 and holds the place on the defensive.",
+   "I wish B69 to attack Brunmarka (P97) from Kelmore (P96). Should the province fall, B71 is to follow B69 into it and stand there on the defensive, going no further.",
+   "Let B69 fall on Brunmarka (P97) first. If the place is carried, B71 is to move in at B69's back and remain there to defend it, not to push on."
+  ],
+  "prepared_two": [
+   "B69 and B71 at Kelmore (P96) are to be readied against Brunmarka (P97) for next quarter; no move this quarter.",
+   "I want B69 and B71 made ready at Kelmore (P96) to attack Brunmarka (P97) next quarter. They are to gather their stores and put their dispositions in order now, but they will not cross the frontier until the new quarter opens.",
+   "Draw up the plan for B69 and B71 to fall on Brunmarka (P97) from Kelmore (P96) when next quarter begins. Let them be brought up to strength and held in hand until then, and let nothing be started this quarter."
+  ],
+  "prepared_two+": [
+   "B69 and B71 attack Brunmarka (P97) now, as planned.",
+   "The plan made last quarter is to be carried out today: B69 and B71 are to attack Brunmarka (P97) from Kelmore (P96) without further delay.",
+   "Send B69 and B71 into Brunmarka (P97) this morning, as we arranged last quarter. They are to march in from Kelmore (P96) and fall on the enemy there."
+  ]
+ },
+ "fleet": {
+  "to_sea": [
+   "The cruisers G94 and the battleships G189 will put to sea from Monona (P57) and take station off Cormore (P44), in D43.",
+   "I wish the cruisers G94 and the battleships G189 to leave Monona (P57) together, steam into D43, and lie off the enemy's harbour of Cormore (P44), where they are to remain on station.",
+   "Let the battleships G189 and the cruisers G94 weigh anchor at Monona (P57), proceed to the sea D43, and take up a position before Cormore (P44)."
+  ],
+  "blockade": [
+   "The cruisers G94 will go to D43 and blockade Cormore (P44). No ship of any flag is to enter or leave.",
+   "I desire the cruisers G94 to leave Monona (P57), proceed to the sea D43, and close the harbour of Cormore (P44) completely, so that no vessel of any flag, neutral or enemy, may go in or come out.",
+   "Send the cruisers G94 to D43 to seal up Cormore (P44) and shut the port against every flag, so that nothing passes in or out."
+  ],
+  "raid": [
+   "The cruisers G94 will go out into D43 and hunt the enemy's merchant shipping. They are to avoid battle with his squadrons.",
+   "I wish the cruisers G94 to put to sea from Monona (P57) and range through D43, seeking out and capturing or sinking the merchant ships of the Military Government of Tirara (U6). If his war squadrons appear they are to decline action and draw off.",
+   "Let the cruisers G94 scour the sea D43 for the enemy's trading vessels and take what they find. They are to slip away from any fighting squadron rather than engage it."
+  ],
+  "bombard": [
+   "The battleships G189 will go to Cormore (P44) and bombard its shore batteries and harbour works. They are not to fire on the town.",
+   "I direct the battleships G189 to leave Monona (P57) for Cormore (P44) and batter the forts, the batteries on the shore, and the harbour works. The town itself is to be spared, and no shell is to be thrown into it.",
+   "Send the battleships G189 against Cormore (P44) to reduce its coast defences and wreck its docks and quays with their guns. The houses of the town are not to be touched."
+  ],
+  "squadron": [
+   "Detach 6 cruisers from G94 and send them to D43. The rest of the cruisers of G94 will stay in Monona (P57).",
+   "I wish six of the 21 cruisers of G94 to be told off from the squadron and sent to the sea D43. The remaining cruisers of G94 are to lie at Monona (P57) in harbour.",
+   "Let G94 be divided: 6 of its cruisers will sail for D43, and the others will remain at their moorings at Monona (P57)."
+  ],
+  "landing": [
+   "Land 8 thousand men of B93 at Cormore (P44) under the guns of the fleet. The rest of B93 will remain at Monona (P57).",
+   "I desire 8 thousand infantry of B93 to be embarked and put ashore at Cormore (P44), covered by the guns of our ships. The remainder of B93 is to stay at Monona (P57) beside the quays.",
+   "Take 8 thousand men from B93, carry them across D43, and set them on the shore at Cormore (P44) with the fleet's guns covering the landing. All the rest of B93 will stay at home at Monona (P57)."
+  ],
+  "mines": [
+   "The torpedo boats G190 will lay mines off Cormore (P44), in D43.",
+   "I wish the torpedo boats G190 to go out from Monona (P57) with mines, and sow them in the waters off Cormore (P44) in D43, so that the enemy's approaches are fouled.",
+   "Let the torpedo boats G190 run across to D43 and plant a field of mines before the harbour of Cormore (P44)."
+  ],
+  "stay_in": [
+   "All squadrons will stay in harbour under the shore guns and decline battle until further orders.",
+   "I direct that G94, G189 and G190 remain at Monona (P57) under the protection of the shore batteries. They are not to seek or accept an engagement with the enemy at sea until I order otherwise.",
+   "Let the whole fleet lie at anchor at Monona (P57) beneath the guns of the forts, and avoid any action with the enemy's ships until further word from me."
+  ],
+  "squadron_both": [
+   "Detach 6 cruisers from G94 and send them to the sea D43; the rest of G94 stays in harbour at Monona (P57).",
+   "Of the 21 cruisers of G94, let six be separated from the squadron and ordered to proceed to the sea D43, while the remaining cruisers lie where they are in harbour at Monona (P57).",
+   "Draw off six cruisers from G94 and dispatch them to cruise upon the sea D43; the other cruisers of G94 are to keep their moorings at Monona (P57)."
+  ]
+ },
+ "papers": {
+  "sign": [
+   "Sign the trade treaty A358 from the Principality of Akulia (U2) for the five years proposed.",
+   "We will accept the trade treaty A358 which the Principality of Akulia (U2) has laid before us. Prepare it for my signature today, and let it be put in force for its full term of five years.",
+   "Set my name and seal to proposal A358 from the Principality of Akulia (U2). Let the five years of trade between our two countries begin."
+  ],
+  "decline": [
+   "Decline proposal A358 from the Principality of Akulia (U2), courteously, since its terms do not suit us this year.",
+   "Write to the Principality of Akulia (U2) that we thank them for treaty proposal A358, but that we cannot sign it, the terms not being such as suit us this year. Keep the tone friendly and leave the door open.",
+   "Return proposal A358 to the Principality of Akulia (U2) unsigned, with our thanks and our regrets. Say that its terms are not convenient to us this year."
+  ],
+  "pact": [
+   "Propose to the United Provinces of Kamestan (U7) a pact of non-aggression for five years.",
+   "Let our envoy approach the United Provinces of Kamestan (U7) and offer them a pact of non-aggression to last five years, each side undertaking not to make war upon the other.",
+   "Put it to the United Provinces of Kamestan (U7) that we two bind ourselves for five years never to raise arms against one another. Draw up the offer of such a pact."
+  ],
+  "alliance_against": [
+   "Propose to the Holy State of Morovia (U1) a defensive alliance against the Military Government of Tirara (U6) alone.",
+   "Offer the Holy State of Morovia (U1) an alliance in which each shall come to the help of the other if the Military Government of Tirara (U6) attacks, and in no other war whatever.",
+   "Sound out the Holy State of Morovia (U1) on a compact of mutual defence: if the Military Government of Tirara (U6) falls upon either of us, the other shall go to its aid. The compact shall bind us in no other quarrel."
+  ],
+  "ultimatum": [
+   "Send the Principality of Akulia (U2) an ultimatum: Steinburga (P280) is to be handed back to us within two quarters.",
+   "Inform the Principality of Akulia (U2) in the form of an ultimatum that Steinburga (P280), which was ours, must be restored to us within two quarters of this day.",
+   "Let a final demand go to the Principality of Akulia (U2): they are to give up Steinburga (P280) to us within six months, or they shall answer for the refusal."
+  ],
+  "note": [
+   "Send the Military Government of Tirara (U6) a note of protest over the massing of its troops on our frontier.",
+   "Draft a formal protest to the Military Government of Tirara (U6) against the gathering of its troops along our frontier, and have it delivered to them without delay.",
+   "Lodge a complaint with the Military Government of Tirara (U6): we object to the troops they have been assembling against our border, and we wish it known that we have taken note of it."
+  ],
+  "commission": [
+   "Propose to the Military Government of Tirara (U6) a joint commission of officers of both armies to look into the incidents on the frontier.",
+   "Suggest to the Military Government of Tirara (U6) that officers of their army and of ours sit together as a commission to inquire into the frontier incidents.",
+   "Invite the Military Government of Tirara (U6) to name officers who will join officers of ours in a mixed board, to examine what has happened on the border and to establish who is at fault."
+  ],
+  "recall": [
+   "Recall our envoy from the Military Government of Tirara (U6), but do not break off relations.",
+   "Our envoy at the Military Government of Tirara (U6) is to be summoned home. This is a mark of displeasure only; relations are to stay open and no rupture is to be declared.",
+   "Withdraw our envoy from the court of the Military Government of Tirara (U6) and bring him back to us. Let it be understood that we have not severed our ties with them."
+  ]
+ },
+ "peace": {
+  "armistice": [
+   "Propose to Terona People's State (U5) an armistice of four quarters, each army to stay where it now stands.",
+   "Let it be put to Terona People's State (U5) that hostilities cease for four quarters, our troops and theirs keeping the ground they hold today, with no advance and no withdrawal while the truce lasts.",
+   "Sound out Terona People's State (U5) on a suspension of arms for a year, the armies left in their present positions."
+  ],
+  "status_quo": [
+   "Offer Terona People's State (U5) peace on the old frontier, no land to change hands and no money to be paid.",
+   "Let Terona People's State (U5) be informed that Morovia will make peace on the boundaries as they stood before the war, with no cession of territory by either side and no indemnity demanded or given.",
+   "Put to Terona People's State (U5) a return to the former frontier and a settlement of the war without annexation or payment."
+  ],
+  "prisoners": [
+   "Release 2 thousand of the Teronan prisoners we hold and send them home. The rest stay.",
+   "As a gesture to Terona People's State (U5), let 2 thousand of the Teronan prisoners in our hands be returned across the lines without condition, the remainder to be kept until peace.",
+   "Set free two thousand of the men of Terona People's State (U5) now in our custody and have them conducted home, and keep the others in confinement."
+  ],
+  "conference": [
+   "Ask Free Ports of Andona (U8) to convene the two belligerents in conference on Terento (P264). If it will not, we shall summon the conference ourselves.",
+   "Take up the offer of good offices from Free Ports of Andona (U8) and request it to call Morovia and Terona People's State (U5) together to discuss Terento (P264). Should Andona decline, we shall issue the invitation ourselves to Terona People's State (U5) and to Free Ports of Andona (U8).",
+   "Invite Free Ports of Andona (U8) to preside over a meeting with Terona People's State (U5) on the matter of Terento (P264), or else let us summon both parties to a conference of our own."
+  ],
+  "war_budget": [
+   "Raise the army's vote to meet the whole cost of the forces in the field this quarter.",
+   "Let the sum voted for the army be increased so that it pays in full for every man and charge of the forces in the field this quarter, leaving no part to be met by arrears or shifts.",
+   "Enlarge the army's appropriation to the full expense of our field forces for the quarter now running."
+  ],
+  "cede": [
+   "Offer Terona People's State (U5) peace: Morovia yields Terento (P264) to them, and nothing else is given up and no money is paid.",
+   "Let it be written to Terona People's State (U5) that Morovia will end the war on their own terms, as they have asked: we surrender Terento (P264) to them, and in return for peace we cede no other land, and we pay no indemnity.",
+   "Tell the government of Terona People's State (U5) that we will lay down our arms and give them the fortress of Terento (P264) as they demand, provided the quarrel ends there, with not a further acre surrendered and not a coin paid out."
+  ]
+ },
+ "conditions": {
+  "if_they_call": [
+   "Should Holy State of Morovia (U1) call up its reserve, we call up 40 thousand of ours that same hour, and no further order from me is needed.",
+   "On the day it is known that Holy State of Morovia (U1) has called its reservists to the colours, 40 thousand of our own reserve are to be summoned at once. The staff is not to wait for a word from me before doing it.",
+   "Let Holy State of Morovia (U1) once begin to muster its reserve, and 40 thousand of our reservists are to be called to the colours straightway, upon my standing word and without referring back to me."
+  ],
+  "if_attacked": [
+   "Should any power make war on us, the whole reserve is to be called up that same day.",
+   "If any nation declares war upon us or crosses our borders in arms, the entire reserve of about 264 thousand is to be summoned to the colours that very day, with no delay for my further order.",
+   "Should anyone fall upon us in arms, let every reservist be mustered and sent to the colours before the day is out."
+  ],
+  "on_a_date": [
+   "In Q3 1901, pay 50 off the state's debt.",
+   "When Q3 1901 comes, the treasury is to set aside 50 and pay it off against the state's debt.",
+   "Let the treasury discharge 50 of what the state owes in Q3 1901."
+  ],
+  "when_garrison": [
+   "As soon as Morovia has more than 60 thousand men at Zoravia (P207), put the staff's report on that frontier on my desk.",
+   "Should Holy State of Morovia (U1) gather more than 60 thousand men at Zoravia (P207), I wish the staff's report on that frontier laid before me at once.",
+   "Once the troops of Holy State of Morovia (U1) in Zoravia (P207) pass 60 thousand, have the staff bring me their written account of that frontier without delay."
+  ],
+  "watch_frontier": [
+   "Have the staff watch the frontier with Holy State of Morovia (U1) and report each quarter what stands across it.",
+   "I charge the staff to keep a steady watch upon our frontier with Holy State of Morovia (U1), and to send me a report every quarter of the forces they find drawn up on the other side.",
+   "Let the staff keep their eyes on the border with Holy State of Morovia (U1), and let me have from them, quarter by quarter, a statement of what troops are posted over against us."
+  ],
+  "delegate": [
+   "Parisa Parvan (K78) is to have the power to call up reservists without asking me, until I take it back.",
+   "I give my chief of staff, Parisa Parvan (K78), leave to summon the reservists on her own judgment, with no need to ask me first. This stands until I withdraw it.",
+   "Let Parisa Parvan (K78) be empowered to muster the reserve whenever she sees fit, without waiting on my consent, and let that authority rest with her until I revoke it."
+  ],
+  "report": [
+   "I want the staff's appreciation of a war with Holy State of Morovia (U1) for Zoravia (P207) on my desk tomorrow morning.",
+   "Let the staff prepare a full appreciation of a war against Holy State of Morovia (U1) to win back Zoravia (P207), and have it laid before me tomorrow morning.",
+   "Have the staff think through and set down for me what a campaign against Holy State of Morovia (U1) to recover Zoravia (P207) would demand and what it might gain, and see that I have the paper by tomorrow morning."
+  ]
+ },
+ "home": {
+  "arrest": [
+   "Have Aurin Vukan (K67) arrested and kept in custody. He is not to be brought to trial for the present.",
+   "I want Aurin Vukan (K67), the leader of the opposition, taken into custody at once and held. No trial is to be set for him for now; he stays under lock until I decide otherwise.",
+   "Lay hands on Aurin Vukan (K67) and shut him up. He is to be detained without any charge being brought before a court for the time being."
+  ],
+  "release": [
+   "Release Cormac Mulcahy (K246) from prison.",
+   "Cormac Mulcahy (K246), the former keeper of the treasury, has been held long enough without trial. Open his cell and set him free.",
+   "Let Cormac Mulcahy (K246) walk out of gaol today; his detention is ended."
+  ],
+  "new_chief": [
+   "Sorcha Dunmore (K66) is relieved as chief of the general staff, and Brigid Ardagh (K253) takes the post.",
+   "Relieve Sorcha Dunmore (K66) of the chief of the general staff's office, with my thanks for her service, and appoint Brigid Ardagh (K253) in her place.",
+   "Thank Sorcha Dunmore (K66) and release her from the head of the general staff. Brigid Ardagh (K253) is to succeed her and take up the office."
+  ],
+  "acting_chief": [
+   "Brigid Ardagh (K253) is to stand in for Sorcha Dunmore (K66) as chief of the general staff whenever the latter cannot serve. Dunmore keeps the post.",
+   "Let it be set down that when Sorcha Dunmore (K66) is prevented from carrying out her duties as chief of the general staff, Brigid Ardagh (K253) is to act in her stead. Dunmore remains the chief and is not displaced.",
+   "Name Brigid Ardagh (K253) as deputy to Sorcha Dunmore (K66) at the head of the general staff, to take the duties in any absence or incapacity. Dunmore holds her office as before."
+  ],
+  "ban_party": [
+   "The Workers' Movement (F61) is forbidden.",
+   "I forbid the Workers' Movement (F61). It is to cease its activity, and its organisation is no longer lawful.",
+   "Ban the Workers' Movement (F61) throughout the land; it is to be dissolved and may not carry on under any name."
+  ],
+  "meetings": [
+   "All public meetings are forbidden until further notice.",
+   "No public meeting of any kind is to be held anywhere until I say otherwise. The authorities are to see this prohibition enforced.",
+   "Prohibit every assembly in public, whatever its purpose, and let that stand until further notice."
+  ],
+  "censor": [
+   "Station a censor in the office of The Furrow (N358). The paper is not to be closed.",
+   "Place a censor in the offices of The Furrow (N358) to read its copy before it is printed. The paper itself is to go on appearing and is not to be shut down.",
+   "Install an official censor at The Furrow (N358) to vet whatever it means to publish; I do not wish the paper suppressed, only supervised."
+  ],
+  "raid": [
+   "The police are to go after the armed underground: its presses, its arms and its men.",
+   "Order the police to move against the armed underground itself. They are to seize its printing presses and its weapons and arrest its men.",
+   "Let the police strike at the armed underground at its roots, breaking up its presses, taking its arms and rounding up its people."
+  ],
+  "streets": [
+   "The police and the garrison are to hold the streets of Belograd (P103).",
+   "Have the police and the garrison together take and keep the streets in Belograd (P103), so that order is maintained there.",
+   "Put the police and the troops of the garrison out on the streets of Belograd (P103) and let them keep command of them."
+  ],
+  "watch": [
+   "The police are to watch Aurin Vukan (K67): who calls at his door and what is written from his house.",
+   "Have the police keep Aurin Vukan (K67) under observation. I want to know who visits him and what papers go out from his house.",
+   "Set the police to keep an eye on Aurin Vukan (K67), noting every caller at his door and everything that is written and sent from there."
+  ]
+ },
+ "treasury": {
+  "tax": [
+   "Raise the income tax from 12 to 25 in the hundred.",
+   "Let it be written that the income tax, which now stands at 12 in the hundred, shall from this day be 25 in the hundred, and let the collectors be told so without delay.",
+   "Double the burden on incomes and a little more: set the income levy at 25 in the hundred."
+  ],
+  "borrow_home": [
+   "Raise a loan of 150 at home for the treasury.",
+   "Let the treasury take up 150 from our own subjects and houses, by a loan at home, to cover the state's needs.",
+   "Draw 150 from the savings of our own people into the treasury as a loan, and let no foreign house be asked."
+  ],
+  "borrow_abroad": [
+   "Take 200 in gold on loan from the banking houses of Free Ports of Andona (U8).",
+   "Send to the banking houses of Free Ports of Andona (U8) and have them lend the state 200 in gold; the treasury will answer for it.",
+   "Go to the bankers of Free Ports of Andona (U8) and procure from them 200 in gold as a debt of the crown."
+  ],
+  "grain": [
+   "Buy 60 of grain abroad, on the state's account.",
+   "Let agents be sent abroad to purchase 60 of grain for the account of the state, to fill our granaries.",
+   "Procure 60 of grain from foreign lands and pay for it out of the state's own purse."
+  ],
+  "duty": [
+   "Lay a duty of 20 in the hundred on foreign cloth and wares; the general tariff is unchanged.",
+   "Let foreign cloth and wares pay a duty of 20 in the hundred at our borders, and let the general tariff remain just as it is.",
+   "Burden the cloth and wares of foreign makers with a charge of 20 in the hundred on entry, leaving the rest of the customs schedule untouched."
+  ],
+  "sell_gold": [
+   "Sell 100 of the state's own gold for the treasury.",
+   "Let 100 of the gold held by the state be sold, and the proceeds paid into the treasury.",
+   "Part with 100 from the state's own store of gold and turn it into coin for the treasury."
+  ],
+  "remit": [
+   "Remit half the land tax of Falkburgir (P253) for four quarters.",
+   "For the next four quarters, let the province of Falkburgir (P253) pay only half of its land tax, and let the officials there be informed.",
+   "Spare Falkburgir (P253) one half of its land dues for a year's four quarters, that its unrest may be eased."
+  ],
+  "railway": [
+   "Build a railway from Tolistanir (P360) to Falkburgir (P253).",
+   "Let a railway be laid from our capital Tolistanir (P360) to Falkburgir (P253), at the state's charge.",
+   "Construct an iron road linking Tolistanir (P360) with Falkburgir (P253)."
+  ],
+  "arms_works": [
+   "Commission a state arms works for no more than 200, and let the engineers choose the site.",
+   "Order the founding of an arms works owned by the state, to cost not above 200 in all; the engineers are to determine where it shall stand.",
+   "Have a state factory for arms erected, with an outlay not exceeding 200, and leave to the engineers the choice of its place."
+  ],
+  "gift": [
+   "Give 20 from the treasury to the peasants as relief after the bad harvest.",
+   "Out of the treasury let 20 be distributed to the peasants, to relieve their want after the failed harvest.",
+   "Hand over 20 of the state's money to the country people to help them through the harvest's failure."
+  ],
+  "gold_floor": [
+   "The banks must keep at least 500 in gold in reserve and not pay it out for imports.",
+   "Let it be ordered that the banks hold back no less than 500 in gold, and that this sum shall not go to pay for goods brought from abroad.",
+   "Forbid the banks to spend the last 500 of their gold on foreign purchases; that much they must keep locked in their vaults."
+  ]
+ },
+ "magnate": {
+  "wages": [
+   "Raise the wages at Waldlandir Consumer industry (SR141) to a tenth above the going wage.",
+   "Have it put about at Waldlandir Consumer industry (SR141) that from now on the hands are to be paid a full tenth more than the going wage; I would have my people well content there.",
+   "Lift the pay of the workers at Waldlandir Consumer industry (SR141) ten in the hundred over what is customary."
+  ],
+  "safety": [
+   "Bring safety at Waldlandir Consumer industry (SR141) up to the full standard.",
+   "I will no longer tolerate half-measures at Waldlandir Consumer industry (SR141); see that the guards, rails and precautions there are made good to the full standard, whatever it costs.",
+   "Have Waldlandir Consumer industry (SR141) fitted out with every safeguard the standard calls for, and spare nothing to make the place wholly sound."
+  ],
+  "new_works": [
+   "Found a new cloth and wares works with 15 of my own money, at whatever site the engineers judge best in the country.",
+   "I wish a new cloth and wares works set up, and I will put 15 of my own money into it; let the engineers choose the place that suits best anywhere in the Republic.",
+   "Lay out 15 from my own purse to build a fresh cloth and wares mill, and let the engineers decide where in the land it should stand."
+  ],
+  "invest": [
+   "Put 10 of my own money into extending Waldlandir Consumer industry (SR141).",
+   "Take 10 from my own purse and spend it on enlarging Waldlandir Consumer industry (SR141), so that it may turn out more.",
+   "Lay out 10 of my private means to add to the buildings and plant of Waldlandir Consumer industry (SR141)."
+  ],
+  "draw": [
+   "Take 5 out of the till of Waldlandir Consumer industry (SR141) and put it in my own purse.",
+   "Draw 5 from the cash of Waldlandir Consumer industry (SR141) and pay it over to me personally.",
+   "Withdraw 5 from the house's coffers at Waldlandir Consumer industry (SR141) for my own use."
+  ],
+  "share": [
+   "Write a fifth of Waldlandir Consumer industry (SR141) over to Gerda Adler (K43), in Gerda Adler's own name.",
+   "Have the papers drawn up making over one fifth of Waldlandir Consumer industry (SR141) to Gerda Adler (K43), the share to stand in Gerda Adler's own name.",
+   "Transfer a fifth part of my holding in Waldlandir Consumer industry (SR141) to Gerda Adler (K43) as Gerda Adler's own property."
+  ],
+  "contract": [
+   "Offer the state, through Otto Brandt (K41), a contract for 4 of arms each quarter for eight quarters, at the world's price of the day, on the treasury's account.",
+   "Let it be proposed to Otto Brandt (K41) that I furnish the army with 4 of arms every quarter for eight quarters running, charged at the world's price of the day and paid from the treasury's account.",
+   "Tender to Otto Brandt (K41) my services as supplier of arms to the state: 4 each quarter for two years, reckoned at the day's world price and settled by the treasury."
+  ],
+  "lend": [
+   "Offer Otto Brandt (K41) a private loan of 10, to be paid back in a year.",
+   "Let Otto Brandt (K41) know that I am willing to lend 10 out of my own pocket, privately, on the understanding that it is repaid within the year.",
+   "Advance 10 to Otto Brandt (K41) as a personal loan, with repayment to me at the twelvemonth's end."
+  ],
+  "bonds": [
+   "Buy 12 of the state's bonds.",
+   "I wish to take up 12 in the state's bonds; see it done at once on my account.",
+   "Subscribe 12 of my money to the state's bonds."
+  ]
+ },
+ "league": {
+  "adopt": [
+   "I will take up the programme of the National Guard of Tirara openly, and Radomir Petran's men shall be counted as ours.",
+   "Let it be known in the street and in the papers that this Government adopts the cause of the National Guard of Tirara, and I shall receive Radomir Petran's men as our own, under our protection and in our service.",
+   "Embrace the National Guard of Tirara's programme before the public, and bring Radomir Petran's following over to our side."
+  ],
+  "forbid": [
+   "The National Guard of Tirara is forbidden. Close its halls and seize its papers.",
+   "I command that the National Guard of Tirara be dissolved by order of this Government; its halls are to be shut, its records and papers taken into our hands, and its meetings no longer suffered.",
+   "Put down the National Guard of Tirara: padlock its halls, carry off its papers, and let Radomir Petran's league be broken up."
+  ],
+  "buy_chief": [
+   "Pay Radomir Petran 60 from my own purse to keep his men at home.",
+   "Let 60 be counted out to Radomir Petran from my own purse, on the understanding that he holds his men at home and out of the streets.",
+   "Settle upon Radomir Petran a sum of 60 out of my private means, that he may restrain the National Guard of Tirara and keep its men indoors."
+  ],
+  "money": [
+   "Give the National Guard of Tirara 20 from my own purse, and say nothing of it.",
+   "Let 20 from my own purse be passed discreetly to the National Guard of Tirara, so that no one learns whence it came.",
+   "Slip 20 of my own money to the National Guard of Tirara by a quiet hand, and let it go unremarked."
+  ],
+  "watch_chief": [
+   "Have the police watch Radomir Petran.",
+   "I wish the police to keep Radomir Petran under observation, to note where he goes and whom he meets, and to report to me.",
+   "Set the police to shadow Radomir Petran and keep an eye upon his comings and goings."
+  ],
+  "arrest_chief": [
+   "Have Radomir Petran arrested.",
+   "I order the police to take Radomir Petran into custody without delay and hold him.",
+   "Lay hands on Radomir Petran and lock him up."
+  ]
+ },
+ "opposition": {
+  "petition": [
+   "Open a petition in the name of the peasants for the land tax on smallholders to be lowered by a fifth.",
+   "Let it be drawn up and carried through the villages: a petition from the peasants of the Land Party (F38), asking that the land tax on the smallholders be cut by one fifth. Every farmer who can make his mark is to be asked to sign.",
+   "Start a petition among the country people, praying the chamber to take a fifth off the land tax that weighs on the smallholders."
+  ],
+  "rally": [
+   "Call a public meeting of the Land Party (F38) in the capital this quarter.",
+   "I want the Land Party (F38) to hold an open meeting in the capital before the quarter is out. Hire a hall, put up the notices, and see that the peasants are told in good time.",
+   "Gather our people in the capital this quarter and let the party speak openly before the public."
+  ],
+  "union": [
+   "Found a miners' union under the wing of the Land Party (F38), and set 3 from the party chest toward its strike fund.",
+   "Let a union of miners be formed under the protection of the Land Party (F38). Take 3 out of the party chest to start its strike fund, so that the men know there is something behind them.",
+   "Set up an association of the pitmen with our party as its patron, and make over 3 from the Land Party (F38) chest as the first money for its strike fund."
+  ],
+  "paper": [
+   "Found a weekly paper of our own, \"The Plough\", and pay 10 for it out of my own purse.",
+   "I will have a weekly newspaper that speaks for the country people. Call it \"The Plough\", and take the 10 needed to start it from my own purse.",
+   "Establish \"The Plough\" as a weekly journal for our cause, with 10 of my own money to set the press going."
+  ],
+  "no_confidence": [
+   "Move a vote of no confidence in the government in the chamber.",
+   "Let it be put to the chamber that this government no longer has the confidence of the country, and let the House vote on it.",
+   "Table a motion in the chamber declaring that the ministers have lost our trust, and call for a division."
+  ],
+  "chest": [
+   "Pay 15 of my own money into the chest of the Land Party (F38).",
+   "From my own purse, put 15 into the chest of the Land Party (F38) so that the party has the means to carry on its work.",
+   "Hand over 15 of my private money to the treasury of the Land Party (F38)."
+  ],
+  "hire_watch": [
+   "Pay men of our own to watch Dietmar Rothe (K42): whom he sees and where he goes.",
+   "Hire some reliable men and have them keep an eye on General Dietmar Rothe (K42). I want to know who calls on him and where he goes, and they are to be paid for it.",
+   "Set paid watchers on the chief of the general staff, Dietmar Rothe (K42), to mark his visitors and follow his comings and goings."
+  ],
+  "widows": [
+   "Give 4 of my own money to the families of the men at Brunburga iron mine (SR143).",
+   "Out of my own purse, send 4 to the wives and children of the men who work at Brunburga iron mine (SR143), as a help in hard times.",
+   "Let 4 from my private means go as a gift to the families of the Brunburga iron mine (SR143) workers."
+  ]
+ }
+}

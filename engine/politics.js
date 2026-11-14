@@ -85,13 +85,13 @@ export function satisfactionStep(w) {
       const scar = p.scar && p.scar.by === p.controller ? p.scar.weight * 40 * Math.max(0, 1 - (w.turn - p.scar.turn) / 80) : 0;
       // A rising that was fought out and put down leaves a province quiet for some years, the longer the harder it was put down.
       const quiet = p.quelled ? p.quelled.weight * Math.max(0, 1 - (w.turn - p.quelled.turn) / 12) : 0;
-      const pressure = 88 - meanSat * 1.3 + (c.pressFreedom > 70 ? 3 : 0) - grip - garrisonHold(garrison[p.id] || 0, pp) - c.repress * .35 - hush(c) + modValue(c, 'unrest') + adminPressure(p) + scar - quiet;
+      const pressure = 88 - meanSat * 1.3 + (c.pressFreedom > 70 ? 3 : 0) - grip - garrisonHold(garrison[p.id] || 0, pp) - Math.max(c.repress, p.held || 0) * .35 - hush(c) + modValue(c, 'unrest') + adminPressure(p) + scar - quiet;
       p.unrest = clamp(p.unrest + (clamp(pressure, 0, 100) - p.unrest) * .35, 0, 100);
       unrestSum += p.unrest * pp; popSum += pp;
     }
     c.unrest = popSum ? unrestSum / popSum : 0;
     updateBlocs(w, c, inWar);
-    c.repress = Math.max(0, c.repress - 6);
+    c.repress = Math.max(0, c.repress - 6); for (const p of countryProvinces(w, c.id)) if (p.held) { p.held = Math.max(0, p.held - 6); if (!p.held) delete p.held; }
     const meanPop = weightedSat(w, c);
     c.popularity = meanPop;
     // Legitimacy rests on how people live and on the standing the regime inherited or earned beyond that: a dynasty, a faith, a constitution, a revolution.

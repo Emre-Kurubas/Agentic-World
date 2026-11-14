@@ -124,7 +124,9 @@ export function standingOp(w, actor, c, op, h) {
 }
 
 // The days an order can wait for, each of them something the engine itself knows to have happened.
-const FORMS = 'attacked (somebody goes to war with us; by: a state, if only that one counts), mobilised (a named state, or with true any state on our frontier, calls up its reserve), war_on (somebody goes to war with a named state), troops (the men of a state in a named province rise above or fall below a number), treaty (a paper comes into force, or ends), peace (our war with a named state ends), ultimatum (a named state refuses our ultimatum or lets it run out), bill (a bill passes, or is rejected), lost (a province of ours falls into other hands), after (so many quarters), date (a quarter by its name, Q3 1903)';
+// The works of a fortress are "breached" in the staff's reports when they are worn below three fifths (military.js worksWord).
+const BREACHED = .6;
+const FORMS = 'attacked (somebody goes to war with us; by: a state, if only that one counts), mobilised (a named state, or with true any state on our frontier, calls up its reserve), war_on (somebody goes to war with a named state), troops (the men of a state in a named province rise above or fall below a number), breach (the works of a fortress we besiege are breached), treaty (a paper comes into force, or ends), peace (our war with a named state ends), ultimatum (a named state refuses our ultimatum or lets it run out), bill (a bill passes, or is rejected), lost (a province of ours falls into other hands), after (so many quarters), date (a quarter by its name, Q3 1903)';
 function normWhen(w, c, raw) {
   const k = raw && typeof raw === 'object' ? raw : {}, st = id => w.countries[id]?.alive ? id : null;
   if (k.attacked) { const by = st(k.by); return { when: { attacked: true, ...(by ? { by } : {}) }, words: `the day ${by ? nameOf(w, by) : 'any state'} goes to war with us` }; }
@@ -133,6 +135,12 @@ function normWhen(w, c, raw) {
   if (k.troops && w.provinces[k.troops.province]) { const p = w.provinces[k.troops.province], who = st(k.troops.country) ?? (p.controller !== c.id ? p.controller : null), above = Number(k.troops.above), below = Number(k.troops.below);
     if (!who) return { no: 'Say whose troops are to be counted there (country).' }; if (!(above >= 0) && !(below >= 0)) return { no: 'Say the number: above (so many thousand or more) or below (so many thousand or fewer).' };
     return { when: { troops: { province: p.id, country: who, ...(above >= 0 ? { above } : { below }) } }, words: `the day the troops of ${nameOf(w, who)} at ${p.name} ${above >= 0 ? `number ${above} thousand or more` : `are down to ${below} thousand or fewer`}, as far as the staff can count them` }; }
+  // "Go on with the siege, and storm when the works are breached": the day the works of a place we have shut in are worn down to a breach.
+  // (The order drill, before world 25: three wordings of that order were entered as the siege alone, "no report reaches the office that would
+  // name the day". The besieger's staff reports the state of the works every quarter; world 25's besieger wrote the same order.)
+  if (k.breach) { const p = w.provinces[typeof k.breach === 'object' ? k.breach.province : k.breach]; if (!p) return { no: 'Say which fortress (breach: its province).' };
+    const ours = p.siege?.by === c.id || Object.values(w.units).some(u => u.country === c.id && u.attack?.to === p.id && u.attack.manner === 'siege'); if (!ours) return { no: `We lay no siege to ${p.name}: an order can wait for a breach only in the works of a place our troops have shut in or are ordered to besiege.` };
+    return { when: { breach: p.id }, words: `the day the works of ${p.name} are breached, by the report of our own staff before it` }; }
   // "If they refuse, we march": the day our ultimatum to a state is refused or runs out. (World 20: a ruler sent an ultimatum and ordered the
   // attack that was to follow it in the same breath, to be countermanded by his own hand if the other bent. The attack could not be entered
   // for want of a war, and he found out a quarter later.)
@@ -161,6 +169,7 @@ const holds = (w, so) => { const c = w.countries[so.country], k = so.when, fresh
   if (k.treaty) { const t = w.treaties.find(x => x.id === k.treaty); return k.state === 'ended' ? !!t && !t.active && !t.pending && t.withdrawn == null && !(k.unsigned && t.since != null) : !!t?.active; }
   if (k.bill) { const b = aliveCountries(w).flatMap(o => [...(o.bills || []), ...(o.laws || [])]).find(x => x.id === k.bill); return !!b && b.status === k.state; }
   if (k.peace) return !atWar(w, c.id, k.peace);
+  if (k.breach) { const p = w.provinces[k.breach]; return !!p && p.siege?.by === c.id && !!p.siege.shut && (p.fort ?? 0) < BREACHED; }
   if (k.lost) return w.provinces[k.lost]?.controller !== c.id;
   if (k.turn != null) return w.turn >= k.turn;
   return false; };
