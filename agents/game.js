@@ -6,7 +6,7 @@ import { news, rand, clamp, quarterLabel } from '../engine/util.js';
 import { openPost, isMinor } from '../engine/court.js';
 import { burden } from '../engine/burdens.js';
 import { npcDecide } from './npc.js';
-import { actorPrompt, refereePrompt, courtPrompt, lookupReply, talkText } from './prompts.js';
+import { actorPrompt, refereePrompt, courtPrompt, lookupReply, talkText, amendText } from './prompts.js';
 import { answer } from './queries.js';
 import { LimitError, SessionLostError } from './backend.js';
 import { snapshotState, buildEntries } from './ledger.js';
@@ -308,6 +308,48 @@ export class Game {
     }));
   }
 
+  // Orders that came back from the offices undone are laid before whoever gave them, the same morning and once, before the quarter is played:
+  // what the engine refused (not what the dice or the quarter's events decided, and not what still waits), what the referee ruled could not be
+  // done at all, and what the referee passed over. What is ordered in their place goes through the referee and the engine like any order, with
+  // the same authority and the same limits by the quarter; what comes back a second time is read next morning. The replies are kept with the
+  // quarter's pending answers, so that a game interrupted here asks nobody twice.
+  async amend(actors, log) {
+    const w = this.w, cfg = this.cfg; if (this.backend.kind === 'mock' || cfg.amendReturned === false) return;
+    const back = new Map(), put = (id, x) => { if (!back.has(id)) back.set(id, []); back.get(id).push(x); }, ok = id => { const r = this.pending.actors[id], ch = w.characters[id]; return !!r && !r.fallback && !r._ops && !!ch?.alive && actors.some(a => a.id === id); };
+    for (const r of log.rulings) { if (r.source !== 'referee' || !ok(r.actor) || !String(r.decisionText ?? '').trim()) continue;
+      const no = (r.results || []).filter(x => x.ok === false && !x.chance && !x.skipped && !x.waits), never = !(r.probability > 0) && !(r.results || []).length;
+      if (!no.length && !never) continue; const rest = (r.results || []).some(x => x.ok !== false && !x.skipped);
+      put(r.actor, { order: r.decisionText, ops: JSON.stringify(r.ops ?? []), why: `${never ? `${r.narrative}${r.note ? ` (${r.note})` : ''}` : no.map(x => x.msg).join(' ')}${!never && r.note ? ` (Your secretary adds: ${r.note})` : ''}${rest ? ' Only this part came back: the rest of the order was carried out.' : ''}` }); }
+    for (const x of log.passed || []) if (ok(x.actor)) put(x.actor, { order: x.order, ops: '(nothing was entered)', why: 'The office entered nothing for it and gave no reason.' });
+    const list = [...back]; if (!list.length) return;
+    const kept = this.pending.amend ||= { replies: {}, referee: {} };
+    this.setStatus('orders returned', `${list.length} characters reading what came back from the offices`);
+    let done = 0;
+    await this.withRetry(() => pool(list, cfg.concurrency, async ([id, items]) => {
+      if (kept.replies[id]) return; const ch = w.characters[id], text = amendText(items), build = ({ intro, fresh, recap }) => fresh ? `${actorPrompt(w, ch, [], true, { intro, recap })}\n\n${text}` : text;
+      let r; try { r = await this.askAs(ch, build, modelFor(cfg, ch)); } catch (e) { if (e instanceof LimitError) throw e; this.report(ch, `No reply to the orders that came back: ${e.message}`); r = {}; }
+      const clean = sanitize(r, cfg); kept.replies[id] = { decisions: (Array.isArray(r?.decisions) ? clean.decisions : []).slice(0, Math.max(2, items.length * 2)), monologue: clean.monologue || '' };
+      this.store.savePending(this.pending); this.setStatus('orders returned', `${++done}/${list.length} have answered`);
+    }));
+    const groups = {}; for (const [id, items] of list) { const mine = kept.replies[id]; if (mine?.decisions?.length) (groups[w.characters[id].country] ||= []).push({ actor: w.characters[id], decisions: mine.decisions, returned: items }); }
+    const again = Object.entries(groups);
+    if (again.length) { this.setStatus('referee judging', `orders given again in ${again.length} countries`);
+      await this.withRetry(() => pool(again, cfg.concurrency, async ([cid, entries]) => {
+        if (kept.referee[cid]) return; let r;
+        try { r = await this.backend.ask(refereePrompt(w, w.countries[cid], entries), cfg.models.referee); } catch (e) { if (e instanceof LimitError) throw e; this.report(null, `No referee reply on the orders given again: ${e.message}`); r = { rulings: [] }; }
+        if (!Array.isArray(r?.rulings)) r = { rulings: [] };
+        const left = unruled(entries, r).map(l => ({ ...l, returned: entries.find(e => e.actor === l.actor)?.returned }));
+        if (left.length) { try { const more = await this.backend.ask(refereePrompt(w, w.countries[cid], left), cfg.models.referee); if (Array.isArray(more?.rulings)) r.rulings.push(...more.rulings); } catch (e) { if (e instanceof LimitError) throw e; this.report(null, `No referee reply to the second request on the orders given again: ${e.message}`); } }
+        kept.referee[cid] = r; this.store.savePending(this.pending);
+      })); }
+    // What was thought and ordered at the second look is part of the morning's record.
+    for (const [id] of list) { const mine = kept.replies[id], t = log.trace.find(x => x.actor === id); if (!mine || !t) continue; if (mine.monologue) t.monologue = [t.monologue, mine.monologue].filter(Boolean).join('\n\n'); if (mine.decisions.length) t.amended = mine.decisions; t.returned = back.get(id).map(x => x.order); }
+    for (const [cid, entries] of again) { const r = kept.referee[cid];
+      for (const h of (Array.isArray(r?.rulings) ? r.rulings : []).filter(h => h && typeof h === 'object')) { const e = entries.find(x => x.actor.id === h.actor), text = e?.decisions[h.decision]; if (!e || text == null) continue;
+        log.rulings.push(this.applyRuling(e.actor, { narrative: String(h.narrative || '').slice(0, 1500), note: String(h.note || '').slice(0, 1500), prob: Number.isFinite(Number(h.probability ?? 1)) ? clamp(Number(h.probability ?? 1), 0, 1) : 1, public: !!h.public, ops: Array.isArray(h.operations) ? h.operations.slice(0, 16) : [], decision: h.decision, decisionText: text, source: 'referee', again: true })); }
+      for (const { actor: ch, decisions, indices } of unruled(entries, r)) decisions.forEach((d, k) => { this.report(ch, `The referee gave no ruling on the order given again ${indices[k]}: ${d.slice(0, 160)}`); ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: Given again the same morning. Not carried out, no ruling was given: ${d.slice(0, 200)}`); ch.outcomes = ch.outcomes.slice(-60); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1)); }); }
+  }
+
   // Letters to people nobody plays are answered for them, country by country, from what the engine knows of each. They are written once the
   // quarter's orders have been carried out and the quarter has been played, so that a banker who was asked to sell a note this quarter writes
   // that he has sold it, or why he would not, and a keeper of the treasury writes the reserve as the quarter left it: the answers are in the
@@ -349,7 +391,7 @@ export class Game {
   }
 
   execute(actors) {
-    const w = this.w, cfg = this.cfg, trace = [], rulings = [];
+    const w = this.w, cfg = this.cfg, trace = [], rulings = [], passed = [];
     const awake = new Set(actors.map(a => a.id));
     const outgoing = [];
     // Those who woke have read their mail: it is cleared now, before anything is carried out, so that what this quarter's acts send them
@@ -387,6 +429,7 @@ export class Game {
       const mine = this.pending.actors[ch.id], ruled = this.pending.referee[ch.country];
       if (!mine?.decisions?.length || mine._ops || mine.fallback || !ruled) continue;
       for (const { decisions, indices } of unruled([{ actor: ch, decisions: mine.decisions }], ruled)) decisions.forEach((d, k) => {
+        passed.push({ actor: ch.id, order: d });
         this.report(ch, `The referee gave no ruling on decision ${indices[k]}: ${d.slice(0, 160)}`);
         ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: Not carried out, no ruling was given: ${d.slice(0, 200)}`); ch.outcomes = ch.outcomes.slice(-60); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
       });
@@ -395,7 +438,7 @@ export class Game {
     for (const ch of Object.values(w.characters)) if (ch.inbox.length > 40) ch.inbox = ch.inbox.slice(-40);
     for (const m of outgoing) this.post(m);
     // Notes the engine's keeper left in the world file (a fault found and corrected, a save repaired) go into the record once, with the quarter they were read in.
-    return { trace, rulings, system: [...(w.engineNotes || []).splice(0), ...(this.sysLog ||= []).splice(0)], messages: outgoing.map(m => this.posted(m)) };
+    return { trace, rulings, passed, system: [...(w.engineNotes || []).splice(0), ...(this.sysLog ||= []).splice(0)], messages: outgoing.map(m => this.posted(m)) };
   }
   // A letter as the record keeps it.
   posted(m) { const w = this.w, target = recipient(w, m.to, m.from, m.text); return { from: m.from.id, fromName: m.from.name, fromCountry: m.from.country, to: m.to, toActor: target?.id, toCountry: target?.country, toName: w.characters[m.to]?.name ?? w.countries[m.to]?.name ?? m.to, text: m.text, undelivered: !!m.undelivered, intercepted: !!m.intercepted, readBy: m.readBy ?? [], npc: !!m.npc, read: !!m.read, round: m.round ?? 0 }; }
@@ -410,7 +453,7 @@ export class Game {
   // quarter (ships still on their way), what hangs on it waits with it. An attack is such an order whatever the quarter: it is accepted today and
   // decided by the fighting, so what hangs on an offensive (or on a move against ground the enemy holds) waits for the place to fall, or for the
   // attack on it to fail (ops.js hangOn, carryTaken); and an operation may name the place it waits for itself (once_taken).
-  applyRuling(ch, { narrative, note, prob, public: pub, ops, source, decision, decisionText }) {
+  applyRuling(ch, { narrative, note, prob, public: pub, ops, source, decision, decisionText, again = false }) {
     const w = this.w, c = w.countries[ch.country];
     // The order's own word says whom it means. Where the order names exactly one person by number and the office entered somebody the
     // order never mentions, the person the order names is the one meant.
@@ -443,10 +486,10 @@ export class Game {
       const words = !said && !results.some(r => !['custom', 'noop'].includes(r.op));
       const verdict = !success ? 'Failed' : refused.length === results.length && results.length ? 'Not carried out' : refused.length ? 'Only partly carried out' : waits ? (results.some(r => String(r.waits).startsWith('take:')) ? 'Ordered; part of it waits on the fighting' : 'Ordered, and waiting on the quarter') : words ? (printed ? 'Said, and it is in the papers; nothing else was set in motion' : 'Recorded as words only; nothing was set in motion') : 'Succeeded';
       told = verdict;
-      ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: ${verdict}: ${narrative}${note ? ` (Your secretary adds: ${note})` : ''}${said ? ` [${said.slice(0, 1500)}]` : ''}`); ch.outcomes = ch.outcomes.slice(-60); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
+      ch.outcomes.push(`${w.date ?? quarterLabel(w.turn)}: ${again ? 'Given again the same morning. ' : ''}${verdict}: ${narrative}${note ? ` (Your secretary adds: ${note})` : ''}${said ? ` [${said.slice(0, 1500)}]` : ''}`); ch.outcomes = ch.outcomes.slice(-60); (ch.newOutcomes ||= []).push(ch.outcomes.at(-1));
     }
     // What is recorded as the probability is the chance that was actually rolled; where the referee named one and no dice were due, its figure is kept beside it.
-    return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, ...(note ? { note } : {}), probability: diced || prob <= 0 ? prob : 1, ...(prob > 0 && prob < 1 && !diced ? { refereeProbability: prob } : {}), success, ...(told ? { verdict: told } : {}), results, source, decision, decisionText, ops, printed };
+    return { actor: ch.id, name: ch.name, country: ch.country, role: ch.role, narrative, ...(note ? { note } : {}), probability: diced || prob <= 0 ? prob : 1, ...(prob > 0 && prob < 1 && !diced ? { refereeProbability: prob } : {}), success, ...(told ? { verdict: told } : {}), results, source, decision, decisionText, ops, printed, ...(again ? { again: true } : {}) };
   }
 
   async turn() {
@@ -459,6 +502,8 @@ export class Game {
     await this.judge(actors);
     this.setStatus('world processing', 'Calculating economy, war and politics');
     const before = snapshotState(w), log = this.execute(actors);
+    await this.amend(actors, log);
+    this.setStatus('world processing', 'Calculating economy, war and politics');
     stepWorld(w);
     await this.answerLetters(actors, log);
     const entries = buildEntries(w, log, before, this.pending.lookups);

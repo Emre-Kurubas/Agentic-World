@@ -29,7 +29,7 @@ import { npcDecide } from '../agents/npc.js';
 import { actorPrompt } from '../agents/prompts.js';
 import { sanitizeSvg, parseArt } from '../agents/art.js';
 
-const base = { plainStates: true, seed: 42, countries: 5, provinces: 130, agentRoles: ['leader', 'general', 'opposition', 'oligarch'], countryAgentRoles: {}, models: { leader: 'a', referee: 'a', secondary: 'b' }, concurrency: 2, wakeEvery: 2, wakeTension: 45, maxMessagesPerActor: 3, maxDecisionsPerActor: 5, limitRetryMinutes: 0, maxTurns: 0 };
+const base = { amendReturned: false, plainStates: true, seed: 42, countries: 5, provinces: 130, agentRoles: ['leader', 'general', 'opposition', 'oligarch'], countryAgentRoles: {}, models: { leader: 'a', referee: 'a', secondary: 'b' }, concurrency: 2, wakeEvery: 2, wakeTension: 45, maxMessagesPerActor: 3, maxDecisionsPerActor: 5, limitRetryMinutes: 0, maxTurns: 0 };
 const fresh = () => { const w = createWorld(base); w.status = 'playing'; for (const c of aliveCountries(w)) c.majorityEth ??= ''; run(w, 4); return w; };
 const run = (w, n) => { for (let i = 0; i < n; i++) { beginTurn(w); stepWorld(w); } };
 const ld = (w, c) => w.characters[c.leader];
@@ -6146,5 +6146,37 @@ chain('World 26, first review: the breach can be waited on before the siege is l
   if (man) { man.status = 'imprisoned'; const posted = applyOp(w, L, { op: 'post_person', character: man.id, office: 'staff' }); assert.ok(!posted.ok && /is in prison: nobody is posted from there/.test(posted.msg), `nobody is posted from a cell: ${posted.msg}`);
     const out = applyOp(w, L, { op: 'post_person', character: man.id, dismiss: true }); assert.ok(out.ok && /out of the state's service/.test(out.msg), `but he can be struck off the rolls: ${out.msg.slice(0, 120)}`); }
 });
+await (async () => { // Chain: an order that comes back from the offices is laid before its giver the same morning, once
+  const play = async (second, reply) => {
+    const cfg = { ...base, amendReturned: true, agentRoles: ['leader'], maxLookupRounds: 0, negotiationRounds: 0, concurrency: 1 }, w = createWorld(cfg), c = w.countries.U1, L = w.characters[c.leader], seen = { back: [], again: [], first: 0 }; w.status = 'playing'; c.treasury = Math.max(c.treasury, 500);
+    const backend = { kind: 'claude', async ask(p) {
+      if (p.includes('have come back from the offices undone')) { seen.back.push(p); return reply; }
+      if (!p.includes('"rulings"')) return { decisions: p.includes(`Your name: ${L.name}`) ? ['Raise more infantry at the capital', 'Set the income tax at a fifth'] : [], messages: [] };
+      if (!p.includes(`${L.id} (`)) return { rulings: [] };
+      if (p.includes('THESE ARE ORDERS GIVEN AGAIN')) { seen.again.push(p); return { rulings: [{ actor: L.id, decision: 0, narrative: 'Infantry is raised at the capital.', probability: 1, operations: [second] }] }; }
+      seen.first++; return { rulings: [{ actor: L.id, decision: 0, narrative: 'More infantry is to be raised at the capital.', probability: 1, operations: [{ op: 'recruit', province: c.capital, unit_kind: 'infantry' }] }, { actor: L.id, decision: 1, narrative: 'The income tax is set at a fifth.', probability: 1, operations: [{ op: 'set_tax', kind: 'income', rate: .2 }] }] };
+    } };
+    const men = () => Object.values(w.units).filter(u => u.country === c.id).reduce((a, u) => a + u.men, 0) + (w.projects || []).filter(x => x.country === c.id && x.kind === 'unit').reduce((a, x) => a + (x.men ?? 0), 0), was = men(), log = [];
+    const g = new Game({ world: w, cfg, backend, store: { ...memoryStore(), commit(_, entries) { log.push(...entries); } } }); await g.turn();
+    return { w, c, L, seen, out: L.outcomes.join(' | '), raised: men() - was, log };
+  };
+  // Given again with what was missing: carried out the same quarter, and the rest of the morning is not touched.
+  const capital = createWorld({ ...base }).countries.U1.capital, b = await play({ op: 'recruit', province: capital, men: 5, unit_kind: 'infantry' }, { inner_voice: 'Five thousand, then.', decisions: ['Raise five thousand infantry at the capital'] });
+  assert.equal(b.seen.back.length, 1, 'whoever gave the order is asked once');
+  const p = b.seen.back[0]; assert.ok(p.startsWith('Before the quarter runs its course, some of this morning\'s orders have come back from the offices undone.') && p.includes('1. Your order: Raise more infantry at the capital') && /Returned: [^\n]*(number|men)/i.test(p) && !p.includes('income tax') && p.includes('If you write nothing, nothing changes.'), `the order and the engine's reason are laid before him, and only what came back: ${p.slice(0, 400)}`);
+  assert.equal(b.seen.again.length, 1); assert.ok(/the order: Raise more infantry at the capital[^]*entered as: \[\{"op":"recruit"[^]*the engine answered: /.test(b.seen.again[0]) && b.seen.again[0].includes('0. Raise five thousand infantry at the capital'), 'the referee sees what was entered and what the engine answered');
+  assert.ok(/Not carried out: More infantry is to be raised/.test(b.out) && /Given again the same morning\. Succeeded: Infantry is raised at the capital/.test(b.out), `both are told next morning: ${b.out.slice(0, 500)}`);
+  assert.equal((b.out.match(/The income tax is set at a fifth/g) || []).length, 1, 'the order that was carried out is not given twice'); assert.equal(b.seen.first, 1);
+  const again = b.log.filter(e => e.k === 'ruling' && e.x?.again), thought = b.log.find(e => e.k === 'thought' && e.a?.[0] === b.L.id);
+  assert.ok(again.length === 1 && again[0].x.decisionText === 'Raise five thousand infantry at the capital' && thought?.x?.amended?.length === 1 && thought.x.returned?.length === 1 && /Five thousand, then\./.test(thought.text), 'the record keeps the second look apart from the first');
+  // Nothing written: nothing changes, and the referee is not asked.
+  const none = await play({ op: 'noop' }, { inner_voice: 'Let it lie.', decisions: [] });
+  assert.ok(none.seen.back.length === 1 && none.seen.again.length === 0 && /Not carried out: More infantry/.test(none.out) && !/Given again/.test(none.out) && (none.out.match(/The income tax is set at a fifth/g) || []).length === 1, 'an empty answer changes nothing');
+  const silent = await play({ op: 'noop' }, null); assert.ok(silent.seen.again.length === 0 && (silent.out.match(/The income tax is set at a fifth/g) || []).length === 1, 'nor does no answer at all');
+  // Refused a second time: read next morning, and nobody is asked a third time.
+  const twice = await play({ op: 'recruit', province: b.c.capital, unit_kind: 'infantry' }, { decisions: ['Raise infantry at the capital, as many as can be had'] });
+  assert.ok(twice.seen.back.length === 1 && twice.seen.again.length === 1 && /Given again the same morning\. Not carried out: Infantry is raised/.test(twice.out), `what comes back a second time waits for the morning: ${twice.out.slice(0, 400)}`);
+  console.log('passed  Chain: an order that comes back from the offices is laid before its giver the same morning, once');
+})();
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');
