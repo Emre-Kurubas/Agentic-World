@@ -6,7 +6,7 @@
 // done (who skimmed, who was paid, what a lease drains, what a works spends on its men), by the same rule as a dossier, across everybody who
 // has a hand in the matter. What it finds lies in the inquirer's files on those people, where a prosecution can use it.
 import { clamp, rand, news, nextId, quarterLabel } from './util.js';
-import { governs } from './polity.js';
+import { governs, leadsParties } from './polity.js';
 import { keptQuiet, findPaper } from './press.js';
 import { isOpen, STATE, firmValue, lawFor, partsOf, inHundred } from './firms.js';
 import { watch as postEye } from './court.js';
@@ -57,6 +57,10 @@ function matterOf(w, c, into) {
       return { kind: 'office', key: 'army', name: `${u.id} and its officers`, persons: people([u.commander, c.general]), re: OFFICES.army, leases: [], plain: [`${u.id}: ${Math.round(u.men * 10) / 10} thousand ${u.kind} at ${at}${cmd?.alive ? ` under ${cmd.name}` : ', with no commander named'}. It is paid and supplied to ${n(paid * 100)} in the hundred of what it costs; its spirit stands at ${n(u.morale)} of 100 and its faith in the government at ${n(u.loyalty)} of 100${u.calledAt != null && u.called ? '; it is made up of reservists called up' : ''}${(u.quality ?? 1) < .95 ? '; it is not yet drilled to the army\'s standard' : ''}.`] }; } }
   { const np = findPaper(c, key); if (np) { const o = w.characters[np.owner]; return { kind: 'paper', key: np.id, name: np.name, persons: people([np.owner]), re: new RegExp(`${np.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|paper|press|print|publish|editor`, 'i'),
       plain: [`${np.name} (${np.id}) is held by ${o?.alive ? o.name : 'nobody now living'}. It has about ${n(np.funds ?? 0)} in its till and is read by about ${n((np.reach ?? 0) * 100)} in the hundred of those who read at all${np.serves ? `; its line is ${np.serves === 'government' ? 'the government\'s' : np.serves === 'against' ? 'against the government' : np.serves === 'none' ? 'nobody\'s' : np.serves === 'owner' ? 'its owner\'s' : `that of ${c.parties.find(q => q.id === np.serves)?.name ?? 'a party'}`}` : ''}${np.print === 'hold' ? '; what its men find about persons is kept back for its owner and not printed' : ''}.`] }; } }
+  // (World 26: "the accounts of the Brotherhood of the Daily Bread are to be audited" was answered with the list of what can be looked into.)
+  { const bare = s => String(s).toLowerCase().replace(/^the\s+/, ''), so = (c.societies || []).find(s => !s.banned && (s.id === key || bare(s.name) === bare(key))); if (so) { const party = c.parties.find(q => q.id === so.party), by = w.characters[so.by], heads = party ? [c.leader, c.opposition, party.founder].filter(id => id && w.characters[id]?.alive && leadsParties(w, c, w.characters[id]).includes(party)) : [];
+      return { kind: 'society', key: so.id, name: so.name, persons: people([so.by, ...heads]), re: new RegExp(`${so.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|society|union|chest|strike|took|money|fund`, 'i'),
+        plain: [`${so.name} (${so.id}) is ${so.kind === 'union' ? 'a union of working men' : so.kind === 'peasants' ? 'a peasants\' society' : 'a mutual aid society'}${party ? ` behind which stand the committees of ${party.name}` : ''}; ${by?.alive ? `${by.name} founded it` : 'it was founded'} in ${quarterLabel(so.since ?? w.turn)}. Its chest holds about ${n(so.funds ?? 0)}, and as a body of people it stands at ${n(so.strength ?? 0)} of 100. ${so.lawful ? 'It is lawful and keeps its books in the open.' : 'The law forbids it, and it keeps no books that can be laid on a table.'}`] }; } }
   const p = own(w.provinces, key) ? w.provinces[key] : null;
   if (p && p.controller === c.id) return { kind: 'province', key, name: `the administration of ${p.name}`, persons: people([p.governor]), re: new RegExp(`${p.name}|governor|tax|levy|bribe`, 'i'), plain: [`${p.name}: unrest ${n(p.unrest)} of 100${p.governor && w.characters[p.governor]?.alive ? `; ${w.characters[p.governor].name} governs it` : '; it has no governor of its own'}.`] };
   const deadKey = key.replace(/^death:/, ''), dead = own(w.characters, deadKey) ? w.characters[deadKey] : null;
@@ -64,7 +68,7 @@ function matterOf(w, c, into) {
     return { kind: 'death', key: dead.id, name: `the death of ${dead.name}`, persons: people(plot ? [plot.leader, ...(plot.members || [])] : []), re: /kill|shot|assassin|murder|poison/i, plot, plain: [`${dead.name} ${dead.death.how ?? 'died'} in ${quarterLabel(dead.death.turn)}.`] }; }
   return null;
 }
-export const INTO = 'a works (its id, SR...), a body of the state or a foundation (its id or name), a contract (CT...) or an arrangement with a banking house (OF...), an office (treasury, customs, army, police, courts, post), one body of troops of ours (B...), a newspaper (its id or name), a province of ours (P...), or a death (death:K...)';
+export const INTO = 'a works (its id, SR...), a body of the state or a foundation (its id or name), a contract (CT...) or an arrangement with a banking house (OF...), an office (treasury, customs, army, police, courts, post), one body of troops of ours (B...), a newspaper (its id or name), a society (its id, SO..., or name), a province of ours (P...), or a death (death:K...)';
 
 export function inquiryOp(w, actor, c, op, h) {
   const { fail, num } = h, state = governs(w, c, actor);

@@ -251,9 +251,11 @@ export function firmOp(w, actor, c, op, fail, ok, tell, leaveTrace, num) {
       if (firm.owner !== actor.id && !state) return fail('This company is not yours.');
       // A company can build out of what it has in its own till, as well as out of its owner's purse or the treasury.
       if (op.from_cash === true) {
-        const own = Math.min(num(op.amount, 0, 1e9, 0), Math.max(firm.cash, 0)); if (!(own > 0)) return fail(`${firm.name} has no cash of its own to spend.`);
+        // (World 26, first morning: "extend the works out of the cash in their tills" named no sum, and four houses with money in the till were
+        // answered "has no cash of its own to spend". No sum named is half of what the till holds, and the answer says so.)
+        const till = Math.max(firm.cash, 0), said = num(op.amount, 0, 1e9, 0), own = Math.min(said > 0 ? said : till / 2, till); if (!(own > .05)) return fail(`${firm.name} has no cash of its own to spend: its till holds ${Math.round(till * 10) / 10}. An extension can be paid from its owner's purse (invest_company with amount, without from_cash).`);
         const no = expand(w, w.countries[firm.country], firm, own, fail); if (no) return no; firm.cash -= own;
-        return { ok: true, msg: `${firm.name} spends ${Math.round(own * 10) / 10} of its own cash; the extension will stand in ${durationOf(firm.sector)} quarters.` };
+        return { ok: true, msg: `${firm.name} spends ${Math.round(own * 10) / 10} of its own cash${said > 0 ? '' : ` (no sum was named: that is half of the ${Math.round(till * 10) / 10} its till held; name a sum, amount, for more or less)`}; the extension will stand in ${durationOf(firm.sector)} quarters.` };
       }
       const amount = Math.min(num(op.amount, 0, 1e9, 0), state ? Math.max(c.treasury, 0) : actor.wealth); if (!(amount > 0)) return fail('No money.');
       const refused = expand(w, w.countries[firm.country], firm, state ? amount / Math.max(c.priceLevel, .01) : amount, fail); if (refused) return refused;

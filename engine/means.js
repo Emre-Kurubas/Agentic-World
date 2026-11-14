@@ -80,7 +80,10 @@ export function meansOp(w, actor, c, op, h) {
     // A servant of the state moved to another desk, raised, or sent away.
     case 'post_person': {
       const staff = c.general === actor.id; if (!state && !staff) return fail('Posts in the state\'s service are filled by whoever governs, and posts on the general staff by its chief.');
-      const ch = h.personFor(w, c, op, 'official'); if (!ch?.alive || ch.country !== c.id || ch.status !== 'free') return fail(h.noPerson('No such person in the state\'s service.')); if (ROLES.some(r => c[r] === ch.id)) return fail(`${ch.name} holds a seat of ${his(ch)} own, and is dismissed or appointed, not posted.`);
+      // (World 26: "dismiss him from the army and release him", of a captain under arrest, was answered "no such person in the state's service".)
+      const ch = h.personFor(w, c, op, 'official'), leaves = op.dismiss === true || String(op.office ?? '').trim().toLowerCase() === 'none'; if (!ch?.alive || ch.country !== c.id) return fail(h.noPerson('No such person in the state\'s service.'));
+      if (ch.status !== 'free' && !(leaves && ch.status === 'imprisoned')) return fail(`${ch.name} is ${ch.status === 'imprisoned' ? 'in prison' : ch.status === 'exiled' ? 'in exile' : 'not at liberty'}: nobody is posted from there. ${ch.status === 'imprisoned' ? `${cap(he(ch))} can be struck off the rolls as ${he(ch)} is (dismiss:true), or released first (release).` : ''}`.trim());
+      if (ROLES.some(r => c[r] === ch.id)) return fail(`${ch.name} holds a seat of ${his(ch)} own, and is dismissed or appointed, not posted.`);
       const office = String(op.office ?? '').trim().toLowerCase(), was = ch.post ?? ch.clerkOf ?? (ch.office ? 'office' : null), out = op.dismiss === true || office === 'none';
       // The chief of staff posts his own officers within the army: off the staff to a school, a depot, a garrison desk. (World 22: "post him to the
       // war college, writing up the campaigns of 1874" was refused; the next quarter's "remove him from the staff" put the man out of the service

@@ -6108,5 +6108,43 @@ chain('The order drill before world 25: an order can wait for the breach of a fo
   assert.ok(kept.ok && hot.held > 0 && !calm.held && !(c.repress > 0) && new RegExp(`^The streets of ${hot.name} are held[^]*there, and nowhere else`).test(kept.msg), `the streets of one province are held, and of no other: ${kept.msg.slice(0, 140)}`);
   const all = applyOp(w, L, { op: 'repress', strength: .5 }); assert.ok(all.ok && c.repress > 0, 'and with no province named, of the whole country, as before');
 });
+chain('World 26, first review: the breach can be waited on before the siege is laid; a paper, a till and a road are begun with no sum or place named; units named for a place of our own are marched there; a society can be looked into', () => {
+  const w = inherited(2696855, 8), cs = aliveCountries(w), b = cs[0], fort = countryProvinces(w, b.id).find(p => p.id !== b.capital && p.neighbors.some(n => w.provinces[n].controller && w.provinces[n].controller !== b.id)), a = w.countries[fort.neighbors.map(n => w.provinces[n].controller).find(id => id && id !== b.id)], G = w.characters[a.general], R = ld(w, a); w.wars = [];
+  // The order for the day of the breach, given the morning the siege is ordered and before a man has marched.
+  fort.fort = 1; delete fort.siege; const mine = Object.values(w.units).filter(u => u.country === a.id).sort((x, y) => y.men - x.men);
+  const so = applyOp(w, R, { op: 'standing_order', when: { breach: fort.id }, then: [{ op: 'offensive', to: fort.id, units: [mine[0].id], manner: 'assault' }] });
+  assert.ok(so.ok && /are breached, by the report of our own staff before it \(that day can come only once our troops have shut the place in\)/.test(so.msg), `a fortress in another's hands can be waited on before the lines are drawn: ${so.msg.slice(0, 220)}`);
+  carryStanding(w); assert.ok(!mine[0].attack, 'and nothing is ordered until it is shut in and breached');
+  const own = applyOp(w, R, { op: 'standing_order', when: { breach: a.capital }, then: [{ op: 'offensive', to: a.capital, manner: 'assault' }] }); assert.ok(!own.ok && /We lay no siege to[^]*our own hands/.test(own.msg), `not a place of our own: ${own.msg}`);
+  const open = countryProvinces(w, b.id).find(p => p.id !== fort.id); open.fort = 0; const bare = applyOp(w, R, { op: 'standing_order', when: { breach: open.id }, then: [{ op: 'offensive', to: open.id, manner: 'assault' }] }); assert.ok(!bare.ok && /has no fortress/.test(bare.msg), `nor a place without works: ${bare.msg}`);
+  // Units named for a place of our own with no enemy in it are marched there; with nobody named the order is still refused.
+  const home = countryProvinces(w, a.id), u = mine.find(x => home.some(p => p.id === x.province)), beside = w.provinces[w.provinces[u.province].neighbors.find(n => w.provinces[n].controller === a.id && w.provinces[n].owner === a.id)];
+  const none = applyOp(w, G, { op: 'offensive', to: beside.id }); assert.ok(!none.ok && /is in our own hands: troops are sent there with move/.test(none.msg), 'nobody named: refused as before');
+  const march = applyOp(w, G, { op: 'offensive', to: beside.id, units: [u.id] }); assert.ok(march.ok && u.target === beside.id && !u.attack && /so this is a march and not an attack/.test(march.msg), `the unit named marches there: ${march.msg.slice(0, 200)}`);
+  // A paper with no sum named, and one out of the party's chest.
+  const c = cs.find(o => o.id !== a.id && o.id !== b.id && o.opposition && w.characters[o.opposition]?.alive), O = w.characters[c.opposition]; c.papers = (c.papers || []).slice(0, 1); O.wealth = 10;
+  const paper = applyOp(w, O, { op: 'found_paper', name: 'The Furrow' }); assert.ok(paper.ok && Math.abs(O.wealth - 7) < .01 && /is founded with 3 \(no sum was named: that is the least a paper can begin with\)/.test(paper.msg), `no sum named is the least a paper can begin with: ${paper.msg.slice(0, 160)}`);
+  const party = c.parties.find(p => p.founder === O.id) ?? c.parties.find(p => !p.banned && p.id !== c.rulingParty); party.founder = O.id; party.funds = 8; O.wealth = 0;
+  const sheet = applyOp(w, O, { op: 'found_paper', name: 'The Weekly Sheet', amount: 6, from: 'party' }); assert.ok(sheet.ok && Math.abs(party.funds - 2) < .01 && O.wealth === 0 && new RegExp(`with 6 from the chest of ${party.name}`).test(sheet.msg), `the chest of a party founds its leader's paper: ${sheet.msg.slice(0, 160)}`);
+  O.wealth = 1; const poor = applyOp(w, O, { op: 'found_paper', name: 'A Third' }); assert.ok(!poor.ok && /at least 3 to begin with, and your purse holds 1/.test(poor.msg), `a purse that cannot find it is told so: ${poor.msg}`);
+  // A society can be looked into.
+  O.wealth = 20; const soc = applyOp(w, O, { op: 'found_society', kind: 'mutual', name: 'The Brotherhood of the Daily Bread', amount: 2 }); assert.ok(soc.ok, soc.msg); const L = ld(w, c);
+  const audit = applyOp(w, L, { op: 'inquire', into: 'Brotherhood of the Daily Bread' }); assert.ok(audit.ok && /The inquiry into The Brotherhood of the Daily Bread sits/.test(audit.msg), `its accounts can be audited: ${audit.msg.slice(0, 160)}`);
+  // Squadrons named for a drill.
+  const sea = cs.find(o => Object.values(w.fleets).some(f => f.country === o.id) && Object.values(w.units).some(x => x.country === o.id)), SG = w.characters[sea.general], fl = Object.values(w.fleets).find(f => f.country === sea.id), body = Object.values(w.units).find(x => x.country === sea.id); sea.treasury = 5000; sea.stock.arms = Math.max(sea.stock.arms, 50);
+  const ships = applyOp(w, SG, { op: 'drill', units: [fl.id] }); assert.ok(!ships.ok && new RegExp(`^${fl.id} is a squadron: this order exercises bodies of the army`).test(ships.msg), `squadrons alone: ${ships.msg.slice(0, 160)}`);
+  const both = applyOp(w, SG, { op: 'drill', units: [body.id, fl.id] }); assert.ok(both.ok && new RegExp(`${fl.id} is a squadron`).test(both.msg), `a corps and a squadron: the corps drills and the order says what became of the ships: ${both.msg.slice(-260)}`);
+  // Roads with no place named.
+  const SL = ld(w, sea), roads = applyOp(w, SL, { op: 'build', kind: 'infrastructure', amount: 60 }); assert.ok(roads.ok && /^No place was named, so the engineers chose /.test(roads.msg), `the engineers choose where roads add most: ${roads.msg.slice(0, 200)}`);
+  const what = applyOp(w, SL, { op: 'build', kind: 'fort' }); assert.ok(!what.ok && /Say where it is to be built/.test(what.msg), `a work that comes in a piece wants its place: ${what.msg}`);
+  // The till, with no sum named.
+  const f = Object.values(w.firms).find(x => x.status === 'open' && w.characters[x.owner]?.alive && w.characters[x.owner].status === 'free' && x.sector !== 'mine'), boss = w.characters[f.owner]; f.cash = 60;
+  const ext = applyOp(w, boss, { op: 'invest_company', id: f.id, from_cash: true }); assert.ok(ext.ok ? f.cash >= 29.99 && f.cash < 45 && /no sum was named: that is half of the 60 its till held/.test(ext.msg) : !/no cash of its own/.test(ext.msg), `no sum named is half the till: ${ext.msg.slice(0, 200)}`);
+  f.cash = 0; const dry = applyOp(w, boss, { op: 'invest_company', id: f.id, from_cash: true }); assert.ok(!dry.ok && /its till holds 0\. An extension can be paid from its owner's purse/.test(dry.msg), `an empty till is said to be empty: ${dry.msg}`);
+  // A man in prison is struck off the rolls, not posted.
+  const man = Object.values(w.characters).find(x => x.alive && x.country === c.id && x.clerkOf === 'army') ?? Object.values(w.characters).find(x => x.alive && x.country === c.id && x.role === 'officer' && ![c.leader, c.general, c.opposition, c.oligarch].includes(x.id));
+  if (man) { man.status = 'imprisoned'; const posted = applyOp(w, L, { op: 'post_person', character: man.id, office: 'staff' }); assert.ok(!posted.ok && /is in prison: nobody is posted from there/.test(posted.msg), `nobody is posted from a cell: ${posted.msg}`);
+    const out = applyOp(w, L, { op: 'post_person', character: man.id, dismiss: true }); assert.ok(out.ok && /out of the state's service/.test(out.msg), `but he can be struck off the rolls: ${out.msg.slice(0, 120)}`); }
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

@@ -1042,11 +1042,16 @@ function applyOne(w, actor, op) {
     }
     case 'found_paper': {
       if (papersOf(c).length >= MAX_PAPERS) return fail('The country has as many newspapers as it will read; one would have to close first.');
-      const m = Math.min(Math.max(actor.wealth, 0), num(op.amount, 0, 1e6, 0)); if (!(m >= 3)) return fail(`A newspaper needs a press, paper and men: at least 3 to begin with${num(op.amount, 0, 1e6, 0) >= 3 ? `, and your purse holds ${Math.round(Math.max(actor.wealth, 0) * 10) / 10}` : ''}.`);
-      actor.wealth -= m; const n = foundPaper(w, c, actor, op.name, m); news(w, `${c.name}: a new paper, ${n.name}, has begun to appear. It belongs to ${actor.name}.`, { kind: 'politics', countries: [c.id] });
+      // (World 26, first review: three leaders of the opposition founded "a modest paper" and named no sum, and a fourth named 6 from his party's
+      // chest; all four were told "at least 3 to begin with". No sum named is the least a paper can begin with; and the chest of a party can
+      // found its leader's paper as it can keep one.)
+      const chest = op.from === 'party' ? leadsParties(w, c, actor)[0] : null; if (op.from === 'party' && !chest) return fail('You lead no party whose chest could pay.');
+      const have = Math.max(chest ? chest.funds || 0 : actor.wealth, 0), asked = num(op.amount, 0, 1e6, 0), m = Math.min(have, asked >= .05 ? asked : 3);
+      if (!(m >= 3)) return fail(`A newspaper needs a press, paper and men: at least 3 to begin with${asked >= .05 && asked < 3 ? '' : `, and ${chest ? `the chest of ${chest.name}` : 'your purse'} holds ${Math.round(have * 10) / 10}`}.`);
+      if (chest) chest.funds -= m; else actor.wealth -= m; const n = foundPaper(w, c, actor, op.name, m); news(w, `${c.name}: a new paper, ${n.name}, has begun to appear. It belongs to ${actor.name}.`, { kind: 'politics', countries: [c.id] });
       // A line given at the founding is the same order as one given later.
       const line = ['serves', 'targets', 'spare', 'print'].some(k => op[k] != null) ? setPaper(w, c, actor, { ...op, id: n.id, name: undefined }) : null;
-      return { ok: true, paper: n.id, msg: `${n.name} (${n.id}) is founded with ${Math.round(m * 10) / 10}. It spends about a seventh of its funds each quarter and reaches readers as far as people can read and the law allows. ${line?.ok ? line.msg : `${line ? `${line.msg} As it stands, it` : 'Left to itself it'} ${paperWords(w, c, n)}; its reporters dig among those in office, ${c.leader === actor.id ? 'the leader of the opposition' : 'the head of the government'} first, and print at once what they find about anyone but you.`} Whom it serves, whom its reporters go after and leave alone, and whether a find is printed or held back for your own file is yours to say (set_paper).` };
+      return { ok: true, paper: n.id, msg: `${n.name} (${n.id}) is founded with ${Math.round(m * 10) / 10}${chest ? ` from the chest of ${chest.name}` : ''}${asked >= .05 ? '' : ' (no sum was named: that is the least a paper can begin with)'}. It spends about a seventh of its funds each quarter and reaches readers as far as people can read and the law allows. ${line?.ok ? line.msg : `${line ? `${line.msg} As it stands, it` : 'Left to itself it'} ${paperWords(w, c, n)}; its reporters dig among those in office, ${c.leader === actor.id ? 'the leader of the opposition' : 'the head of the government'} first, and print at once what they find about anyone but you.`} Whom it serves, whom its reporters go after and leave alone, and whether a find is printed or held back for your own file is yours to say (set_paper).` };
     }
     // The owner's line for his paper; and, for whoever governs, the censor, short of closing it.
     case 'set_paper': { const r = setPaper(w, c, actor, op); return r.ok ? r : fail(r.msg); }
@@ -1312,13 +1317,16 @@ function applyOne(w, actor, op) {
     case 'drill': {
       const mine = Object.values(w.units).filter(u => u.country === c.id), named = [...new Set([op.unit, ...(Array.isArray(op.units) ? op.units : op.units ? [op.units] : [])].filter(Boolean).map(x => String(x).trim()))];
       const picked = op.all === true ? mine : mine.filter(u => named.includes(u.id) || (op.province && u.province === op.province));
-      if (!picked.length) return fail(`Say which bodies are to drill (unit or units; province; or all: true). The army's bodies: ${mine.slice(0, 16).map(u => u.id).join(', ')}.`);
+      // (World 26: a chief of staff ordered "a quarter of drill and gunnery" for three squadrons; the first time he was asked which bodies, the
+      // second time the army's corps drilled and nothing was said of the ships.)
+      const ships = named.filter(id => w.fleets?.[id]?.country === c.id), afloat = ships.length ? `${ships.join(', ')} ${ships.length > 1 ? 'are squadrons' : 'is a squadron'}: this order exercises bodies of the army. What a squadron is fit for is its coal, its pay and its repairs (the fleet report says how each stands).` : '';
+      if (!picked.length) return fail(`${afloat ? `${afloat} ` : ''}Say which bodies are to drill (unit or units; province; or all: true). The army's bodies: ${mine.slice(0, 16).map(u => u.id).join(', ')}.`);
       const fresh = picked.filter(u => u.drill !== w.turn); if (!fresh.length) return fail('They are at their exercises this quarter already; ordering it twice fires off no more cartridges and teaches nothing more.');
       const men = sum(fresh, u => u.men), all = Math.max(sum(mine, u => u.men), 1e-9), shells = men * .004, cost = upkeepCost(w, c) * men / all * .15, free = Math.max(0, (c.stock.arms || 0) - (c.arsenalReserve || 0));
       if (free < shells) return fail(`A season of exercises for ${Math.round(men)} thousand men fires off about ${Math.round(shells * 10) / 10} of arms; the arsenal has ${Math.round(free * 10) / 10} to spare${c.arsenalReserve ? ` above the reserve of ${Math.round(c.arsenalReserve)}` : ''}.`);
       const note = pay(c, cost); if (note === null) return fail(NO_FUNDS);
       c.stock.arms -= shells; for (const u of fresh) u.drill = w.turn;
-      return { ok: true, msg: `${fresh.map(u => u.id).join(', ')} (${Math.round(men)} thousand men) spend the quarter at field exercises and musketry: ${Math.round(cost)} from the treasury and ${Math.round(shells * 10) / 10} of arms from the arsenal. Men who drill come up to the army's standard in a few quarters where barracks routine takes years, and a little past it; the edge wears off again when the drilling stops. The order is for this quarter; it is given again for the next.${note}` }; }
+      return { ok: true, msg: `${fresh.map(u => u.id).join(', ')} (${Math.round(men)} thousand men) spend the quarter at field exercises and musketry: ${Math.round(cost)} from the treasury and ${Math.round(shells * 10) / 10} of arms from the arsenal. Men who drill come up to the army's standard in a few quarters where barracks routine takes years, and a little past it; the edge wears off again when the drilling stops. The order is for this quarter; it is given again for the next.${afloat ? ` ${afloat}` : ''}${note}` }; }
     case 'set_pay_priority': {
       const list = [...new Set((Array.isArray(op.first) ? op.first : op.first ? [op.first] : []).filter(x => typeof x === 'string' || typeof x === 'number').map(x => String(x).trim()).filter(Boolean))].slice(0, 24);
       // A body that is not on the rolls (formed only this quarter, or misnamed) is left out and named; the rest of the order stands. (World 16: a
@@ -2243,6 +2251,18 @@ function build(w, c, op, actor) {
     if (!site) return fail(op.kind === 'mine' ? `No place was named, and the mining returns show no ${GOOD_LABEL[op.resource] ?? op.resource ?? 'deposit'} in the country that is not worked already: a pit is sunk on a known deposit (province, resource).` : 'No place was named, and the engineers found none in the country with room for such a works: name a province.');
     const r = build(w, c, { ...op, province: site.id }, actor); return r.ok ? { ...r, msg: `No place was named, so the engineers chose ${w.provinces[site.id].name} (${site.id}): ${site.why}. ${r.msg}` } : r;
   }
+  // Roads, drainage and forest roads ordered with no place named: the engineers choose where a point of the work adds most for what it costs.
+  // (World 26: "public works in the provinces with the most idle hands, from the roads vote" came with no province and was answered "that
+  // province is not under your control".)
+  if (!w.provinces[op.province] && ['infrastructure', 'farming', 'forestry'].includes(op.kind) && (!actor || governs(w, c, actor) || delegated(c, actor, 'build'))) {
+    const among = (Array.isArray(op.provinces) ? op.provinces : []).map(id => w.provinces[id]).filter(Boolean), pool = (among.length ? among : countryProvinces(w, c.id)).filter(x => x.controller === c.id);
+    // (On the first morning no province has a quarter's returns yet, and the engineers have no estimate of the gain: they go by the people a work serves.)
+    const open = pool.map(x => { const q = quote(w, c, x, op.kind); return q && !q.no && q.room > .005 && q.price > 0 ? { x, gain: q.gain > 0 ? q.gain : 0, cost: q.price * wasteOf(w, c, x) } : null; }).filter(Boolean), known = open.some(o => o.gain > 0);
+    const best = open.filter(o => !known || o.gain > 0).map(o => ({ ...o, v: (known ? o.gain : provincePop(o.x)) / o.cost })).sort((a, b) => b.v - a.v)[0];
+    if (!best) return fail('No place was named, and the engineers found no province where that work can be carried further: name a province.');
+    const r = build(w, c, { ...op, province: best.x.id }, actor); return r.ok ? { ...r, msg: `No place was named, so the engineers chose ${best.x.name} (${best.x.id}): ${known ? 'by their estimate a point of the work adds most there for what it costs' : 'the work serves the most people there for what it costs'}. ${r.msg}` } : r;
+  }
+  if (op.province == null || op.province === '') return fail('Say where it is to be built (province).');
   const p = w.provinces[op.province]; if (!p || p.controller !== c.id) return fail('That province is not under your control.');
   const kind = op.kind; if (!has(PLANTS, kind) && !WORKS.includes(kind)) return fail('Unknown building type.');
   // The chief of staff may have his own troops dig in where they stand; everything else that is built is the government's to order.
@@ -2356,7 +2376,12 @@ function offensive(w, c, op) {
   // with grounded rifles the quarter the place was stormed. Its ruler: "it was lost by a clerk's sentence".)
   if (to.controller === c.id) {
     const foes = Object.values(w.units).filter(u => u.province === to.id && atWar(w, c.id, u.country));
-    if (!(to.siege && to.siege.by !== c.id) && !foes.length) return fail(`${to.name} is in our own hands: troops are sent there with move.`);
+    // (World 26: "B70 from Tirmore to Morogradon to put down the rising; retake the town" came as an offensive from the ruler and from her chief
+    // of staff, and both were refused. Units named for a place of our own with no enemy in it are marched there.)
+    if (!(to.siege && to.siege.by !== c.id) && !foes.length) { const ls = v => (Array.isArray(v) ? v : v != null && v !== '' ? String(v).split(/[\s,;]+/) : []).map(x => String(x).trim()).filter(Boolean), ids = [...new Set([...ls(op.units), ...ls(op.unit)])], go = mine.filter(u => ids.includes(u.id));
+      if (!go.length) return fail(`${to.name} is in our own hands: troops are sent there with move.`);
+      const res = go.map(u => [u, applyOrder(w, c, u, to.id, true)]), gone = res.filter(([, r]) => r.ok), not = res.filter(([, r]) => !r.ok); if (!gone.length) return fail(`${to.name} is in our own hands and no enemy stands in it, so this is a march and not an attack; and it could not be made: ${not.map(([u, r]) => `${u.id}: ${r.msg}`).join(' ')}`);
+      return { ok: true, msg: `${to.name} is in our own hands and no enemy stands in it, so this is a march and not an attack: ${gone.map(([u, r]) => u.province === to.id ? r.msg : u.id).join(', ')}${gone.some(([u]) => u.province !== to.id) ? ` (${menText(sum(gone.filter(([u]) => u.province !== to.id), ([u]) => u.men))}) march${gone.filter(([u]) => u.province !== to.id).length > 1 ? '' : 'es'} to ${to.name}` : ''}. What rises in a province of ours is no army to be attacked: troops quartered in a place hold it down by their numbers.${not.length ? ` Not marched: ${not.map(([u, r]) => `${u.id} (${r.msg})`).join('; ')}.` : ''}` }; }
     const list = v => (Array.isArray(v) ? v : v != null && v !== '' ? String(v).split(/[\s,;]+/) : []).map(x => String(x).trim()).filter(Boolean), want = [...new Set([...list(op.units), ...list(op.unit)])], from = list(op.from);
     const out = mine.filter(u => u.province !== to.id && u.shutIn !== to.id), unknown = want.filter(id => !mine.some(u => u.id === id)); if (unknown.length) return fail(`No such unit of yours: ${unknown.join(', ')}.`);
     const pick = want.length ? out.filter(u => want.includes(u.id)) : out.filter(u => to.neighbors.includes(u.province) && (from.length ? from.includes(u.province) : u.posture !== 'defensive'));

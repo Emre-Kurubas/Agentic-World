@@ -139,8 +139,13 @@ function normWhen(w, c, raw) {
   // (The order drill, before world 25: three wordings of that order were entered as the siege alone, "no report reaches the office that would
   // name the day". The besieger's staff reports the state of the works every quarter; world 25's besieger wrote the same order.)
   if (k.breach) { const p = w.provinces[typeof k.breach === 'object' ? k.breach.province : k.breach]; if (!p) return { no: 'Say which fortress (breach: its province).' };
-    const ours = p.siege?.by === c.id || Object.values(w.units).some(u => u.country === c.id && u.attack?.to === p.id && u.attack.manner === 'siege'); if (!ours) return { no: `We lay no siege to ${p.name}: an order can wait for a breach only in the works of a place our troops have shut in or are ordered to besiege.` };
-    return { when: { breach: p.id }, words: `the day the works of ${p.name} are breached, by the report of our own staff before it` }; }
+    // (World 26, first review: a president ordered the siege of Steinburga and its storming on the day of the breach in one decision. The war
+    // was before the house, so the siege order waited for the vote, and the order for the breach was refused: "we lay no siege to Steinburga".
+    // A fortress in another's hands can be waited on before the lines are drawn: the day comes only once we have shut it in.)
+    if (p.controller === c.id) return { no: `We lay no siege to ${p.name}: it is in our own hands. An order can wait for a breach in the works of a place our troops besiege.` };
+    if (!((p.fort ?? 0) > 0)) return { no: `${p.name} has no fortress: a place without works is attacked, not besieged, and there is no breach to wait for.` };
+    const ours = p.siege?.by === c.id || Object.values(w.units).some(u => u.country === c.id && u.attack?.to === p.id && u.attack.manner === 'siege');
+    return { when: { breach: p.id }, words: `the day the works of ${p.name} are breached, by the report of our own staff before it${ours ? '' : ' (that day can come only once our troops have shut the place in)'}` }; }
   // "If they refuse, we march": the day our ultimatum to a state is refused or runs out. (World 20: a ruler sent an ultimatum and ordered the
   // attack that was to follow it in the same breath, to be countermanded by his own hand if the other bent. The attack could not be entered
   // for want of a war, and he found out a quarter later.)
