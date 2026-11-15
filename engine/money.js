@@ -84,7 +84,14 @@ export const vaultPremium = c => c.vault == null || !(vaultBase(c) > 1) ? 0 : VA
 // years; the rate moved for none of them, because it looked only at a debt that had to pass six tenths of a year's output first.)
 // What a state was borrowing when it was handed over is its habit, long priced and long found by its own savers: what is priced anew and
 // found against new money is what it borrows beyond that (c.borrowBase). A state left alone is therefore where it always was.
-export const BORROW_FREE = .005, BORROW_COSTS = .25, PRESS = .5, PRESS_CAP = .02;
+// (2026-11-15, after world 27: states that borrowed for a war, or for three years of welfare, paid twelve to eighteen in the hundred a year, the
+// rate of a state on the edge of default, while their debt was a third of a year's output. Two things did it: the premium for borrowing reached
+// its ceiling for anybody who borrowed at all, and half of all borrowing beyond the habit was found against new money, so the same loan was
+// priced twice, once as a premium and again as the inflation it made. On the gold standard a power at war paid one to three points more, and
+// prices moved a few in the hundred a year. Now a fifth is found against new money, and the premium's ceiling grows with what the state already
+// owes: about a point and a half a year for a state owing a third of its year's output, three for one owing as much as it makes.)
+export const BORROW_FREE = .005, BORROW_COSTS = .25, PRESS = .2, PRESS_CAP = .01;
+const premiumCeiling = c => clamp(.0015 + (c.debt || 0) / Math.max((c.gdp || 1) * 4, 1) * .006, .0015, .008);
 export const borrowHabit = c => Math.max(BORROW_FREE, c.borrowBase ?? 0);
 export const borrowBeyond = c => c.borrowBase == null ? 0 : Math.max(0, (c.borrowAvg || 0) - borrowHabit(c));
 // Lenders price the same borrowing by who asks. A state that owes little and sits on gold is let run for years before they stir; one that
@@ -95,7 +102,7 @@ export const borrowStanding = c => clamp((c.debt || 0) / Math.max((c.gdp || 1) *
 // A state at war is expected to borrow: in the first year of a war lenders price what it borrows beyond its habit at three tenths of what they
 // would in peace, and at the whole of it only when the war is in its third year (warcost.js: the war loan).
 export const warEase = c => c.war?.on ? clamp(.3 + Math.max(0, (c.war.quarters || 0) - 4) * .1, .3, 1) : 1;
-export const borrowPremium = c => clamp(borrowBeyond(c) * BORROW_COSTS * borrowStanding(c) * warEase(c), 0, .01);
+export const borrowPremium = c => clamp(borrowBeyond(c) * BORROW_COSTS * borrowStanding(c), 0, premiumCeiling(c)) * warEase(c);
 // What a state's borrowing does beyond its own books, each quarter it borrows (called from the quarter's accounts, economy.js fiscal): what the
 // country's own savers cannot take up is found by the banks against new money, and new money beyond what output asks for is what moves prices.
 // (Tried and taken out again, 2026-11-13: the banks of states with gold to spare taking up part of a dearer neighbour's loan in gold. In a
@@ -109,12 +116,15 @@ export function lendersStep(w, c) {
   // fiftieth of all the money there is, so that a government must go on for years to wreck a currency.
   const press = Math.min(extra * PRESS, (c.money || 0) * PRESS_CAP); if (press > 0) { c.money += press; c._monetised = press; }
 }
+// How much of the inflation a state is running lenders add to what they ask. The state's debt abroad is owed in gold, which its inflation does
+// not wear down; lenders price only the fear that the currency, and with it the state's will to pay, goes the same way. (It was .6.)
+export const INFL_PASS = .35;
 export function sovereignRate(c) {
   const burden = c.debt / Math.max(c.gdp * 4, 1);
   // Lenders also price a state's word: one that breaks treaties, falls on its neighbours and threatens emptily pays more for money (about a point and
   // a half a year for every ten its standing has lost). And they price a war: a state at war pays a premium that grows with the war's length, more
   // if it began it and more again while it is losing ground, and that outlasts the peace by a few quarters (warcost.js warFooting).
-  return clamp(.0075 + .02 * Math.max(0, burden - .6) ** 1.5 + Math.max(0, c.inflTrend ?? c.inflation) * .6 + (c.defaulted ? .02 : 0) + (c.bankHealth < 30 ? .01 : 0) + Math.max(0, 60 - (c.honour ?? 60)) * .0004 + (c.war?.premium || 0) + vaultPremium(c) + (c.extArrears || 0) * .0004 + borrowPremium(c), .005, .35);
+  return clamp(.0075 + .02 * Math.max(0, burden - .6) ** 1.5 + Math.max(0, c.inflTrend ?? c.inflation) * INFL_PASS + (c.defaulted ? .02 : 0) + (c.bankHealth < 30 ? .01 : 0) + Math.max(0, 60 - (c.honour ?? 60)) * .0004 + (c.war?.premium || 0) + vaultPremium(c) + (c.extArrears || 0) * .0004 + borrowPremium(c), .005, .35);
 }
 // Lenders shut out a defaulter, but not forever: some years of paying in full and the market deals with the state again.
 // A state already in default cannot default again; it simply goes on not paying.
@@ -130,7 +140,7 @@ export function creditStanding(w, c, paidInFull) {
 // Lenders take up about an eighth of the remaining headroom in a quarter: enough for a war loan, not for the whole ceiling at once.
 // And they look at what the state takes in: no one lends on to a treasury whose interest would eat more than about half its revenue.
 // Inflation is left out of that sum: it raises the interest asked and wears the debt down by as much.
-const ceiling = c => { const trust = c.gdp * 4 * (1.1 + c.legitimacy / 100) * (c.war?.squeeze ?? 1), rate = Math.max((c.interestRate ?? sovereignRate(c)) - Math.max(0, c.inflTrend ?? c.inflation ?? 0) * .6, .005); return c.lastRevenue > 0 ? Math.min(trust, c.lastRevenue * (c.war?.on ? .7 : .5) / rate) : trust; };
+const ceiling = c => { const trust = c.gdp * 4 * (1.1 + c.legitimacy / 100) * (c.war?.squeeze ?? 1), rate = Math.max((c.interestRate ?? sovereignRate(c)) - Math.max(0, c.inflTrend ?? c.inflation ?? 0) * INFL_PASS, .005); return c.lastRevenue > 0 ? Math.min(trust, c.lastRevenue * (c.war?.on ? .7 : .5) / rate) : trust; };
 const creditRoom = c => Math.max(0, ceiling(c) - c.debt) * (c.defaulted ? .03 : .12);
 // All that lenders would still let the state owe before they stop altogether, for whoever asks how long a deficit can be carried.
 export const creditHeadroom = c => Math.max(0, ceiling(c) - c.debt);
