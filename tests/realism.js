@@ -866,6 +866,7 @@ import { sovereignRate, creditLeft, creditHeadroom as roomOf } from '../engine/m
 import { marketStep, warFooting, KIT } from '../engine/warcost.js';
 import { costOfPolice } from '../engine/economy.js';
 import { die, neutralize, electionStep } from '../engine/politics.js';
+import { noteLetter } from '../engine/annals.js';
 import { afflict, healthStep, incapacitated } from '../engine/health.js';
 import { upkeepCost } from '../engine/military.js';
 import { groupsOf } from '../engine/culture.js';
@@ -6262,5 +6263,23 @@ await (async () => {
   console.log('passed  Chain: a mind that fills falls ill, and dies the day it is compacted');
 })();
 
+chain('The annals of the game years go into the chronicles, and whoever takes a seat finds what the one before left on its desk', () => {
+  // The user, 2026-11-15: "does the new AI that comes after a death know what the other did through the game?" It did not: the chronicle stopped at the first day.
+  const w = inherited(2696855, 8), cs = aliveCountries(w), a = cs[0], b = cs.find(o => o.id !== a.id), L = ld(w, a), friend = ld(w, b);
+  for (let i = 0; i < 3; i++) noteLetter(w, L, friend);
+  beginTurn(w);
+  w.wars.push({ id: 'S-an', a: [a.id], b: [b.id], civil: false, active: true, start: w.turn, name: 'annals', aims: { [a.id]: { text: 'The recovery of our old frontier. And more besides.' } } });
+  const so = applyOp(w, L, { op: 'standing_order', when: { after: 3 }, then: [{ op: 'set_gold_floor', amount: 77 }], label: 'the floor in the spring' }); assert.ok(so.ok, so.msg);
+  const p = countryProvinces(w, b.id).find(x => x.id !== b.capital); p.owner = a.id; p.controller = a.id;
+  die(w, L, 'died after a long illness'); const next = w.characters[a.leader]; next.inbox = [];
+  stepWorld(w);
+  const told = a.chronicle.filter(e => e.t != null).map(e => e.text).join('\n');
+  assert.ok(new RegExp(`${a.name} went to war with ${b.name}, for the recovery of our old frontier\.`).test(told), told);
+  assert.ok(told.includes(`${p.name} (${p.id}) passed from ${b.name} to ${a.name}`) && b.chronicle.some(e => e.text.includes(`passed from ${b.name}`)), 'the land that changed hands is in both chronicles');
+  assert.ok(new RegExp(`${L.name} died after a long illness; ${next.name} became the head of the state`).test(told), told);
+  const desk = next.inbox.map(m => m.text).join('\n');
+  assert.ok(desk.includes(`What ${L.name} left in this seat`) && desk.includes('the floor in the spring') && desk.includes(`${friend.name} (${friend.id}, the head of the state of ${b.name}), 3 letters`), desk);
+  assert.ok(answer(w, next, 'history').includes(`went to war with ${b.name}`), 'and anyone who asks for the history reads it');
+});
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

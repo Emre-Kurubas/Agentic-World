@@ -30,8 +30,9 @@ import { disputeStep } from './politics.js';
 import { countryProvinces, aliveCountries, provincePop } from './world.js';
 import { sum, quarterLabel } from './util.js';
 import { openCredit } from './money.js';
+import { annalsBegin, annalsStep } from './annals.js';
 
-export function beginTurn(w) { w.newsThisTurn = []; w.battles = []; w.seaFights = []; w.awaited = []; for (const c of aliveCountries(w)) { openCredit(c); openGold(c); } }
+export function beginTurn(w) { w.newsThisTurn = []; w.battles = []; w.seaFights = []; w.awaited = []; for (const c of aliveCountries(w)) { openCredit(c); openGold(c); } annalsBegin(w); }
 
 export function stepWorld(w) {
   // Signatures ordered for papers that had not yet arrived are given now that every government's orders of the quarter are in.
@@ -93,6 +94,8 @@ export function stepWorld(w) {
   }
   // When a year closes the table of the powers is reckoned and printed (rank.js).
   rankStep(w);
+  // The open events of the quarter go into the chronicles, and a seat that changed hands leaves its desk to the new holder (annals.js).
+  annalsStep(w);
   w.newsLog.push(...w.newsThisTurn);
   if (w.newsLog.length > 800) w.newsLog.splice(0, w.newsLog.length - 800);
   w.turn += 1;

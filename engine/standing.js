@@ -190,7 +190,7 @@ const holds = (w, so) => { const c = w.countries[so.country], k = so.when, fresh
 export function standingStep(w, apply, carry) {
   const list = w.standingOrders || []; if (!list.length) return;
   for (const so of [...list]) { const ch = w.characters[so.by], c = w.countries[so.country];
-    if (!ch?.alive || !c?.alive || ch.status === 'imprisoned' || w.turn - so.since > 20) { list.splice(list.indexOf(so), 1); if (ch?.alive && c?.alive) say(w, ch, 'Your secretary', `Order ${so.id} (${so.words}) has lapsed unused.`); continue; }
+    if (!ch?.alive || !c?.alive || ch.status === 'imprisoned' || w.turn - so.since > 20) { list.splice(list.indexOf(so), 1); if (!(ch?.alive && ch.status !== 'imprisoned') && c?.alive) { (w.lapsedOrders ||= []).push({ ...so, lapsed: w.turn }); w.lapsedOrders = w.lapsedOrders.filter(x => x.lapsed >= w.turn - 1); } if (ch?.alive && c?.alive) say(w, ch, 'Your secretary', `Order ${so.id} (${so.words}) has lapsed unused.`); continue; }
     // An order that waited on a bill lapses with the bill.
     if (so.when.bill && so.when.state === 'passed') { const b = aliveCountries(w).flatMap(o => [...(o.bills || []), ...(o.laws || [])]).find(x => x.id === so.when.bill); if (!b || ['rejected', 'withdrawn', 'lapsed'].includes(b.status)) { list.splice(list.indexOf(so), 1); say(w, ch, 'Your secretary', `Order ${so.id}${so.label ? ` ("${so.label}")` : ''} has lapsed: bill ${so.when.bill} ${!b ? 'is no longer before the house' : `was ${b.status}`}, and what waited on its passing (${so.then.map(o => o.op).join(', ')}) was not ordered.`); continue; } }
     if (so.firedAt === w.turn || !holds(w, so)) continue;

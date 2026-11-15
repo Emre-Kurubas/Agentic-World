@@ -13,6 +13,7 @@ import { snapshotState, buildEntries } from './ledger.js';
 import { isPaintable, portraitPrompt, paintingPrompt, parseArt, witnessFor } from './art.js';
 import { incapacitated, WEAR, wearStage, wearOn } from '../engine/health.js';
 import { die } from '../engine/politics.js';
+import { noteLetter } from '../engine/annals.js';
 
 export function rolesFor(cfg, c) {
   const root = c.parent ?? c.id;
@@ -410,6 +411,7 @@ export class Game {
     if (target) m.to = target.id === w.countries[m.to]?.leader ? m.to : target.id;
     if (m.undelivered) return;
     if (!m.read) target.inbox.push({ turn: w.turn, from: `${m.from.name} (${m.from.id}, ${w.countries[m.from.country]?.name})`, text: m.text, letter: true });
+    noteLetter(w, m.from, target);
     // A prisoner's letters pass through the censor's hands; how often they are copied depends on how good the state's eyes are.
     const home = w.countries[m.from.country], warden = w.characters[home?.leader];
     if (m.from.status === 'imprisoned' && target?.alive && warden?.alive && warden.id !== target.id && rand(w) < clamp(.25 + home.intelligence / 150, .25, .85)) { warden.inbox.push({ turn: w.turn, from: 'Prison censor', text: `Letter from the prisoner ${m.from.name} to ${target.name}: ${m.text}` }); m.intercepted = true; }
@@ -531,8 +533,9 @@ export class Game {
     const before = snapshotState(w), log = this.execute(actors);
     await this.amend(actors, log);
     this.setStatus('world processing', 'Calculating economy, war and politics');
-    stepWorld(w);
+    // A mind that ran out dies before the quarter is played, so that the seat passes and the annals see it (annals.js).
     this.wearStep();
+    stepWorld(w);
     await this.answerLetters(actors, log);
     const entries = buildEntries(w, log, before, this.pending.lookups);
     this.store.commit(w, entries);
