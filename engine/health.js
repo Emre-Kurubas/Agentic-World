@@ -27,6 +27,22 @@ export function afflict(w, ch, kind, severity, cause = '') {
   return false;
 }
 
+// A character's mind has room for so much and no more (the user, 2026-11-15: "as the context window nears a million the models fall ill,
+// and when it is compacted they die"). An AI character's session grows with every quarter it lives; past `mild` tokens the body begins to
+// fail, past `serious` it is seriously ill, and the day the session is compacted (or can no longer be answered) the person dies.
+// The wasting is no ordinary illness: it does not pass, and it does not grow grave, since the gravely ill are not woken and could never
+// reach the end. Only the game knows the number; the character reads an illness that does not let up.
+export const WEAR = { mild: 700000, serious: 850000, compacted: .5, since: 500000 };
+export const wearStage = (tokens, t = WEAR) => tokens >= t.serious ? 2 : tokens >= t.mild ? 1 : 0;
+export function wearOn(w, ch, stage) {
+  if (!ch?.alive || !stage) return;
+  const cond = ch.condition;
+  if (cond?.worn && cond.severity >= stage) return;
+  ch.condition = { kind: 'illness', severity: Math.max(stage, cond?.worn ? 0 : Math.min(cond?.severity ?? 0, 2)), since: cond?.since ?? w.turn, cause: 'a wasting illness', worn: true };
+  announce(w, ch);
+  if (ch.condition.severity >= 2) ch.condition.announced = true;
+}
+
 // Each quarter the healthy may fall ill and the sick improve, hold or worsen. Old age makes all of it harder; modern medicine makes it easier.
 export function healthStep(w, die) {
   for (const ch of Object.values(w.characters)) {
@@ -38,6 +54,7 @@ export function healthStep(w, die) {
       if (rand(w) < onset) { ch.condition = { kind: 'illness', severity: rand(w) < clamp(.2 + (age - 40) / 100, .15, .6) ? 2 : 1, since: w.turn, cause: plague ? 'epidemic' : '' }; announce(w, ch); }
       continue;
     }
+    if (cond.worn) continue;
     const better = clamp(.5 - (age - 40) / 150 + medicine, .15, .65), worse = clamp(.12 + (age - 40) / 200 - medicine / 2, .06, .45), roll = rand(w);
     if (roll < better) {
       if (--cond.severity <= 0) { delete ch.condition; if (holdsOffice(w, ch) && cond.announced) news(w, `${c.name}: ${ch.name} has recovered.`, { kind: 'politics', countries: [c.id] }); }

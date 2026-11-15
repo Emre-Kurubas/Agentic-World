@@ -104,6 +104,8 @@ export function makeBackend(cfg, cwd = null) {
         try {
           const r = await callClaude(text, model, { session: current, cwd, effort: effortOf(model) });
           backend.record(r.usage);
+          // The caller learns how large the session has grown (a character's mind wears out as it fills; health.js wearStage).
+          if (session && r.usage) session.usage = r.usage;
           return extractJson(r.text);
         } catch (e) {
           if (e instanceof LimitError || e instanceof SessionLostError) throw e;

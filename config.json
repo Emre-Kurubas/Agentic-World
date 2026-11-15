@@ -1,5 +1,6 @@
 {
-  "runName": "world-26",
+  "runName": "world-27",
+  "wearOut": { "mild": 700000, "serious": 850000 },
   "seed": 2696855,
   "countries": 8,
   "provinces": 200,

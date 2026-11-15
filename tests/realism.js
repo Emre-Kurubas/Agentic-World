@@ -6239,5 +6239,28 @@ chain('World 26, third review: in the fight before a besieged place the garrison
   const p3 = peace(); applyOp(p3.w, p3.Lb, { op: 'accept_treaty', target: p3.a.id, cede: [p3.place.id] }); applyOp(p3.w, p3.L, { op: 'propose_treaty', target: p3.b.id, kind: 'peace', cede: [p3.place.id], terms: `${p3.place.name} (${p3.place.id}) passes to ${p3.a.name}. The war ends.` }); carrySigned(p3.w);
   assert.equal(p3.place.owner, p3.a.id, 'where the order to sign named the land, the paper is signed as before');
 });
+await (async () => {
+  // The user, 2026-11-15: as a character's context window nears a million it falls ill, and when the session is compacted it dies.
+  const { cfg, w } = sessionWorld(); const c = w.countries.U1, L = w.characters[c.leader], G = w.characters[c.general], size = {}; let compact = false;
+  const backend = { kind: 'claude', async ask(p, model, session) {
+    if (p.includes('rulings')) return { rulings: [] };
+    if (session) { const who = p.includes('Your name: ' + L.name) || session.id === g.sessions[L.id]?.id ? 'L' : p.includes('Your name: ' + G.name) || session.id === g.sessions[G.id]?.id ? 'G' : 'x';
+      session.usage = { input_tokens: 10, cache_read_input_tokens: compact && who === 'L' ? 90000 : (size[who] ?? 20000), cache_creation_input_tokens: 0 }; }
+    return { decisions: [], messages: [] };
+  } };
+  const g = new Game({ world: w, cfg: { ...cfg, maxLookupRounds: 0, negotiationRounds: 0 }, backend, store: memoryStore() });
+  await g.turn(); assert.ok(!L.condition && !G.condition, 'a young session is a sound body');
+  size.L = 720000; size.G = 300000; await g.turn();
+  assert.ok(L.condition?.worn && L.condition.severity === 1 && L.alive, `past 700 thousand the ruler is mildly ill: ${JSON.stringify(L.condition)}`); assert.ok(!G.condition?.worn, 'the general is not');
+  size.L = 880000; await g.turn(); assert.ok(L.condition.severity === 2 && L.alive, 'past 850 thousand, seriously');
+  const { healthStep } = await import('../engine/health.js'); for (let i = 0; i < 30; i++) healthStep(w, (_, x) => { if (x === L) throw new Error('the wasting does not kill by the dice'); x.alive = false; });
+  assert.equal(L.condition.severity, 2, 'it neither passes nor grows grave with the ordinary dice');
+  compact = true; const id = L.id; await g.turn();
+  assert.ok(!w.characters[id].alive && /long illness/.test(w.characters[id].death?.how || ''), `the day the session is compacted the ruler dies: ${JSON.stringify(w.characters[id].death)}`);
+  assert.ok(c.leader !== id && w.characters[c.leader]?.alive, 'and somebody succeeds');
+  const off = new Game({ world: sessionWorld().w, cfg: { ...cfg, wearOut: false }, backend, store: memoryStore() }); assert.equal(off.wearing(), null, 'wearOut: false turns it off');
+  console.log('passed  Chain: a mind that fills falls ill, and dies the day it is compacted');
+})();
+
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

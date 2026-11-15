@@ -11,7 +11,8 @@ import { answer } from './queries.js';
 import { LimitError, SessionLostError } from './backend.js';
 import { snapshotState, buildEntries } from './ledger.js';
 import { isPaintable, portraitPrompt, paintingPrompt, parseArt, witnessFor } from './art.js';
-import { incapacitated } from '../engine/health.js';
+import { incapacitated, WEAR, wearStage, wearOn } from '../engine/health.js';
+import { die } from '../engine/politics.js';
 
 export function rolesFor(cfg, c) {
   const root = c.parent ?? c.id;
@@ -132,16 +133,42 @@ export class Game {
     for (;;) {
       const resume = s.calls > 0, intro = !s.intro;
       s.calls++; this.saveSessions();
+      const call = { id: s.id, resume };
       try {
-        const r = await this.backend.ask(build({ intro, fresh, recap }), model, { id: s.id, resume });
-        s.done++; if (build.isActor) s.intro = true; this.saveSessions();
+        const r = await this.backend.ask(build({ intro, fresh, recap }), model, call);
+        s.done++; if (build.isActor) s.intro = true;
+        this.wear(ch, s, call.usage);
+        this.saveSessions();
         return r;
       } catch (e) {
-        if (!(e instanceof SessionLostError)) throw e;
+        // A session too full to be answered at all is a mind at its end, as much as one that was compacted.
+        if (!(e instanceof SessionLostError)) { if ((s.ctx ?? 0) >= (this.wearing()?.serious ?? Infinity) && /too long|context|too many tokens/i.test(e.message || '')) { s.spent ??= this.w.turn; this.saveSessions(); } throw e; }
         recap = s.done > 0; fresh = true;
         s = this.sessions[ch.id] = { id: randomUUID(), calls: 0, done: 0, intro: false };
         this.report(ch, recap ? 'Session file not found; opened a new session from the character\'s diary.' : 'The session had not been created yet; reopened.');
       }
+    }
+  }
+
+  // How large each character's session has grown, from the last call. A drop to under half of a session that was already large is the
+  // session being compacted: the person dies at the end of the quarter (wearStep). A new session (one that was lost) starts from nothing.
+  wearing() { const t = this.cfg.wearOut; return t === false ? null : { ...WEAR, ...(t || {}) }; }
+  wear(ch, s, usage) {
+    const t = this.wearing(); if (!t || !usage) return;
+    const ctx = ['input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'].reduce((a, k) => a + (Number(usage[k]) || 0), 0);
+    if (!ctx) return;
+    const before = s.ctx ?? 0;
+    if (before >= t.since && ctx < before * t.compacted) { s.spent ??= this.w.turn; this.report(ch, `The session was compacted (${Math.round(before / 1000)}k to ${Math.round(ctx / 1000)}k tokens): the character dies at the end of the quarter.`); }
+    s.ctx = ctx; s.peak = Math.max(s.peak ?? 0, ctx);
+  }
+  // At the quarter's end: the minds that ran out die, the rest fall ill as far as their sessions have grown.
+  wearStep() {
+    const t = this.wearing(); if (!t) return;
+    const w = this.w;
+    for (const [id, s] of Object.entries(this.sessions)) {
+      const ch = w.characters[id]; if (!ch?.alive) continue;
+      if (s.spent != null) { die(w, ch, 'died after a long illness'); continue; }
+      wearOn(w, ch, wearStage(s.ctx ?? 0, t));
     }
   }
 
@@ -505,6 +532,7 @@ export class Game {
     await this.amend(actors, log);
     this.setStatus('world processing', 'Calculating economy, war and politics');
     stepWorld(w);
+    this.wearStep();
     await this.answerLetters(actors, log);
     const entries = buildEntries(w, log, before, this.pending.lookups);
     this.store.commit(w, entries);
