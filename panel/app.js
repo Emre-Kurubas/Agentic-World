@@ -122,9 +122,19 @@ const views = {
     if (!list.length) return '';
     return `<h3>Treaties</h3>${list.map(t => `<div class="entry"><span class="who2">${esc(t.kind)}${t.secret ? ' (secret)' : ''}</span> <span class="muted">${esc(t.parties.filter(x => x !== c.id).map(x => country(x)?.name).filter(Boolean).join(', '))}</span>${t.terms ? `<div class="small">${esc(t.terms)}</div>` : ''}${t.clauses?.length ? `<ul>${t.clauses.map(x => `<li>${esc(x.text ?? x.type)}</li>`).join('')}</ul>` : ''}${t.breaches?.length ? t.breaches.slice(-3).map(b => `<div class="news war small">${quarter(b.turn)}: ${esc(b.text)}</div>`).join('') : ''}</div>`).join('')}`;
   },
+  // The table of the powers as the chancelleries reckoned it when the last year closed (rank.js): the same list the rulers and chiefs of staff
+  // are sent, with each state's share of the world in the six things weighed.
+  tableHtml(w) {
+    const t = w.table; if (!t?.order?.length) return '';
+    const order = t.order.filter(id => w.countries[id]?.alive), cols = [['army', 'Army'], ['fleet', 'Fleet'], ['works', 'Works'], ['gold', 'Gold'], ['people', 'People'], ['land', 'Land']];
+    const move = id => { const was = (t.was || []).indexOf(id), is = order.indexOf(id); if (was < 0 || !t.was) return ''; const d = was - is; return d > 0 ? ` <span class="badge" title="up ${d} since the year before">▲${d}</span>` : d < 0 ? ` <span class="badge no" title="down ${-d} since the year before">▼${-d}</span>` : ''; };
+    return `<h3>The table of the powers, ${t.year}</h3><p class="small muted">Reckoned when each year closes and sent to every ruler and chief of staff. The score is the state's share of the world's strength (the world is 100); the columns are its share of each thing weighed: army 25%, fleet 15%, works and trade 30%, gold, people and land 10% each. A state passes the one above it only when it is 5 in the hundred ahead.</p>
+    <table><tr><th>#</th><th>State</th><th class="n">Score</th>${cols.map(([, n]) => `<th class="n">${n}</th>`).join('')}</tr>${order.map((id, i) => { const c = w.countries[id], pr = t.parts?.[id] || {}; return `<tr><td>${i + 1}</td><td><button class="linky" type="button" data-c="${id}"><span class="swatch" style="background:${c.colors[0]}"></span> ${esc(c.rootName ?? c.name)}</button>${move(id)}</td><td class="n"><b>${(t.score[id] ?? 0).toFixed(1)}</b></td>${cols.map(([k]) => `<td class="n">${Math.round(pr[k] ?? 0)}</td>`).join('')}</tr>`; }).join('')}</table>`;
+  },
   world() {
     const w = S.data.world, cs = Object.values(w.countries).filter(c => c.alive).sort((a, b) => b.realGdp - a.realGdp), wars = w.wars.filter(x => x.active);
     return `<h2>${quarter(S.turn)}</h2><p class="muted small">${cs.length} powers alive. ${wars.length ? `${wars.length} wars under way.` : 'No wars at the moment.'}</p>
+    ${views.tableHtml(w)}
     ${cs.map(c => { const h = c.history.at(-1) || {}; return `<button class="row" type="button" data-c="${c.id}"><span class="swatch" style="background:${c.colors[0]}"></span><span><b>${esc(c.name)}</b><br><span class="small muted">${esc(c.regime)}, ${esc(c.ideology)}</span><br><span class="small">${esc(leaderName(c))}</span></span><span class="small" style="text-align:right">GDP ${fmt(h.gdp ?? c.realGdp)}<br>Inflation ${h.infl ?? 0}%<br>Unrest ${h.unrest ?? 0}</span></button>`; }).join('')}
     ${wars.length ? `<h3>Ongoing wars</h3>${wars.map(x => `<div class="news war">${esc(x.name)}<span class="muted small"> (${quarter(x.start)})</span></div>`).join('')}` : ''}
     ${w.past?.length ? `<h3>The world's past</h3>${w.past.map(e => `<div class="news small">${esc(e.text)}</div>`).join('')}` : ''}
