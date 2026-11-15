@@ -65,8 +65,10 @@ export function annalsStep(w) {
   }
   for (const x of (w.wars || []).filter(x => !x.active && was.wars.includes(x.id))) write(w, [...x.a, ...x.b], `The war between ${list(x.a.map(id => nm(w, id)))} and ${list(x.b.map(id => nm(w, id)))} ended.`);
   // Papers that came into force in the open.
-  for (const t of (w.treaties || []).filter(t => t.active && !t.pending && !t.secret && !was.treaties.includes(t.id))) {
-    const words = sentence(t.terms);
+  // Papers of trade are not history, and a counting commission is history the first time two states agree to one, not at each renewal.
+  for (const t of (w.treaties || []).filter(t => t.active && !t.pending && !t.secret && !was.treaties.includes(t.id) && t.kind !== 'trade')) {
+    const words = sentence(t.terms), names = t.parties.map(id => nm(w, id));
+    if (t.kind === 'commission' && t.parties.some(id => (w.countries[id]?.chronicle || []).some(e => e.t != null && /A treaty \(commission\)/.test(e.text) && names.every(n => e.text.includes(n))))) continue;
     write(w, t.parties, `A treaty (${String(t.kind).replace(/_/g, ' ')}) between ${list(t.parties.map(id => nm(w, id)))} came into force${words ? `: ${words}` : ''}.`);
   }
   // Land that changed sovereignty.

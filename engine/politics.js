@@ -158,7 +158,7 @@ export function succeed(w, c, gone, shock = 0) {
     if (rule === 'army') { next = free(c.general); by = 'at the head of the army'; }
     else if (rule === 'council') { next = free(c.oligarch); by = 'by the choice of the great houses'; }
     else if (rule === 'party') { next = [c.general, c.oligarch].map(free).filter(Boolean).sort((a, b) => b.power - a.power)[0]; by = 'by the choice of the party'; }
-    else if (rule === 'dynasty' && gone) { next = spawnCharacter(w, c.id, 'leader', c.axes, { family: familyOf(gone), age: [18, clamp((gone.age ?? 50) - 18, 19, 50)], power: 50 }); by = 'by right of blood'; }
+    else if (rule === 'dynasty' && gone) { next = spawnCharacter(w, c.id, 'leader', c.axes, { family: familyOf(gone), age: [18, clamp((gone.age ?? 50) - 18, 19, 50)], power: 50, heirOf: gone.id }); by = 'by right of blood'; }
     else if (rule === 'clergy') { next = spawnCharacter(w, c.id, 'leader', c.axes, { age: [52, 72], power: 55 }); by = 'by the choice of the clerical council'; }
     else if (rule === 'election') { next = spawnCharacter(w, c.id, 'leader', c.axes, { power: 50 }); by = 'as interim head of government until a vote is held'; }
   }

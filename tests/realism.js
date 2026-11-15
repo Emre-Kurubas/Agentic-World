@@ -865,7 +865,7 @@ import { ROLES } from '../engine/world.js';
 import { sovereignRate, creditLeft, creditHeadroom as roomOf } from '../engine/money.js';
 import { marketStep, warFooting, KIT } from '../engine/warcost.js';
 import { costOfPolice } from '../engine/economy.js';
-import { die, neutralize, electionStep } from '../engine/politics.js';
+import { die, neutralize, electionStep, successionRule } from '../engine/politics.js';
 import { noteLetter } from '../engine/annals.js';
 import { afflict, healthStep, incapacitated } from '../engine/health.js';
 import { upkeepCost } from '../engine/military.js';
@@ -6280,6 +6280,17 @@ chain('The annals of the game years go into the chronicles, and whoever takes a 
   const desk = next.inbox.map(m => m.text).join('\n');
   assert.ok(desk.includes(`What ${L.name} left in this seat`) && desk.includes('the floor in the spring') && desk.includes(`${friend.name} (${friend.id}, the head of the state of ${b.name}), 3 letters`), desk);
   assert.ok(answer(w, next, 'history').includes(`went to war with ${b.name}`), 'and anyone who asks for the history reads it');
+});
+chain('An heir is the child of the ruler who died, and nobody\'s life holds a year that has not come or a paper of trade', () => {
+  // 2026-11-15: a prince of twenty-three, heir by blood, was written "the child of a provincial clerk", with estates managed in 1912 and an iron
+  // treaty for the event of his youth.
+  const w = inherited(2696855, 8), c = aliveCountries(w).find(x => successionRule(x) === 'dynasty'); assert.ok(c, 'a dynasty in this world');
+  w.turn = 33; const old = w.characters[c.leader]; (c.chronicle ||= []).push({ year: 1905, t: 20, text: 'Q3 1905: A treaty (trade) between X and Y came into force: iron.' });
+  beginTurn(w); die(w, old, 'died after a long illness'); stepWorld(w);
+  const heir = w.characters[c.leader], now = 1900 + Math.floor(w.turn / 4);
+  assert.ok(heir.heirOf === old.id && heir.name.split(' ').at(-1) === old.name.split(' ').at(-1), `the heir carries the dynasty: ${heir.name} after ${old.name}`);
+  assert.ok(new RegExp(`child of ${old.name}`).test(heir.background) && heir.life.some(e => e.text.includes(`the child of ${old.name}, who held the throne`)), JSON.stringify(heir.life));
+  assert.ok(heir.life.every(e => e.year <= now) && !heir.life.some(e => /A treaty \(trade\)|Q\d \d{4}:/.test(e.text)), `no year to come and no paper of trade: ${JSON.stringify(heir.life)}`);
 });
 // [economy, map] checks of the economy, the resources and the map are added above this line.
 if (failed) { console.log(`${failed} check(s) FAILED.`); process.exitCode = 1; } else console.log('All checks passed.');

@@ -1,7 +1,7 @@
 // Country chronicles and character lives. Only events are recorded; who feels what is never written.
 // Uses local randomness; does not affect world generation or the engine.
 import { countryProvinces, aliveCountries, GOOD_LABEL, familyFor } from './world.js';
-import { givenNames, familyNames, personName, sexOf, freeFamily } from './names.js';
+import { givenNames, familyNames, personName, sexOf, freeFamily, his } from './names.js';
 
 function seeded(key) {
   let h = 2166136261; for (const ch of key) { h ^= ch.codePointAt(0); h = Math.imul(h, 16777619) >>> 0; }
@@ -71,28 +71,37 @@ const CAREER = {
   opposition: [p => `Published a newspaper in ${p} that was shut down twice.`, p => `Founded village schools in ${p}.`, () => 'Represented strikers as a lawyer in court.'],
   oligarch: [p => `Rented a first warehouse in the port of ${p}.`, p => `Became a partner in the ${p} mine.`, () => 'Won a state grain supply tender.']
 };
-const FAMILY = ['Widowed, with two children.', 'Married with four children; the eldest is in the army.', 'Never married.', 'Their spouse comes from a leading family of another province.', 'Their only child is studying abroad.', 'Lost a child to an epidemic.'];
+const FAMILY = [() => 'Widowed, with two children.', () => 'Married with four children; the eldest is in the army.', () => 'Never married.', ch => `${his(ch).replace(/^./, x => x.toUpperCase())} spouse comes from a leading family of another province.`, ch => `${his(ch).replace(/^./, x => x.toUpperCase())} only child is studying abroad.`, () => 'Lost a child to an epidemic.'];
 
+// Nothing in a life lies after the day it is written, and nothing in it before the person could have done it. (A ruler of twenty-three, heir to
+// a throne in 1908, was given estates he managed in 1912, and a trade treaty for iron as the event of his youth; 2026-11-15.)
+// Of the country's own annals, only what a person would remember: wars, land, rulers falling, risings, elections; not every paper of trade or
+// counting signed in the game years (annals.js), and those are told without the quarter they already carry.
+const MINOR = /A treaty \((trade|commission)\)|deposits on its soil|keeps fortress works|has owed the banks|bound by a trade agreement|across the sea since/;
 export function writeLife(w, ch) {
   const c = w.countries[ch.country]; if (!c) return;
   const r = seeded(`${ch.id}|${ch.name}`), provs = countryProvinces(w, c.id); if (!provs.length) return;
-  const now = 1900 + Math.floor(w.turn / 4), born = now - ch.age, home = pickOf(r, provs), role = ch.role in PARENTS ? ch.role : 'leader', parent = pickOf(r, PARENTS[role]);
-  const year = age => born + age, life = [];
+  const now = 1900 + Math.floor(w.turn / 4), born = now - ch.age, heir = ch.heirOf ? w.characters[ch.heirOf] : null;
+  const home = heir ? (provs.find(p => p.id === c.capital) ?? pickOf(r, provs)) : pickOf(r, provs), role = ch.role in PARENTS ? ch.role : 'leader', parent = heir ? `${heir.name}, who held the throne` : pickOf(r, PARENTS[role]);
+  // An event at some age between lo and hi, never beyond the person's age today; none if the person is too young for it.
+  const at = (lo, hi) => { const top = Math.min(hi, ch.age); return top < lo ? null : born + Math.round(between(r, lo, top)); }, life = [];
   life.push({ year: born, text: `Born in ${home.name}, the child of ${parent}.` });
-  const ruler = role === 'leader' ? RULER_PATH[c.archetype] : null;
-  life.push({ year: year(between(r, 17, 23)), text: `Educated at ${ruler ? pickOf(r, ruler.school) : role === 'leader' ? 'law school' : SCHOOL[role]}.` });
-  life.push({ year: year(between(r, 26, Math.max(27, ch.age - 8))), text: pickOf(r, ruler?.career ?? CAREER[role])(pickOf(r, provs).name) });
-  const shared = [...(w.past || []).filter(e => e.countries.includes(c.id)), ...(c.chronicle || [])].filter(e => e.year >= born + 16 && e.year <= now);
-  if (shared.length) { const e = pickOf(r, shared); life.push({ year: e.year, text: `At age ${e.year - born}, this happened in the country: ${e.text}` }); }
-  const peers = Object.values(w.characters).filter(o => o.id !== ch.id && o.country === c.id && o.alive);
-  if (peers.length) {
-    const other = pickOf(r, peers), y = Math.min(now - 1, year(between(r, 30, Math.max(31, ch.age - 2))));
-    life.push({ year: y, text: pickOf(r, [`Faced ${other.name} in a court case; the case ended in favor of ${r() < .5 ? ch.name : other.name}.`, `Served on the same commission as ${other.name}.`, `${other.name} put up an important bond for ${ch.name}.`, `${other.name} blocked one of their appointments at the last moment.`]) });
+  const ruler = role === 'leader' ? RULER_PATH[c.archetype] : null, schooled = at(17, 23);
+  if (schooled != null) life.push({ year: schooled, text: `Educated at ${ruler ? pickOf(r, ruler.school) : role === 'leader' ? 'law school' : SCHOOL[role]}.` });
+  const worked = heir ? null : at(26, Math.max(27, ch.age - 8));
+  if (worked != null) life.push({ year: worked, text: pickOf(r, ruler?.career ?? CAREER[role])(pickOf(r, provs).name) });
+  const shared = [...(w.past || []).filter(e => e.countries.includes(c.id)), ...(c.chronicle || [])].filter(e => e.year >= born + 16 && e.year <= now && !MINOR.test(e.text));
+  if (shared.length) { const e = pickOf(r, shared); life.push({ year: e.year, text: `At age ${e.year - born}, this happened in the country: ${String(e.text).replace(/^Q\d \d{4}: /, '')}` }); }
+  const peers = Object.values(w.characters).filter(o => o.id !== ch.id && o.country === c.id && o.alive), met = at(Math.min(30, Math.max(18, ch.age - 4)), Math.max(31, ch.age - 2));
+  if (peers.length && met != null) {
+    const other = pickOf(r, peers), y = Math.min(now - 1, met);
+    life.push({ year: y, text: pickOf(r, [`Faced ${other.name} in a court case; the case ended in favor of ${r() < .5 ? ch.name : other.name}.`, `Served on the same commission as ${other.name}.`, `${other.name} put up an important bond for ${ch.name}.`, `${other.name} blocked one of ${his(ch)} appointments at the last moment.`]) });
   }
   // Somebody whose home is another people's province bears a name of that people; and no more than anybody else a name that somebody of note in
-  // the country bears already.
-  if (home.eth !== c.majorityEth) { const [given, drawn] = personName(home.eth, home.rel, ch.id).split(' '); ch.name = `${given} ${familyFor(w, c.id, home.eth, drawn, ch.id)}`; ch.sex = sexOf(ch.name); }
-  ch.origin = { birthplace: home.name, born, eth: home.eth, rel: home.rel, family: pickOf(r, FAMILY) };
+  // the country bears already. (An heir bears the dynasty's name, wherever the dynasty's people is.)
+  if (!heir && home.eth !== c.majorityEth) { const [given, drawn] = personName(home.eth, home.rel, ch.id).split(' '); ch.name = `${given} ${familyFor(w, c.id, home.eth, drawn, ch.id)}`; ch.sex = sexOf(ch.name); }
+  const o = heir?.origin;
+  ch.origin = { birthplace: home.name, born, eth: o?.eth ?? home.eth, rel: o?.rel ?? home.rel, family: pickOf(r, FAMILY)(ch) };
   ch.life = life.sort((a, b) => a.year - b.year);
 }
 

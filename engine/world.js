@@ -137,7 +137,7 @@ function depositsFor(w, s, basin) {
 }
 
 // A background is only an event; what the character makes of it is their own affair. Does not consume world randomness.
-const LIFE_COMMON = ['Lost two siblings in a famine and walked from the village to the city.', 'As a child, saw the family lose its land to debt.', 'Spent their youth in exile, working at a printing press in a foreign country.', 'Their father died in a mine accident; went down the pit at twelve.', 'Lost the whole family to an epidemic and grew up in a temple.', 'Studied on a scholarship as the child of a poor clerk.', 'Grew up as the sole heir of a great landowner.', 'The family fled a massacre because it belonged to a minority.', 'Worked as an interpreter for foreign merchants in a port city.', 'Spent childhood with a shepherd clan driven from its pastures by drought.'];
+const LIFE_COMMON = ['Lost two siblings in a famine and walked from the village to the city.', 'As a child, saw the family lose its land to debt.', 'Spent the years of youth in exile, working at a printing press in a foreign country.', 'Lost a father to a mine accident and went down the pit at twelve.', 'Lost the whole family to an epidemic and grew up in a temple.', 'Studied on a scholarship as the child of a poor clerk.', 'Grew up as the sole heir of a great landowner.', 'The family fled a massacre because it belonged to a minority.', 'Worked as an interpreter for foreign merchants in a port city.', 'Spent childhood with a shepherd clan driven from its pastures by drought.'];
 const LIFE_ROLE = {
   leader: ['Served as deputy to a provincial governor and took over the night the governor was overthrown.', 'Spent years abroad as an envoy before coming home to a divided court.', 'Youngest of a large family; the inheritance dispute among the siblings dragged on for years.', 'Joined an uprising when young and served two years in prison.'],
   general: ['Most of the regiment died in a border war; came home with a shrapnel wound.', 'Graduated first from the war college and put down a village uprising on the first posting.', 'Commanded a remote garrison for fifteen years.', 'Captured in war and held two years in an enemy camp.', 'Rose from the ranks to general as the child of a peasant family.'],
@@ -182,7 +182,10 @@ function spawnCharacter(w, cid, role, axes, patch = {}) {
     axes: { econ: axes.econ + between(w, -40, 40), auth: axes.auth + between(w, -40, 40), nation: axes.nation + between(w, -40, 40), faith: axes.faith + between(w, -40, 40) },
     notes: '', lastWake: -99, inbox: []
   };
-  w.characters[id].background = lifeOf(w, id, w.characters[id].name, role);
+  // An heir to a throne is the child of the one who held it, brought up for it; not somebody's background drawn from the common lot.
+  const heir = patch.heirOf ? w.characters[patch.heirOf] : null;
+  if (heir) w.characters[id].heirOf = heir.id;
+  w.characters[id].background = heir ? `The child of ${heir.name}, brought up at court for the succession and kept from affairs of state while ${heir.name} ruled.` : lifeOf(w, id, w.characters[id].name, role);
   if (w.lifeReady) writeLife(w, w.characters[id]);
   return w.characters[id];
 }
