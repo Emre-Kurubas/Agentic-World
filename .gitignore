@@ -5,3 +5,8 @@ node_modules/
 
 # Working copies of helpers (git worktrees) are not part of the game.
 .claude/worktrees/
+
+# Notes and records kept out of the public repository.
+CLAUDE.md
+docs/denetim/
+tools/drill/last-report.json

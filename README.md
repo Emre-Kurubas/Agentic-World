@@ -114,16 +114,13 @@ agents/         the turn loop, prompts, queries (what each seat may know), refer
 panel/          the viewing app (no build step)
 tests/          realism.js
 tools/          checkup, fuzz, drill, export, balance measurements
-docs/denetim/   audit reports of past games
-CLAUDE.md       the developer handbook (in Turkish): design decisions, the history of every
-                game played and what was learned from it
 ```
 
 ---
 
 ## Design principles
 
-A few rules the project keeps (the full list, with the reasoning behind each, is in `CLAUDE.md`):
+A few rules the project keeps:
 
 - **Total freedom, no menu.** Characters write what they want to do. Nothing is refused because it isn't on a list.
 - **The engine decides outcomes.** Economy, battles and elections are computed, never narrated. Dice are thrown only where the engine cannot know the answer.
@@ -137,4 +134,4 @@ A few rules the project keeps (the full list, with the reasoning behind each, is
 
 ## Status
 
-This is a personal research project, built and tuned over dozens of full games with real AI characters. It runs on Windows (tested on Windows 11 with Node 24) and should run anywhere Node and Claude Code do. The game text, panel and data are in English. The developer handbook is in Turkish.
+This is a personal research project, built and tuned over dozens of full games with real AI characters. It runs on Windows (tested on Windows 11 with Node 24) and should run anywhere Node and Claude Code do. The game text, panel and data are in English.
